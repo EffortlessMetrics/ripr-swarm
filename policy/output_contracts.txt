@@ -1,0 +1,83 @@
+# kind|value|reason
+
+confidence|high|Confidence value.
+confidence|low|Confidence value.
+confidence|medium|Confidence value.
+confidence|unknown|Confidence value.
+confidence_label|ambiguous_runtime_join|Mutation calibration confidence label.
+confidence_label|contradicts_static_clean|Mutation calibration confidence label.
+confidence_label|contradicts_static_gap|Mutation calibration confidence label.
+confidence_label|no_runtime_data|Mutation calibration confidence label.
+confidence_label|runtime_only_signal|Mutation calibration confidence label.
+confidence_label|supports_static_clean|Mutation calibration confidence label.
+confidence_label|supports_static_gap|Mutation calibration confidence label.
+context_version|1.0|Current agent context packet version.
+delta|control|Delta kind value.
+delta|effect|Delta kind value.
+delta|unknown|Delta kind value.
+delta|value|Delta kind value.
+evidence_record_schema_version|0.1|Current evidence_record schema version.
+exposure_class|exposed|Static classification value.
+exposure_class|infection_unknown|Static classification value.
+exposure_class|no_static_path|Static classification value.
+exposure_class|propagation_unknown|Static classification value.
+exposure_class|reachable_unrevealed|Static classification value.
+exposure_class|static_unknown|Static classification value.
+exposure_class|weakly_exposed|Static classification value.
+flow_sink|call_effect|Flow sink value.
+flow_sink|error_variant|Flow sink value.
+flow_sink|match_arm|Flow sink value.
+flow_sink|return_value|Flow sink value.
+flow_sink|struct_field|Flow sink value.
+flow_sink|unknown|Flow sink value.
+oracle_kind|broad_error|Oracle kind value.
+oracle_kind|exact_error_variant|Oracle kind value.
+oracle_kind|exact_value|Oracle kind value.
+oracle_kind|mock_expectation|Oracle kind value.
+oracle_kind|relational_check|Oracle kind value.
+oracle_kind|smoke_only|Oracle kind value.
+oracle_kind|snapshot|Oracle kind value.
+oracle_kind|unknown|Oracle kind value.
+oracle_kind|whole_object_equality|Oracle kind value.
+oracle_strength|medium|Oracle strength value.
+oracle_strength|none|Oracle strength value.
+oracle_strength|smoke|Oracle strength value.
+oracle_strength|strong|Oracle strength value.
+oracle_strength|unknown|Oracle strength value.
+oracle_strength|weak|Oracle strength value.
+probe_family|call_deletion|Probe family value.
+probe_family|error_path|Probe family value.
+probe_family|field_construction|Probe family value.
+probe_family|match_arm|Probe family value.
+probe_family|predicate|Probe family value.
+probe_family|return_value|Probe family value.
+probe_family|side_effect|Probe family value.
+probe_family|static_unknown|Probe family value.
+schema_version|0.1|Current check JSON schema version.
+severity|info|Output and LSP severity value.
+severity|note|Output and LSP severity value.
+severity|warning|Output and LSP severity value.
+stage_state|not_applicable|RIPR stage state value.
+stage_state|no|RIPR stage state value.
+stage_state|opaque|RIPR stage state value.
+stage_state|unknown|RIPR stage state value.
+stage_state|weak|RIPR stage state value.
+stage_state|yes|RIPR stage state value.
+stop_reason|async_boundary_opaque|Static analysis stop reason value.
+stop_reason|dynamic_dispatch_unresolved|Static analysis stop reason value.
+stop_reason|external_crate_boundary|Static analysis stop reason value.
+stop_reason|feature_unknown|Static analysis stop reason value.
+stop_reason|fixture_opaque|Static analysis stop reason value.
+stop_reason|infection_evidence_unknown|Static analysis stop reason value.
+stop_reason|max_depth_reached|Static analysis stop reason value.
+stop_reason|no_changed_rust_line|Static analysis stop reason value.
+stop_reason|proc_macro_opaque|Static analysis stop reason value.
+stop_reason|propagation_evidence_unknown|Static analysis stop reason value.
+stop_reason|static_probe_unknown|Static analysis stop reason value.
+value_context|assertion_argument|Activation value context.
+value_context|builder_method|Activation value context.
+value_context|enum_variant|Activation value context.
+value_context|function_argument|Activation value context.
+value_context|return_value|Activation value context.
+value_context|table_row|Activation value context.
+value_context|unknown|Activation value context.

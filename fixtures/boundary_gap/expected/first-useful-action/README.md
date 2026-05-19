@@ -1,0 +1,61 @@
+# First Useful Action Fixture Corpus
+
+These files pin the Campaign 22 first-useful-action routing corpus for
+`RIPR-SPEC-0020`.
+
+They are static fixture artifacts. They do not implement `ripr first-action`,
+edit source, generate tests, call a provider, run mutation testing, rerun
+hidden analysis, invent policy, or change CI blocking behavior.
+
+Files:
+
+- `corpus.json` records PR-shaped input states and expected first-action
+  routing results for the bounded statuses in RIPR-SPEC-0020.
+- `<case>/first-useful-action.json` and `<case>/first-useful-action.md` pin the
+  expected report output for each route.
+
+The corpus intentionally covers:
+
+- actionable PR-local weak seam;
+- stale evidence;
+- missing required artifact;
+- baseline-only debt;
+- acknowledged item;
+- waived item;
+- suppressed item;
+- no actionable seam;
+- already-improved receipt state;
+- unchanged-after-attempt receipt state.
+
+Case directories:
+
+- `actionable/`
+- `stale/`
+- `missing-required-artifact/`
+- `baseline-only/`
+- `acknowledged/`
+- `waived/`
+- `suppressed/`
+- `no-actionable-seam/`
+- `already-improved/`
+- `unchanged-after-attempt/`
+
+Each case pins the expected status, action kind, audience, selected seam,
+target, routing reason, fallback state, command expectations, and static
+limits. The report producer, generated CI projection, editor status projection,
+and dogfood receipt checks all use this corpus as the regression contract.
+
+`cargo xtask dogfood` also treats the following cases as repo-local first-action
+receipts:
+
+- `actionable/`
+- `baseline-only/`
+- `stale/`
+- `missing-required-artifact/`
+- `unchanged-after-attempt/`
+- `no-actionable-seam/`
+
+Those dogfood checks prove that the documented first useful action routes stay
+reviewable from checked artifacts. They remain advisory and do not rerun hidden
+analysis, edit source, generate tests, call providers, run mutation testing,
+invent policy, or change CI blocking.

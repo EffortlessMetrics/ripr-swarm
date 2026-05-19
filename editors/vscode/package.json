@@ -1,0 +1,231 @@
+{
+  "name": "ripr",
+  "displayName": "ripr: Static Mutation Exposure",
+  "description": "Find mutation-exposed Rust code with static diagnostics, targeted test briefs, and agent handoff commands.",
+  "version": "0.6.0",
+  "publisher": "EffortlessMetrics",
+  "preview": true,
+  "license": "MIT OR Apache-2.0",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EffortlessMetrics/ripr.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/EffortlessMetrics/ripr/issues"
+  },
+  "homepage": "https://github.com/EffortlessMetrics/ripr",
+  "categories": [
+    "Linters",
+    "Programming Languages",
+    "Testing"
+  ],
+  "keywords": [
+    "rust",
+    "testing",
+    "mutation-testing",
+    "ripr",
+    "lsp"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:rust",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:python",
+    "workspaceContains:Cargo.toml",
+    "onCommand:ripr.restartServer",
+    "onCommand:ripr.showStatus",
+    "onCommand:ripr.diagnoseSetup",
+    "onCommand:ripr.startCurrentRepair",
+    "onCommand:ripr.openFirstPrPacket",
+    "onCommand:ripr.copyFirstPrSummary",
+    "onCommand:ripr.copyFirstPrRepairPacket",
+    "onCommand:ripr.copyFirstPrVerifyCommand",
+    "onCommand:ripr.copyFirstPrReceiptCommand",
+    "onCommand:ripr.copyFirstPrRegenerationGuidance"
+  ],
+  "main": "./out/src/extension.js",
+  "scripts": {
+    "compile": "cargo xtask vscode-compile",
+    "package": "cargo xtask vscode-package",
+    "test": "cargo xtask vscode-test",
+    "test:e2e": "cargo xtask vscode-test-e2e"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.12.4",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.2.2",
+    "mocha": "^10.8.2",
+    "typescript": "^6.0.3"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "ripr",
+      "properties": {
+        "ripr.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable saved-workspace ripr diagnostics, hovers, status, and code actions."
+        },
+        "ripr.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a ripr executable. Overrides bundled, downloaded, and PATH server resolution."
+        },
+        "ripr.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "lsp",
+            "--stdio"
+          ],
+          "description": "Arguments used to start the ripr language server."
+        },
+        "ripr.server.autoDownload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download the matching ripr server binary when no configured, bundled, or cached server is available."
+        },
+        "ripr.server.version": {
+          "type": "string",
+          "default": "",
+          "description": "Pinned ripr server version. Empty means match the extension version."
+        },
+        "ripr.server.downloadBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the server manifest base URL for internal mirrors. Empty uses GitHub Releases."
+        },
+        "ripr.check.mode": {
+          "type": "string",
+          "enum": [
+            "instant",
+            "draft",
+            "fast",
+            "deep",
+            "ready"
+          ],
+          "default": "draft",
+          "description": "Preferred ripr check mode for editor-triggered analysis."
+        },
+        "ripr.baseRef": {
+          "type": "string",
+          "default": "origin/main",
+          "description": "Git base ref used by ripr editor diagnostics and context commands."
+        },
+        "ripr.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace ripr language-server messages in the ripr output channel."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "ripr.restartServer",
+        "title": "ripr: Restart Server"
+      },
+      {
+        "command": "ripr.showOutput",
+        "title": "ripr: Show Output"
+      },
+      {
+        "command": "ripr.showStatus",
+        "title": "ripr: Show Status"
+      },
+      {
+        "command": "ripr.diagnoseSetup",
+        "title": "ripr: Diagnose Setup"
+      },
+      {
+        "command": "ripr.startCurrentRepair",
+        "title": "ripr: Start Current Repair"
+      },
+      {
+        "command": "ripr.openFirstPrPacket",
+        "title": "ripr: First PR - Open Packet"
+      },
+      {
+        "command": "ripr.copyFirstPrSummary",
+        "title": "ripr: First PR - Copy Summary"
+      },
+      {
+        "command": "ripr.copyFirstPrRepairPacket",
+        "title": "ripr: First PR - Copy Repair Packet"
+      },
+      {
+        "command": "ripr.copyFirstPrVerifyCommand",
+        "title": "ripr: First PR - Copy Verify Command"
+      },
+      {
+        "command": "ripr.copyFirstPrReceiptCommand",
+        "title": "ripr: First PR - Copy Receipt Command"
+      },
+      {
+        "command": "ripr.copyFirstPrRegenerationGuidance",
+        "title": "ripr: First PR - Copy Regeneration Guidance"
+      },
+      {
+        "command": "ripr.copyContext",
+        "title": "ripr: Inspect Test Gap - Copy Context"
+      },
+      {
+        "command": "ripr.copySuggestedAssertion",
+        "title": "ripr: Write Targeted Test - Copy Suggested Assertion"
+      },
+      {
+        "command": "ripr.copyTargetedTestBrief",
+        "title": "ripr: Write Targeted Test - Copy Brief"
+      },
+      {
+        "command": "ripr.copyAgentPacketCommand",
+        "title": "ripr: Agent Handoff - Copy Packet Command"
+      },
+      {
+        "command": "ripr.copyAgentBriefCommand",
+        "title": "ripr: Agent Handoff - Copy Brief Command"
+      },
+      {
+        "command": "ripr.copyAfterSnapshotCommand",
+        "title": "ripr: Verify After Test - Copy After Snapshot Command"
+      },
+      {
+        "command": "ripr.copyAgentVerifyCommand",
+        "title": "ripr: Verify After Test - Copy Verify Command"
+      },
+      {
+        "command": "ripr.copyAgentReceiptCommand",
+        "title": "ripr: Review Result - Copy Receipt Command"
+      },
+      {
+        "command": "ripr.openRelatedTest",
+        "title": "ripr: Write Targeted Test - Open Best Related Test"
+      },
+      {
+        "command": "ripr.openSettings",
+        "title": "ripr: Open Settings"
+      }
+    ]
+  }
+}

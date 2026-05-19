@@ -1,0 +1,85 @@
+#![forbid(unsafe_code)]
+//! `ripr` is a static RIPR mutation-exposure analyzer for Rust workspaces.
+//!
+//! It does not run mutants. It reads changed Rust code, creates mutation-shaped
+//! probes, and estimates whether tests appear to reach, infect, propagate, and
+//! reveal those changed behaviors through meaningful oracles.
+//!
+//! # Library entry points
+//!
+//! Most integrations should start with [`check_workspace`] to analyze a unified
+//! diff and obtain structured findings.
+//!
+//! # Typical integration flow
+//!
+//! 1. Build a [`CheckInput`] with repository root, target diff, and options.
+//! 2. Call [`check_workspace`] to produce a [`CheckOutput`] report.
+//! 3. For a specific probe id, call [`explain_finding`] to inspect evidence.
+//! 4. Use [`collect_context`] when you need neighboring source context for UX.
+//!
+//! The CLI wraps these same APIs and renders the resulting model in human,
+//! JSON, and annotation formats.
+//!
+//! # Output and compatibility
+//!
+//! [`CheckOutput`] and the domain re-exports in this crate are the intended
+//! integration surface for editor tooling, CI automation, and custom reporting.
+//! Prefer consuming these typed values over parsing CLI output so integrations
+//! remain resilient as human-readable formatting evolves.
+//!
+//! # Exposure language
+//!
+//! `ripr` reports static exposure estimates such as [`ExposureClass::Exposed`]
+//! and [`ExposureClass::WeaklyExposed`]. Findings can also remain unknown when
+//! static evidence is incomplete. These results are intended to guide targeted
+//! test intent, not to claim runtime mutation outcomes.
+//!
+//! # Quick start
+//!
+//! ```no_run
+//! use ripr::{CheckInput, check_workspace};
+//! use std::path::PathBuf;
+//!
+//! let report = check_workspace(CheckInput {
+//!     root: PathBuf::from("."),
+//!     ..CheckInput::default()
+//! })?;
+//!
+//! println!("findings: {}", report.findings.len());
+//! # Ok::<(), String>(())
+//! ```
+//!
+
+#[cfg(not(feature = "lang-rust"))]
+compile_error!(
+    "ripr requires the `lang-rust` Cargo feature; build rust-only binaries with `--no-default-features --features lang-rust`."
+);
+
+// Kept public for compatibility; prefer the crate-root re-exports for new
+// integrations.
+pub(crate) mod agent;
+#[doc(hidden)]
+pub mod analysis;
+// Kept public for compatibility; prefer the crate-root re-exports for new
+// integrations.
+#[doc(hidden)]
+pub mod app;
+// Kept public for compatibility with existing embedders.
+#[doc(hidden)]
+pub mod cli;
+pub(crate) mod config;
+// Kept public for compatibility; prefer the crate-root domain type re-exports
+// for new integrations.
+#[doc(hidden)]
+pub mod domain;
+// Kept public for compatibility with experimental editor integrations.
+#[doc(hidden)]
+pub mod lsp;
+// Kept public for compatibility with existing render integrations.
+#[doc(hidden)]
+pub mod output;
+
+/// Analyze a workspace diff using the default RIPR static pipeline.
+pub use app::{CheckInput, CheckOutput, check_workspace, collect_context, explain_finding};
+/// Domain model types exposed as part of the stable public contract.
+pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};

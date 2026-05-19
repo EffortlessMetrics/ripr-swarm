@@ -1,0 +1,186 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs on the same PR when new commits are pushed
+# (`synchronize`), but never on label or other PR-action events. The
+# label-event cancellation bug described in docs/CI.md caused in-progress runs
+# to be cancelled on label toggling.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ripr-rust-1.95-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --check
+      - run: cargo check --workspace --all-targets
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo xtask check-static-language
+      - run: cargo xtask check-no-panic-family
+      - run: cargo xtask check-allow-attributes
+      - run: cargo xtask check-local-context
+      - run: cargo xtask check-file-policy
+      - run: cargo xtask check-executable-files
+      - run: cargo xtask check-workflows
+      - run: cargo xtask check-droid-review-config
+      - run: cargo xtask check-spec-format
+      - run: cargo xtask check-spec-numbering
+      - run: cargo xtask check-fixture-contracts
+      - run: cargo xtask check-generated
+      - run: cargo xtask check-badge-diff-policy
+      - run: cargo xtask check-generated-clean
+      - run: cargo xtask check-dependencies
+      - run: cargo xtask check-process-policy
+      - run: cargo xtask check-network-policy
+      # Release-surface steps run only when the PR targets a release path:
+      # push to main, the `release-check` label, or the `full-ci` label.
+      # Ordinary code PRs skip them; package metadata and publish dry-run
+      # are still validated on every release-bearing change.
+      - name: Package list (release surface)
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        run: cargo package -p ripr --list
+      - name: Publish dry-run (release surface)
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        run: cargo publish -p ripr --dry-run
+      - name: Generate ripr test-efficiency report
+        if: always()
+        run: cargo xtask test-efficiency-report || true
+      - name: Generate ripr badge artifacts
+        if: always()
+        run: cargo xtask badge-artifacts || true
+      - name: Generate ripr PR summary
+        if: always()
+        run: cargo xtask pr-summary || true
+      - name: Generate RIPR PR evidence
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo xtask ripr-pr --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
+          cargo xtask ripr-pr --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --check
+      - name: Generate RIPR review guidance
+        if: github.event_name == 'pull_request'
+        env:
+          RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
+        run: |
+          cargo xtask ripr-review-comments --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
+          cargo xtask ripr-review-comments --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --check
+      - name: Generate impacted evidence
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          cargo xtask impacted-evidence
+          cargo xtask impacted-evidence --check
+      - name: Generate PR evidence summary
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo xtask ripr-pr-summary
+          cargo xtask ripr-pr-summary --check
+      - name: Generate RIPR annotations
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo xtask ripr-annotations
+          cargo xtask ripr-annotations --check
+      - name: Generate ripr report index
+        if: always()
+        run: cargo xtask reports index || true
+      - name: Generate ripr receipts
+        if: always()
+        run: cargo xtask receipts || true
+      - name: Refresh ripr report index
+        if: always()
+        run: cargo xtask reports index || true
+      - name: Write ripr report summary
+        if: always()
+        run: |
+          if [ -f target/ripr/reports/index.md ]; then
+            cat target/ripr/reports/index.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Write ripr badge summary
+        if: always()
+        run: |
+          if [ -f target/ripr/reports/ripr-badges.md ]; then
+            cat target/ripr/reports/ripr-badges.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Write PR evidence summary
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          if [ -f target/ripr/pr/summary.md ]; then
+            cat target/ripr/pr/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Write RIPR review guidance summary
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          if [ -f target/ripr/review/comments.md ]; then
+            printf "\n" >> "$GITHUB_STEP_SUMMARY" && cat target/ripr/review/comments.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Write impacted evidence summary
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          if [ -f target/xtask/impacted-evidence/latest.md ]; then
+            printf "\n" >> "$GITHUB_STEP_SUMMARY" && cat target/xtask/impacted-evidence/latest.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload ripr reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ripr-pr-reports
+          path: |
+            target/ripr/reports/
+            target/ripr/receipts/
+            target/ripr/pr/
+            target/ripr/review/
+            target/xtask/impacted-evidence/
+          if-no-files-found: ignore
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ripr-msrv-1.95-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --workspace --all-targets
+
+  vscode:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: npm ci
+      - run: npm run compile
+      - run: npm run package
+      - name: Build local ripr server for e2e
+        working-directory: .
+        run: cargo build -p ripr
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: xvfb-run -a npm run test:e2e
+        env:
+          RIPR_TEST_SERVER_PATH: ${{ github.workspace }}/target/debug/ripr
