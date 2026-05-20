@@ -36,6 +36,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showStatus'));
     assert.ok(commands.includes('ripr.diagnoseSetup'));
     assert.ok(commands.includes('ripr.startCurrentRepair'));
+    assert.ok(commands.includes('ripr.copyCurrentRepairPacket'));
     assert.ok(commands.includes('ripr.openFirstPrPacket'));
     assert.ok(commands.includes('ripr.copyFirstPrSummary'));
     assert.ok(commands.includes('ripr.copyFirstPrRepairPacket'));
@@ -1643,6 +1644,82 @@ suite('Extension Smoke', () => {
       const statusOutput = await showStatusReport(context);
       assert.ok(statusOutput.includes('Actionable gap queue: static-limit-only; target/ripr/reports/actionable-gaps.json has no repairable queue item.'));
       assert.ok(statusOutput.includes('Static-limit-only evidence is advisory and must not become a repair packet without a typed repair route.'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+  });
+
+  test('copyCurrentRepairPacket copies bounded queue packet for safe actionable state', async () => {
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({})
+      }
+    }, async (context) => {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await context.controller.start();
+      await context.controller.copyCurrentRepairPacket();
+      const packet = context.clipboardWrites.at(-1) ?? '';
+      assert.ok(packet.includes('RIPR current repair packet'), packet);
+      assert.ok(packet.includes('Repair this one canonical gap: gap:rust:pricing:discount:threshold-boundary.'), packet);
+      assert.ok(packet.includes('Language: rust (stable)'), packet);
+      assert.ok(packet.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), packet);
+      assert.ok(packet.includes('Repair kind: add_boundary_assertion'), packet);
+      assert.ok(packet.includes('Target assertion or output proof: assert_eq!(discount(100, 100), 90)'), packet);
+      assert.ok(packet.includes('Run: ripr agent verify --root . --json'), packet);
+      assert.ok(packet.includes('Record: ripr agent receipt --root . --json'), packet);
+      assert.ok(packet.includes('Do not broaden scope beyond this one gap.'), packet);
+      assert.ok(packet.includes('Do not treat this advisory static packet as a gate decision'), packet);
+      assert.strictEqual(context.runRiprCalls.length, 0);
+      assert.ok(context.infoMessages.at(-1)?.includes('current repair packet copied'));
+    });
+  });
+
+  test('copyCurrentRepairPacket fails closed for no-action stale and unsafe queue states', async () => {
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({
+          summary: {
+            actionable_gaps: 0,
+            packets_emitted: 0,
+            public_projection_eligible_packets: 0,
+            public_projection_excluded_packets: 0
+          },
+          packets: []
+        })
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyCurrentRepairPacket();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('no actionable gap'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({})
+      }
+    }, async (context) => {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+      context.controller.markWorkspaceStale(document);
+      await context.controller.copyCurrentRepairPacket();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('requires current saved-workspace evidence'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+
+    const unsafeCommandPacket = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
+    (unsafeCommandPacket.packets as Array<Record<string, unknown>>)[0].verify_command =
+      'ripr agent verify --root . --json; cargo test';
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': JSON.stringify(unsafeCommandPacket)
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyCurrentRepairPacket();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('unsafe command'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
   });
