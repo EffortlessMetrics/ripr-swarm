@@ -134,5 +134,4 @@ mod tests {
         assert_eq!(summary.propagation_unknown, 0);
         assert_eq!(summary.static_unknown, 0);
     }
-
 }
