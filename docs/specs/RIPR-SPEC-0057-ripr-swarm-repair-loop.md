@@ -323,7 +323,7 @@ Given a receipt-backed attempt with evidence movement `evidence_regressed`,
 
 ## Fixture Expectations
 
-The first fixture corpus should include:
+`fixtures/swarm-plan-packet-corpus` pins the first packet-ranking corpus with:
 
 - high-confidence boundary assertion packet;
 - exact error variant packet;
@@ -331,7 +331,10 @@ The first fixture corpus should include:
 - blocked static limitation packet;
 - missing verify command packet;
 - missing receipt command packet;
-- must-not-change boundary packet;
+- must-not-change boundary packet.
+
+Follow-up outcome fixtures should add:
+
 - prior attempt improved, unchanged, and regressed outcome rows.
 
 Must-not-claim guards:
@@ -350,6 +353,9 @@ Current implementation coverage:
 - `xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context`
   pins ready, missing-context, missing verify, missing receipt, and
   static-limitation blocking behavior for `swarm-plan`;
+- `xtask::tests::ripr_swarm_plan_packet_corpus_matches_expected_states`
+  validates `fixtures/swarm-plan-packet-corpus/corpus.json` against the same
+  planner used by the report command;
 - `xtask::tests::ripr_swarm_command_parses_plan_args` pins the
   `cargo xtask ripr-swarm plan --top <n>` command shape.
 

@@ -5127,6 +5127,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "swarm-plan-packet-corpus"
             )
         })
 }
@@ -7292,6 +7293,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_first_successful_pr_fixture_corpus(&mut violations)?;
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
     validate_gap_decision_ledger_fixture_corpus(&mut violations)?;
+    validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
     validate_pr_review_front_panel_fixture_corpus(&mut violations)?;
     validate_report_packet_index_fixture_corpus(&mut violations)?;
     validate_pr_inline_comment_publisher_fixture_corpus(&mut violations)?;
@@ -7441,6 +7443,30 @@ const FINDING_ALIGNMENT_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
         "already_observed",
     ),
     ("config_policy_flow_unknown_limitation", "static_limitation"),
+];
+
+const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
+
+const SWARM_PLAN_PACKET_REQUIRED_CASES: &[(&str, &str)] = &[
+    ("high_confidence_boundary_assertion_packet", "queued"),
+    ("exact_error_variant_packet", "queued"),
+    ("output_observer_packet", "queued"),
+    (
+        "blocked_static_limitation_packet",
+        "blocked_by_static_limitation",
+    ),
+    (
+        "missing_verify_command_packet",
+        "blocked_by_missing_context",
+    ),
+    (
+        "missing_receipt_command_packet",
+        "blocked_by_missing_context",
+    ),
+    (
+        "must_not_change_boundary_packet",
+        "blocked_by_missing_context",
+    ),
 ];
 
 const FIRST_SUCCESSFUL_PR_CORPUS: &str = "fixtures/first_successful_pr/corpus.json";
@@ -8251,6 +8277,251 @@ fn validate_finding_alignment_dogfood_fixture_corpus_at(
     }
 
     Ok(())
+}
+
+fn validate_swarm_plan_packet_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
+    let root = Path::new("fixtures/swarm-plan-packet-corpus");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "swarm plan packet fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec = root.join("SPEC.md");
+    if spec.exists() {
+        let spec_text = read_text_lossy(&spec)?;
+        if !spec_text
+            .lines()
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0057"))
+        {
+            violations.push(format!(
+                "{} is missing `Spec: RIPR-SPEC-0057`",
+                normalize_path(&spec)
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !has_markdown_heading(&spec_text, heading) {
+                violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
+            }
+        }
+    }
+
+    validate_swarm_plan_packet_fixture_corpus_at(Path::new(SWARM_PLAN_PACKET_CORPUS), violations)
+}
+
+fn validate_swarm_plan_packet_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "swarm plan packet corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let corpus = match read_json_value(path) {
+        Ok(value) => value,
+        Err(err) => {
+            violations.push(err);
+            return Ok(());
+        }
+    };
+    if json_string_field(&corpus, "kind").as_deref() != Some("swarm_plan_packet_corpus") {
+        violations.push(format!(
+            "{} kind must be swarm_plan_packet_corpus",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        violations.push(format!(
+            "{} schema_version must be 0.1",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0057") {
+        violations.push(format!(
+            "{} spec must be RIPR-SPEC-0057",
+            normalize_path(path)
+        ));
+    }
+
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        violations.push(format!("{} is missing cases array", normalize_path(path)));
+        return Ok(());
+    };
+    let mut seen = BTreeMap::new();
+    for case in cases {
+        let case_id = json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string());
+        if seen
+            .insert(
+                case_id.clone(),
+                json_string_field(case.get("expected").unwrap_or(&Value::Null), "swarm_state")
+                    .unwrap_or_default(),
+            )
+            .is_some()
+        {
+            violations.push(format!("swarm plan packet case {case_id} is duplicated"));
+        }
+        validate_swarm_plan_packet_fixture_case(case, &case_id, violations);
+    }
+
+    for (case_id, expected_state) in SWARM_PLAN_PACKET_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == expected_state => {}
+            Some(actual) => violations.push(format!(
+                "swarm plan packet case {case_id} must have state {expected_state}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "swarm plan packet corpus is missing case {case_id}"
+            )),
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_swarm_plan_packet_fixture_case(
+    case: &Value,
+    case_id: &str,
+    violations: &mut Vec<String>,
+) {
+    if json_string_field(case, "description").is_none() {
+        violations.push(format!(
+            "swarm plan packet case {case_id} is missing description"
+        ));
+    }
+    require_non_empty_string_array_at(case, "must_not_claim", case_id, violations);
+
+    let Some(packet) = case.get("packet").filter(|value| value.is_object()) else {
+        violations.push(format!(
+            "swarm plan packet case {case_id} is missing packet object"
+        ));
+        return;
+    };
+    if !matches!(packet.get("raw_findings"), Some(Value::Array(values)) if !values.is_empty()) {
+        violations.push(format!(
+            "swarm plan packet case {case_id} must keep raw_findings as supporting evidence"
+        ));
+    }
+
+    let Some(expected) = case.get("expected").filter(|value| value.is_object()) else {
+        violations.push(format!(
+            "swarm plan packet case {case_id} is missing expected object"
+        ));
+        return;
+    };
+
+    let actionable_gaps = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "summary": {"actionable_gaps": 1},
+        "packets": [packet.clone()]
+    });
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    if report.packets.len() != 1 {
+        violations.push(format!(
+            "swarm plan packet case {case_id} produced {} packets, expected 1",
+            report.packets.len()
+        ));
+        return;
+    }
+    let planned = &report.packets[0];
+
+    if let Some(expected_state) = json_string_field(expected, "swarm_state") {
+        if planned.swarm_state != expected_state {
+            violations.push(format!(
+                "swarm plan packet case {case_id} state must be {expected_state}, got {}",
+                planned.swarm_state
+            ));
+        }
+    } else {
+        violations.push(format!(
+            "swarm plan packet case {case_id} expected.swarm_state is missing"
+        ));
+    }
+
+    if let Some(expected_ready) = json_bool_field(expected, "swarm_ready") {
+        let actual_ready = planned.swarm_state == "queued";
+        if actual_ready != expected_ready {
+            violations.push(format!(
+                "swarm plan packet case {case_id} ready must be {expected_ready}, got {actual_ready}"
+            ));
+        }
+    }
+    if let Some(expected_high_confidence) = json_bool_field(expected, "high_confidence") {
+        let actual_high_confidence = ripr_swarm_plan_packet_is_high_confidence(planned);
+        if actual_high_confidence != expected_high_confidence {
+            violations.push(format!(
+                "swarm plan packet case {case_id} high_confidence must be {expected_high_confidence}, got {actual_high_confidence}"
+            ));
+        }
+    }
+
+    let expected_missing_context = json_string_array_field(expected, "missing_context");
+    if planned.missing_context != expected_missing_context {
+        violations.push(format!(
+            "swarm plan packet case {case_id} missing_context must be [{}], got [{}]",
+            expected_missing_context.join(", "),
+            planned.missing_context.join(", ")
+        ));
+    }
+    let expected_blocked_reasons = json_string_array_field(expected, "blocked_reasons");
+    if planned.blocked_reasons != expected_blocked_reasons {
+        violations.push(format!(
+            "swarm plan packet case {case_id} blocked_reasons must be [{}], got [{}]",
+            expected_blocked_reasons.join(", "),
+            planned.blocked_reasons.join(", ")
+        ));
+    }
+
+    let output_packet = ripr_swarm_plan_packets_json(std::slice::from_ref(planned))
+        .into_iter()
+        .next()
+        .unwrap_or(Value::Null);
+    if output_packet
+        .get("raw_findings_supporting_only")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        violations.push(format!(
+            "swarm plan packet case {case_id} must emit raw_findings_supporting_only"
+        ));
+    }
+
+    let Some(summary) = expected.get("summary").and_then(Value::as_object) else {
+        violations.push(format!(
+            "swarm plan packet case {case_id} expected.summary is missing"
+        ));
+        return;
+    };
+    let actual_summary = ripr_swarm_plan_summary_json(&report);
+    for (key, expected_value) in summary {
+        let Some(expected_count) = expected_value.as_u64() else {
+            violations.push(format!(
+                "swarm plan packet case {case_id} expected.summary.{key} must be numeric"
+            ));
+            continue;
+        };
+        let actual_count = actual_summary.get(key).and_then(Value::as_u64);
+        if actual_count != Some(expected_count) {
+            violations.push(format!(
+                "swarm plan packet case {case_id} summary.{key} must be {expected_count}, got {}",
+                actual_count
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "missing".to_string())
+            ));
+        }
+    }
 }
 
 fn validate_first_successful_pr_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
@@ -42605,10 +42876,11 @@ mod tests {
         targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
         test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
         test_oracle_tests_in_text, unknown_command_message, validate_local_context_allowlist,
-        vscode_compile_command, vscode_extension_dir, vscode_package_command,
-        vscode_package_version, vscode_test_e2e_command, windows_absolute_path_tokens,
-        workflow_runtime_violations, worktree, worktree_doctor_findings,
-        write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
+        validate_swarm_plan_packet_fixture_corpus, vscode_compile_command, vscode_extension_dir,
+        vscode_package_command, vscode_package_version, vscode_test_e2e_command,
+        windows_absolute_path_tokens, workflow_runtime_violations, worktree,
+        worktree_doctor_findings, write_evidence_health_report_with_runner,
+        write_evidence_health_report_with_runners,
         write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     };
     use super::{
@@ -58414,6 +58686,22 @@ covered_by = ["cargo xtask check-file-policy"]
 
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].canonical_gap_id, "gap:suggested-assertion");
+    }
+
+    #[test]
+    fn ripr_swarm_plan_packet_corpus_matches_expected_states() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let mut violations = Vec::new();
+            validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
+            if violations.is_empty() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "swarm plan packet corpus violations:\n- {}",
+                    violations.join("\n- ")
+                ))
+            }
+        })
     }
 
     #[test]
