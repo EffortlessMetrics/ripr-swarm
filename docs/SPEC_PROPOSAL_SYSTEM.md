@@ -1,5 +1,9 @@
 # The spec/proposal system, fully explained
 
+This guide explains the canonical [Repo Tracking Model](REPO_TRACKING_MODEL.md).
+It does not replace that model; use it as the longer operator explanation for
+the same layers and boundaries.
+
 The system is a **repo source-of-truth stack**. Its central rule is:
 
 > **Do not make every document do every job.**
@@ -101,30 +105,9 @@ docs/proposals/
 
 Proposal template:
 
-```md
-# <REPO>-PROP-0001: <Title>
-
-Status:
-Owner:
-Created:
-Target milestone:
-Linked specs:
-Linked ADRs:
-Linked plan:
-
-## Problem
-## Users and surfaces
-## Success criteria
-## Proposed shape
-## Alternatives considered
-## Specs to create or update
-## Architecture decisions needed
-## Implementation campaign shape
-## Evidence plan
-## Risks
-## Non-goals
-## Exit criteria
-```
+Use [docs/templates/PROPOSAL_TEMPLATE.md](templates/PROPOSAL_TEMPLATE.md).
+Do not fork proposal headers or section names in this guide; update the
+template when the canonical shape changes.
 
 ### 3.3 Spec
 
@@ -138,31 +121,8 @@ docs/specs/
 
 Spec template:
 
-```md
-# <REPO>-SPEC-0001: <Title>
-
-Status:
-Owner:
-Created:
-Linked proposal:
-Linked ADRs:
-Linked plan:
-Linked issues:
-Linked PRs:
-Support-tier impact:
-Policy impact:
-
-## Problem
-## Behavior
-## Non-goals
-## Required evidence
-## Acceptance examples
-## Test mapping
-## Implementation mapping
-## CI proof
-## Metrics / promotion rule
-## Failure modes
-```
+Use [docs/templates/SPEC_TEMPLATE.md](templates/SPEC_TEMPLATE.md). The
+template is the canonical section inventory checked by repo automation.
 
 ### 3.4 ADR
 
@@ -176,21 +136,7 @@ docs/adr/
 
 ADR template:
 
-```md
-# <REPO>-ADR-0001: <Title>
-
-Status:
-Date:
-Owner:
-Linked proposal:
-Linked specs:
-
-## Decision
-## Context
-## Consequences
-## Alternatives considered
-## Follow-up specs / plans
-```
+Use [docs/templates/ADR_TEMPLATE.md](templates/ADR_TEMPLATE.md).
 
 ### 3.5 Implementation plan
 
@@ -204,34 +150,7 @@ plans/<milestone>/
 
 Plan item template:
 
-````md
-## Work item: <id>
-
-Status: ready
-Linked proposal:
-Linked spec:
-Linked ADR:
-Blocks:
-Blocked by:
-Branch:
-Issue:
-PR:
-
-### Goal
-### Production delta
-### Non-goals
-### Acceptance
-### Proof commands
-
-```bash
-cargo test -p ...
-cargo xtask ...
-git diff --check
-```
-
-### Rollback
-### Claim boundary
-````
+Use [docs/templates/PLAN_ITEM_TEMPLATE.md](templates/PLAN_ITEM_TEMPLATE.md).
 
 ### 3.6 Active goal manifest
 
@@ -262,8 +181,7 @@ Typical location:
 
 ```text
 policy/*.toml
-ci/**/*.toml
-docs/tracking/**/*.toml
+policy/*.txt
 ```
 
 ### 3.9 Closeout / handoff
@@ -344,7 +262,7 @@ Single source-of-truth examples:
 
 - Product claim stability -> `docs/status/SUPPORT_TIERS.md`
 - CI lane policy -> `policy/ci-lane-whitelist.toml`
-- Package classification -> `policy/package-boundary.toml`
+- Workspace/package shape -> `policy/workspace_shape.txt`
 - File exceptions -> `policy/non-rust-allowlist.toml`
 - Active work -> `.ripr/goals/active.toml`
 - PR order -> `plans/<milestone>/implementation-plan.md`
@@ -376,12 +294,14 @@ Single source-of-truth examples:
 Recommended checks:
 
 ```text
-cargo xtask check-doc-artifacts
+cargo xtask check-doc-index
+cargo xtask check-spec-format
+cargo xtask check-spec-numbering
+cargo xtask check-traceability
+cargo xtask check-capabilities
 cargo xtask check-goals
-cargo xtask check-package-boundary
-cargo xtask check-ci-lanes
-cargo xtask check-support-tiers
-cargo xtask policy-report
+cargo xtask check-doc-roles
+cargo xtask check-ci-lane-whitelist
 ```
 
 ---
