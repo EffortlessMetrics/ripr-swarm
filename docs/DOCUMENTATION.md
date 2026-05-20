@@ -23,6 +23,8 @@ Current and planned tutorial docs:
   install/open, diagnose setup, repair one Rust gap, verify, receipt, refresh
 - [Editor first-pr bridge workflow](EDITOR_FIRST_PR_BRIDGE_WORKFLOW.md) -
   local handoff from receipt and refresh to first-pr `start-here` packet
+- [RIPR swarm human workflow](RIPR_SWARM_HUMAN_WORKFLOW.md) - one bounded
+  actionable-gap repair attempt from packet to receipt and outcome
 - [Start-here surface convergence proposal](proposals/RIPR-PROP-0011-start-here-surface-convergence.md) -
   cross-surface plan for making editor, CLI, PR/CI, receipts, and preview
   promotion use the same safe next-action unit
@@ -56,6 +58,7 @@ Current how-to docs:
 - [Roll out Factory Droid review](how-to/roll-out-droid.md)
 - [Dogfooding](DOGFOODING.md)
 - [Targeted test workflow](TARGETED_TEST_WORKFLOW.md)
+- [RIPR swarm human workflow](RIPR_SWARM_HUMAN_WORKFLOW.md)
 - [Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md)
 - [Static limits](STATIC_LIMITS.md)
 - [Targeted test boundary-gap case study](case-studies/TARGETED_TEST_BOUNDARY_GAP.md)
@@ -99,6 +102,7 @@ Current how-to docs:
 - [Editor first run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md)
 - [Editor actionable gap queue](EDITOR_ACTIONABLE_GAP_QUEUE.md)
 - [Editor first-pr bridge workflow](EDITOR_FIRST_PR_BRIDGE_WORKFLOW.md)
+- [RIPR swarm human workflow](RIPR_SWARM_HUMAN_WORKFLOW.md)
 - [Editor gap cockpit workflow](EDITOR_GAP_COCKPIT_WORKFLOW.md)
 - [Editor evidence workflow](EDITOR_EVIDENCE_WORKFLOW.md)
 - [Editor evidence UX](EDITOR_EVIDENCE_UX.md)
@@ -228,6 +232,7 @@ Current explanation docs:
 - [ADRs](adr/)
 - [Specs](specs/)
 - [Agent workflows](AGENT_WORKFLOWS.md)
+- [RIPR swarm human workflow](RIPR_SWARM_HUMAN_WORKFLOW.md)
 - [First successful PR workflow](FIRST_PR_WORKFLOW.md)
 - [Agent dispatch workflow](AGENT_DISPATCH_WORKFLOW.md)
 - [Editor agent integration](EDITOR_AGENT_INTEGRATION.md)

@@ -436,6 +436,7 @@ implementation surfaces are:
 - `cargo xtask ripr-swarm attempt --packet <id> --dry-run` (implemented);
 - `target/ripr/reports/swarm-plan.json` (implemented);
 - `target/ripr/reports/swarm-plan.md` (implemented);
+- `docs/RIPR_SWARM_HUMAN_WORKFLOW.md` (implemented);
 - existing `actionable-gaps` and `actionable-gap-outcomes` artifacts.
 
 No provider SDK, mutation executor, generated-test writer, PR/CI renderer,

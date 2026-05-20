@@ -24,7 +24,8 @@ Linked work items:
 - Follow-up: `fixtures: add swarm-plan packet corpus`
 - Follow-up: `report: add actionable gap outcome report`
 - Follow-up: `xtask: add swarm dry-run`
-- Follow-up: `docs: add ripr-swarm human workflow`
+- `docs/RIPR_SWARM_HUMAN_WORKFLOW.md`: human workflow for one bounded repair
+  attempt
 - Follow-up: `dogfood: close real actionable packets`
 
 ## Problem
