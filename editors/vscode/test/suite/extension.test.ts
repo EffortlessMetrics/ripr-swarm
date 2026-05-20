@@ -140,6 +140,78 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('real extension actionable gap queue commands copy bounded packets for safe artifacts', async function (this: Mocha.Context) {
+    this.timeout(30000);
+    await cleanupActionableGapQueueSmokeFiles();
+    await writeWorkspaceFile('target/ripr/reports/actionable-gaps.json', actionableGapsReport({}));
+    await writeWorkspaceFile('target/ripr/agent/agent-receipt.json', agentReceipt({ movement: 'improved' }));
+    await writeWorkspaceFile('target/ripr/first-pr/start-here.json', firstPrPacket({}));
+    try {
+      await vscode.commands.executeCommand('ripr.diagnoseSetup');
+      await vscode.commands.executeCommand('ripr.showStatus');
+
+      await writeClipboardText('actionable-gap-queue-repair-sentinel');
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      const repairPacket = await waitForClipboardText((text) =>
+        text.includes('RIPR current repair packet') &&
+        text.includes('gap:rust:pricing:discount:threshold-boundary')
+      );
+      assert.notStrictEqual(repairPacket, 'actionable-gap-queue-repair-sentinel');
+      assert.ok(repairPacket.includes('Repair kind: add_boundary_assertion'), repairPacket);
+      assert.ok(repairPacket.includes('Run: ripr agent verify --root . --json'), repairPacket);
+      assert.ok(repairPacket.includes('Record: ripr agent receipt --root . --json'), repairPacket);
+      assert.ok(repairPacket.includes('Do not broaden scope beyond this one gap.'), repairPacket);
+      assert.ok(repairPacket.includes('Do not treat this advisory static packet as a gate decision'), repairPacket);
+
+      await writeClipboardText('actionable-gap-queue-map-sentinel');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      const repoMap = await waitForClipboardText((text) =>
+        text.includes('RIPR repo gap map') &&
+        text.includes('Queue state: topActionableGap')
+      );
+      assert.notStrictEqual(repoMap, 'actionable-gap-queue-map-sentinel');
+      assert.ok(repoMap.includes('Canonical gap id: gap:rust:pricing:discount:threshold-boundary'), repoMap);
+      assert.ok(repoMap.includes('Movement: improved'), repoMap);
+      assert.ok(repoMap.includes('First PR packet state'), repoMap);
+      assert.ok(repoMap.includes('This map is read-only orientation.'), repoMap);
+      assert.ok(repoMap.includes('not a gate decision, merge approval, runtime proof, mutation proof'), repoMap);
+    } finally {
+      await cleanupActionableGapQueueSmokeFiles();
+    }
+  });
+
+  test('real extension actionable gap queue commands fail closed for unsafe artifacts', async function (this: Mocha.Context) {
+    this.timeout(30000);
+    await cleanupActionableGapQueueSmokeFiles();
+    try {
+      await writeWorkspaceFile('target/ripr/reports/actionable-gaps.json', '{not-json');
+      await writeClipboardText('actionable-gap-queue-sentinel');
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      assert.strictEqual(await currentClipboardText(), 'actionable-gap-queue-sentinel');
+
+      await cleanupActionableGapQueueSmokeFiles();
+      await writeWorkspaceFile(
+        'target/ripr/reports/actionable-gaps.json',
+        actionableGapsReport({ root: '../other-workspace' })
+      );
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      assert.strictEqual(await currentClipboardText(), 'actionable-gap-queue-sentinel');
+
+      await cleanupActionableGapQueueSmokeFiles();
+      await writeWorkspaceFile(
+        'target/ripr/reports/actionable-gaps.json',
+        actionableGapsReport({ status: 'stale' })
+      );
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      assert.strictEqual(await currentClipboardText(), 'actionable-gap-queue-sentinel');
+    } finally {
+      await cleanupActionableGapQueueSmokeFiles();
+    }
+  });
+
   test('real extension adoption assurance smoke keeps setup repair and first-pr actions bounded', async function (this: Mocha.Context) {
     this.timeout(45000);
     await cleanupAdoptionAssuranceSmokeFiles();
@@ -3597,9 +3669,21 @@ async function cleanupFirstPrBridgeSmokeFiles(): Promise<void> {
   ]);
 }
 
+async function cleanupActionableGapQueueSmokeFiles(): Promise<void> {
+  await Promise.all([
+    removeWorkspacePath('target/ripr/reports/actionable-gaps.json'),
+    removeWorkspacePath('target/ripr/agent/agent-receipt.json'),
+    removeWorkspacePath('target/ripr/first-pr/start-here.json'),
+    removeWorkspacePath('target/ripr/first-pr/start-here.md'),
+    removeWorkspacePath('target/ripr/reports/start-here.json'),
+    removeWorkspacePath('target/ripr/reports/start-here.md')
+  ]);
+}
+
 async function cleanupAdoptionAssuranceSmokeFiles(): Promise<void> {
   await Promise.all([
     removeWorkspacePath('ripr.toml'),
+    removeWorkspacePath('target/ripr/reports/actionable-gaps.json'),
     removeWorkspacePath('target/ripr/reports/first-useful-action.json'),
     removeWorkspacePath('target/ripr/agent/agent-receipt.json'),
     removeWorkspacePath('target/ripr/first-pr/start-here.json'),

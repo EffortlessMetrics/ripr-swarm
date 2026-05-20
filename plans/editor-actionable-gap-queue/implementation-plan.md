@@ -25,10 +25,10 @@ parse Markdown for action semantics.
 
 The source-of-truth stack, read-only artifact validation seam, Show Status
 queue projection, bounded current repair packet copy action, read-only repo gap
-map orientation command, and manifest-only fixture corpus have landed. The
-active swarm-trunk slice is the packaged VS Code smoke that proves those
-surfaces through the real extension path without changing producers, gates,
-PR/CI output, or editor authority.
+map orientation command, manifest-only fixture corpus, and packaged VS Code
+smoke proof have landed. The active swarm-trunk slice is the user-facing editor
+documentation that explains the queue workflow without changing producers,
+gates, PR/CI output, or editor authority.
 
 ## Hard Boundaries
 
@@ -65,8 +65,8 @@ from the pre-swarm queue. Remaining open work is tracked directly in
 | #1302 | `lsp(queue): add Copy Current Repair Packet` | closed | Copy one bounded packet only for validated actionable gaps. |
 | #1303 | `lsp(queue): add Copy Repo Gap Map` | closed | Copy read-only orientation without gate/runtime/policy claims. |
 | source #1304 / swarm PR #16 | `fixtures(editor): add actionable gap queue corpus` | closed | Manifest-only fixture corpus covers success, no-action, receipt, and fail-closed queue states without changing editor behavior. |
-| swarm #17 | `test(vscode): smoke actionable gap queue` | active | Prove the packaged extension path. |
-| swarm #18 | `docs(editor): document actionable gap queue` | planned | Explain workflow, recovery states, and non-claims. |
+| swarm #17 | `test(vscode): smoke actionable gap queue` | closed | Packaged VS Code smoke proves safe queue packet copy, read-only repo map copy, fail-closed stale/wrong-root/malformed states, receipt state, Rust defaults, and preview boundaries. |
+| swarm #18 | `docs(editor): document actionable gap queue` | active | Explain workflow, recovery states, and non-claims. |
 | swarm #19 | `dogfood(lane3): record actionable gap queue receipts` | planned | Record queue, packet, receipt, no-action, and fail-closed proof. |
 | swarm #20 | `campaign(lane3): close editor actionable gap queue` | planned | Close after behavior, fixtures, e2e, docs, dogfood, and validation land. |
 
