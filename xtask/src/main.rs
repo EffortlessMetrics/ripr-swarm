@@ -43343,9 +43343,9 @@ mod tests {
         mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
         next_spec_id_from_ids, no_panic_toml_string, non_rust_programming_retention_reason,
         normalize_fixture_human_output, normalize_fixture_json_output, normalize_golden_text,
-        panic_family_from_pattern, parse_campaign_manifest, parse_file_policy_allowlist,
-        parse_gh_pr_status_args, parse_gh_pr_status_pull_request, parse_inline_array,
-        parse_mutation_calibration_args, parse_mutation_outcomes_json,
+        panic_family_from_pattern, parse_actionable_gap_outcomes_args, parse_campaign_manifest,
+        parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
+        parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
         parse_no_panic_allowlist_toml, parse_no_panic_allowlist_toml_v2,
         parse_pr_triage_pull_requests, parse_reason, parse_repo_exposure_static_seams,
         parse_repo_exposure_summary_counts, parse_required_status_contexts,
@@ -60033,6 +60033,178 @@ covered_by = ["cargo xtask check-file-policy"]
             assert!(markdown.contains("gap:seam-a"));
             Ok(())
         })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_command_rejects_unsafe_argument_shapes() -> Result<(), String> {
+        for (args, expected) in [
+            (
+                vec!["--actionable-gaps"],
+                "missing value for `--actionable-gaps`",
+            ),
+            (
+                vec!["--agent-receipt"],
+                "missing value for `--agent-receipt`",
+            ),
+            (
+                vec!["--targeted-test-outcome"],
+                "missing value for `--targeted-test-outcome`",
+            ),
+            (vec!["--help"], "usage: cargo xtask actionable-gap-outcomes"),
+            (
+                vec!["--unknown"],
+                "unknown actionable-gap-outcomes option `--unknown`",
+            ),
+            (
+                vec!["positional"],
+                "unexpected positional argument `positional`",
+            ),
+        ] {
+            let owned_args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let err = parse_actionable_gap_outcomes_args(&owned_args)
+                .expect_err("invalid actionable-gap-outcomes args should be rejected");
+            assert!(
+                err.contains(expected),
+                "expected {expected:?} in error for {args:?}, got {err:?}"
+            );
+        }
+
+        with_temp_cwd("actionable-gap-outcomes-missing-input", |_| {
+            let err = actionable_gap_outcomes_report_impl(&[])
+                .expect_err("missing actionable-gaps artifact should fail closed");
+            assert!(
+                err.contains(
+                    "actionable-gap-outcomes requires `target/ripr/reports/actionable-gaps.json`"
+                ),
+                "missing artifact error should name regeneration target, got {err:?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_join_receipt_arrays_anchor_and_unknown_movement()
+    -> Result<(), String> {
+        let packets = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:anchor-only",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/anchor.rs",
+                    "primary_anchor": {"file": "src/anchor.rs", "line": 7},
+                    "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                    "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id anchor-only"
+                },
+                {
+                    "canonical_gap_id": "gap:changed-target",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/target.rs",
+                    "primary_anchor": {"file": "src/target.rs", "line": 11},
+                    "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                    "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id changed-target"
+                }
+            ]
+        });
+        let receipt = serde_json::json!([
+            {
+                "schema_version": "0.3",
+                "seam": {
+                    "file": "src/anchor.rs",
+                    "line": 7,
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped"
+                },
+                "summary": {"next_action": {"kind": "changed"}}
+            }
+        ]);
+        let targeted = serde_json::json!({
+            "schema_version": "0.1",
+            "moved": [
+                {
+                    "seam_id": "changed-target",
+                    "seam_kind": "predicate_boundary",
+                    "file": "src/target.rs",
+                    "line": 11,
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped",
+                    "direction": "changed",
+                    "evidence_delta": []
+                }
+            ],
+            "unchanged": [],
+            "regressed": [],
+            "removed": [],
+            "new": []
+        });
+
+        let report = actionable_gap_outcomes_report_from_values(
+            &packets,
+            Some(&receipt),
+            Some(&targeted),
+            "target/ripr/reports/actionable-gaps.json".to_string(),
+            Some("target/ripr/reports/agent-receipt.json".to_string()),
+            Some("target/ripr/reports/targeted-test-outcome.json".to_string()),
+        )?;
+        let json = actionable_gap_outcomes_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+        assert_eq!(value["summary"]["receipt_present"], 1);
+        assert_eq!(value["summary"]["attempted_no_receipt"], 1);
+        assert_eq!(value["summary"]["unknown"], 0);
+        assert_eq!(value["outcomes"][0]["canonical_gap_id"], "gap:anchor-only");
+        assert_eq!(value["outcomes"][0]["receipt_state"], "present");
+        assert_eq!(value["outcomes"][0]["outcome_state"], "receipt_present");
+        assert_eq!(value["outcomes"][0]["movement_direction"], "changed");
+        assert_eq!(
+            value["outcomes"][1]["canonical_gap_id"],
+            "gap:changed-target"
+        );
+        assert_eq!(value["outcomes"][1]["receipt_state"], "missing");
+        assert_eq!(
+            value["outcomes"][1]["outcome_state"],
+            "attempted_no_receipt"
+        );
+        assert_eq!(
+            value["outcomes"][1]["reason"],
+            "Matched targeted-test outcome `moved` bucket."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_render_empty_packet_set_as_no_action() -> Result<(), String> {
+        let packets = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "packets": []
+        });
+        let report = actionable_gap_outcomes_report_from_values(
+            &packets,
+            None,
+            None,
+            "target/ripr/reports/actionable-gaps.json".to_string(),
+            None,
+            None,
+        )?;
+        let json = actionable_gap_outcomes_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["packets_total"], 0);
+        assert_eq!(value["summary"]["outcomes_total"], 0);
+
+        let markdown = actionable_gap_outcomes_markdown(&report);
+        assert!(markdown.contains("No actionable-gap packets were present."));
+        Ok(())
     }
 
     #[test]
