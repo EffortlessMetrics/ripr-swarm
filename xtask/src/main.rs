@@ -59346,6 +59346,110 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn actionable_gap_outcomes_fixture_corpus_reports_contract_drift() -> Result<(), String> {
+        with_temp_cwd("actionable-gap-outcomes-corpus-drift", |_| {
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("missing-corpus.json"),
+                &mut violations,
+            )?;
+            assert!(
+                violations.iter().any(
+                    |violation| violation.contains("actionable gap outcomes corpus is missing")
+                ),
+                "missing corpus path should be reported: {violations:?}"
+            );
+
+            write(
+                Path::new("bad-corpus.json"),
+                r#"{
+  "schema_version": "bad",
+  "kind": "wrong",
+  "spec": "RIPR-SPEC-0000",
+  "related_spec": "RIPR-SPEC-0000",
+  "cases": [
+    {
+      "id": "bad-outcome",
+      "description": "Bad outcome case.",
+      "must_not_claim": ["Do not trust this malformed case."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:bad-outcome",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+            "verify_command": "ripr agent verify --json",
+            "receipt_command_or_path": "ripr agent receipt --seam-id bad-outcome"
+          }
+        ]
+      },
+      "agent_receipt": null,
+      "targeted_test_outcome": null,
+      "expected": {
+        "summary": {"packets_total": 2},
+        "outcomes": [
+          {
+            "canonical_gap_id": "gap:bad-outcome",
+            "outcome_state": "resolved",
+            "receipt_state": "present",
+            "movement_source": "agent_receipt"
+          }
+        ]
+      }
+    }
+  ]
+}"#,
+            );
+
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("bad-corpus.json"),
+                &mut violations,
+            )?;
+            for expected in [
+                "kind must be actionable_gap_outcomes_corpus",
+                "schema_version must be 0.1",
+                "spec must be RIPR-SPEC-0031",
+                "related_spec must be RIPR-SPEC-0057",
+                "outcome_state must be resolved, got not_attempted",
+                "receipt_state must be present, got not_attempted",
+                "summary.packets_total must be 2, got 1",
+                "corpus is missing case not_attempted_packet",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(
+                &serde_json::json!({"id": "missing-fields"}),
+                "missing-fields",
+                &mut violations,
+            )?;
+            for expected in [
+                "missing description",
+                "must_not_claim must be a non-empty string array",
+                "is missing actionable_gaps object",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected fixture-case violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
         expect_ripr_swarm_plan_arg_error(&[])?
             .contains("usage: cargo xtask ripr-swarm plan")
