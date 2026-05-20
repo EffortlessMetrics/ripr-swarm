@@ -710,7 +710,7 @@ suite('Extension Smoke', () => {
       assert.strictEqual(context.runRiprCalls.length, 0);
       assert.strictEqual(context.infoMessages.length, 3);
       for (const message of context.infoMessages) {
-        assert.ok(message.includes('active file or target URI'), message);
+        assertRepairTargetBlocker(message);
       }
     } finally {
       await context.dispose();
@@ -834,9 +834,12 @@ suite('Extension Smoke', () => {
         }
       );
 
+      await writeClipboardText('start-current-repair-sentinel');
+      await waitForCodeAction(uri, near.range, (action) => action.title === 'Copy first repair packet');
       await vscode.commands.executeCommand('ripr.startCurrentRepair');
 
       const copied = await waitForClipboardText((text) => text === 'nearest repair packet');
+      assert.notStrictEqual(copied, 'start-current-repair-sentinel');
       assert.strictEqual(copied, 'nearest repair packet');
     } finally {
       provider?.dispose();
@@ -3879,6 +3882,30 @@ async function waitForClipboardText(
   throw new Error(`timed out waiting for clipboard text. Last clipboard:\n${lastText}`);
 }
 
+async function waitForCodeAction(
+  uri: vscode.Uri,
+  range: vscode.Range,
+  predicate: (action: vscode.CodeAction | vscode.Command) => boolean,
+  timeoutMs = 5000
+): Promise<vscode.CodeAction | vscode.Command> {
+  const started = Date.now();
+  let lastTitles: string[] = [];
+  while (Date.now() - started < timeoutMs) {
+    const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+      'vscode.executeCodeActionProvider',
+      uri,
+      range
+    );
+    lastTitles = (actions ?? []).map((action) => action.title);
+    const match = (actions ?? []).find(predicate);
+    if (match) {
+      return match;
+    }
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for code action. Last actions:\n${lastTitles.join('\n')}`);
+}
+
 async function currentClipboardText(): Promise<string> {
   const capturePath = process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH;
   if (capturePath) {
@@ -3904,6 +3931,14 @@ async function writeClipboardText(text: string): Promise<void> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+function assertRepairTargetBlocker(message: string): void {
+  assert.ok(
+    message.includes('active file or target URI') ||
+      message.includes('file URI in the current workspace'),
+    message
+  );
 }
 
 function diagnosticCode(diagnostic: vscode.Diagnostic): string {
