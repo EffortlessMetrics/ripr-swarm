@@ -2,6 +2,10 @@ use crate::agent::loop_commands;
 use serde::Serialize;
 use serde_json::Value;
 
+mod parsing;
+
+use parsing::{ParsedSources, parse_sources};
+
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "first_useful_action";
 const DEFAULT_GENERATED_AT: &str = "unknown";
@@ -131,21 +135,6 @@ struct ActionFallback {
     summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     missing: Option<String>,
-}
-
-#[derive(Default)]
-struct ParsedSources {
-    pr_guidance: Option<Value>,
-    assistant_proof: Option<Value>,
-    gap_ledger: Option<Value>,
-    ledger: Option<Value>,
-    baseline_delta: Option<Value>,
-    receipt: Option<Value>,
-    gate_decision: Option<Value>,
-    coverage_frontier: Option<Value>,
-    editor_context: Option<Value>,
-    warnings: Vec<String>,
-    read_errors: Vec<(String, String)>,
 }
 
 pub(crate) fn build_first_useful_action_report(
@@ -321,107 +310,6 @@ pub(crate) fn render_first_useful_action_markdown(report: &FirstUsefulActionRepo
 }
 
 pub(crate) use crate::output::path::display_path;
-
-fn parse_sources(input: &FirstUsefulActionInput) -> ParsedSources {
-    let mut parsed = ParsedSources::default();
-    parsed.pr_guidance = parse_optional_json(
-        "PR guidance",
-        input.pr_guidance_path.as_deref(),
-        &input.pr_guidance_json,
-        &mut parsed,
-    );
-    parsed.assistant_proof = parse_optional_json(
-        "assistant proof",
-        input.assistant_proof_path.as_deref(),
-        &input.assistant_proof_json,
-        &mut parsed,
-    );
-    parsed.gap_ledger = parse_optional_json(
-        "gap decision ledger",
-        input.gap_ledger_path.as_deref(),
-        &input.gap_ledger_json,
-        &mut parsed,
-    );
-    parsed.ledger = parse_optional_json(
-        "PR evidence ledger",
-        input.ledger_path.as_deref(),
-        &input.ledger_json,
-        &mut parsed,
-    );
-    parsed.baseline_delta = parse_optional_json(
-        "baseline debt delta",
-        input.baseline_delta_path.as_deref(),
-        &input.baseline_delta_json,
-        &mut parsed,
-    );
-    parsed.receipt = parse_optional_json(
-        "receipt",
-        input.receipt_path.as_deref(),
-        &input.receipt_json,
-        &mut parsed,
-    );
-    parsed.gate_decision = parse_optional_json(
-        "gate decision",
-        input.gate_decision_path.as_deref(),
-        &input.gate_decision_json,
-        &mut parsed,
-    );
-    parsed.coverage_frontier = parse_optional_json(
-        "coverage/grip frontier",
-        input.coverage_frontier_path.as_deref(),
-        &input.coverage_frontier_json,
-        &mut parsed,
-    );
-    parsed.editor_context = parse_optional_json(
-        "editor context",
-        input.editor_context_path.as_deref(),
-        &input.editor_context_json,
-        &mut parsed,
-    );
-    parsed
-}
-
-fn parse_optional_json(
-    label: &str,
-    path: Option<&str>,
-    text: &Option<Result<String, String>>,
-    parsed: &mut ParsedSources,
-) -> Option<Value> {
-    let path = path?;
-    let Some(text) = text else {
-        parsed.warnings.push(format!(
-            "{label} path {path} was supplied but no input text was loaded"
-        ));
-        parsed
-            .read_errors
-            .push((label.to_string(), path.to_string()));
-        return None;
-    };
-    let text = match text {
-        Ok(text) => text,
-        Err(error) => {
-            parsed
-                .warnings
-                .push(format!("optional {label} input {path} is invalid: {error}"));
-            parsed
-                .read_errors
-                .push((label.to_string(), path.to_string()));
-            return None;
-        }
-    };
-    match serde_json::from_str::<Value>(text) {
-        Ok(value) => Some(value),
-        Err(error) => {
-            parsed
-                .warnings
-                .push(format!("optional {label} input {path} is invalid: {error}"));
-            parsed
-                .read_errors
-                .push((label.to_string(), path.to_string()));
-            None
-        }
-    }
-}
 
 fn stale_report(
     input: &FirstUsefulActionInput,
@@ -2059,7 +1947,8 @@ mod tests {
         // When path is None the function immediately returns None without touching
         // ParsedSources – zero warnings, zero read_errors.
         let mut parsed = ParsedSources::default();
-        let result = parse_optional_json("label", None, &Some(Ok("{}".to_string())), &mut parsed);
+        let result =
+            parsing::parse_optional_json("label", None, &Some(Ok("{}".to_string())), &mut parsed);
         assert!(result.is_none(), "expected None when path is None");
         assert!(
             parsed.warnings.is_empty(),
@@ -2073,7 +1962,8 @@ mod tests {
     fn parse_optional_json_path_but_no_text_records_warning() -> Result<(), String> {
         // path is Some, but text (Option<Result>) is None → warning + read_error
         let mut parsed = ParsedSources::default();
-        let result = parse_optional_json("my-label", Some("some/path.json"), &None, &mut parsed);
+        let result =
+            parsing::parse_optional_json("my-label", Some("some/path.json"), &None, &mut parsed);
         assert!(result.is_none(), "expected None when text is absent");
         assert!(
             !(parsed.warnings.is_empty()),
@@ -2096,7 +1986,7 @@ mod tests {
     fn parse_optional_json_io_error_records_warning() -> Result<(), String> {
         // text is Some(Err(...)) → warning + read_error
         let mut parsed = ParsedSources::default();
-        let result = parse_optional_json(
+        let result = parsing::parse_optional_json(
             "my-label",
             Some("broken.json"),
             &Some(Err("permission denied".to_string())),
@@ -2115,7 +2005,7 @@ mod tests {
     fn parse_optional_json_invalid_json_records_warning() -> Result<(), String> {
         // text is Some(Ok(...)) but not valid JSON → warning + read_error
         let mut parsed = ParsedSources::default();
-        let result = parse_optional_json(
+        let result = parsing::parse_optional_json(
             "my-label",
             Some("bad.json"),
             &Some(Ok("not json {{{".to_string())),
@@ -2136,7 +2026,7 @@ mod tests {
     #[test]
     fn parse_optional_json_valid_json_returns_value() -> Result<(), String> {
         let mut parsed = ParsedSources::default();
-        let result = parse_optional_json(
+        let result = parsing::parse_optional_json(
             "my-label",
             Some("ok.json"),
             &Some(Ok(r#"{"key": "value"}"#.to_string())),
