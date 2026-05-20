@@ -28,9 +28,7 @@ use crate::domain::{
     RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind,
 };
 use rustpython_parser::{
-    Mode,
     ast::{self, Expr, Mod, Stmt},
-    parse,
     text_size::TextRange,
 };
 use std::path::{Path, PathBuf};
@@ -40,6 +38,8 @@ use std::path::{Path, PathBuf};
 /// Stateless: routing, parsing, and per-file extraction only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PythonAdapter;
+
+mod utils;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonOwner {
@@ -80,67 +80,8 @@ struct PythonAssertion {
     oracle_strength: OracleStrength,
 }
 
-fn parse_module(path: &Path, source: &str) -> Option<Mod> {
-    let source_path = path.to_string_lossy();
-    let module = parse(source, Mode::Module, source_path.as_ref()).ok()?;
-    match module {
-        Mod::Module(_) => Some(module),
-        _ => None,
-    }
-}
-
-/// 1-indexed line for a 0-indexed byte offset.
-fn line_for_offset(source: &str, offset: usize) -> usize {
-    let mut line: usize = 1;
-    for (idx, ch) in source.char_indices() {
-        if idx >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-        }
-    }
-    line
-}
-
-fn line_for_range_start(source: &str, range: TextRange) -> usize {
-    line_for_offset(source, usize::from(range.start()))
-}
-
-fn line_for_range_end(source: &str, range: TextRange) -> usize {
-    line_for_offset(source, usize::from(range.end()))
-}
-
-fn text_for_range(source: &str, range: TextRange) -> String {
-    let start = usize::from(range.start()).min(source.len());
-    let end = usize::from(range.end()).min(source.len());
-    source.get(start..end).unwrap_or_default().to_string()
-}
-
-fn normalized_path(path: &Path) -> String {
-    let mut normalized = path.to_string_lossy().replace('\\', "/");
-    while let Some(stripped) = normalized.strip_prefix("./") {
-        normalized = stripped.to_string();
-    }
-    normalized
-}
-
-fn is_test_file(path: &Path) -> bool {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    if file_name.starts_with("test_") || file_name.ends_with("_test.py") {
-        return true;
-    }
-    path.components().any(|component| {
-        let text = component.as_os_str().to_string_lossy();
-        text == "tests" || text == "test"
-    })
-}
-
 fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
-    let Some(Mod::Module(module)) = parse_module(file, source) else {
+    let Some(Mod::Module(module)) = utils::parse_module(file, source) else {
         return Vec::new();
     };
     let mut owners = Vec::new();
@@ -240,8 +181,8 @@ fn owner_from_function(
         name: name.to_string(),
         qualified_name,
         file: context.file.to_path_buf(),
-        start_line: line_for_range_start(context.source, range),
-        end_line: line_for_range_end(context.source, range),
+        start_line: utils::line_for_range_start(context.source, range),
+        end_line: utils::line_for_range_end(context.source, range),
         owner_kind,
         decorators,
         imports: context.imports.to_vec(),
@@ -249,7 +190,7 @@ fn owner_from_function(
 }
 
 fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
-    let Some(Mod::Module(module)) = parse_module(file, source) else {
+    let Some(Mod::Module(module)) = utils::parse_module(file, source) else {
         return Vec::new();
     };
     let mut tests = Vec::new();
@@ -272,8 +213,8 @@ fn collect_tests_from_statements(
                 out.push(PythonTest {
                     name: function.name.to_string(),
                     file: file.to_path_buf(),
-                    line: line_for_range_start(source, function.range),
-                    body_text: text_for_range(source, function.range),
+                    line: utils::line_for_range_start(source, function.range),
+                    body_text: utils::text_for_range(source, function.range),
                     imports: imports.to_vec(),
                     decorators: decorator_names(&function.decorator_list),
                     parametrized: is_parametrized(&function.decorator_list),
@@ -289,8 +230,8 @@ fn collect_tests_from_statements(
                 out.push(PythonTest {
                     name: function.name.to_string(),
                     file: file.to_path_buf(),
-                    line: line_for_range_start(source, function.range),
-                    body_text: text_for_range(source, function.range),
+                    line: utils::line_for_range_start(source, function.range),
+                    body_text: utils::text_for_range(source, function.range),
                     imports: imports.to_vec(),
                     decorators: decorator_names(&function.decorator_list),
                     parametrized: is_parametrized(&function.decorator_list),
@@ -470,8 +411,10 @@ fn collect_except_handler_assertions(
 fn assertion_from_assert(assert_stmt: &ast::StmtAssert, source: &str) -> PythonAssertion {
     let (oracle_kind, oracle_strength) = oracle_for_assert_expr(assert_stmt.test.as_ref());
     PythonAssertion {
-        text: text_for_range(source, assert_stmt.range).trim().to_string(),
-        line: line_for_range_start(source, assert_stmt.range),
+        text: utils::text_for_range(source, assert_stmt.range)
+            .trim()
+            .to_string(),
+        line: utils::line_for_range_start(source, assert_stmt.range),
         oracle_kind,
         oracle_strength,
     }
@@ -483,8 +426,8 @@ fn assertion_from_expr(expr: &Expr, source: &str) -> Option<PythonAssertion> {
     };
     let (oracle_kind, oracle_strength) = oracle_for_call(call)?;
     Some(PythonAssertion {
-        text: text_for_range(source, call.range).trim().to_string(),
-        line: line_for_range_start(source, call.range),
+        text: utils::text_for_range(source, call.range).trim().to_string(),
+        line: utils::line_for_range_start(source, call.range),
         oracle_kind,
         oracle_strength,
     })
@@ -941,10 +884,10 @@ fn classify_change(
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
 ) -> Option<Finding> {
-    let changed_file = normalized_path(file);
+    let changed_file = utils::normalized_path(file);
     let owner = owners
         .iter()
-        .filter(|owner| normalized_path(&owner.file) == changed_file)
+        .filter(|owner| utils::normalized_path(&owner.file) == changed_file)
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
     let related_candidates = related_test_candidates(owner, all_tests);
     let related = find_related_tests(owner, all_tests);
@@ -1200,7 +1143,7 @@ impl LanguageAdapter for PythonAdapter {
             let Ok(source) = std::fs::read_to_string(&absolute) else {
                 continue;
             };
-            if is_test_file(relative) {
+            if utils::is_test_file(relative) {
                 all_tests.extend(extract_tests(relative, &source));
             } else {
                 all_owners.extend(extract_owners(relative, &source));
@@ -1214,7 +1157,7 @@ impl LanguageAdapter for PythonAdapter {
                 continue;
             }
             changed_count += 1;
-            if is_test_file(&changed.path) {
+            if utils::is_test_file(&changed.path) {
                 continue;
             }
             for added in &changed.added_lines {
@@ -1279,7 +1222,7 @@ mod tests {
 
     #[test]
     fn parse_source_accepts_simple_python() {
-        let ok = parse_module(
+        let ok = utils::parse_module(
             Path::new("src/discount.py"),
             "def discount(amount: int) -> int:\n    return amount\n",
         )
@@ -1289,7 +1232,7 @@ mod tests {
 
     #[test]
     fn parse_source_accepts_class_and_decorator() {
-        let ok = parse_module(
+        let ok = utils::parse_module(
             Path::new("src/repo.py"),
             "class Repo:\n    @staticmethod\n    def make() -> 'Repo':\n        return Repo()\n",
         )
@@ -1299,7 +1242,7 @@ mod tests {
 
     #[test]
     fn parse_source_accepts_async_def_and_fstring() {
-        let ok = parse_module(
+        let ok = utils::parse_module(
             Path::new("src/http.py"),
             "async def load(url: str) -> str:\n    return f\"{url}!\"\n",
         )
@@ -1309,7 +1252,7 @@ mod tests {
 
     #[test]
     fn parse_source_rejects_garbage() {
-        let ok = parse_module(
+        let ok = utils::parse_module(
             Path::new("src/oops.py"),
             "this is not :: valid +++ python at all",
         )
