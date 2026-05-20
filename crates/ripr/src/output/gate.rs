@@ -3,6 +3,8 @@ mod model;
 mod presentation;
 
 use super::gap_decision_ledger::{self, GapRecord};
+#[cfg(test)]
+use input::baseline_index_from_value;
 use model::*;
 pub(crate) use model::{GateEvaluateInput, GateMode};
 pub(crate) use presentation::{

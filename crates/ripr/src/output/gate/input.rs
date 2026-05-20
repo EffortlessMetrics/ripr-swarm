@@ -282,7 +282,7 @@ fn is_runtime_gap_outcome(outcome: &str) -> bool {
         || outcome == "uncaught"
         || outcome == format!("{}{}", "sur", "vived")
 }
-fn baseline_index_from_value(value: &Value) -> BaselineIndex {
+pub(super) fn baseline_index_from_value(value: &Value) -> BaselineIndex {
     let mut index = BaselineIndex::default();
     for item in value
         .get("entries")
