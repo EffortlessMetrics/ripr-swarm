@@ -15638,6 +15638,30 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
         )
     })?;
 
+    let timeout = Duration::from_millis(badge_artifact_timeout_ms());
+    let build_output = build_badge_artifact_binary(timeout)?;
+    if build_output.timed_out {
+        return write_limited_badge_artifact_reports(
+            "badge-build",
+            &badge_artifact_build_command_label(),
+            timeout,
+            diff_output.len(),
+            &build_output,
+        );
+    }
+    match build_output.status {
+        Some(status) if status.success() => {}
+        Some(_) | None => {
+            return write_limited_badge_artifact_reports(
+                "badge-build",
+                &badge_artifact_build_command_label(),
+                timeout,
+                diff_output.len(),
+                &build_output,
+            );
+        }
+    }
+
     write_badge_artifacts_from_diff(&diff_output, run_badge_artifact_command)
 }
 
@@ -15656,10 +15680,11 @@ where
     for job in badge_artifact_jobs() {
         let args = badge_artifact_command_args(job.format);
         let output = run_artifact(job.format, &args, timeout)?;
+        let command = badge_artifact_command_label(&args);
         if output.timed_out {
             return write_limited_badge_artifact_reports(
                 job.format,
-                &args,
+                &command,
                 timeout,
                 diff_output.len(),
                 &output,
@@ -15668,7 +15693,7 @@ where
         let Some(status) = output.status else {
             return write_limited_badge_artifact_reports(
                 job.format,
-                &args,
+                &command,
                 timeout,
                 diff_output.len(),
                 &output,
@@ -15677,7 +15702,7 @@ where
         if !status.success() {
             return write_limited_badge_artifact_reports(
                 job.format,
-                &args,
+                &command,
                 timeout,
                 diff_output.len(),
                 &output,
@@ -15734,11 +15759,6 @@ fn badge_artifact_jobs() -> Vec<BadgeArtifactJob> {
 
 fn badge_artifact_command_args(format: &str) -> Vec<String> {
     vec![
-        "run".to_string(),
-        "-p".to_string(),
-        "ripr".to_string(),
-        "--quiet".to_string(),
-        "--".to_string(),
         "check".to_string(),
         "--root".to_string(),
         ".".to_string(),
@@ -15757,13 +15777,25 @@ fn badge_artifact_timeout_ms() -> u64 {
         .unwrap_or(BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS)
 }
 
+fn build_badge_artifact_binary(timeout: Duration) -> Result<TimedOutput, String> {
+    capture_output_with_timeout(
+        "cargo",
+        &["build".to_string(), "-p".to_string(), "ripr".to_string()],
+        &[],
+        timeout,
+        "badge artifact binary build",
+    )
+}
+
 fn run_badge_artifact_command(
     format: &str,
     args: &[String],
     timeout: Duration,
 ) -> Result<TimedOutput, String> {
+    let binary = ripr_debug_binary();
+    let binary_text = binary.display().to_string();
     capture_output_with_timeout(
-        "cargo",
+        &binary_text,
         args,
         &[],
         timeout,
@@ -15773,25 +15805,32 @@ fn run_badge_artifact_command(
 
 fn write_limited_badge_artifact_reports(
     format: &str,
-    args: &[String],
+    command: &str,
     timeout: Duration,
     diff_bytes: usize,
     output: &TimedOutput,
 ) -> Result<(), String> {
     clear_diff_badge_artifact_outputs();
-    let command = badge_artifact_command_label(args);
     write_report(
         "badge-artifacts-limitation.json",
-        &limited_badge_artifacts_json(format, &command, timeout, diff_bytes, output)?,
+        &limited_badge_artifacts_json(format, command, timeout, diff_bytes, output)?,
     )?;
     write_report(
         "ripr-badges.md",
-        &limited_badge_artifacts_markdown(format, &command, timeout, diff_bytes, output),
+        &limited_badge_artifacts_markdown(format, command, timeout, diff_bytes, output),
     )
 }
 
 fn badge_artifact_command_label(args: &[String]) -> String {
-    format!("cargo {}", args.join(" "))
+    format!(
+        "{} {}",
+        normalize_path(&ripr_debug_binary()),
+        args.join(" ")
+    )
+}
+
+fn badge_artifact_build_command_label() -> String {
+    "cargo build -p ripr".to_string()
 }
 
 fn clear_badge_artifact_limitation() {
@@ -53682,11 +53721,6 @@ reason = "second"
     fn badge_artifact_command_args_matches_documented_invocation() -> Result<(), String> {
         let args = badge_artifact_command_args("badge-plus-json");
         let expected: Vec<String> = [
-            "run",
-            "-p",
-            "ripr",
-            "--quiet",
-            "--",
             "check",
             "--root",
             ".",
@@ -53718,11 +53752,6 @@ reason = "second"
             // The static prefix must be byte-identical across formats.
             let prefix = &args[..args.len() - 1];
             let expected_prefix: Vec<String> = [
-                "run",
-                "-p",
-                "ripr",
-                "--quiet",
-                "--",
                 "check",
                 "--root",
                 ".",
@@ -53754,9 +53783,12 @@ reason = "second"
                 |format, args, timeout| {
                     assert_eq!(format, "badge-json");
                     assert!(timeout.as_millis() > 0);
-                    assert_eq!(
-                        badge_artifact_command_label(args),
-                        "cargo run -p ripr --quiet -- check --root . --diff target/ripr/badge-input.diff --format badge-json"
+                    assert!(
+                        badge_artifact_command_label(args).ends_with(
+                            "ripr.exe check --root . --diff target/ripr/badge-input.diff --format badge-json"
+                        ) || badge_artifact_command_label(args).ends_with(
+                            "ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
+                        )
                     );
                     Ok(TimedOutput {
                         status: None,
