@@ -169,7 +169,10 @@
             "canonical_gap_id": "gap:improved",
             "outcome_state": "evidence_improved",
             "receipt_state": "present",
-            "movement_source": "agent_receipt"
+            "movement_source": "agent_receipt",
+            "movement_direction": "improved",
+            "before": "weakly_gripped",
+            "after": "strongly_gripped"
           }
         ]
       },
@@ -234,7 +237,10 @@
             "canonical_gap_id": "gap:unchanged",
             "outcome_state": "evidence_unchanged",
             "receipt_state": "missing",
-            "movement_source": "targeted_test_outcome"
+            "movement_source": "targeted_test_outcome",
+            "movement_direction": "unchanged",
+            "before": "weakly_gripped",
+            "after": "weakly_gripped"
           }
         ]
       },
@@ -301,7 +307,10 @@
             "canonical_gap_id": "gap:regressed",
             "outcome_state": "evidence_regressed",
             "receipt_state": "missing",
-            "movement_source": "targeted_test_outcome"
+            "movement_source": "targeted_test_outcome",
+            "movement_direction": "regressed",
+            "before": "weakly_gripped",
+            "after": "ungripped"
           }
         ]
       },
@@ -363,7 +372,10 @@
             "canonical_gap_id": "gap:resolved",
             "outcome_state": "resolved",
             "receipt_state": "missing",
-            "movement_source": "targeted_test_outcome"
+            "movement_source": "targeted_test_outcome",
+            "movement_direction": "resolved",
+            "before": "weakly_gripped",
+            "after": null
           }
         ]
       },
@@ -425,7 +437,10 @@
             "canonical_gap_id": "gap:attempted-no-receipt",
             "outcome_state": "attempted_no_receipt",
             "receipt_state": "missing",
-            "movement_source": "targeted_test_outcome"
+            "movement_source": "targeted_test_outcome",
+            "movement_direction": "new",
+            "before": null,
+            "after": "ungripped"
           }
         ]
       },

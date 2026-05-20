@@ -8764,6 +8764,9 @@ fn validate_actionable_gap_outcomes_fixture_case(
     let agent_receipt = actionable_gap_outcomes_optional_fixture_input(case, "agent_receipt");
     let targeted_test_outcome =
         actionable_gap_outcomes_optional_fixture_input(case, "targeted_test_outcome");
+    if let Some(targeted_test_outcome) = targeted_test_outcome {
+        validate_actionable_gap_outcomes_targeted_shape(case_id, targeted_test_outcome, violations);
+    }
     let report = match actionable_gap_outcomes_report_from_values(
         actionable_gaps,
         agent_receipt,
@@ -8835,6 +8838,40 @@ fn actionable_gap_outcomes_optional_fixture_input<'a>(
     case.get(field).filter(|value| !value.is_null())
 }
 
+fn validate_actionable_gap_outcomes_targeted_shape(
+    case_id: &str,
+    targeted_test_outcome: &Value,
+    violations: &mut Vec<String>,
+) {
+    for bucket in ["moved", "unchanged", "regressed"] {
+        for item in audit_array(targeted_test_outcome, &[bucket]) {
+            for field in ["before", "after", "direction"] {
+                if audit_non_empty_string(item, &[field]).is_none() {
+                    violations.push(format!(
+                        "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must include {field}"
+                    ));
+                }
+            }
+        }
+    }
+    for bucket in ["removed", "new"] {
+        for item in audit_array(targeted_test_outcome, &[bucket]) {
+            if audit_non_empty_string(item, &["grip_class"]).is_none() {
+                violations.push(format!(
+                    "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must include grip_class"
+                ));
+            }
+            for field in ["before", "after", "direction"] {
+                if item.get(field).is_some_and(|value| !value.is_null()) {
+                    violations.push(format!(
+                        "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must use one-sided grip_class instead of {field}"
+                    ));
+                }
+            }
+        }
+    }
+}
+
 fn validate_actionable_gap_outcomes_expected_outcome(
     case_id: &str,
     expected: &Value,
@@ -8875,16 +8912,25 @@ fn validate_actionable_gap_outcomes_expected_outcome(
         }
     }
 
-    if let Some(expected_movement_source) = expected.get("movement_source") {
-        let actual = actual
-            .movement_source
-            .as_deref()
-            .map(Value::from)
-            .unwrap_or(Value::Null);
-        if actual != *expected_movement_source {
-            violations.push(format!(
-                "actionable gap outcomes case {case_id} outcome {canonical_gap_id} movement_source must be {expected_movement_source}, got {actual}"
-            ));
+    for (field, actual_value) in [
+        (
+            "movement_source",
+            actual.movement_source.as_deref().map(Value::from),
+        ),
+        (
+            "movement_direction",
+            actual.movement_direction.as_deref().map(Value::from),
+        ),
+        ("before", actual.before.as_deref().map(Value::from)),
+        ("after", actual.after.as_deref().map(Value::from)),
+    ] {
+        if let Some(expected_value) = expected.get(field) {
+            let actual_value = actual_value.unwrap_or(Value::Null);
+            if actual_value != *expected_value {
+                violations.push(format!(
+                    "actionable gap outcomes case {case_id} outcome {canonical_gap_id} {field} must be {expected_value}, got {actual_value}"
+                ));
+            }
         }
     }
 }
@@ -59442,6 +59488,97 @@ covered_by = ["cargo xtask check-file-policy"]
                         .iter()
                         .any(|violation| violation.contains(expected)),
                     "expected fixture-case violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            let targeted_shape_case = serde_json::json!({
+                "id": "bad-targeted-shape",
+                "description": "Bad targeted-test outcome shape.",
+                "must_not_claim": ["Do not infer movement from malformed targeted-test outcome."],
+                "actionable_gaps": {
+                    "packets": [
+                        {
+                            "canonical_gap_id": "gap:bad-targeted-shape",
+                            "evidence_class": "predicate_boundary",
+                            "repair_kind": "add_boundary_assertion",
+                            "source_file": "src/lib.rs",
+                            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+                            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id bad-targeted-shape --json"
+                        }
+                    ]
+                },
+                "agent_receipt": {"receipts": []},
+                "targeted_test_outcome": {
+                    "schema_version": "0.1",
+                    "moved": [
+                        {
+                            "seam_id": "bad-targeted-shape",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 1
+                        }
+                    ],
+                    "unchanged": [],
+                    "regressed": [],
+                    "removed": [
+                        {
+                            "seam_id": "bad-targeted-shape-removed",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 2,
+                            "before": "weakly_gripped"
+                        }
+                    ],
+                    "new": [
+                        {
+                            "seam_id": "bad-targeted-shape-new",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 3,
+                            "after": "ungripped"
+                        }
+                    ]
+                },
+                "expected": {
+                    "summary": {"packets_total": 1},
+                    "outcomes": [
+                        {
+                            "canonical_gap_id": "gap:bad-targeted-shape",
+                            "outcome_state": "evidence_improved",
+                            "receipt_state": "missing",
+                            "movement_source": "targeted_test_outcome",
+                            "movement_direction": "improved",
+                            "before": "weakly_gripped",
+                            "after": "strongly_gripped"
+                        }
+                    ]
+                }
+            });
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(
+                &targeted_shape_case,
+                "bad-targeted-shape",
+                &mut violations,
+            )?;
+            for expected in [
+                "targeted_test_outcome.moved item must include before",
+                "targeted_test_outcome.moved item must include after",
+                "targeted_test_outcome.moved item must include direction",
+                "targeted_test_outcome.removed item must include grip_class",
+                "targeted_test_outcome.removed item must use one-sided grip_class instead of before",
+                "targeted_test_outcome.new item must include grip_class",
+                "targeted_test_outcome.new item must use one-sided grip_class instead of after",
+                "outcome_state must be evidence_improved, got attempted_no_receipt",
+                "movement_direction must be \"improved\", got \"move\"",
+                "before must be \"weakly_gripped\", got null",
+                "after must be \"strongly_gripped\", got null",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected targeted-shape violation containing {expected:?}, got {violations:?}"
                 );
             }
 
