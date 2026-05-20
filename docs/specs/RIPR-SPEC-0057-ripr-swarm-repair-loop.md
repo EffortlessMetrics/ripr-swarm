@@ -127,20 +127,23 @@ repair attempt:
 
 ```text
 canonical_gap_id
+evidence_class
+gap_state
 repair_kind
+repair_route
 target_test_type or target_assertion_shape
 related_test_or_observer
 verify_command
 receipt_command
+static_limitations[]
 must_not_change[]
 confidence_basis
 raw_findings[] as supporting evidence
 ```
 
-The runner may also use evidence class, gap state, repair route, static
-limitations, projection eligibility, and prior outcome state for ranking and
-blocking decisions. It must not derive work items from raw findings, Markdown
-text, PR annotations, or static class labels.
+The runner may also use projection eligibility and prior outcome state for
+ranking and blocking decisions. It must not derive work items from raw findings,
+Markdown text, PR annotations, or static class labels.
 
 ## Required Packet Fields
 
