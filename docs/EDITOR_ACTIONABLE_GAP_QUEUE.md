@@ -50,15 +50,15 @@ Important typed fields include:
 | `canonical_gap_id` | Stable identity for the gap, receipt, and first-pr handoff. |
 | `language` and `language_status` | Rust default/stable versus preview/advisory boundaries. |
 | `gap_state` | Whether the item is actionable, report-only, no-action, or blocked. |
-| `repair_kind` and `repair_route` | The bounded repair family. |
-| `target_test` or `related_test` | The likely test or observer to inspect. |
-| `target_assertion_shape` | The expected assertion or output proof shape. |
+| `repair_kind` and `repair_route_source` | The bounded repair family and the typed source used to project it. |
+| `target_test_type` and `related_test_or_observer` | The likely test or observer to inspect. |
+| `assertion_shape` | The expected assertion or output proof shape. |
 | `static_limit_kind` | Why syntax-first evidence cannot safely classify further. |
 | `verify_command` | Command that checks static movement. |
-| `receipt_command` | Command or path that records the movement receipt. |
+| `receipt_command_or_path` | Command or path that records the movement receipt. |
 | `receipt_movement` | Improved, unchanged, stale, missing, or mismatched movement state. |
 | `confidence_basis` | Why the queue item is trusted enough to show or blocked. |
-| `workspace_root` and freshness fields | Whether the artifact belongs to the open workspace and is current. |
+| top-level `root` and freshness fields | Whether the artifact belongs to the open workspace and is current. |
 
 If a field required for safe action is missing or unsafe, the editor fails
 closed.
