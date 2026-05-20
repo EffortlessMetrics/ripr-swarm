@@ -8537,8 +8537,43 @@ fn ripr_swarm_plan_fixture_receipt_command_supported(command: &str) -> bool {
     ripr_swarm_plan_field_missing(command)
         || command == "cargo xtask receipts"
         || command == "cargo xtask receipts check"
-        || command.starts_with("ripr agent receipt ")
-        || command.starts_with("cargo run -p ripr -- agent receipt ")
+        || command
+            .strip_prefix("ripr agent receipt ")
+            .is_some_and(ripr_swarm_plan_fixture_agent_receipt_args_supported)
+        || command
+            .strip_prefix("cargo run -p ripr -- agent receipt ")
+            .is_some_and(ripr_swarm_plan_fixture_agent_receipt_args_supported)
+}
+
+fn ripr_swarm_plan_fixture_agent_receipt_args_supported(args: &str) -> bool {
+    let mut has_json = false;
+    let mut has_verify_json = false;
+    let mut has_seam_id = false;
+    let mut tokens = args.split_whitespace();
+    let mut saw_any = false;
+
+    while let Some(token) = tokens.next() {
+        saw_any = true;
+        match token {
+            "--json" => has_json = true,
+            "--root" | "--verify-json" | "--seam-id" | "--test" | "--command" | "--out" => {
+                let Some(value) = tokens.next() else {
+                    return false;
+                };
+                if value.trim().is_empty() || value.starts_with("--") {
+                    return false;
+                }
+                match token {
+                    "--verify-json" => has_verify_json = true,
+                    "--seam-id" => has_seam_id = true,
+                    _ => {}
+                }
+            }
+            _ => return false,
+        }
+    }
+
+    saw_any && has_json && has_verify_json && has_seam_id
 }
 
 fn validate_first_successful_pr_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
@@ -58765,6 +58800,58 @@ covered_by = ["cargo xtask check-file-policy"]
         });
         let mut violations = Vec::new();
         validate_swarm_plan_packet_fixture_case(&case, "unsupported_receipt_emit", &mut violations);
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported receipt_command"))
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_packet_corpus_rejects_incomplete_agent_receipt_commands() {
+        let case = serde_json::json!({
+            "id": "incomplete_agent_receipt",
+            "description": "ready-looking packet with an incomplete agent receipt command",
+            "must_not_claim": ["Do not accept malformed receipt commands."],
+            "packet": {
+                "canonical_gap_id": "gap:incomplete-agent-receipt",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test incomplete_agent_receipt",
+                "receipt_command": "ripr agent receipt --root . --json",
+                "related_test_or_observer": "tests/lib.rs::incomplete_agent_receipt",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_findings": [
+                    {"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            },
+            "expected": {
+                "swarm_state": "queued",
+                "swarm_ready": true,
+                "high_confidence": true,
+                "missing_context": [],
+                "blocked_reasons": [],
+                "summary": {
+                    "swarm_ready_packets": 1,
+                    "blocked_packets": 0
+                }
+            }
+        });
+        let mut violations = Vec::new();
+        validate_swarm_plan_packet_fixture_case(&case, "incomplete_agent_receipt", &mut violations);
 
         assert!(
             violations
