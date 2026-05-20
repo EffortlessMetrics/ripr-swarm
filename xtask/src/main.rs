@@ -44501,10 +44501,11 @@ mod tests {
         ripr_swarm_plan_blocked_packets, ripr_swarm_plan_blocked_report,
         ripr_swarm_plan_from_actionable_gaps_value, ripr_swarm_plan_json, ripr_swarm_plan_markdown,
         ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
-        ripr_swarm_readiness_from_values, ripr_swarm_readiness_json, ripr_swarm_readiness_markdown,
-        run_ci_full_evidence_gates, sarif_policy_report_json, sarif_policy_report_markdown,
-        semantic_selector_matches, should_scan_static_language_path, should_skip_path,
-        sorted_allowlist_content, sorted_capability_blocks_content, sorted_command_catalog_content,
+        ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
+        ripr_swarm_readiness_markdown, ripr_swarm_readiness_summary, run_ci_full_evidence_gates,
+        sarif_policy_report_json, sarif_policy_report_markdown, semantic_selector_matches,
+        should_scan_static_language_path, should_skip_path, sorted_allowlist_content,
+        sorted_capability_blocks_content, sorted_command_catalog_content,
         sorted_markdown_index_table_content, sorted_traceability_behavior_blocks_content,
         spec_id_from_path, spec_ids_in_text, spec_numbering_violations, specs,
         static_language_allowlist_covers, status_for_report, suggested_fixes_patch,
@@ -60555,6 +60556,149 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("actionable gaps total"));
         assert!(markdown.contains("Readiness counts do not change public badge semantics."));
         Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_rejects_invalid_args() {
+        for (args, expected) in [
+            (
+                vec!["readiness".to_string(), "--swarm-plan".to_string()],
+                "ripr-swarm readiness --swarm-plan requires a path",
+            ),
+            (
+                vec![
+                    "readiness".to_string(),
+                    "--actionable-gap-outcomes".to_string(),
+                ],
+                "ripr-swarm readiness --actionable-gap-outcomes requires a path",
+            ),
+            (
+                vec!["readiness".to_string(), "--unknown".to_string()],
+                "unknown ripr-swarm readiness argument",
+            ),
+            (vec!["ready".to_string()], "unknown ripr-swarm subcommand"),
+        ] {
+            let error = parse_ripr_swarm_args(&args).expect_err("readiness args should fail");
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} in {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_reports_read_missing_and_malformed_inputs() -> Result<(), String> {
+        let dir = badge_endpoint_tempdir("readiness-inputs")?;
+        let good = dir.join("good.json");
+        let malformed = dir.join("malformed.json");
+        let missing = dir.join("missing.json");
+        std::fs::write(&good, "{\"report\":\"swarm-plan\"}\n").map_err(|err| err.to_string())?;
+        std::fs::write(&malformed, "{").map_err(|err| err.to_string())?;
+
+        let (state, limitation, value) = ripr_swarm_read_optional_json(&good);
+        assert_eq!(state, "read");
+        assert!(limitation.is_none());
+        assert!(value.is_some());
+
+        let (state, limitation, value) = ripr_swarm_read_optional_json(&missing);
+        assert_eq!(state, "missing");
+        assert!(
+            limitation
+                .as_deref()
+                .unwrap_or_default()
+                .contains("failed to read")
+        );
+        assert!(value.is_none());
+
+        let (state, limitation, value) = ripr_swarm_read_optional_json(&malformed);
+        assert_eq!(state, "malformed");
+        assert!(
+            limitation
+                .as_deref()
+                .unwrap_or_default()
+                .contains("failed to parse")
+        );
+        assert!(value.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_blocks_without_plan_but_keeps_outcome_context() -> Result<(), String> {
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "summary": {
+                "outcomes_total": 8,
+                "not_attempted": 5,
+                "evidence_improved": 1,
+                "evidence_unchanged": 1,
+                "evidence_regressed": 1,
+                "resolved": 1,
+                "orphaned_receipts": 2
+            }
+        });
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read swarm plan".to_string()),
+                value: None,
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+        );
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.swarm_plan_state, "missing");
+        assert_eq!(report.summary.actionable_gaps_total, 0);
+        assert_eq!(report.summary.attempted_packets, 3);
+        assert_eq!(report.summary.improved_packets, 1);
+        assert_eq!(report.summary.unchanged_packets, 1);
+        assert_eq!(report.summary.regressed_packets, 1);
+        assert_eq!(report.summary.orphaned_receipts, 2);
+
+        let json = ripr_swarm_readiness_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "blocked");
+        assert_eq!(value["inputs"]["swarm_plan"]["state"], "missing");
+        assert_eq!(
+            value["summary"]["attempted_packets"],
+            serde_json::Value::from(3)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_summary_accepts_actionable_gap_total_fallback() {
+        let swarm_plan = serde_json::json!({
+            "source_summary": {
+                "actionable_gaps_total": 184,
+                "public_projection_eligible_packets": 12
+            },
+            "summary": {
+                "swarm_ready_packets": 7,
+                "blocked_packets": 5,
+                "missing_verify_command": 1,
+                "missing_receipt_command": 2,
+                "static_limitation_packets": 3,
+                "high_confidence_packets": 4
+            }
+        });
+
+        let summary = ripr_swarm_readiness_summary(Some(&swarm_plan), None);
+        assert_eq!(summary.actionable_gaps_total, 184);
+        assert_eq!(summary.public_projection_eligible_packets, 12);
+        assert_eq!(summary.swarm_ready_packets, 7);
+        assert_eq!(summary.blocked_packets, 5);
+        assert_eq!(summary.missing_verify_command, 1);
+        assert_eq!(summary.missing_receipt_command, 2);
+        assert_eq!(summary.static_limitation_packets, 3);
+        assert_eq!(summary.high_confidence_packets, 4);
+        assert_eq!(summary.attempted_packets, 0);
     }
 
     #[test]
