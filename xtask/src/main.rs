@@ -58236,16 +58236,30 @@ covered_by = ["cargo xtask check-file-policy"]
 
     #[test]
     fn ripr_swarm_plan_rejects_unsafe_argument_shapes() {
-        assert!(parse_ripr_swarm_plan_args(&[]).is_err());
-        assert!(parse_ripr_swarm_plan_args(&["unknown".to_string()]).is_err());
-        assert!(parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string()]).is_err());
+        assert!(
+            parse_ripr_swarm_plan_args(&[])
+                .expect_err("missing ripr-swarm subcommand should fail")
+                .contains("usage: cargo xtask ripr-swarm plan")
+        );
+        assert!(
+            parse_ripr_swarm_plan_args(&["unknown".to_string()])
+                .expect_err("unknown ripr-swarm subcommand should fail")
+                .contains("unknown ripr-swarm subcommand")
+        );
         assert!(
             parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string(), "0".to_string()])
-                .is_err()
+                .expect_err("zero swarm plan top value should fail")
+                .contains("must be greater than zero")
         );
         assert!(
             parse_ripr_swarm_plan_args(&["plan".to_string(), "--actionable-gaps".to_string()])
-                .is_err()
+                .expect_err("missing actionable-gaps path should fail")
+                .contains("--actionable-gaps requires a path")
+        );
+        assert!(
+            parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string()])
+                .expect_err("missing swarm plan top value should fail")
+                .contains("--top requires a positive integer")
         );
     }
 
