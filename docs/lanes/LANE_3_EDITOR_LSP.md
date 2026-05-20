@@ -711,7 +711,7 @@ Hard boundaries:
 
 ## Next Selected Slice: Editor Actionable Gap Queue
 
-Editor Actionable Gap Queue is the next selected Lane 3 slice. It projects the
+Editor Actionable Gap Queue is the current Lane 3 slice. It projects the
 existing Lane 1 actionable-gap queue into the editor as a bounded local repair
 queue:
 
@@ -765,9 +765,14 @@ Lane 3 does not own:
 - provider/model calls;
 - mutation execution.
 
-No behavior-bearing queue PR should start until the source-of-truth stack lands.
-Future queue behavior must consume typed fields rather than prose, preserve
-Rust defaults, keep preview evidence visibly bounded, and fail closed on stale,
+The source-of-truth stack, validation seam, Show Status queue projection,
+bounded Current Repair Packet action, read-only Repo Gap Map action, and
+manifest-only fixture corpus have landed. The active swarm-trunk follow-up is
+the packaged VS Code smoke, tracked in `ripr-swarm` issue #17; later work is
+documentation (#18), dogfood receipts (#19), and campaign closeout (#20).
+
+Future queue behavior must consume typed fields rather than prose, preserve Rust
+defaults, keep preview evidence visibly bounded, and fail closed on stale,
 wrong-root, malformed, missing, unsupported, disabled, unavailable, unsafe,
 receipt-mismatched, first-pr-mismatched, and actionable-packet-mismatched
 states.
