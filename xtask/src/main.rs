@@ -59495,6 +59495,97 @@ covered_by = ["cargo xtask check-file-policy"]
                 );
             }
 
+            let targeted_shape_case = serde_json::json!({
+                "id": "bad-targeted-shape",
+                "description": "Bad targeted-test outcome shape.",
+                "must_not_claim": ["Do not infer movement from malformed targeted-test outcome."],
+                "actionable_gaps": {
+                    "packets": [
+                        {
+                            "canonical_gap_id": "gap:bad-targeted-shape",
+                            "evidence_class": "predicate_boundary",
+                            "repair_kind": "add_boundary_assertion",
+                            "source_file": "src/lib.rs",
+                            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+                            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id bad-targeted-shape --json"
+                        }
+                    ]
+                },
+                "agent_receipt": {"receipts": []},
+                "targeted_test_outcome": {
+                    "schema_version": "0.1",
+                    "moved": [
+                        {
+                            "seam_id": "bad-targeted-shape",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 1
+                        }
+                    ],
+                    "unchanged": [],
+                    "regressed": [],
+                    "removed": [
+                        {
+                            "seam_id": "bad-targeted-shape-removed",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 2,
+                            "before": "weakly_gripped"
+                        }
+                    ],
+                    "new": [
+                        {
+                            "seam_id": "bad-targeted-shape-new",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 3,
+                            "after": "ungripped"
+                        }
+                    ]
+                },
+                "expected": {
+                    "summary": {"packets_total": 1},
+                    "outcomes": [
+                        {
+                            "canonical_gap_id": "gap:bad-targeted-shape",
+                            "outcome_state": "evidence_improved",
+                            "receipt_state": "missing",
+                            "movement_source": "targeted_test_outcome",
+                            "movement_direction": "improved",
+                            "before": "weakly_gripped",
+                            "after": "strongly_gripped"
+                        }
+                    ]
+                }
+            });
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(
+                &targeted_shape_case,
+                "bad-targeted-shape",
+                &mut violations,
+            )?;
+            for expected in [
+                "targeted_test_outcome.moved item must include before",
+                "targeted_test_outcome.moved item must include after",
+                "targeted_test_outcome.moved item must include direction",
+                "targeted_test_outcome.removed item must include grip_class",
+                "targeted_test_outcome.removed item must use one-sided grip_class instead of before",
+                "targeted_test_outcome.new item must include grip_class",
+                "targeted_test_outcome.new item must use one-sided grip_class instead of after",
+                "outcome_state must be evidence_improved, got attempted_no_receipt",
+                "movement_direction must be \"improved\", got \"move\"",
+                "before must be \"weakly_gripped\", got null",
+                "after must be \"strongly_gripped\", got null",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected targeted-shape violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
             Ok(())
         })
     }
