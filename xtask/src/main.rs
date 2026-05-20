@@ -58418,22 +58418,37 @@ covered_by = ["cargo xtask check-file-policy"]
 
     #[test]
     fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
-        expect_ripr_swarm_plan_arg_error(&[])?;
-        expect_ripr_swarm_plan_arg_error(&["unknown"])?;
-        expect_ripr_swarm_plan_arg_error(&["plan", "--top"])?;
-        expect_ripr_swarm_plan_arg_error(&["plan", "--top", "0"])?;
-        expect_ripr_swarm_plan_arg_error(&["plan", "--actionable-gaps"])?;
+        expect_ripr_swarm_plan_arg_error(&[])?
+            .contains("usage: cargo xtask ripr-swarm plan")
+            .then_some(())
+            .ok_or_else(|| "missing ripr-swarm subcommand returned unexpected error".to_string())?;
+        expect_ripr_swarm_plan_arg_error(&["unknown"])?
+            .contains("unknown ripr-swarm subcommand")
+            .then_some(())
+            .ok_or_else(|| "unknown ripr-swarm subcommand returned unexpected error".to_string())?;
+        expect_ripr_swarm_plan_arg_error(&["plan", "--top"])?
+            .contains("--top requires a positive integer")
+            .then_some(())
+            .ok_or_else(|| "missing swarm plan top value returned unexpected error".to_string())?;
+        expect_ripr_swarm_plan_arg_error(&["plan", "--top", "0"])?
+            .contains("must be greater than zero")
+            .then_some(())
+            .ok_or_else(|| "zero swarm plan top value returned unexpected error".to_string())?;
+        expect_ripr_swarm_plan_arg_error(&["plan", "--actionable-gaps"])?
+            .contains("--actionable-gaps requires a path")
+            .then_some(())
+            .ok_or_else(|| "missing actionable-gaps path returned unexpected error".to_string())?;
         Ok(())
     }
 
-    fn expect_ripr_swarm_plan_arg_error(args: &[&str]) -> Result<(), String> {
+    fn expect_ripr_swarm_plan_arg_error(args: &[&str]) -> Result<String, String> {
         let owned_args = args
             .iter()
             .map(|arg| (*arg).to_string())
             .collect::<Vec<_>>();
         match parse_ripr_swarm_plan_args(&owned_args) {
             Ok(parsed) => Err(format!("accepted invalid ripr swarm plan args: {parsed:?}")),
-            Err(_) => Ok(()),
+            Err(err) => Ok(err),
         }
     }
 
