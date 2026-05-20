@@ -15638,28 +15638,39 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
         )
     })?;
 
-    write_badge_artifacts_from_diff(&diff_output, run_badge_artifact_command)
+    let timeout = Duration::from_millis(badge_artifact_timeout_ms());
+    let build_args = badge_artifact_build_command_args();
+    run_output_owned("cargo", &build_args)?;
+
+    write_badge_artifacts_from_diff(
+        &diff_output,
+        &ripr_debug_binary(),
+        timeout,
+        run_badge_artifact_command,
+    )
 }
 
 fn write_badge_artifacts_from_diff<Runner>(
     diff_output: &str,
+    binary: &Path,
+    timeout: Duration,
     mut run_artifact: Runner,
 ) -> Result<(), String>
 where
-    Runner: FnMut(&str, &[String], Duration) -> Result<TimedOutput, String>,
+    Runner: FnMut(&Path, &str, &[String], Duration) -> Result<TimedOutput, String>,
 {
     clear_badge_artifact_limitation();
     let mut ripr_native_json = String::new();
     let mut ripr_plus_native_json = String::new();
-    let timeout = Duration::from_millis(badge_artifact_timeout_ms());
 
     for job in badge_artifact_jobs() {
         let args = badge_artifact_command_args(job.format);
-        let output = run_artifact(job.format, &args, timeout)?;
+        let command = badge_artifact_command_label(binary, &args);
+        let output = run_artifact(binary, job.format, &args, timeout)?;
         if output.timed_out {
             return write_limited_badge_artifact_reports(
                 job.format,
-                &args,
+                &command,
                 timeout,
                 diff_output.len(),
                 &output,
@@ -15668,7 +15679,7 @@ where
         let Some(status) = output.status else {
             return write_limited_badge_artifact_reports(
                 job.format,
-                &args,
+                &command,
                 timeout,
                 diff_output.len(),
                 &output,
@@ -15677,7 +15688,7 @@ where
         if !status.success() {
             return write_limited_badge_artifact_reports(
                 job.format,
-                &args,
+                &command,
                 timeout,
                 diff_output.len(),
                 &output,
@@ -15734,11 +15745,6 @@ fn badge_artifact_jobs() -> Vec<BadgeArtifactJob> {
 
 fn badge_artifact_command_args(format: &str) -> Vec<String> {
     vec![
-        "run".to_string(),
-        "-p".to_string(),
-        "ripr".to_string(),
-        "--quiet".to_string(),
-        "--".to_string(),
         "check".to_string(),
         "--root".to_string(),
         ".".to_string(),
@@ -15747,6 +15753,10 @@ fn badge_artifact_command_args(format: &str) -> Vec<String> {
         "--format".to_string(),
         format.to_string(),
     ]
+}
+
+fn badge_artifact_build_command_args() -> Vec<String> {
+    vec!["build".to_string(), "-p".to_string(), "ripr".to_string()]
 }
 
 fn badge_artifact_timeout_ms() -> u64 {
@@ -15758,12 +15768,14 @@ fn badge_artifact_timeout_ms() -> u64 {
 }
 
 fn run_badge_artifact_command(
+    binary: &Path,
     format: &str,
     args: &[String],
     timeout: Duration,
 ) -> Result<TimedOutput, String> {
+    let binary_text = binary.display().to_string();
     capture_output_with_timeout(
-        "cargo",
+        &binary_text,
         args,
         &[],
         timeout,
@@ -15773,25 +15785,24 @@ fn run_badge_artifact_command(
 
 fn write_limited_badge_artifact_reports(
     format: &str,
-    args: &[String],
+    command: &str,
     timeout: Duration,
     diff_bytes: usize,
     output: &TimedOutput,
 ) -> Result<(), String> {
     clear_diff_badge_artifact_outputs();
-    let command = badge_artifact_command_label(args);
     write_report(
         "badge-artifacts-limitation.json",
-        &limited_badge_artifacts_json(format, &command, timeout, diff_bytes, output)?,
+        &limited_badge_artifacts_json(format, command, timeout, diff_bytes, output)?,
     )?;
     write_report(
         "ripr-badges.md",
-        &limited_badge_artifacts_markdown(format, &command, timeout, diff_bytes, output),
+        &limited_badge_artifacts_markdown(format, command, timeout, diff_bytes, output),
     )
 }
 
-fn badge_artifact_command_label(args: &[String]) -> String {
-    format!("cargo {}", args.join(" "))
+fn badge_artifact_command_label(binary: &Path, args: &[String]) -> String {
+    normalize_report_path(&format!("{} {}", binary.display(), args.join(" ")))
 }
 
 fn clear_badge_artifact_limitation() {
@@ -53682,11 +53693,6 @@ reason = "second"
     fn badge_artifact_command_args_matches_documented_invocation() -> Result<(), String> {
         let args = badge_artifact_command_args("badge-plus-json");
         let expected: Vec<String> = [
-            "run",
-            "-p",
-            "ripr",
-            "--quiet",
-            "--",
             "check",
             "--root",
             ".",
@@ -53718,11 +53724,6 @@ reason = "second"
             // The static prefix must be byte-identical across formats.
             let prefix = &args[..args.len() - 1];
             let expected_prefix: Vec<String> = [
-                "run",
-                "-p",
-                "ripr",
-                "--quiet",
-                "--",
                 "check",
                 "--root",
                 ".",
@@ -53751,12 +53752,15 @@ reason = "second"
             );
             write_badge_artifacts_from_diff(
                 "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
-                |format, args, timeout| {
+                Path::new("target/debug/ripr"),
+                Duration::from_secs(90),
+                |binary, format, args, timeout| {
+                    assert_eq!(binary, Path::new("target/debug/ripr"));
                     assert_eq!(format, "badge-json");
-                    assert!(timeout.as_millis() > 0);
+                    assert_eq!(timeout.as_millis(), 90_000);
                     assert_eq!(
-                        badge_artifact_command_label(args),
-                        "cargo run -p ripr --quiet -- check --root . --diff target/ripr/badge-input.diff --format badge-json"
+                        badge_artifact_command_label(binary, args),
+                        "target/debug/ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
                     );
                     Ok(TimedOutput {
                         status: None,
