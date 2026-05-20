@@ -35,6 +35,8 @@ use rustpython_parser::{
 };
 use std::path::{Path, PathBuf};
 mod source_utils;
+#[cfg(test)]
+use source_utils::line_for_offset;
 use source_utils::{
     is_test_file, line_for_range_end, line_for_range_start, normalized_path, text_for_range,
 };
