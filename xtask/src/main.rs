@@ -8408,6 +8408,14 @@ fn validate_swarm_plan_packet_fixture_case(
             "swarm plan packet case {case_id} must keep raw_findings as supporting evidence"
         ));
     }
+    if let Some(receipt_command) = audit_non_empty_string(packet, &["receipt_command_or_path"])
+        .or_else(|| audit_non_empty_string(packet, &["receipt_command"]))
+        && !ripr_swarm_plan_fixture_receipt_command_supported(&receipt_command)
+    {
+        violations.push(format!(
+            "swarm plan packet case {case_id} uses unsupported receipt_command `{receipt_command}`"
+        ));
+    }
 
     let Some(expected) = case.get("expected").filter(|value| value.is_object()) else {
         violations.push(format!(
@@ -8522,6 +8530,15 @@ fn validate_swarm_plan_packet_fixture_case(
             ));
         }
     }
+}
+
+fn ripr_swarm_plan_fixture_receipt_command_supported(command: &str) -> bool {
+    let command = command.trim();
+    ripr_swarm_plan_field_missing(command)
+        || command == "cargo xtask receipts"
+        || command == "cargo xtask receipts check"
+        || command.starts_with("ripr agent receipt ")
+        || command.starts_with("cargo run -p ripr -- agent receipt ")
 }
 
 fn validate_first_successful_pr_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
@@ -42876,11 +42893,11 @@ mod tests {
         targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
         test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
         test_oracle_tests_in_text, unknown_command_message, validate_local_context_allowlist,
-        validate_swarm_plan_packet_fixture_corpus, vscode_compile_command, vscode_extension_dir,
-        vscode_package_command, vscode_package_version, vscode_test_e2e_command,
-        windows_absolute_path_tokens, workflow_runtime_violations, worktree,
-        worktree_doctor_findings, write_evidence_health_report_with_runner,
-        write_evidence_health_report_with_runners,
+        validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
+        vscode_compile_command, vscode_extension_dir, vscode_package_command,
+        vscode_package_version, vscode_test_e2e_command, windows_absolute_path_tokens,
+        workflow_runtime_violations, worktree, worktree_doctor_findings,
+        write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
         write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     };
     use super::{
@@ -58702,6 +58719,58 @@ covered_by = ["cargo xtask check-file-policy"]
                 ))
             }
         })
+    }
+
+    #[test]
+    fn ripr_swarm_plan_packet_corpus_rejects_unsupported_receipt_commands() {
+        let case = serde_json::json!({
+            "id": "unsupported_receipt_emit",
+            "description": "ready-looking packet with an unsupported receipt command",
+            "must_not_claim": ["Do not create receipts from the swarm plan."],
+            "packet": {
+                "canonical_gap_id": "gap:unsupported-receipt",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test unsupported_receipt",
+                "receipt_command": "cargo xtask receipts emit --packet gap:unsupported-receipt",
+                "related_test_or_observer": "tests/lib.rs::unsupported_receipt",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_findings": [
+                    {"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            },
+            "expected": {
+                "swarm_state": "queued",
+                "swarm_ready": true,
+                "high_confidence": true,
+                "missing_context": [],
+                "blocked_reasons": [],
+                "summary": {
+                    "swarm_ready_packets": 1,
+                    "blocked_packets": 0
+                }
+            }
+        });
+        let mut violations = Vec::new();
+        validate_swarm_plan_packet_fixture_case(&case, "unsupported_receipt_emit", &mut violations);
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported receipt_command"))
+        );
     }
 
     #[test]
