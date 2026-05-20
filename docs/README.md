@@ -1,5 +1,5 @@
 # Documentation index
-- [SPEC_PROPOSAL_SYSTEM.md](SPEC_PROPOSAL_SYSTEM.md) - source-of-truth stack model for proposals, specs, ADRs, plans, goals, policy ledgers, and closeouts
+- [SPEC_PROPOSAL_SYSTEM.md](SPEC_PROPOSAL_SYSTEM.md) - companion guide to the repo tracking model for proposals, specs, ADRs, plans, goals, policy ledgers, and closeouts
 
 - [status/SUPPORT_TIERS.md](status/SUPPORT_TIERS.md) - buyer-readable support, preview, advisory, blocked, and proof boundaries
 - [FIRST_PR_WORKFLOW.md](FIRST_PR_WORKFLOW.md) - first successful Rust PR loop from one repairable gap to one receipt

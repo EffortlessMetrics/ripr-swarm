@@ -4,6 +4,10 @@ The system is a **repo source-of-truth stack**. Its central rule is:
 
 > **Do not make every document do every job.**
 
+This guide explains the canonical [Repo Tracking Model](REPO_TRACKING_MODEL.md).
+It does not replace that model; use it as the longer operator explanation for
+the same layers and boundaries.
+
 Each artifact owns one kind of truth: **why**, **what**, **what decision**,
 **how**, **what now**, **what proves it**, and **what changed**.
 
@@ -63,7 +67,7 @@ ambiguous README claims, and unverifiable assumptions.
 With the system, the repo itself provides the execution graph:
 
 ```text
-.codex/goals/active.toml
+.ripr/goals/active.toml
   -> linked implementation plan
     -> linked spec
       -> linked proposal
@@ -122,7 +126,7 @@ docs/
   status/
   handoffs/
 plans/
-.codex/goals/
+.ripr/goals/
 policy/
 ```
 
@@ -152,8 +156,8 @@ Keep one source of truth per fact.
 
 - Support tiers -> `docs/status/SUPPORT_TIERS.md`
 - CI lane rules -> `policy/ci-lane-whitelist.toml`
-- Package classification -> `policy/package-boundary.toml`
-- Active Codex work -> `.codex/goals/active.toml`
+- Non-Rust file exceptions -> `policy/non-rust-allowlist.toml`
+- Active Codex work -> `.ripr/goals/active.toml`
 - PR order -> `plans/<milestone>/implementation-plan.md`
 - Why -> `docs/proposals/`
 - Behavior contract -> `docs/specs/`
@@ -161,7 +165,7 @@ Keep one source of truth per fact.
 
 ## 8. Codex operating flow
 
-1. Read `.codex/goals/active.toml`.
+1. Read `.ripr/goals/active.toml`.
 2. Pick next ready `work_item`.
 3. Read linked plan item.
 4. Read linked spec.
@@ -178,12 +182,13 @@ Keep one source of truth per fact.
 
 Recommended checks include:
 
-- `cargo xtask check-doc-artifacts`
 - `cargo xtask check-goals`
-- `cargo xtask check-package-boundary`
-- `cargo xtask check-ci-lanes`
-- `cargo xtask check-support-tiers`
-- `cargo xtask policy-report`
+- `cargo xtask check-doc-index`
+- `cargo xtask check-doc-roles`
+- `cargo xtask check-traceability`
+- `cargo xtask check-capabilities`
+- `cargo xtask check-ci-lane-whitelist`
+- `cargo xtask check-process-policy`
 
 ## 10. PR body shape
 
