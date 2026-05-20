@@ -3522,11 +3522,15 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::workspace_gap_artifact_loader_validates_known_report_paths",
   "editors/vscode/test/suite/extension.test.ts::actionable gap queue validation is read-only and fail-closed",
   "editors/vscode/test/suite/extension.test.ts::status model projects actionable gap queue state without producing packets",
+  "editors/vscode/test/suite/extension.test.ts::copyCurrentRepairPacket copies bounded queue packet for safe actionable state",
+  "editors/vscode/test/suite/extension.test.ts::copyCurrentRepairPacket fails closed for no-action stale and unsafe queue states",
   "editors/vscode/test/suite/extension.test.ts::editor adoption baseline keeps setup receipt and first-pr projection read-only",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/lsp/gap_artifacts.rs",
+  "editors/vscode/package.json",
+  "editors/vscode/src/extension.ts",
   "editors/vscode/src/client.ts",
 ]
 outputs = [
