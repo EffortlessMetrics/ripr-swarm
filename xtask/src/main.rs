@@ -15858,7 +15858,7 @@ fn limited_badge_artifacts_json(
     diff_bytes: usize,
     output: &TimedOutput,
 ) -> Result<String, String> {
-    let limitation = badge_artifacts_limited_kind(output);
+    let limitation = badge_artifacts_limited_kind(format, output);
     let summary = badge_artifacts_limited_summary(limitation);
     let repair_route = badge_artifacts_limited_repair_route(limitation);
     let value = serde_json::json!({
@@ -15896,7 +15896,14 @@ fn limited_badge_artifacts_json(
         .map_err(|err| format!("failed to render badge artifact limitation JSON: {err}"))
 }
 
-fn badge_artifacts_limited_kind(output: &TimedOutput) -> &'static str {
+fn badge_artifacts_limited_kind(format: &str, output: &TimedOutput) -> &'static str {
+    if format == "badge-build" {
+        return if output.timed_out {
+            "badge_artifacts_build_timeout"
+        } else {
+            "badge_artifacts_build_incomplete"
+        };
+    }
     if output.timed_out {
         "badge_artifacts_diff_analysis_timeout"
     } else {
@@ -15909,6 +15916,12 @@ fn badge_artifacts_limited_summary(kind: &str) -> &'static str {
         "badge_artifacts_diff_analysis_timeout" => {
             "Badge artifact generation timed out before a complete diff-scoped badge was available."
         }
+        "badge_artifacts_build_timeout" => {
+            "Badge artifact generation timed out while building the ripr binary before diff analysis could run."
+        }
+        "badge_artifacts_build_incomplete" => {
+            "Badge artifact generation could not build the ripr binary before diff analysis could run."
+        }
         "badge_artifacts_generation_incomplete" => {
             "Badge artifact generation ended before producing a complete diff-scoped badge."
         }
@@ -15920,6 +15933,12 @@ fn badge_artifacts_limited_repair_route(kind: &str) -> &'static str {
     match kind {
         "badge_artifacts_diff_analysis_timeout" => {
             "inspect the diff-scoped badge runtime, narrow the diff input, or rerun with RIPR_BADGE_ARTIFACT_TIMEOUT_MS on a machine that can complete the analysis"
+        }
+        "badge_artifacts_build_timeout" => {
+            "inspect the cargo build output or rerun with RIPR_BADGE_ARTIFACT_TIMEOUT_MS on a machine that can build ripr before claiming badge counts from this run"
+        }
+        "badge_artifacts_build_incomplete" => {
+            "inspect the cargo build exit status and stdout/stderr before claiming badge counts from this run"
         }
         "badge_artifacts_generation_incomplete" => {
             "inspect the badge artifact command exit status, stdout/stderr, and diff input before claiming badge counts from this run"
@@ -15935,7 +15954,7 @@ fn limited_badge_artifacts_markdown(
     diff_bytes: usize,
     output: &TimedOutput,
 ) -> String {
-    let limitation = badge_artifacts_limited_kind(output);
+    let limitation = badge_artifacts_limited_kind(format, output);
     let summary = badge_artifacts_limited_summary(limitation);
     let repair_route = badge_artifacts_limited_repair_route(limitation);
     let exit = output
@@ -53870,7 +53889,23 @@ reason = "second"
             assert_eq!(value["format"], "badge-build");
             assert_eq!(
                 value["limitation"]["category"],
-                "badge_artifacts_diff_analysis_timeout"
+                "badge_artifacts_build_timeout"
+            );
+            assert_eq!(
+                value["limitation"]["summary"],
+                "Badge artifact generation timed out while building the ripr binary before diff analysis could run."
+            );
+            assert!(
+                value["limitation"]["repair_route"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("cargo build output")
+            );
+            assert!(
+                !value["limitation"]["repair_route"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("narrow the diff input")
             );
             assert_eq!(value["generation"]["command"], "cargo build -p ripr");
             assert_eq!(value["generation"]["timed_out"], true);
