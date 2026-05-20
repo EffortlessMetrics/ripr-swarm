@@ -15640,6 +15640,7 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
 
     write_badge_artifacts_after_build(
         &diff_output,
+        &ripr_debug_binary(),
         build_badge_artifact_binary,
         run_badge_artifact_command,
     )
@@ -15647,18 +15648,19 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
 
 fn write_badge_artifacts_after_build<BuildRunner, Runner>(
     diff_output: &str,
+    binary: &Path,
     mut build_ripr: BuildRunner,
     run_artifact: Runner,
 ) -> Result<(), String>
 where
     BuildRunner: FnMut(Duration) -> Result<TimedOutput, String>,
-    Runner: FnMut(&str, &[String], Duration) -> Result<TimedOutput, String>,
+    Runner: FnMut(&Path, &str, &[String], Duration) -> Result<TimedOutput, String>,
 {
     let timeout = Duration::from_millis(badge_artifact_timeout_ms());
     let build_output = build_ripr(timeout)?;
     match build_output.status {
         Some(status) if status.success() && !build_output.timed_out => {
-            write_badge_artifacts_from_diff(diff_output, run_artifact)
+            write_badge_artifacts_from_diff(diff_output, binary, timeout, run_artifact)
         }
         Some(_) | None => write_limited_badge_artifact_reports(
             "badge-build",
@@ -15672,20 +15674,21 @@ where
 
 fn write_badge_artifacts_from_diff<Runner>(
     diff_output: &str,
+    binary: &Path,
+    timeout: Duration,
     mut run_artifact: Runner,
 ) -> Result<(), String>
 where
-    Runner: FnMut(&str, &[String], Duration) -> Result<TimedOutput, String>,
+    Runner: FnMut(&Path, &str, &[String], Duration) -> Result<TimedOutput, String>,
 {
     clear_badge_artifact_limitation();
     let mut ripr_native_json = String::new();
     let mut ripr_plus_native_json = String::new();
-    let timeout = Duration::from_millis(badge_artifact_timeout_ms());
 
     for job in badge_artifact_jobs() {
         let args = badge_artifact_command_args(job.format);
-        let output = run_artifact(job.format, &args, timeout)?;
-        let command = badge_artifact_command_label(&args);
+        let command = badge_artifact_command_label(binary, &args);
+        let output = run_artifact(binary, job.format, &args, timeout)?;
         if output.timed_out {
             return write_limited_badge_artifact_reports(
                 job.format,
@@ -15774,6 +15777,10 @@ fn badge_artifact_command_args(format: &str) -> Vec<String> {
     ]
 }
 
+fn badge_artifact_build_command_args() -> Vec<String> {
+    vec!["build".to_string(), "-p".to_string(), "ripr".to_string()]
+}
+
 fn badge_artifact_timeout_ms() -> u64 {
     std::env::var(BADGE_ARTIFACT_TIMEOUT_ENV)
         .ok()
@@ -15783,21 +15790,16 @@ fn badge_artifact_timeout_ms() -> u64 {
 }
 
 fn build_badge_artifact_binary(timeout: Duration) -> Result<TimedOutput, String> {
-    capture_output_with_timeout(
-        "cargo",
-        &["build".to_string(), "-p".to_string(), "ripr".to_string()],
-        &[],
-        timeout,
-        "badge artifact binary build",
-    )
+    let args = badge_artifact_build_command_args();
+    capture_output_with_timeout("cargo", &args, &[], timeout, "badge artifact binary build")
 }
 
 fn run_badge_artifact_command(
+    binary: &Path,
     format: &str,
     args: &[String],
     timeout: Duration,
 ) -> Result<TimedOutput, String> {
-    let binary = ripr_debug_binary();
     let binary_text = binary.display().to_string();
     capture_output_with_timeout(
         &binary_text,
@@ -15826,16 +15828,12 @@ fn write_limited_badge_artifact_reports(
     )
 }
 
-fn badge_artifact_command_label(args: &[String]) -> String {
-    format!(
-        "{} {}",
-        normalize_path(&ripr_debug_binary()),
-        args.join(" ")
-    )
+fn badge_artifact_command_label(binary: &Path, args: &[String]) -> String {
+    normalize_report_path(&format!("{} {}", binary.display(), args.join(" ")))
 }
 
 fn badge_artifact_build_command_label() -> String {
-    "cargo build -p ripr".to_string()
+    format!("cargo {}", badge_artifact_build_command_args().join(" "))
 }
 
 fn clear_badge_artifact_limitation() {
@@ -53785,15 +53783,15 @@ reason = "second"
             );
             write_badge_artifacts_from_diff(
                 "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
-                |format, args, timeout| {
+                Path::new("target/debug/ripr"),
+                Duration::from_secs(90),
+                |binary, format, args, timeout| {
+                    assert_eq!(binary, Path::new("target/debug/ripr"));
                     assert_eq!(format, "badge-json");
-                    assert!(timeout.as_millis() > 0);
-                    assert!(
-                        badge_artifact_command_label(args).ends_with(
-                            "ripr.exe check --root . --diff target/ripr/badge-input.diff --format badge-json"
-                        ) || badge_artifact_command_label(args).ends_with(
-                            "ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
-                        )
+                    assert_eq!(timeout.as_millis(), 90_000);
+                    assert_eq!(
+                        badge_artifact_command_label(binary, args),
+                        "target/debug/ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
                     );
                     Ok(TimedOutput {
                         status: None,
@@ -53846,6 +53844,7 @@ reason = "second"
             );
             write_badge_artifacts_after_build(
                 "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+                Path::new("target/debug/ripr"),
                 |_timeout| {
                     Ok(TimedOutput {
                         status: Some(failure_exit_status()),
@@ -53855,7 +53854,7 @@ reason = "second"
                         timed_out: true,
                     })
                 },
-                |_format, _args, _timeout| {
+                |_binary, _format, _args, _timeout| {
                     Err("artifact runner should not run after build timeout".to_string())
                 },
             )?;
@@ -53884,6 +53883,7 @@ reason = "second"
             let mut artifact_runner_called = false;
             write_badge_artifacts_after_build(
                 "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+                Path::new("target/debug/ripr"),
                 |_timeout| {
                     Ok(TimedOutput {
                         status: Some(success_exit_status()),
@@ -53893,15 +53893,13 @@ reason = "second"
                         timed_out: false,
                     })
                 },
-                |format, args, _timeout| {
+                |binary, format, args, _timeout| {
                     artifact_runner_called = true;
+                    assert_eq!(binary, Path::new("target/debug/ripr"));
                     assert_eq!(format, "badge-json");
-                    assert!(
-                        badge_artifact_command_label(args).ends_with(
-                            "ripr.exe check --root . --diff target/ripr/badge-input.diff --format badge-json"
-                        ) || badge_artifact_command_label(args).ends_with(
-                            "ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
-                        )
+                    assert_eq!(
+                        badge_artifact_command_label(binary, args),
+                        "target/debug/ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
                     );
                     Ok(TimedOutput {
                         status: None,
