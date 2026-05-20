@@ -26,9 +26,9 @@ parse Markdown for action semantics.
 The source-of-truth stack, read-only artifact validation seam, Show Status
 queue projection, bounded current repair packet copy action, read-only repo gap
 map orientation command, manifest-only fixture corpus, packaged VS Code smoke
-proof, and user-facing editor documentation have landed. The active
-swarm-trunk slice is dogfood receipts that record actionable, no-action,
-receipt, fail-closed, and preview-boundary proof without changing producers,
+proof, user-facing editor documentation, and dogfood receipts have landed. The
+active swarm-trunk slice is campaign closeout, which should map landed behavior,
+fixtures, e2e proof, docs, and dogfood receipts without changing producers,
 gates, PR/CI output, or editor authority.
 
 ## Hard Boundaries
