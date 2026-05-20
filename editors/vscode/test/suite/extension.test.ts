@@ -1722,6 +1722,22 @@ suite('Extension Smoke', () => {
       assert.ok(context.infoMessages.at(-1)?.includes('unsafe command'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
+
+    const missingRelatedTestPacket = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
+    const missingRelatedTestPackets = missingRelatedTestPacket.packets as Array<Record<string, unknown>>;
+    delete missingRelatedTestPackets[0].target_test;
+    delete missingRelatedTestPackets[0].related_test_or_observer;
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': JSON.stringify(missingRelatedTestPacket)
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyCurrentRepairPacket();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('missing required repair packet fields'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
   });
 
   test('editor adoption baseline keeps setup receipt and first-pr projection read-only', async () => {

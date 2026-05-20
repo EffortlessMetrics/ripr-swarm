@@ -1806,6 +1806,7 @@ function actionableGapQueueAllowsCurrentRepairPacket(queue: RiprActionableGapQue
   return queue.state === 'topActionableGap'
     && Boolean(queue.canonicalGapId)
     && Boolean(queue.topRepair)
+    && Boolean(queue.relatedTest)
     && Boolean(queue.verifyCommand)
     && Boolean(queue.receiptCommandOrPath)
     && queue.languageStatus !== 'disabled'
