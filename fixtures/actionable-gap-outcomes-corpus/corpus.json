@@ -31,7 +31,7 @@
               "line": 42
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id not-attempted"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id not-attempted --json"
           }
         ]
       },
@@ -78,7 +78,7 @@
               "line": 12
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id receipt-present"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id receipt-present --json"
           }
         ]
       },
@@ -134,7 +134,7 @@
               "line": 42
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id improved"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id improved --json"
           }
         ]
       },
@@ -196,7 +196,7 @@
               "line": 12
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id unchanged"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id unchanged --json"
           }
         ]
       },
@@ -261,7 +261,7 @@
               "line": 9
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id regressed"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id regressed --json"
           }
         ]
       },
@@ -328,7 +328,7 @@
               "line": 9
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id resolved"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id resolved --json"
           }
         ]
       },
@@ -390,7 +390,7 @@
               "line": 20
             },
             "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
-            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id attempted-no-receipt"
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id attempted-no-receipt --json"
           }
         ]
       },

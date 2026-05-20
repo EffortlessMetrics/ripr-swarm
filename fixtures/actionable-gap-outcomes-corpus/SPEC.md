@@ -32,3 +32,6 @@ Each case pins one bounded outcome state:
 Fixtures must not imply repair execution, provider calls, generated tests,
 mutation execution, public badge changes, PR/CI rendering changes, autonomous
 merges, or raw-finding consumption.
+
+Each case records those non-claims as fixture metadata. The validator requires
+the metadata to be present and separately proves the joined outcome state.
