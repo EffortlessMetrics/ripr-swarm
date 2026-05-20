@@ -34,6 +34,13 @@ non-claims.
 - Expanding static findings vocabulary beyond existing conservative language.
 - Turning editor or swarm surfaces into mutation proof or merge-readiness proof.
 
+## Behavior
+
+User-facing and agent-facing start-here surfaces translate existing RIPR
+evidence into one actionable first-screen question. Each surface keeps raw
+findings, seam-native inventory, and static pressure gauges below the primary
+repair unit unless the surface is explicitly labeled as internal diagnostics.
+
 ## Canonical User Questions
 
 Each surface must lead with one question it answers first:
@@ -120,8 +127,8 @@ missing receipt path, unsupported schema) and a regeneration or setup command.
 
 ### 4) Swarm Attempt Packet Usability
 
-`ripr-swarm attempt --dry-run` should emit a compact copy-ready operator/agent
-packet section with:
+`cargo xtask ripr-swarm attempt --packet <id> --dry-run` should emit a compact
+copy-ready operator/agent packet section with:
 
 - task;
 - allowed files;
@@ -148,20 +155,42 @@ receipt-linked states:
 - orphaned/missing receipts;
 - top blocked reason.
 
-## Acceptance Criteria
+## Required Evidence
 
-This spec is satisfied when:
+Implementation PRs that change a covered surface must provide typed evidence
+for the surface they touch:
 
-1. A new reader can describe what the badge count means without reading another
-   spec.
-2. A PR reviewer can identify next repair action from PR summary alone.
-3. A developer in editor can see one safe repair action or one explicit
-   fail-closed reason on first screen.
-4. A swarm operator can copy one dry-run packet into an external agent without
-   reconstructing missing boundaries.
-5. Movement can be read as outcome delta, not just static queue size.
+- the primary rendered unit is an actionable canonical gap, actionable gap
+  delta, bounded repair packet, or receipt-linked outcome delta;
+- badge and badge-basis surfaces name `canonical_actionable_gap` as the public
+  basis and keep seam-native inventory labeled as internal diagnostics;
+- PR evidence front panels name PR-local actionable deltas and do not lead with
+  raw finding counts;
+- editor status names the safe next action or a precise fail-closed reason;
+- swarm dry-run packets include verify command, receipt command, allowed files,
+  and do-not-change boundaries;
+- outcome/trend reports join movement to receipt-backed states;
+- every surface repeats the relevant advisory, static, preview, and non-runtime
+  proof boundary.
 
-## Validation Signals
+## Acceptance Examples
+
+Given the public badge headline, a new reader can describe the count as
+unresolved actionable static repair gaps without reading another spec.
+
+Given a PR summary, a reviewer can identify the next repair action from the
+front panel without reconstructing raw findings.
+
+Given editor status for a workspace, a developer sees either one safe repair
+action or one explicit fail-closed reason on the first screen.
+
+Given a swarm-ready packet, an operator can copy one dry-run packet into an
+external agent without reconstructing missing boundaries.
+
+Given an outcome or trend report, movement can be read as receipt-linked delta,
+not just static queue size.
+
+## Test Mapping
 
 Validation should use existing guardrails plus focused evidence checks:
 
@@ -171,6 +200,10 @@ Validation should use existing guardrails plus focused evidence checks:
 - `cargo xtask actionable-gap-outcomes`
 - `cargo xtask badge-basis`
 - editor and swarm focused fixture/smoke checks for first-screen rendering
+
+Future implementation PRs should add or update fixtures for the surface they
+change. Docs-only PRs satisfy this spec by passing spec-format and doc-index
+checks.
 
 ## Risks and Mitigations
 
@@ -182,6 +215,37 @@ Validation should use existing guardrails plus focused evidence checks:
     panels.
 - **Risk:** packet verbosity blocks adoption.
   - **Mitigation:** define compact top blocks and push diagnostics below fold.
+
+## Implementation Mapping
+
+Existing source-of-truth surfaces that this spec coordinates:
+
+- public badge projection and badge-basis policy from `RIPR-SPEC-0056`;
+- editor actionable gap queue projection from `RIPR-SPEC-0055`;
+- swarm repair-loop planning and dry-run behavior from `RIPR-SPEC-0057`;
+- external-agent handoff boundaries from `RIPR-SPEC-0058`;
+- outcome joins from `cargo xtask actionable-gap-outcomes`;
+- generated start-here and PR evidence surfaces already documented in
+  `docs/OUTPUT_SCHEMA.md`.
+
+This spec does not add a command, schema, renderer, editor surface, CI gate, or
+badge generator by itself. Those changes require separate scoped PRs with
+fixtures and output-contract updates.
+
+## Metrics
+
+Covered surfaces should be able to report or derive:
+
+- repo actionable queue count;
+- PR-local actionable gap count;
+- new and resolved actionable gaps;
+- blocked/static-limited counts;
+- receipt missing and orphaned counts;
+- attempted-but-unchanged repairs;
+- swarm-ready packet count;
+- outcome deltas for improved, unchanged, regressed, and resolved states;
+- excluded raw, seam-native, preview-only, or static-limited diagnostics by
+  named reason.
 
 ## Rollout Plan
 
