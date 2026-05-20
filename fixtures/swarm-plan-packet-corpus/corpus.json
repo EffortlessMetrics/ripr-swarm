@@ -30,7 +30,7 @@
           "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
         },
         "verify_command": "cargo test -p ripr pricing_threshold",
-        "receipt_command": "cargo xtask receipts emit --packet gap:boundary-threshold",
+        "receipt_command": "cargo xtask receipts check",
         "related_test_or_observer": {
           "file": "tests/pricing.rs",
           "name": "pricing_threshold"
@@ -88,7 +88,7 @@
           "suggested_assertion": "matches!(parse(input), Err(Error::Missing))"
         },
         "verify_command": "cargo test -p ripr parser_missing_input",
-        "receipt_command": "cargo xtask receipts emit --packet gap:parser-missing-input",
+        "receipt_command": "cargo xtask receipts check",
         "related_test_or_observer": {
           "file": "tests/parser.rs",
           "name": "parser_missing_input"
@@ -146,7 +146,7 @@
           "assertion_shape": "assert rendered report contains the changed config label"
         },
         "verify_command": "cargo xtask goldens check",
-        "receipt_command": "cargo xtask receipts emit --packet gap:report-config-label",
+        "receipt_command": "cargo xtask receipts check",
         "related_test_or_observer": {
           "file": "tests/report_golden.rs",
           "name": "renders_config_label"
@@ -204,7 +204,7 @@
           "assertion_shape": "trace opaque config helper to rendered output"
         },
         "verify_command": "cargo xtask evidence-quality-scorecard",
-        "receipt_command": "cargo xtask receipts emit --packet gap:opaque-helper-output",
+        "receipt_command": "cargo xtask receipts check",
         "related_test_or_observer": {
           "file": "tests/config.rs",
           "name": "renders_config"
@@ -269,7 +269,7 @@
           "assertion_shape": "assert audit event emitted"
         },
         "verify_command": "verify_command_unknown",
-        "receipt_command": "cargo xtask receipts emit --packet gap:missing-verify",
+        "receipt_command": "cargo xtask receipts check",
         "related_test_or_observer": {
           "file": "tests/events.rs",
           "name": "audit_event"
@@ -393,7 +393,7 @@
           "assertion_shape": "assert_eq!(limit(threshold), expected)"
         },
         "verify_command": "cargo test -p ripr limit_threshold",
-        "receipt_command": "cargo xtask receipts emit --packet gap:missing-boundary-guard",
+        "receipt_command": "cargo xtask receipts check",
         "related_test_or_observer": {
           "file": "tests/limits.rs",
           "name": "limit_threshold"
