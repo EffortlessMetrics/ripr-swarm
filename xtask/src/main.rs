@@ -15621,6 +15621,23 @@ fn test_efficiency_report_json(
 }
 
 pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
+    badge_artifacts_impl_with_runners(
+        read_badge_artifact_diff,
+        build_badge_artifact_binary,
+        run_badge_artifact_command,
+    )
+}
+
+fn badge_artifacts_impl_with_runners<DiffRunner, BuildRunner, Runner>(
+    mut read_diff: DiffRunner,
+    build_ripr: BuildRunner,
+    run_artifact: Runner,
+) -> Result<(), String>
+where
+    DiffRunner: FnMut() -> Result<String, String>,
+    BuildRunner: FnMut(Duration) -> Result<TimedOutput, String>,
+    Runner: FnMut(&Path, &str, &[String], Duration) -> Result<TimedOutput, String>,
+{
     let badge_dir = Path::new("target").join("ripr");
     fs::create_dir_all(&badge_dir).map_err(|err| {
         format!(
@@ -15630,7 +15647,7 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
     })?;
 
     let badge_input_path = badge_dir.join("badge-input.diff");
-    let diff_output = run_output_optional("git", &["diff", "origin/main...HEAD"])?;
+    let diff_output = read_diff()?;
     fs::write(&badge_input_path, &diff_output).map_err(|err| {
         format!(
             "failed to write badge input diff {}: {err}",
@@ -15641,13 +15658,11 @@ pub(crate) fn badge_artifacts_impl() -> Result<(), String> {
     let timeout = Duration::from_millis(badge_artifact_timeout_ms());
     let binary = ripr_debug_binary();
 
-    write_badge_artifacts_after_build(
-        &diff_output,
-        &binary,
-        timeout,
-        build_badge_artifact_binary,
-        run_badge_artifact_command,
-    )
+    write_badge_artifacts_after_build(&diff_output, &binary, timeout, build_ripr, run_artifact)
+}
+
+fn read_badge_artifact_diff() -> Result<String, String> {
+    run_output_optional("git", &["diff", "origin/main...HEAD"])
 }
 
 fn write_badge_artifacts_after_build<BuildRunner, Runner>(
@@ -43589,10 +43604,11 @@ mod tests {
         actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
         actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
         badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
-        badge_artifact_native_slot, badge_artifacts_summary_markdown,
-        badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-        badge_basis_report_markdown, badge_basis_seam_native_counts, badge_diff_policy_violations,
-        badge_native_audit_snapshot, build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
+        badge_artifact_native_slot, badge_artifacts_impl_with_runners,
+        badge_artifacts_summary_markdown, badge_basis_derived_ripr_plus_snapshot,
+        badge_basis_needs_repo_badge_plus_job, badge_basis_report_markdown,
+        badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
+        build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
         build_repo_exposure_latency_report, build_targeted_test_outcome_report,
         campaign_source_truth_violations_for_root, check_allow_attributes,
         check_badge_diff_policy_with_context, check_droid_review_config, check_executable_files,
@@ -53795,6 +53811,68 @@ reason = "second"
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn badge_artifacts_impl_with_runners_writes_diff_and_uses_built_binary() -> Result<(), String> {
+        with_temp_cwd("badge-artifacts-impl-with-runners", |_root| {
+            let diff = "diff --git a/fixture.json b/fixture.json\n+large fixture\n".to_string();
+            let expected_binary = ripr_debug_binary();
+            let mut build_calls = 0;
+            let mut formats = Vec::new();
+
+            badge_artifacts_impl_with_runners(
+                || Ok(diff.clone()),
+                |timeout| {
+                    build_calls += 1;
+                    assert_eq!(timeout.as_millis(), 90_000);
+                    Ok(TimedOutput {
+                        status: Some(success_exit_status()),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        duration: Duration::from_millis(12),
+                        timed_out: false,
+                    })
+                },
+                |binary, format, args, timeout| {
+                    formats.push(format.to_string());
+                    assert_eq!(binary, expected_binary.as_path());
+                    assert_eq!(args, badge_artifact_command_args(format).as_slice());
+                    assert_eq!(timeout.as_millis(), 90_000);
+                    let stdout = match format {
+                        "badge-json" => STUB_RIPR_NATIVE_JSON,
+                        "badge-plus-json" => STUB_RIPR_PLUS_NATIVE_JSON,
+                        _ => r#"{"label":"stub","message":"0","color":"brightgreen"}"#,
+                    };
+                    Ok(TimedOutput {
+                        status: Some(success_exit_status()),
+                        stdout: stdout.to_string(),
+                        stderr: String::new(),
+                        duration: Duration::from_millis(12),
+                        timed_out: false,
+                    })
+                },
+            )?;
+
+            assert_eq!(build_calls, 1);
+            assert_eq!(
+                formats,
+                vec![
+                    "badge-json",
+                    "badge-shields",
+                    "badge-plus-json",
+                    "badge-plus-shields"
+                ]
+            );
+            assert_eq!(
+                fs::read_to_string("target/ripr/badge-input.diff").unwrap(),
+                diff
+            );
+            assert!(Path::new("target/ripr/reports/ripr-badge.json").exists());
+            assert!(Path::new("target/ripr/reports/ripr-plus-badge.json").exists());
+            assert!(!Path::new("target/ripr/reports/badge-artifacts-limitation.json").exists());
+            Ok(())
+        })
     }
 
     #[test]
