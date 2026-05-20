@@ -15,6 +15,9 @@ are scoped or reviewed.
   autonomous merge, production-code edits by default, raw-finding work queues,
   unbounded retries, generated tests, mutation execution, PR/CI rendering,
   LSP/editor behavior, gate policy, and public badge changes.
+
+## 0.7.0 - 2026-05-20
+
 - Added a 0.7 swarm repair-loop dogfood receipt that records live
   `lane1-evidence-audit` fail-closed timeout behavior, fixture-backed
   `ripr-swarm plan` ranking, ready and static-limit dry-run attempt packets,
@@ -41,6 +44,10 @@ are scoped or reviewed.
   prevents cold or pathological builds from consuming the outer shell timeout
   without producing `evidence-health.json` / `.md`; the fallback artifact names
   a limitation and does not claim user test debt.
+- `cargo xtask evidence-health` now uses a 5-minute default bounded runtime for
+  both build and report-generation phases so pathological live-repo evidence
+  health runs degrade to `evidence_health_timeout` warning artifacts before
+  abnormal termination can silently drop `evidence-health.json` / `.md`.
 - Lane 1 now has an actionable-gap outcome report that joins existing
   actionable packets with optional agent receipt and targeted-test outcome
   artifacts. `cargo xtask actionable-gap-outcomes` writes
