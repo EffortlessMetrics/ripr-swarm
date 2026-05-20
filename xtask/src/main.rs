@@ -57137,15 +57137,6 @@ jobs:
                 XtaskCommand::Metrics,
                 XtaskCommand::TestOracleReport,
                 XtaskCommand::TestEfficiencyReport,
-                XtaskCommand::BadgeArtifacts,
-                XtaskCommand::RepoBadgeArtifacts(Vec::new()),
-                XtaskCommand::RepoSeamInventory,
-                XtaskCommand::RepoExposureReport,
-                XtaskCommand::RepoExposureLatencyReport,
-                XtaskCommand::EvidenceHealth,
-                XtaskCommand::Lane1EvidenceAudit,
-                XtaskCommand::EvidenceQualityScorecard,
-                XtaskCommand::EvidenceQualityTrend(Vec::new()),
                 XtaskCommand::ActionableGapOutcomes(Vec::new()),
                 XtaskCommand::AgentSeamPackets(Some(".".to_string())),
                 XtaskCommand::LspCockpitReport,
@@ -57154,12 +57145,23 @@ jobs:
                 XtaskCommand::TargetedTestOutcome(Vec::new()),
                 XtaskCommand::MutationCalibration(Vec::new()),
                 XtaskCommand::SarifPolicy(Vec::new()),
-                XtaskCommand::CheckBadgeEndpoints(Vec::new()),
                 XtaskCommand::Dogfood,
                 XtaskCommand::Critic,
                 XtaskCommand::Reports(vec!["index".to_string()]),
                 XtaskCommand::Receipts(Vec::new()),
                 XtaskCommand::GoldenDrift,
+            ];
+            let live_repo_analysis_commands = [
+                "badge-artifacts",
+                "repo-badge-artifacts",
+                "repo-seam-inventory",
+                "repo-exposure-report",
+                "repo-exposure-latency-report",
+                "evidence-health",
+                "lane1-evidence-audit",
+                "evidence-quality-scorecard",
+                "evidence-quality-trend",
+                "check-badge-endpoints",
             ];
 
             for command in commands {
@@ -57172,6 +57174,13 @@ jobs:
                             "{label} should either succeed or return an actionable error"
                         ));
                     }
+                }
+            }
+            for command_name in live_repo_analysis_commands {
+                if !known_xtask_command(command_name) {
+                    return Err(format!(
+                        "{command_name} should remain a known xtask command"
+                    ));
                 }
             }
 
