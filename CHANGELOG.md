@@ -9,6 +9,12 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Added `RIPR-SPEC-0058` for the `ripr-swarm` external-agent handoff. The spec
+  defines the packet-only input, operator review boundary, patch and receipt
+  metadata response, outcome join, and hard non-goals for provider SDKs,
+  autonomous merge, production-code edits by default, raw-finding work queues,
+  unbounded retries, generated tests, mutation execution, PR/CI rendering,
+  LSP/editor behavior, gate policy, and public badge changes.
 - Added a 0.7 swarm repair-loop dogfood receipt that records live
   `lane1-evidence-audit` fail-closed timeout behavior, fixture-backed
   `ripr-swarm plan` ranking, ready and static-limit dry-run attempt packets,
