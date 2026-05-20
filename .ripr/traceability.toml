@@ -3651,6 +3651,8 @@ outputs = [
   "docs/proposals/RIPR-PROP-0014-ripr-swarm-repair-loop.md",
   "docs/proposals/README.md",
   "docs/OUTPUT_SCHEMA.md",
+  "target/ripr/reports/swarm-plan.json",
+  "target/ripr/reports/swarm-plan.md",
   "docs/CAPABILITY_MATRIX.md",
   "metrics/capabilities.toml",
   ".ripr/traceability.toml",

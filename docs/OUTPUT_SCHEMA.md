@@ -2248,13 +2248,19 @@ not change committed badge endpoint semantics.
 packets for a bounded, dry-run repair loop:
 
 ```text
+target/ripr/reports/swarm-plan.json
+target/ripr/reports/swarm-plan.md
 ```
 
+The command reads `target/ripr/reports/actionable-gaps.json` by default, or the
 path supplied by `--actionable-gaps`. It is report-only. It does not edit files,
+run tests, call providers, generate tests, create receipts, run mutation
+testing, change PR/CI rendering, change editor/LSP behavior, change gates, or
 change public badges.
 
 For compatibility with current actionable-gap packets, input may carry either
 `receipt_command_or_path` or `receipt_command`. The swarm plan normalizes the
+ranked packet output to `receipt_command`.
 
 If the actionable-gaps input is missing or malformed, the command still writes
 a bounded blocked report with the input path, input state, and limitation text.
@@ -2346,6 +2352,7 @@ attempt. Packets missing required typed context use
 actionability; it starts from the canonical packet state already emitted by
 Lane 1.
 
+
 ## Actionable Gap Outcomes
 
 `cargo xtask actionable-gap-outcomes` joins actionable-gap packets with optional
@@ -2421,6 +2428,7 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
 `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
 and `unknown`. Raw findings do not determine outcome state; the join is based
 on canonical packet identity, seam identity, or the packet primary anchor.
+
 
 ## Evidence Quality Scorecard
 

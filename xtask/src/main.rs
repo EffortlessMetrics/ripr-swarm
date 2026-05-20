@@ -57948,75 +57948,6 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
-    fn lane1_actionable_gap_packets_require_canonical_assertion_for_public_projection()
-    -> Result<(), String> {
-        let report = lane1_evidence_audit_from_repo_exposure(
-            ".",
-            r#"{
-              "schema_version": "0.3",
-              "scope": "repo",
-              "seams": [
-                {
-                  "seam_id": "packet-fallback-assertion-gap",
-                  "headline_eligible": true,
-                  "file": "src/pricing.rs",
-                  "evidence_record": {
-                    "schema_version": "0.1",
-                    "seam_id": "packet-fallback-assertion-gap",
-                    "canonical_gap_id": "gap:packet-fallback-assertion-gap",
-                    "location": {"file": "src/pricing.rs", "line": 42},
-                    "recommendation": {
-                      "assertion_shape": {"kind": "exact_value"}
-                    },
-                    "raw_findings": [
-                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
-                    ],
-                    "canonical_item": {
-                      "canonical_gap_id": "gap:packet-fallback-assertion-gap",
-                      "canonical_item_kind": "gap",
-                      "evidence_class": "predicate_boundary",
-                      "gap_state": "actionable",
-                      "actionability": "extend_related_test",
-                      "raw_findings": [
-                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
-                      ],
-                      "why": "related tests reach the seam but miss equality at the threshold",
-                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
-                      "repair_route": {
-                        "repair_kind": "add_boundary_assertion",
-                        "target_test_type": "boundary_discriminator"
-                      },
-                      "verify_command": "cargo xtask evidence-quality-scorecard",
-                      "receipt_command": "cargo xtask receipts check",
-                      "confidence": {"basis": "static_only", "notes": []}
-                    }
-                  }
-                }
-              ]
-            }"#,
-        )?;
-
-        let packet_json = lane1_actionable_gap_packets_json(&report)?;
-        let packet_value: serde_json::Value =
-            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
-        assert_eq!(packet_value["packets"][0]["assertion_shape"], "exact_value");
-        assert_eq!(packet_value["packets"][0]["repair_route_source"], "missing");
-        assert_eq!(
-            packet_value["packets"][0]["public_projection_eligible"],
-            serde_json::Value::Bool(false)
-        );
-        assert_eq!(
-            packet_value["packets"][0]["projection_exclusion_reasons"],
-            serde_json::json!(["missing_repair_route"])
-        );
-        assert_eq!(
-            packet_value["summary"]["public_projection_eligible_packets"],
-            serde_json::Value::from(0)
-        );
-        Ok(())
-    }
-
-    #[test]
     fn ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context() -> Result<(), String> {
         let actionable_gaps = serde_json::json!({
             "schema_version": "0.1",
@@ -58155,24 +58086,23 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_blocked_packets"][0]["swarm_state"],
             "blocked_by_missing_context"
         );
+        let blocked_packets = value["top_blocked_packets"]
+            .as_array()
+            .ok_or_else(|| "top_blocked_packets must be an array".to_string())?;
         assert!(
-            value["top_blocked_packets"]
-                .as_array()
-                .unwrap()
+            blocked_packets
                 .iter()
                 .any(|packet| packet["swarm_state"] == "blocked_by_static_limitation")
         );
-        assert_eq!(
-            value["top_missing_verify_or_receipt"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
+        let missing_verify_or_receipt = value["top_missing_verify_or_receipt"]
+            .as_array()
+            .ok_or_else(|| "top_missing_verify_or_receipt must be an array".to_string())?;
+        assert_eq!(missing_verify_or_receipt.len(), 2);
+        let must_not_infer = value["must_not_infer"]
+            .as_array()
+            .ok_or_else(|| "must_not_infer must be an array".to_string())?;
         assert!(
-            value["must_not_infer"]
-                .as_array()
-                .unwrap()
+            must_not_infer
                 .iter()
                 .any(|claim| claim == "do not rank packets without receipt_command as swarm-ready")
         );
@@ -58201,6 +58131,75 @@ covered_by = ["cargo xtask check-file-policy"]
                 "3".to_string()
             ])
         );
+    }
+
+    #[test]
+    fn lane1_actionable_gap_packets_require_canonical_assertion_for_public_projection()
+    -> Result<(), String> {
+        let report = lane1_evidence_audit_from_repo_exposure(
+            ".",
+            r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-fallback-assertion-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-fallback-assertion-gap",
+                    "canonical_gap_id": "gap:packet-fallback-assertion-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "recommendation": {
+                      "assertion_shape": {"kind": "exact_value"}
+                    },
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-fallback-assertion-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )?;
+
+        let packet_json = lane1_actionable_gap_packets_json(&report)?;
+        let packet_value: serde_json::Value =
+            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+        assert_eq!(packet_value["packets"][0]["assertion_shape"], "exact_value");
+        assert_eq!(packet_value["packets"][0]["repair_route_source"], "missing");
+        assert_eq!(
+            packet_value["packets"][0]["public_projection_eligible"],
+            serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            packet_value["packets"][0]["projection_exclusion_reasons"],
+            serde_json::json!(["missing_repair_route"])
+        );
+        assert_eq!(
+            packet_value["summary"]["public_projection_eligible_packets"],
+            serde_json::Value::from(0)
+        );
+        Ok(())
     }
 
     #[test]
