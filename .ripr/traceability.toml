@@ -3524,6 +3524,8 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::status model projects actionable gap queue state without producing packets",
   "editors/vscode/test/suite/extension.test.ts::copyCurrentRepairPacket copies bounded queue packet for safe actionable state",
   "editors/vscode/test/suite/extension.test.ts::copyCurrentRepairPacket fails closed for no-action stale and unsafe queue states",
+  "editors/vscode/test/suite/extension.test.ts::copyRepoGapMap copies read-only orientation for safe queue states",
+  "editors/vscode/test/suite/extension.test.ts::copyRepoGapMap suppresses unsafe and mismatched queue artifacts",
   "editors/vscode/test/suite/extension.test.ts::editor adoption baseline keeps setup receipt and first-pr projection read-only",
 ]
 fixtures = []

@@ -37,6 +37,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.diagnoseSetup'));
     assert.ok(commands.includes('ripr.startCurrentRepair'));
     assert.ok(commands.includes('ripr.copyCurrentRepairPacket'));
+    assert.ok(commands.includes('ripr.copyRepoGapMap'));
     assert.ok(commands.includes('ripr.openFirstPrPacket'));
     assert.ok(commands.includes('ripr.copyFirstPrSummary'));
     assert.ok(commands.includes('ripr.copyFirstPrRepairPacket'));
@@ -1736,6 +1737,94 @@ suite('Extension Smoke', () => {
       await context.controller.copyCurrentRepairPacket();
       assert.deepStrictEqual(context.clipboardWrites, []);
       assert.ok(context.infoMessages.at(-1)?.includes('missing required repair packet fields'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+  });
+
+  test('copyRepoGapMap copies read-only orientation for safe queue states', async () => {
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({}),
+        'target/ripr/agent/agent-receipt.json': agentReceipt({ movement: 'improved' }),
+        'target/ripr/first-pr/start-here.json': firstPrPacket({})
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyRepoGapMap();
+      const map = context.clipboardWrites.at(-1) ?? '';
+      assert.ok(map.includes('RIPR repo gap map'), map);
+      assert.ok(map.includes('Queue state: topActionableGap'), map);
+      assert.ok(map.includes('Canonical gap id: gap:rust:pricing:discount:threshold-boundary'), map);
+      assert.ok(map.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), map);
+      assert.ok(map.includes('State: found'), map);
+      assert.ok(map.includes('Movement: improved'), map);
+      assert.ok(map.includes('First PR packet state'), map);
+      assert.ok(map.includes('This map is read-only orientation.'), map);
+      assert.ok(map.includes('not a gate decision, merge approval, runtime proof, mutation proof'), map);
+      assert.strictEqual(context.runRiprCalls.length, 0);
+      assert.ok(context.infoMessages.at(-1)?.includes('repo gap map copied'));
+    });
+
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({
+          summary: {
+            actionable_gaps: 0,
+            packets_emitted: 0,
+            public_projection_eligible_packets: 0,
+            public_projection_excluded_packets: 0
+          },
+          packets: []
+        })
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyRepoGapMap();
+      const map = context.clipboardWrites.at(-1) ?? '';
+      assert.ok(map.includes('RIPR repo gap map'), map);
+      assert.ok(map.includes('Queue state: noAction'), map);
+      assert.ok(map.includes('No top repair packet is available in state noAction.'), map);
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+  });
+
+  test('copyRepoGapMap suppresses unsafe and mismatched queue artifacts', async () => {
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({ root: '../other-workspace' })
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyRepoGapMap();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('another workspace'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': actionableGapsReport({ status: 'stale' })
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyRepoGapMap();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('stale'));
+      assert.strictEqual(context.runRiprCalls.length, 0);
+    });
+
+    const unsafeCommandPacket = JSON.parse(actionableGapsReport({})) as Record<string, unknown>;
+    (unsafeCommandPacket.packets as Array<Record<string, unknown>>)[0].verify_command =
+      'ripr agent verify --root . --json; cargo test';
+    await withControllerTestContext({
+      files: {
+        'target/ripr/reports/actionable-gaps.json': JSON.stringify(unsafeCommandPacket)
+      }
+    }, async (context) => {
+      await context.controller.start();
+      await context.controller.copyRepoGapMap();
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('unsafe command'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
   });

@@ -645,6 +645,23 @@ export class RiprClientController {
     }
   }
 
+  async copyRepoGapMap(): Promise<void> {
+    await this.refreshSetupStatusFiles();
+    const queue = this.setupStatus.actionableQueue;
+    if (!actionableGapQueueAllowsRepoGapMap(queue)) {
+      this.runtime.showInformationMessage(actionableGapQueueRepoMapSuppressedMessage(queue));
+      return;
+    }
+    try {
+      await this.runtime.writeClipboard(repoGapMap(queue, this.setupStatus.receipt, this.setupStatus.firstPr));
+      this.runtime.showInformationMessage('ripr repo gap map copied.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr copy repo gap map failed: ${message}`);
+      this.runtime.showWarningMessage('ripr could not copy the repo gap map. See ripr output for details.');
+    }
+  }
+
   async openFirstPrPacket(): Promise<void> {
     const packet = await this.firstPrPacketForAction('open');
     if (!packet) {
@@ -1882,6 +1899,92 @@ function currentRepairPacket(queue: RiprActionableGapQueueStatus): string {
   lines.push('- Do not edit production code unless the focused test exposes a real issue.');
   lines.push('- Do not generate tests automatically, call providers, run mutation execution, or claim runtime adequacy.');
   lines.push('- Do not treat this advisory static packet as a gate decision, merge approval, or policy eligibility claim.');
+  return lines.join('\n');
+}
+
+function actionableGapQueueAllowsRepoGapMap(queue: RiprActionableGapQueueStatus): boolean {
+  return queue.state === 'topActionableGap'
+    || queue.state === 'noAction'
+    || queue.state === 'reportOnly'
+    || queue.state === 'staticLimitOnly'
+    || queue.state === 'blocked';
+}
+
+function actionableGapQueueRepoMapSuppressedMessage(queue: RiprActionableGapQueueStatus): string {
+  switch (queue.state) {
+    case 'missing':
+      return 'ripr actionable gap queue is missing; run cargo xtask evidence-quality-audit before copying a repo gap map.';
+    case 'malformed':
+      return 'ripr actionable gap queue is malformed; repo gap map is suppressed.';
+    case 'unsupportedSchema':
+      return 'ripr actionable gap queue schema is unsupported; repo gap map is suppressed.';
+    case 'wrongRoot':
+      return 'ripr actionable gap queue belongs to another workspace; repo gap map is suppressed.';
+    case 'unsafePath':
+      return 'ripr actionable gap queue contains an unsafe path; repo gap map is suppressed.';
+    case 'unsafeCommand':
+      return 'ripr actionable gap queue contains an unsafe command; repo gap map is suppressed.';
+    case 'noWorkspace':
+      return 'Open a workspace before copying a ripr repo gap map.';
+    case 'stale':
+      return 'ripr actionable gap queue is stale; refresh saved-workspace evidence before copying a repo gap map.';
+    case 'topActionableGap':
+    case 'noAction':
+    case 'reportOnly':
+    case 'staticLimitOnly':
+    case 'blocked':
+      return 'ripr repo gap map is unavailable for the current queue state.';
+  }
+}
+
+function repoGapMap(
+  queue: RiprActionableGapQueueStatus,
+  receipt: RiprReceiptArtifactStatus,
+  firstPr: RiprFirstPrPacketStatus
+): string {
+  const lines = [
+    'RIPR repo gap map',
+    '',
+    'Scope',
+    `Artifact: ${queue.relativePath}`,
+    `Queue state: ${queue.state}`,
+    `Actionable gaps: ${queue.actionableGaps ?? 0}`,
+    `Report-only gaps: ${queue.reportOnlyGaps ?? 0}`,
+    `Static-limit-only gaps: ${queue.staticLimitOnlyGaps ?? 0}`,
+    '',
+    'Top queue item'
+  ];
+  if (queue.state === 'topActionableGap') {
+    pushOptionalLine(lines, 'Canonical gap id', queue.canonicalGapId);
+    pushOptionalLine(lines, 'Repair kind', queue.topRepair);
+    pushOptionalLine(lines, 'Language', queue.languageStatus ? `${queue.language ?? 'unknown'} (${queue.languageStatus})` : queue.language);
+    pushOptionalLine(lines, 'Related test', queue.relatedTest);
+    pushOptionalLine(lines, 'Verify', queue.verifyCommand);
+    pushOptionalLine(lines, 'Receipt command or path', queue.receiptCommandOrPath);
+  } else {
+    lines.push(`No top repair packet is available in state ${queue.state}.`);
+    if (queue.detail) {
+      lines.push(`Detail: ${queue.detail}`);
+    }
+  }
+  lines.push('');
+  lines.push('Receipt state');
+  lines.push(`State: ${receipt.state}`);
+  pushOptionalLine(lines, 'Movement', receipt.movement);
+  pushOptionalLine(lines, 'Receipt seam', receipt.seamId);
+  lines.push('');
+  lines.push('First PR packet state');
+  lines.push(`State: ${firstPr.state}`);
+  pushOptionalLine(lines, 'First PR gap id', firstPr.canonicalGapId ?? firstPr.gapId);
+  lines.push('');
+  lines.push('Safe next commands');
+  lines.push('- Refresh saved-workspace evidence before acting on stale queue state.');
+  lines.push('- Run cargo xtask evidence-quality-audit to regenerate actionable-gaps artifacts.');
+  lines.push('- Use ripr: Copy Current Repair Packet only for a validated top actionable gap.');
+  lines.push('');
+  lines.push('Non-claims');
+  lines.push('- This map is read-only orientation.');
+  lines.push('- It is not a gate decision, merge approval, runtime proof, mutation proof, coverage claim, or policy eligibility claim.');
   return lines.join('\n');
 }
 
