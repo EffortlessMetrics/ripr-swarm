@@ -1404,13 +1404,15 @@ without changing analyzer behavior. The same report lands at
 
 The xtask facade bounds both the preflight `cargo build -p ripr` phase and the
 live `ripr evidence-health` subprocess with `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS`
-(default 30 minutes). If either phase times out or exits before a complete
+(default 5 minutes). If either phase times out or exits before a complete
 report is available, xtask discards stale or partial outputs and writes warning
 JSON and Markdown with `status = "warn"`, phase context such as
 `evidence_health_build` or `evidence_health_generation`, and a named
 `evidence_health_timeout` or `evidence_health_incomplete` `run_limitations[]`
-entry. That limited artifact is diagnostic only; it does not claim user test
-debt from missing health counts.
+entry. The default is deliberately below known pathological live-repo runtimes
+so the report produces bounded diagnostics before abnormal termination can drop
+the artifact. That limited artifact is diagnostic only; it does not claim user
+test debt from missing health counts.
 
 ```json
 {
@@ -3232,7 +3234,7 @@ JSON shape:
     "after": "target/ripr/workflow/after.repo-exposure.json"
   },
   "provenance": {
-    "ripr_version": "0.6.0",
+    "ripr_version": "0.7.0",
     "repo_root": ".",
     "config_fingerprint": "fnv1a64:4c94a2f6cfaa5c21",
     "command_template_version": "0.1",
@@ -7694,7 +7696,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "report": "release-readiness",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "status": "warn",
   "checks": [
     {
