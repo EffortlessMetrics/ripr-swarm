@@ -15,6 +15,9 @@ are scoped or reviewed.
   autonomous merge, production-code edits by default, raw-finding work queues,
   unbounded retries, generated tests, mutation execution, PR/CI rendering,
   LSP/editor behavior, gate policy, and public badge changes.
+
+## 0.7.0 - 2026-05-20
+
 - Added a 0.7 swarm repair-loop dogfood receipt that records live
   `lane1-evidence-audit` fail-closed timeout behavior, fixture-backed
   `ripr-swarm plan` ranking, ready and static-limit dry-run attempt packets,
