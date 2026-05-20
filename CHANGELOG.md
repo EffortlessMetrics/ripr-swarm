@@ -9,6 +9,14 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Added a 0.7 swarm repair-loop dogfood receipt that records live
+  `lane1-evidence-audit` fail-closed timeout behavior, fixture-backed
+  `ripr-swarm plan` ranking, ready and static-limit dry-run attempt packets,
+  verify/receipt command separation, and actionable-gap outcome joins for
+  not-attempted, improved, unchanged, and orphaned receipt states. The receipt
+  also records that current live-repo packet repair proof remains a
+  release-readiness decision because the full live audit timed out before
+  producing actionable packets.
 - Added `cargo xtask ripr-swarm plan --top <n>` to rank existing
   `actionable-gaps.json` packets into swarm-ready, blocked, and
   missing-verify-or-receipt buckets. The report writes
