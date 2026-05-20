@@ -8765,11 +8765,7 @@ fn validate_actionable_gap_outcomes_fixture_case(
     let targeted_test_outcome =
         actionable_gap_outcomes_optional_fixture_input(case, "targeted_test_outcome");
     if let Some(targeted_test_outcome) = targeted_test_outcome {
-        validate_actionable_gap_outcomes_targeted_shape(
-            case_id,
-            targeted_test_outcome,
-            violations,
-        );
+        validate_actionable_gap_outcomes_targeted_shape(case_id, targeted_test_outcome, violations);
     }
     let report = match actionable_gap_outcomes_report_from_values(
         actionable_gaps,
