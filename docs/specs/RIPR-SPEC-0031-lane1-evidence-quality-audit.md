@@ -291,6 +291,9 @@ movement remains static evidence movement rather than mutation proof.
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
   validates `fixtures/actionable-gap-outcomes-corpus/corpus.json` against the
   same outcome joiner used by the report command.
+- `xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift`
+  pins fixture-contract failures for missing, malformed, and mismatched
+  actionable-gap outcome corpus inputs.
 - `xtask::tests::lane1_evidence_audit_reports_alignment_coverage_holes` pins
   unaligned raw finding examples and same-line duplicate grouping.
 - `xtask::tests::lane1_evidence_audit_requires_structured_repair_route_for_actionable_items`

@@ -2171,6 +2171,7 @@ tests = [
   "xtask::tests::actionable_gap_outcomes_join_receipts_and_targeted_movement",
   "xtask::tests::actionable_gap_outcomes_command_writes_markdown_and_json",
   "xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states",
+  "xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift",
   "xtask::tests::lane1_evidence_audit_requires_structured_repair_route_for_actionable_items",
   "xtask::tests::lane1_evidence_audit_limits_static_top_reasons_to_actionable_items",
   "xtask::tests::lane1_evidence_audit_rejects_generic_static_unknown_limitation_category",
@@ -3560,6 +3561,7 @@ outputs = [
   "docs/adr/0017-editor-gap-queue-is-read-only.md",
   "docs/adr/README.md",
   "docs/lanes/LANE_3_EDITOR_LSP.md",
+  "docs/EDITOR_ACTIONABLE_GAP_QUEUE.md",
   "docs/DOCUMENTATION.md",
   "docs/README.md",
   "docs/IMPLEMENTATION_PLAN.md",
@@ -3642,6 +3644,7 @@ tests = [
   "xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context",
   "xtask::tests::ripr_swarm_plan_packet_corpus_matches_expected_states",
   "xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states",
+  "xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift",
   "xtask::tests::ripr_swarm_command_parses_plan_args",
 ]
 fixtures = [

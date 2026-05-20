@@ -365,6 +365,8 @@ Current implementation coverage:
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
   validates `fixtures/actionable-gap-outcomes-corpus/corpus.json` against the
   same outcome joiner used by the report command;
+- `xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift`
+  pins missing, malformed, and mismatched outcome-corpus guardrails;
 - `xtask::tests::ripr_swarm_command_parses_plan_args` pins the
   `cargo xtask ripr-swarm plan --top <n>` command shape.
 
