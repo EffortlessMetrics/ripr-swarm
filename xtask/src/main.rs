@@ -42546,14 +42546,15 @@ mod tests {
         parse_no_panic_allowlist_toml, parse_no_panic_allowlist_toml_v2,
         parse_pr_triage_pull_requests, parse_reason, parse_repo_exposure_static_seams,
         parse_repo_exposure_summary_counts, parse_required_status_contexts,
-        parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-        parse_string_value, parse_targeted_test_outcome_args, pr_body_validation_warning,
-        pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-        pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
-        pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-        pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-        public_contract_rows, read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json,
-        receipt_specs, receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
+        parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
+        parse_static_language_allowlist, parse_string_value, parse_targeted_test_outcome_args,
+        pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
+        pr_ready_next_action, pr_ready_status, pr_ready_status_from_report_status,
+        pr_sensitive_file_reason, pr_shape_warnings, pr_summary_body, pr_title_family,
+        pr_triage_findings, pr_triage_json, pr_triage_markdown, pr_triage_queue_dispositions,
+        precommit_report_body, public_badge_basis_violations, public_contract_rows,
+        read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json, receipt_specs,
+        receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
         render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
         repo_badge_artifact_jobs, repo_badge_artifacts_summary_markdown,
         repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
@@ -42562,7 +42563,9 @@ mod tests {
         report_index_json, report_index_markdown, report_index_missing_expected,
         report_index_repo_ops_packets, report_index_repo_ops_status, report_status_from_text,
         ripr_command_literals_in_text, ripr_debug_binary, ripr_pre_commit_hook,
+        ripr_swarm_plan_blocked_packets, ripr_swarm_plan_blocked_report,
         ripr_swarm_plan_from_actionable_gaps_value, ripr_swarm_plan_json, ripr_swarm_plan_markdown,
+        ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
         run_ci_full_evidence_gates, sarif_policy_report_json, sarif_policy_report_markdown,
         semantic_selector_matches, should_scan_static_language_path, should_skip_path,
         sorted_allowlist_content, sorted_capability_blocks_content, sorted_command_catalog_content,
@@ -58130,6 +58133,119 @@ covered_by = ["cargo xtask check-file-policy"]
                 "--top".to_string(),
                 "3".to_string()
             ])
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_reports_blocked_input_states() -> Result<(), String> {
+        let report = ripr_swarm_plan_blocked_report(
+            5,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            "missing",
+            "run `cargo xtask lane1-evidence-audit` first".to_string(),
+        );
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.input_state, "missing");
+        assert_eq!(report.top_limit, 5);
+        assert!(report.packets.is_empty());
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "blocked");
+        assert_eq!(value["input"]["state"], "missing");
+        assert_eq!(
+            value["summary"]["packets_total"],
+            serde_json::Value::from(0)
+        );
+
+        let markdown = ripr_swarm_plan_markdown(&report);
+        assert!(markdown.contains("run `cargo xtask lane1-evidence-audit` first"));
+        assert!(markdown.contains("No packets in this section."));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_accepts_structured_routes_and_candidate_context() -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:structured",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {"repair_kind": "add_boundary_assertion"},
+                    "verify_command": "cargo test structured",
+                    "receipt_command": "cargo xtask receipts check",
+                    "candidate_value_or_observer": "tests/lib.rs::structured",
+                    "confidence_basis": "calibrated",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                },
+                {
+                    "canonical_gap_id": "gap:report-only",
+                    "evidence_class": "static_unknown",
+                    "gap_state": "report_only",
+                    "source_file": "src/opaque.rs",
+                    "repair_kind": "repair_kind_unknown",
+                    "target_test_type": "target_test_type_unknown",
+                    "assertion_shape": "assertion_shape_unknown",
+                    "verify_command": "verify_command_unknown",
+                    "receipt_command": "receipt_command_unknown",
+                    "confidence_basis": "confidence_basis_unknown",
+                    "must_not_change": []
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].canonical_gap_id, "gap:structured");
+        assert!(ready[0].related_test_or_observer_available);
+        assert!(ripr_swarm_plan_packet_is_high_confidence(&ready[0]));
+
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "actionable_gap_state")
+        );
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_route")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_rejects_unsafe_argument_shapes() {
+        assert!(parse_ripr_swarm_plan_args(&[]).is_err());
+        assert!(parse_ripr_swarm_plan_args(&["unknown".to_string()]).is_err());
+        assert!(parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string()]).is_err());
+        assert!(
+            parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string(), "0".to_string()])
+                .is_err()
+        );
+        assert!(
+            parse_ripr_swarm_plan_args(&["plan".to_string(), "--actionable-gaps".to_string()])
+                .is_err()
         );
     }
 
