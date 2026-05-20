@@ -127,6 +127,8 @@ reviewed work item.
 ## 4. Using An External Agent Safely
 
 Give the agent the dry-run output and the matching packet only.
+The full handoff contract is defined by
+[`RIPR-SPEC-0058`](specs/RIPR-SPEC-0058-ripr-swarm-external-agent-handoff.md).
 
 The agent may:
 
