@@ -17883,10 +17883,21 @@ fn ripr_swarm_plan_from_actionable_gaps_value(
     path: &Path,
     value: &Value,
 ) -> RiprSwarmPlanReport {
-    let packets = audit_array(value, &["packets"])
-        .iter()
-        .map(ripr_swarm_plan_packet_from_value)
-        .collect::<Vec<_>>();
+    let packets = match audit_get(value, &["packets"]) {
+        Some(Value::Array(packets)) => packets
+            .iter()
+            .map(ripr_swarm_plan_packet_from_value)
+            .collect::<Vec<_>>(),
+        _ => {
+            return ripr_swarm_plan_blocked_report(
+                top_limit,
+                path,
+                "malformed",
+                "actionable-gaps JSON is missing a `packets` array; rerun `cargo xtask lane1-evidence-audit` before planning swarm repairs."
+                    .to_string(),
+            );
+        }
+    };
     RiprSwarmPlanReport {
         status: "advisory".to_string(),
         input_state: "read".to_string(),
@@ -17942,6 +17953,9 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     }
     if !has_repair_route {
         missing_context.push("repair_route".to_string());
+    }
+    if !related_test_or_observer_available {
+        missing_context.push("related_test_or_observer".to_string());
     }
     if !has_verify_command {
         missing_context.push("verify_command".to_string());
@@ -18041,24 +18055,39 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
 fn ripr_swarm_plan_has_repair_route(packet: &Value) -> bool {
     let structured_route = audit_get(packet, &["repair_route"]).is_some_and(|route| {
         route.is_object()
-            && audit_non_empty_string(route, &["repair_kind"])
-                .is_some_and(|field| !ripr_swarm_plan_field_missing(&field))
+            && ripr_swarm_plan_non_missing_field(route, "repair_kind")
+            && ripr_swarm_plan_non_missing_field(route, "target_test_type")
+            && ripr_swarm_plan_non_missing_any_field(
+                route,
+                &["assertion_shape", "suggested_assertion"],
+            )
     });
     structured_route
         || (audit_non_empty_string(packet, &["repair_route_source"]).as_deref()
             == Some("canonical_item.repair_route")
-            && audit_non_empty_string(packet, &["repair_kind"])
-                .is_some_and(|field| !ripr_swarm_plan_field_missing(&field))
-            && audit_non_empty_string(packet, &["target_test_type"])
-                .is_some_and(|field| !ripr_swarm_plan_field_missing(&field))
-            && audit_non_empty_string(packet, &["assertion_shape"])
-                .is_some_and(|field| !ripr_swarm_plan_field_missing(&field)))
+            && ripr_swarm_plan_non_missing_field(packet, "repair_kind")
+            && ripr_swarm_plan_non_missing_field(packet, "target_test_type")
+            && ripr_swarm_plan_non_missing_any_field(
+                packet,
+                &["assertion_shape", "suggested_assertion"],
+            ))
 }
 
 fn ripr_swarm_plan_related_context_present(packet: &Value) -> bool {
     ripr_swarm_plan_value_present(audit_get(packet, &["related_test_or_observer"]))
         || audit_non_empty_string(packet, &["candidate_value_or_observer"])
             .is_some_and(|field| !ripr_swarm_plan_field_missing(&field))
+}
+
+fn ripr_swarm_plan_non_missing_field(value: &Value, field: &str) -> bool {
+    audit_non_empty_string(value, &[field])
+        .is_some_and(|field_value| !ripr_swarm_plan_field_missing(&field_value))
+}
+
+fn ripr_swarm_plan_non_missing_any_field(value: &Value, fields: &[&str]) -> bool {
+    fields
+        .iter()
+        .any(|field| ripr_swarm_plan_non_missing_field(value, field))
 }
 
 fn ripr_swarm_plan_value_present(value: Option<&Value>) -> bool {
@@ -58179,7 +58208,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_boundary_assertion",
                     "target_test_type": "boundary_discriminator",
                     "assertion_shape": "assert_eq!(value, expected)",
-                    "repair_route": {"repair_kind": "add_boundary_assertion"},
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(value, expected)"
+                    },
                     "verify_command": "cargo test structured",
                     "receipt_command": "cargo xtask receipts check",
                     "candidate_value_or_observer": "tests/lib.rs::structured",
@@ -58235,18 +58268,173 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
-    fn ripr_swarm_plan_rejects_unsafe_argument_shapes() {
-        assert!(parse_ripr_swarm_plan_args(&[]).is_err());
-        assert!(parse_ripr_swarm_plan_args(&["unknown".to_string()]).is_err());
-        assert!(parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string()]).is_err());
-        assert!(
-            parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string(), "0".to_string()])
-                .is_err()
+    fn ripr_swarm_plan_blocks_malformed_actionable_gap_reports() {
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &serde_json::json!({"summary": {"actionable_gaps": 1}}),
         );
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.input_state, "malformed");
+        assert!(report.packets.is_empty());
         assert!(
-            parse_ripr_swarm_plan_args(&["plan".to_string(), "--actionable-gaps".to_string()])
-                .is_err()
+            report
+                .input_limitation
+                .as_deref()
+                .is_some_and(|limitation| limitation.contains("`packets` array"))
         );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_missing_related_context() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:no-related-context",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(value, expected)"
+                    },
+                    "verify_command": "cargo test no_related_context",
+                    "receipt_command": "cargo xtask receipts check",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "related_test_or_observer")
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_incomplete_structured_repair_routes() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:incomplete-route",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {"repair_kind": "add_boundary_assertion"},
+                    "verify_command": "cargo test incomplete_route",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": "tests/lib.rs::incomplete_route",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_route")
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_accepts_structured_routes_with_suggested_assertion() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:suggested-assertion",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(value, expected)"
+                    },
+                    "verify_command": "cargo test suggested_assertion",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": "tests/lib.rs::suggested_assertion",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].canonical_gap_id, "gap:suggested-assertion");
+    }
+
+    #[test]
+    fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
+        expect_ripr_swarm_plan_arg_error(&[])?;
+        expect_ripr_swarm_plan_arg_error(&["unknown"])?;
+        expect_ripr_swarm_plan_arg_error(&["plan", "--top"])?;
+        expect_ripr_swarm_plan_arg_error(&["plan", "--top", "0"])?;
+        expect_ripr_swarm_plan_arg_error(&["plan", "--actionable-gaps"])?;
+        Ok(())
+    }
+
+    fn expect_ripr_swarm_plan_arg_error(args: &[&str]) -> Result<(), String> {
+        let owned_args = args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect::<Vec<_>>();
+        match parse_ripr_swarm_plan_args(&owned_args) {
+            Ok(parsed) => Err(format!("accepted invalid ripr swarm plan args: {parsed:?}")),
+            Err(_) => Ok(()),
+        }
     }
 
     #[test]
