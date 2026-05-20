@@ -58086,27 +58086,25 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_blocked_packets"][0]["swarm_state"],
             "blocked_by_missing_context"
         );
-        assert!(
-            value["top_blocked_packets"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|packet| packet["swarm_state"] == "blocked_by_static_limitation")
-        );
+        let blocked_packets = value["top_blocked_packets"]
+            .as_array()
+            .ok_or_else(|| "top_blocked_packets must be an array".to_string())?;
+        assert!(blocked_packets
+            .iter()
+            .any(|packet| packet["swarm_state"] == "blocked_by_static_limitation"));
+        let missing_verify_or_receipt = value["top_missing_verify_or_receipt"]
+            .as_array()
+            .ok_or_else(|| "top_missing_verify_or_receipt must be an array".to_string())?;
         assert_eq!(
-            value["top_missing_verify_or_receipt"]
-                .as_array()
-                .unwrap()
-                .len(),
+            missing_verify_or_receipt.len(),
             2
         );
-        assert!(
-            value["must_not_infer"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|claim| claim == "do not rank packets without receipt_command as swarm-ready")
-        );
+        let must_not_infer = value["must_not_infer"]
+            .as_array()
+            .ok_or_else(|| "must_not_infer must be an array".to_string())?;
+        assert!(must_not_infer
+            .iter()
+            .any(|claim| claim == "do not rank packets without receipt_command as swarm-ready"));
 
         let markdown = ripr_swarm_plan_markdown(&report);
         assert!(markdown.contains("# RIPR Swarm Plan"));
