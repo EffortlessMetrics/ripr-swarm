@@ -59587,6 +59587,142 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn actionable_gap_outcomes_fixture_corpus_reports_spec_wrapper_drift() -> Result<(), String> {
+        with_temp_cwd("actionable-gap-outcomes-wrapper-drift", |_| {
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+            for expected in [
+                "fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/SPEC.md",
+                "fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+                "corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected wrapper violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            write(
+                Path::new("fixtures/actionable-gap-outcomes-corpus/SPEC.md"),
+                "# Bad spec\n\n## Given\n",
+            );
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+            for expected in [
+                "is missing `Spec: RIPR-SPEC-0031`",
+                "is missing `Related: RIPR-SPEC-0057`",
+                "is missing `## When`",
+                "is missing `## Then`",
+                "is missing `## Must Not`",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected spec violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_fixture_case_reports_expected_shape_drift() -> Result<(), String> {
+        let base_packet = serde_json::json!({
+            "canonical_gap_id": "gap:expected-shape",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id expected-shape --json"
+        });
+
+        for (case, expected) in [
+            (
+                serde_json::json!({
+                    "id": "empty-packets",
+                    "description": "Empty packet list.",
+                    "must_not_claim": ["Do not accept an empty packet list."],
+                    "actionable_gaps": {"packets": []}
+                }),
+                "actionable_gaps.packets must not be empty",
+            ),
+            (
+                serde_json::json!({
+                    "id": "missing-expected",
+                    "description": "Missing expected object.",
+                    "must_not_claim": ["Do not accept a missing expected object."],
+                    "actionable_gaps": {"packets": [base_packet.clone()]}
+                }),
+                "is missing expected object",
+            ),
+            (
+                serde_json::json!({
+                    "id": "empty-expected-outcomes",
+                    "description": "Empty expected outcomes.",
+                    "must_not_claim": ["Do not accept empty expected outcomes."],
+                    "actionable_gaps": {"packets": [base_packet.clone()]},
+                    "expected": {"summary": {"packets_total": 1}, "outcomes": []}
+                }),
+                "expected.outcomes must not be empty",
+            ),
+        ] {
+            let case_id = case.get("id").and_then(Value::as_str).unwrap_or_default();
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(&case, case_id, &mut violations)?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected fixture violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        let case = serde_json::json!({
+            "id": "bad-expected-shape",
+            "description": "Malformed expected shape.",
+            "must_not_claim": ["Do not accept malformed expected outcome fields."],
+            "actionable_gaps": {"packets": [base_packet]},
+            "agent_receipt": null,
+            "targeted_test_outcome": null,
+            "expected": {
+                "summary": {"packets_total": "one"},
+                "outcomes": [
+                    {},
+                    {"canonical_gap_id": "gap:missing"},
+                    {"canonical_gap_id": "gap:expected-shape"}
+                ]
+            }
+        });
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &case,
+            "bad-expected-shape",
+            &mut violations,
+        )?;
+        for expected in [
+            "expected outcome is missing canonical_gap_id",
+            "did not produce outcome gap:missing",
+            "expected outcome gap:expected-shape is missing outcome_state",
+            "expected outcome gap:expected-shape is missing receipt_state",
+            "expected.summary.packets_total must be numeric",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected malformed expected-shape violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
         expect_ripr_swarm_plan_arg_error(&[])?
             .contains("usage: cargo xtask ripr-swarm plan")
