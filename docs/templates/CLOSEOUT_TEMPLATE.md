@@ -1,9 +1,13 @@
 # Closeout: <milestone or work item>
 
 Date:
+
 Owner:
+
 Linked proposal:
+
 Linked spec:
+
 Linked plan item:
 
 ## What landed

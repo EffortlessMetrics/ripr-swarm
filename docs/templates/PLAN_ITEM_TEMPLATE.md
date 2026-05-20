@@ -1,13 +1,21 @@
 ## Work item: <id>
 
 Status: ready
+
 Linked proposal:
+
 Linked spec:
+
 Linked ADR:
+
 Blocks:
+
 Blocked by:
+
 Branch:
+
 Issue:
+
 PR:
 
 ### Goal
