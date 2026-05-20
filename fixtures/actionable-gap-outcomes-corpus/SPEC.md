@@ -35,3 +35,13 @@ merges, or raw-finding consumption.
 
 Each case records those non-claims as fixture metadata. The validator requires
 the metadata to be present and separately proves the joined outcome state.
+
+Targeted-test outcome inputs preserve the upstream receipt shape:
+
+- `moved`, `unchanged`, and `regressed` buckets carry `before`, `after`, and
+  `direction`.
+- `new` and `removed` buckets carry one-sided `grip_class` values.
+
+Expected joined outcomes pin the rendered `before`, `after`, and
+`movement_direction` fields when movement exists so one-sided inputs remain
+explicit in the report.

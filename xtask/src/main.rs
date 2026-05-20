@@ -8764,6 +8764,13 @@ fn validate_actionable_gap_outcomes_fixture_case(
     let agent_receipt = actionable_gap_outcomes_optional_fixture_input(case, "agent_receipt");
     let targeted_test_outcome =
         actionable_gap_outcomes_optional_fixture_input(case, "targeted_test_outcome");
+    if let Some(targeted_test_outcome) = targeted_test_outcome {
+        validate_actionable_gap_outcomes_targeted_shape(
+            case_id,
+            targeted_test_outcome,
+            violations,
+        );
+    }
     let report = match actionable_gap_outcomes_report_from_values(
         actionable_gaps,
         agent_receipt,
@@ -8835,6 +8842,40 @@ fn actionable_gap_outcomes_optional_fixture_input<'a>(
     case.get(field).filter(|value| !value.is_null())
 }
 
+fn validate_actionable_gap_outcomes_targeted_shape(
+    case_id: &str,
+    targeted_test_outcome: &Value,
+    violations: &mut Vec<String>,
+) {
+    for bucket in ["moved", "unchanged", "regressed"] {
+        for item in audit_array(targeted_test_outcome, &[bucket]) {
+            for field in ["before", "after", "direction"] {
+                if audit_non_empty_string(item, &[field]).is_none() {
+                    violations.push(format!(
+                        "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must include {field}"
+                    ));
+                }
+            }
+        }
+    }
+    for bucket in ["removed", "new"] {
+        for item in audit_array(targeted_test_outcome, &[bucket]) {
+            if audit_non_empty_string(item, &["grip_class"]).is_none() {
+                violations.push(format!(
+                    "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must include grip_class"
+                ));
+            }
+            for field in ["before", "after", "direction"] {
+                if item.get(field).is_some_and(|value| !value.is_null()) {
+                    violations.push(format!(
+                        "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must use one-sided grip_class instead of {field}"
+                    ));
+                }
+            }
+        }
+    }
+}
+
 fn validate_actionable_gap_outcomes_expected_outcome(
     case_id: &str,
     expected: &Value,
@@ -8875,16 +8916,25 @@ fn validate_actionable_gap_outcomes_expected_outcome(
         }
     }
 
-    if let Some(expected_movement_source) = expected.get("movement_source") {
-        let actual = actual
-            .movement_source
-            .as_deref()
-            .map(Value::from)
-            .unwrap_or(Value::Null);
-        if actual != *expected_movement_source {
-            violations.push(format!(
-                "actionable gap outcomes case {case_id} outcome {canonical_gap_id} movement_source must be {expected_movement_source}, got {actual}"
-            ));
+    for (field, actual_value) in [
+        (
+            "movement_source",
+            actual.movement_source.as_deref().map(Value::from),
+        ),
+        (
+            "movement_direction",
+            actual.movement_direction.as_deref().map(Value::from),
+        ),
+        ("before", actual.before.as_deref().map(Value::from)),
+        ("after", actual.after.as_deref().map(Value::from)),
+    ] {
+        if let Some(expected_value) = expected.get(field) {
+            let actual_value = actual_value.unwrap_or(Value::Null);
+            if actual_value != *expected_value {
+                violations.push(format!(
+                    "actionable gap outcomes case {case_id} outcome {canonical_gap_id} {field} must be {expected_value}, got {actual_value}"
+                ));
+            }
         }
     }
 }
