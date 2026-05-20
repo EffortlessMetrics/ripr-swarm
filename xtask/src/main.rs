@@ -59587,6 +59587,276 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn actionable_gap_outcomes_fixture_validation_reports_edge_states() -> Result<(), String> {
+        with_temp_cwd("actionable-gap-outcomes-corpus-edge-states", |_| {
+            fs::create_dir_all("fixtures/actionable-gap-outcomes-corpus")
+                .map_err(|err| format!("failed to create fixture dir: {err}"))?;
+            write(
+                Path::new("fixtures/actionable-gap-outcomes-corpus/SPEC.md"),
+                "Spec: RIPR-SPEC-0000\nRelated: RIPR-SPEC-0000\n",
+            );
+
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+            for expected in [
+                "actionable gap outcomes fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+                "is missing `Spec: RIPR-SPEC-0031`",
+                "is missing `Related: RIPR-SPEC-0057`",
+                "is missing `## Given`",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected root fixture violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            write(Path::new("bad-json.json"), "{");
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("bad-json.json"),
+                &mut violations,
+            )?;
+            assert!(
+                !violations.is_empty(),
+                "invalid corpus JSON should be reported"
+            );
+
+            write(
+                Path::new("no-cases.json"),
+                r#"{
+  "schema_version": "0.1",
+  "kind": "actionable_gap_outcomes_corpus",
+  "spec": "RIPR-SPEC-0031",
+  "related_spec": "RIPR-SPEC-0057"
+}"#,
+            );
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("no-cases.json"),
+                &mut violations,
+            )?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("is missing cases array")),
+                "missing cases array should be reported: {violations:?}"
+            );
+
+            write(
+                Path::new("duplicate-case.json"),
+                r#"{
+  "schema_version": "0.1",
+  "kind": "actionable_gap_outcomes_corpus",
+  "spec": "RIPR-SPEC-0031",
+  "related_spec": "RIPR-SPEC-0057",
+  "cases": [
+    {
+      "id": "not_attempted_packet",
+      "description": "Duplicate case A.",
+      "must_not_claim": ["Do not treat duplicate cases as valid."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:duplicate-a",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id duplicate-a"
+          }
+        ]
+      },
+      "expected": {
+        "summary": {"packets_total": 1},
+        "outcomes": [
+          {"canonical_gap_id": "gap:duplicate-a", "outcome_state": "not_attempted", "receipt_state": "not_attempted"}
+        ]
+      }
+    },
+    {
+      "id": "not_attempted_packet",
+      "description": "Duplicate case B.",
+      "must_not_claim": ["Do not treat duplicate cases as valid."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:duplicate-b",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id duplicate-b"
+          }
+        ]
+      },
+      "expected": {
+        "summary": {"packets_total": 1},
+        "outcomes": [
+          {"canonical_gap_id": "gap:duplicate-b", "outcome_state": "receipt_present", "receipt_state": "present"}
+        ]
+      }
+    }
+  ]
+}"#,
+            );
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("duplicate-case.json"),
+                &mut violations,
+            )?;
+            for expected in [
+                "case not_attempted_packet is duplicated",
+                "case not_attempted_packet must have state not_attempted/not_attempted",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected duplicate-case violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            Ok::<(), String>(())
+        })?;
+
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &serde_json::json!({
+                "id": "empty-packets",
+                "description": "Empty packet list.",
+                "must_not_claim": ["Do not accept empty actionable-gaps packets."],
+                "actionable_gaps": {"packets": []}
+            }),
+            "empty-packets",
+            &mut violations,
+        )?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("actionable_gaps.packets must not be empty")),
+            "empty packets should be reported: {violations:?}"
+        );
+
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &serde_json::json!({
+                "id": "missing-expected",
+                "description": "Missing expected object.",
+                "must_not_claim": ["Do not accept cases without expectations."],
+                "actionable_gaps": {
+                    "packets": [
+                        {
+                            "canonical_gap_id": "gap:missing-expected",
+                            "evidence_class": "predicate_boundary",
+                            "repair_kind": "add_boundary_assertion",
+                            "source_file": "src/lib.rs",
+                            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id missing-expected"
+                        }
+                    ]
+                }
+            }),
+            "missing-expected",
+            &mut violations,
+        )?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is missing expected object")),
+            "missing expected object should be reported: {violations:?}"
+        );
+
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &serde_json::json!({
+                "id": "bad-expected",
+                "description": "Bad expected outcome and summary.",
+                "must_not_claim": ["Do not accept malformed expected outcomes."],
+                "actionable_gaps": {
+                    "packets": [
+                        {
+                            "canonical_gap_id": "gap:bad-expected",
+                            "evidence_class": "predicate_boundary",
+                            "repair_kind": "add_boundary_assertion",
+                            "source_file": "src/lib.rs",
+                            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id bad-expected"
+                        }
+                    ]
+                },
+                "expected": {
+                    "summary": {"packets_total": "one", "outcomes_total": 2},
+                    "outcomes": [
+                        {},
+                        {
+                            "canonical_gap_id": "gap:not-produced",
+                            "outcome_state": "not_attempted",
+                            "receipt_state": "not_attempted"
+                        },
+                        {
+                            "canonical_gap_id": "gap:bad-expected"
+                        }
+                    ]
+                }
+            }),
+            "bad-expected",
+            &mut violations,
+        )?;
+        for expected in [
+            "expected outcome is missing canonical_gap_id",
+            "did not produce outcome gap:not-produced",
+            "expected outcome gap:bad-expected is missing outcome_state",
+            "expected outcome gap:bad-expected is missing receipt_state",
+            "expected.summary.packets_total must be numeric",
+            "summary.outcomes_total must be 2, got 1",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected fixture-case violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &serde_json::json!({
+                "id": "empty-expected-outcomes",
+                "description": "Empty expected outcome list.",
+                "must_not_claim": ["Do not accept missing outcome expectations."],
+                "actionable_gaps": {
+                    "packets": [
+                        {
+                            "canonical_gap_id": "gap:empty-expected-outcomes",
+                            "evidence_class": "predicate_boundary",
+                            "repair_kind": "add_boundary_assertion",
+                            "source_file": "src/lib.rs",
+                            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id empty-expected-outcomes"
+                        }
+                    ]
+                },
+                "expected": {
+                    "summary": {"packets_total": 1},
+                    "outcomes": []
+                }
+            }),
+            "empty-expected-outcomes",
+            &mut violations,
+        )?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("expected.outcomes must not be empty")),
+            "empty expected outcomes should be reported: {violations:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
         expect_ripr_swarm_plan_arg_error(&[])?
             .contains("usage: cargo xtask ripr-swarm plan")
