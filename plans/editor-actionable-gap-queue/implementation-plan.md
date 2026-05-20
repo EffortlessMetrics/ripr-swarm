@@ -24,10 +24,11 @@ after validating it; it should not rederive the queue, produce the artifact, or
 parse Markdown for action semantics.
 
 The source-of-truth stack, read-only artifact validation seam, Show Status
-queue projection, bounded current repair packet copy action, and read-only repo
-gap map orientation command have landed. The active slice adds the manifest-only
-fixture corpus for success, no-action, receipt, and fail-closed queue states
-without changing producers, gates, PR/CI output, or editor behavior.
+queue projection, bounded current repair packet copy action, read-only repo gap
+map orientation command, and manifest-only fixture corpus have landed. The
+active swarm-trunk slice is the packaged VS Code smoke that proves those
+surfaces through the real extension path without changing producers, gates,
+PR/CI output, or editor authority.
 
 ## Hard Boundaries
 
@@ -51,6 +52,10 @@ without changing producers, gates, PR/CI output, or editor behavior.
 
 ## GitHub Issue Burn-Down
 
+The `#1298` through `#1304` rows are source-repo planning issue references
+from the pre-swarm queue. Remaining open work is tracked directly in
+`ripr-swarm` issues.
+
 | Issue | Work item | Status | Evidence / remaining gap |
 | --- | --- | --- | --- |
 | #1298 | `docs(lane3): open editor actionable gap queue stack` | closed | Source-of-truth proposal, spec, ADR, plan, indexes, lane tracker, traceability, and capability wiring landed before behavior work. |
@@ -59,11 +64,11 @@ without changing producers, gates, PR/CI output, or editor behavior.
 | #1301 | `lsp(queue): project repair queue in Show Status` | closed | Show bounded queue summary and no-action/fail-closed states without adding copy actions or packet generation. |
 | #1302 | `lsp(queue): add Copy Current Repair Packet` | closed | Copy one bounded packet only for validated actionable gaps. |
 | #1303 | `lsp(queue): add Copy Repo Gap Map` | closed | Copy read-only orientation without gate/runtime/policy claims. |
-| #1304 | `fixtures(editor): add actionable gap queue corpus` | active | Add success and fail-closed fixture cases. |
-| #1305 | `test(vscode): smoke actionable gap queue` | planned | Prove the packaged extension path. |
-| #1306 | `docs(editor): document actionable gap queue` | planned | Explain workflow, recovery states, and non-claims. |
-| #1307 | `dogfood(lane3): record actionable gap queue receipts` | planned | Record queue, packet, receipt, no-action, and fail-closed proof. |
-| #1308 | `campaign(lane3): close editor actionable gap queue` | planned | Close after behavior, fixtures, e2e, docs, dogfood, and validation land. |
+| source #1304 / swarm PR #16 | `fixtures(editor): add actionable gap queue corpus` | closed | Manifest-only fixture corpus covers success, no-action, receipt, and fail-closed queue states without changing editor behavior. |
+| swarm #17 | `test(vscode): smoke actionable gap queue` | active | Prove the packaged extension path. |
+| swarm #18 | `docs(editor): document actionable gap queue` | planned | Explain workflow, recovery states, and non-claims. |
+| swarm #19 | `dogfood(lane3): record actionable gap queue receipts` | planned | Record queue, packet, receipt, no-action, and fail-closed proof. |
+| swarm #20 | `campaign(lane3): close editor actionable gap queue` | planned | Close after behavior, fixtures, e2e, docs, dogfood, and validation land. |
 
 ## Work Item 1: docs(lane3): open editor actionable gap queue stack
 
