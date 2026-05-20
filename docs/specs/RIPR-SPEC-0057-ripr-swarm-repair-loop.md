@@ -116,6 +116,35 @@ target/ripr/reports/evidence-quality-trend.json
 The swarm may read these artifacts only as typed JSON contracts. Markdown is
 human explanation and must not decide actionability.
 
+## Actionable Packet Input Contract
+
+`actionable-gaps.json` is the only repair-queue input. A swarm runner consumes
+canonical actionable packets from that artifact and treats raw findings only as
+supporting evidence.
+
+Each consumed packet must expose the typed fields needed to route one bounded
+repair attempt:
+
+```text
+canonical_gap_id
+evidence_class
+gap_state
+repair_kind
+repair_route
+target_test_type or target_assertion_shape
+related_test_or_observer
+verify_command
+receipt_command
+static_limitations[]
+must_not_change[]
+confidence_basis
+raw_findings[] as supporting evidence
+```
+
+The runner may also use projection eligibility and prior outcome state for
+ranking and blocking decisions. It must not derive work items from raw findings,
+Markdown text, PR annotations, or static class labels.
+
 ## Required Packet Fields
 
 A packet is swarm-ready only when typed fields provide a closed repair loop.
@@ -148,9 +177,11 @@ Each packet has one swarm state.
 | `queued` | Packet is valid but not assigned. | Select, dry run, or skip. |
 | `assigned` | A human or agent has accepted the packet. | Attempt or release assignment. |
 | `attempted` | A repair was attempted, but verification or receipt is not complete. | Run verify and receipt commands. |
+| `receipt_present` | A receipt exists for the attempt, but evidence movement has not been joined or is still unknown. | Join evidence movement or inspect missing movement context. |
 | `verified_improved` | Receipt and evidence movement indicate improvement. | Record outcome and refresh audit. |
 | `verified_unchanged` | Receipt exists but evidence did not improve. | Keep attempt visible and inspect repair fit. |
 | `verified_regressed` | Receipt exists and evidence worsened. | Stop, revert or inspect manually. |
+| `resolved` | Receipt-backed evidence movement shows the canonical gap is no longer actionable. | Record resolution and refresh audit/scorecard. |
 | `failed_to_apply` | The repair could not be applied within packet boundaries. | Record failure and keep packet visible. |
 | `blocked_by_missing_context` | Required packet fields, related test, verify command, receipt command, or safe path context are missing. | Regenerate upstream artifacts or improve Lane 1 packet fields. |
 | `blocked_by_static_limitation` | The packet or class carries a named static limitation that prevents a safe repair attempt. | Close analyzer limitation or inspect manually. |
@@ -234,11 +265,11 @@ The swarm maps these outcome states into swarm attempt states:
 | --- | --- |
 | `not_attempted` | `queued` unless assignment metadata says otherwise. |
 | `attempted_no_receipt` | `attempted`; do not claim improvement. |
-| `receipt_present` | `attempted`; movement still unknown. |
+| `receipt_present` | `receipt_present`; movement still unknown. |
 | `evidence_improved` | `verified_improved`. |
 | `evidence_unchanged` | `verified_unchanged`. |
 | `evidence_regressed` | `verified_regressed`. |
-| `resolved` | `verified_improved` with resolved canonical gap. |
+| `resolved` | `resolved`. |
 | `unknown` | `attempted` or blocked, depending on missing context. |
 
 The same canonical gap may have multiple attempts. The latest attempt may be
