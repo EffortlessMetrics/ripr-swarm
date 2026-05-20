@@ -58235,18 +58235,22 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
-    fn ripr_swarm_plan_rejects_unsafe_argument_shapes() {
-        assert!(parse_ripr_swarm_plan_args(&[]).is_err());
-        assert!(parse_ripr_swarm_plan_args(&["unknown".to_string()]).is_err());
-        assert!(parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string()]).is_err());
-        assert!(
-            parse_ripr_swarm_plan_args(&["plan".to_string(), "--top".to_string(), "0".to_string()])
-                .is_err()
-        );
-        assert!(
-            parse_ripr_swarm_plan_args(&["plan".to_string(), "--actionable-gaps".to_string()])
-                .is_err()
-        );
+    fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
+        fn reject(args: &[String]) -> Result<(), String> {
+            match parse_ripr_swarm_plan_args(args) {
+                Ok(parsed) => Err(format!(
+                    "accepted invalid ripr-swarm plan args as {parsed:?}"
+                )),
+                Err(_) => Ok(()),
+            }
+        }
+
+        reject(&[])?;
+        reject(&["unknown".to_string()])?;
+        reject(&["plan".to_string(), "--top".to_string()])?;
+        reject(&["plan".to_string(), "--top".to_string(), "0".to_string()])?;
+        reject(&["plan".to_string(), "--actionable-gaps".to_string()])?;
+        Ok(())
     }
 
     #[test]
