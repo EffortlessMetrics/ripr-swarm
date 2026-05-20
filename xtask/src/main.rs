@@ -53996,6 +53996,51 @@ reason = "second"
     }
 
     #[test]
+    fn badge_artifacts_build_failure_writes_build_incomplete_limitation() -> Result<(), String> {
+        with_temp_cwd("badge-artifacts-build-failure", |_root| {
+            write_badge_artifacts_after_build(
+                "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+                Path::new("target/debug/ripr"),
+                Duration::from_secs(90),
+                |_timeout| {
+                    Ok(TimedOutput {
+                        status: Some(failure_exit_status()),
+                        stdout: String::new(),
+                        stderr: "build failed\n".to_string(),
+                        duration: Duration::from_millis(120),
+                        timed_out: false,
+                    })
+                },
+                |_binary, _format, _args, _timeout| {
+                    Err("artifact runner should not run after build failure".to_string())
+                },
+            )?;
+
+            let json_path = Path::new("target/ripr/reports/badge-artifacts-limitation.json");
+            let json = fs::read_to_string(json_path).map_err(|err| err.to_string())?;
+            let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+            assert_eq!(value["format"], "badge-build");
+            assert_eq!(
+                value["limitation"]["category"],
+                "badge_artifacts_build_incomplete"
+            );
+            assert_eq!(
+                value["limitation"]["summary"],
+                "Badge artifact generation could not build the ripr binary before diff analysis could run."
+            );
+            assert_eq!(value["generation"]["timed_out"], false);
+            assert_eq!(value["generation"]["exit_code"], 1);
+            assert!(
+                value["limitation"]["repair_route"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("cargo build exit status")
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
     fn badge_artifacts_successful_build_runs_direct_ripr_binary() -> Result<(), String> {
         with_temp_cwd("badge-artifacts-build-success", |_root| {
             let mut artifact_runner_called = false;
