@@ -9,6 +9,13 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Added `cargo xtask ripr-swarm plan --top <n>` to rank existing
+  `actionable-gaps.json` packets into swarm-ready, blocked, and
+  missing-verify-or-receipt buckets. The report writes
+  `target/ripr/reports/swarm-plan.{json,md}`, blocks static limitations and
+  missing receipt/verify context, and remains dry-run/report-only with no file
+  edits, provider calls, generated tests, mutation execution, receipts, gates,
+  badges, PR/CI rendering, or editor/LSP behavior changes.
 - Added `RIPR-PROP-0014` to define the `ripr-swarm` campaign rationale:
   consume actionable canonical packets, rank bounded repair attempts, require
   receipts and evidence movement, reject raw-finding queues and arbitrary agent
