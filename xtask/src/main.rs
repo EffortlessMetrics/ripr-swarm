@@ -17618,10 +17618,19 @@ fn audit_actionable_gap_repair_route_fields(
         audit_non_empty_string(canonical_item, &["repair_route", "target_test_type"])
             .filter(|value| !audit_guidance_field_is_missing(value))
             .unwrap_or_else(|| "target_test_type_unknown".to_string());
-    let assertion_shape = audit_actionable_gap_assertion_shape(record, canonical_item);
+    let canonical_assertion_shape =
+        audit_non_empty_string(canonical_item, &["repair_route", "suggested_assertion"])
+            .filter(|value| !audit_guidance_field_is_missing(value));
+    let assertion_shape = canonical_assertion_shape
+        .clone()
+        .or_else(|| {
+            audit_non_empty_string(record, &["recommendation", "assertion_shape", "kind"])
+                .filter(|value| !audit_guidance_field_is_missing(value))
+        })
+        .unwrap_or_else(|| "assertion_shape_unknown".to_string());
     let source = if repair_kind != "repair_route_unknown"
         && target_test_type != "target_test_type_unknown"
-        && assertion_shape != "assertion_shape_unknown"
+        && canonical_assertion_shape.is_some()
     {
         "canonical_item.repair_route"
     } else {
@@ -17633,13 +17642,6 @@ fn audit_actionable_gap_repair_route_fields(
         assertion_shape,
         source.to_string(),
     )
-}
-
-fn audit_actionable_gap_assertion_shape(record: &Value, canonical_item: &Value) -> String {
-    audit_non_empty_string(canonical_item, &["repair_route", "suggested_assertion"])
-        .or_else(|| audit_non_empty_string(record, &["recommendation", "assertion_shape", "kind"]))
-        .filter(|value| !audit_guidance_field_is_missing(value))
-        .unwrap_or_else(|| "assertion_shape_unknown".to_string())
 }
 
 fn audit_actionable_gap_verify_command_with_source(
@@ -55941,6 +55943,75 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             packet_value["packets"][0]["receipt_source"],
             "canonical_item.receipt_command"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn lane1_actionable_gap_packets_require_canonical_assertion_for_public_projection()
+    -> Result<(), String> {
+        let report = lane1_evidence_audit_from_repo_exposure(
+            ".",
+            r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-fallback-assertion-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-fallback-assertion-gap",
+                    "canonical_gap_id": "gap:packet-fallback-assertion-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "recommendation": {
+                      "assertion_shape": {"kind": "exact_value"}
+                    },
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-fallback-assertion-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )?;
+
+        let packet_json = lane1_actionable_gap_packets_json(&report)?;
+        let packet_value: serde_json::Value =
+            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+        assert_eq!(packet_value["packets"][0]["assertion_shape"], "exact_value");
+        assert_eq!(packet_value["packets"][0]["repair_route_source"], "missing");
+        assert_eq!(
+            packet_value["packets"][0]["public_projection_eligible"],
+            serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            packet_value["packets"][0]["projection_exclusion_reasons"],
+            serde_json::json!(["missing_repair_route"])
+        );
+        assert_eq!(
+            packet_value["summary"]["public_projection_eligible_packets"],
+            serde_json::Value::from(0)
         );
         Ok(())
     }
