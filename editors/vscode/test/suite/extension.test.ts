@@ -140,6 +140,78 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('real extension actionable gap queue commands copy bounded packets for safe artifacts', async function (this: Mocha.Context) {
+    this.timeout(30000);
+    await cleanupActionableGapQueueSmokeFiles();
+    await writeWorkspaceFile('target/ripr/reports/actionable-gaps.json', actionableGapsReport({}));
+    await writeWorkspaceFile('target/ripr/agent/agent-receipt.json', agentReceipt({ movement: 'improved' }));
+    await writeWorkspaceFile('target/ripr/first-pr/start-here.json', firstPrPacket({}));
+    try {
+      await vscode.commands.executeCommand('ripr.diagnoseSetup');
+      await vscode.commands.executeCommand('ripr.showStatus');
+
+      await writeClipboardText('actionable-gap-queue-repair-sentinel');
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      const repairPacket = await waitForClipboardText((text) =>
+        text.includes('RIPR current repair packet') &&
+        text.includes('gap:rust:pricing:discount:threshold-boundary')
+      );
+      assert.notStrictEqual(repairPacket, 'actionable-gap-queue-repair-sentinel');
+      assert.ok(repairPacket.includes('Repair kind: add_boundary_assertion'), repairPacket);
+      assert.ok(repairPacket.includes('Run: ripr agent verify --root . --json'), repairPacket);
+      assert.ok(repairPacket.includes('Record: ripr agent receipt --root . --json'), repairPacket);
+      assert.ok(repairPacket.includes('Do not broaden scope beyond this one gap.'), repairPacket);
+      assert.ok(repairPacket.includes('Do not treat this advisory static packet as a gate decision'), repairPacket);
+
+      await writeClipboardText('actionable-gap-queue-map-sentinel');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      const repoMap = await waitForClipboardText((text) =>
+        text.includes('RIPR repo gap map') &&
+        text.includes('Queue state: topActionableGap')
+      );
+      assert.notStrictEqual(repoMap, 'actionable-gap-queue-map-sentinel');
+      assert.ok(repoMap.includes('Canonical gap id: gap:rust:pricing:discount:threshold-boundary'), repoMap);
+      assert.ok(repoMap.includes('Movement: improved'), repoMap);
+      assert.ok(repoMap.includes('First PR packet state'), repoMap);
+      assert.ok(repoMap.includes('This map is read-only orientation.'), repoMap);
+      assert.ok(repoMap.includes('not a gate decision, merge approval, runtime proof, mutation proof'), repoMap);
+    } finally {
+      await cleanupActionableGapQueueSmokeFiles();
+    }
+  });
+
+  test('real extension actionable gap queue commands fail closed for unsafe artifacts', async function (this: Mocha.Context) {
+    this.timeout(30000);
+    await cleanupActionableGapQueueSmokeFiles();
+    try {
+      await writeWorkspaceFile('target/ripr/reports/actionable-gaps.json', '{not-json');
+      await writeClipboardText('actionable-gap-queue-sentinel');
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      assert.strictEqual(await currentClipboardText(), 'actionable-gap-queue-sentinel');
+
+      await cleanupActionableGapQueueSmokeFiles();
+      await writeWorkspaceFile(
+        'target/ripr/reports/actionable-gaps.json',
+        actionableGapsReport({ root: '../other-workspace' })
+      );
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      assert.strictEqual(await currentClipboardText(), 'actionable-gap-queue-sentinel');
+
+      await cleanupActionableGapQueueSmokeFiles();
+      await writeWorkspaceFile(
+        'target/ripr/reports/actionable-gaps.json',
+        actionableGapsReport({ status: 'stale' })
+      );
+      await vscode.commands.executeCommand('ripr.copyCurrentRepairPacket');
+      await vscode.commands.executeCommand('ripr.copyRepoGapMap');
+      assert.strictEqual(await currentClipboardText(), 'actionable-gap-queue-sentinel');
+    } finally {
+      await cleanupActionableGapQueueSmokeFiles();
+    }
+  });
+
   test('real extension adoption assurance smoke keeps setup repair and first-pr actions bounded', async function (this: Mocha.Context) {
     this.timeout(45000);
     await cleanupAdoptionAssuranceSmokeFiles();
@@ -638,7 +710,7 @@ suite('Extension Smoke', () => {
       assert.strictEqual(context.runRiprCalls.length, 0);
       assert.strictEqual(context.infoMessages.length, 3);
       for (const message of context.infoMessages) {
-        assert.ok(message.includes('active file or target URI'), message);
+        assertRepairTargetBlocker(message);
       }
     } finally {
       await context.dispose();
@@ -762,9 +834,12 @@ suite('Extension Smoke', () => {
         }
       );
 
+      await writeClipboardText('start-current-repair-sentinel');
+      await waitForCodeAction(uri, near.range, (action) => action.title === 'Copy first repair packet');
       await vscode.commands.executeCommand('ripr.startCurrentRepair');
 
       const copied = await waitForClipboardText((text) => text === 'nearest repair packet');
+      assert.notStrictEqual(copied, 'start-current-repair-sentinel');
       assert.strictEqual(copied, 'nearest repair packet');
     } finally {
       provider?.dispose();
@@ -3597,9 +3672,21 @@ async function cleanupFirstPrBridgeSmokeFiles(): Promise<void> {
   ]);
 }
 
+async function cleanupActionableGapQueueSmokeFiles(): Promise<void> {
+  await Promise.all([
+    removeWorkspacePath('target/ripr/reports/actionable-gaps.json'),
+    removeWorkspacePath('target/ripr/agent/agent-receipt.json'),
+    removeWorkspacePath('target/ripr/first-pr/start-here.json'),
+    removeWorkspacePath('target/ripr/first-pr/start-here.md'),
+    removeWorkspacePath('target/ripr/reports/start-here.json'),
+    removeWorkspacePath('target/ripr/reports/start-here.md')
+  ]);
+}
+
 async function cleanupAdoptionAssuranceSmokeFiles(): Promise<void> {
   await Promise.all([
     removeWorkspacePath('ripr.toml'),
+    removeWorkspacePath('target/ripr/reports/actionable-gaps.json'),
     removeWorkspacePath('target/ripr/reports/first-useful-action.json'),
     removeWorkspacePath('target/ripr/agent/agent-receipt.json'),
     removeWorkspacePath('target/ripr/first-pr/start-here.json'),
@@ -3795,6 +3882,30 @@ async function waitForClipboardText(
   throw new Error(`timed out waiting for clipboard text. Last clipboard:\n${lastText}`);
 }
 
+async function waitForCodeAction(
+  uri: vscode.Uri,
+  range: vscode.Range,
+  predicate: (action: vscode.CodeAction | vscode.Command) => boolean,
+  timeoutMs = 5000
+): Promise<vscode.CodeAction | vscode.Command> {
+  const started = Date.now();
+  let lastTitles: string[] = [];
+  while (Date.now() - started < timeoutMs) {
+    const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+      'vscode.executeCodeActionProvider',
+      uri,
+      range
+    );
+    lastTitles = (actions ?? []).map((action) => action.title);
+    const match = (actions ?? []).find(predicate);
+    if (match) {
+      return match;
+    }
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for code action. Last actions:\n${lastTitles.join('\n')}`);
+}
+
 async function currentClipboardText(): Promise<string> {
   const capturePath = process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH;
   if (capturePath) {
@@ -3820,6 +3931,14 @@ async function writeClipboardText(text: string): Promise<void> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+function assertRepairTargetBlocker(message: string): void {
+  assert.ok(
+    message.includes('active file or target URI') ||
+      message.includes('file URI in the current workspace'),
+    message
+  );
 }
 
 function diagnosticCode(diagnostic: vscode.Diagnostic): string {

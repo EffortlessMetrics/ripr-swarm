@@ -767,9 +767,10 @@ Lane 3 does not own:
 
 The source-of-truth stack, validation seam, Show Status queue projection,
 bounded Current Repair Packet action, read-only Repo Gap Map action, and
-manifest-only fixture corpus have landed. The active swarm-trunk follow-up is
-the packaged VS Code smoke, tracked in `ripr-swarm` issue #17; later work is
-documentation (#18), dogfood receipts (#19), and campaign closeout (#20).
+manifest-only fixture corpus have landed. Packaged VS Code smoke for the queue
+path is tracked as closed in `ripr-swarm` issue #17. The active swarm-trunk
+follow-up is user-facing documentation (#18), followed by dogfood receipts
+(#19) and campaign closeout (#20).
 
 Future queue behavior must consume typed fields rather than prose, preserve Rust
 defaults, keep preview evidence visibly bounded, and fail closed on stale,
