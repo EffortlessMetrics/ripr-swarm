@@ -333,9 +333,15 @@ Given a receipt-backed attempt with evidence movement `evidence_regressed`,
 - missing receipt command packet;
 - must-not-change boundary packet.
 
-Follow-up outcome fixtures should add:
+`fixtures/actionable-gap-outcomes-corpus` pins outcome reporting with:
 
-- prior attempt improved, unchanged, and regressed outcome rows.
+- not attempted packet;
+- receipt present without movement;
+- evidence improved;
+- evidence unchanged;
+- evidence regressed;
+- resolved;
+- attempted without a matching receipt.
 
 Must-not-claim guards:
 
@@ -356,6 +362,11 @@ Current implementation coverage:
 - `xtask::tests::ripr_swarm_plan_packet_corpus_matches_expected_states`
   validates `fixtures/swarm-plan-packet-corpus/corpus.json` against the same
   planner used by the report command;
+- `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
+  validates `fixtures/actionable-gap-outcomes-corpus/corpus.json` against the
+  same outcome joiner used by the report command;
+- `xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift`
+  pins missing, malformed, and mismatched outcome-corpus guardrails;
 - `xtask::tests::ripr_swarm_command_parses_plan_args` pins the
   `cargo xtask ripr-swarm plan --top <n>` command shape.
 

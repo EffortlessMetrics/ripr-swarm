@@ -5118,7 +5118,8 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
         .is_some_and(|name| {
             matches!(
                 name,
-                "editor_gap_cockpit"
+                "actionable-gap-outcomes-corpus"
+                    | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
                     | "editor_adoption_assurance"
@@ -7294,6 +7295,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
     validate_gap_decision_ledger_fixture_corpus(&mut violations)?;
     validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
+    validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
     validate_pr_review_front_panel_fixture_corpus(&mut violations)?;
     validate_report_packet_index_fixture_corpus(&mut violations)?;
     validate_pr_inline_comment_publisher_fixture_corpus(&mut violations)?;
@@ -7466,6 +7468,42 @@ const SWARM_PLAN_PACKET_REQUIRED_CASES: &[(&str, &str)] = &[
     (
         "must_not_change_boundary_packet",
         "blocked_by_missing_context",
+    ),
+];
+
+const ACTIONABLE_GAP_OUTCOMES_CORPUS: &str = "fixtures/actionable-gap-outcomes-corpus/corpus.json";
+
+const ACTIONABLE_GAP_OUTCOMES_REQUIRED_CASES: &[(&str, &str, &str)] = &[
+    ("not_attempted_packet", "not_attempted", "not_attempted"),
+    (
+        "receipt_present_without_movement",
+        "receipt_present",
+        "present",
+    ),
+    (
+        "evidence_improved_from_receipt",
+        "evidence_improved",
+        "present",
+    ),
+    (
+        "evidence_unchanged_from_targeted_outcome",
+        "evidence_unchanged",
+        "missing",
+    ),
+    (
+        "evidence_regressed_from_targeted_outcome",
+        "evidence_regressed",
+        "missing",
+    ),
+    (
+        "resolved_from_removed_targeted_outcome",
+        "resolved",
+        "missing",
+    ),
+    (
+        "attempted_no_receipt_from_new_targeted_outcome",
+        "attempted_no_receipt",
+        "missing",
     ),
 ];
 
@@ -8529,6 +8567,419 @@ fn validate_swarm_plan_packet_fixture_case(
                     .unwrap_or_else(|| "missing".to_string())
             ));
         }
+    }
+}
+
+fn validate_actionable_gap_outcomes_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/actionable-gap-outcomes-corpus");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "actionable gap outcomes fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec = root.join("SPEC.md");
+    if spec.exists() {
+        let spec_text = read_text_lossy(&spec)?;
+        if !spec_text
+            .lines()
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0031"))
+        {
+            violations.push(format!(
+                "{} is missing `Spec: RIPR-SPEC-0031`",
+                normalize_path(&spec)
+            ));
+        }
+        if !spec_text
+            .lines()
+            .any(|line| line.starts_with("Related: RIPR-SPEC-0057"))
+        {
+            violations.push(format!(
+                "{} is missing `Related: RIPR-SPEC-0057`",
+                normalize_path(&spec)
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !has_markdown_heading(&spec_text, heading) {
+                violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
+            }
+        }
+    }
+
+    validate_actionable_gap_outcomes_fixture_corpus_at(
+        Path::new(ACTIONABLE_GAP_OUTCOMES_CORPUS),
+        violations,
+    )
+}
+
+fn validate_actionable_gap_outcomes_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "actionable gap outcomes corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let corpus = match read_json_value(path) {
+        Ok(value) => value,
+        Err(err) => {
+            violations.push(err);
+            return Ok(());
+        }
+    };
+    if json_string_field(&corpus, "kind").as_deref() != Some("actionable_gap_outcomes_corpus") {
+        violations.push(format!(
+            "{} kind must be actionable_gap_outcomes_corpus",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        violations.push(format!(
+            "{} schema_version must be 0.1",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0031") {
+        violations.push(format!(
+            "{} spec must be RIPR-SPEC-0031",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "related_spec").as_deref() != Some("RIPR-SPEC-0057") {
+        violations.push(format!(
+            "{} related_spec must be RIPR-SPEC-0057",
+            normalize_path(path)
+        ));
+    }
+
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        violations.push(format!("{} is missing cases array", normalize_path(path)));
+        return Ok(());
+    };
+    let mut seen = BTreeMap::new();
+    for case in cases {
+        let case_id = json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string());
+        if seen
+            .insert(
+                case_id.clone(),
+                actionable_gap_outcomes_expected_case_state(case).unwrap_or_default(),
+            )
+            .is_some()
+        {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} is duplicated"
+            ));
+        }
+        validate_actionable_gap_outcomes_fixture_case(case, &case_id, violations)?;
+    }
+
+    for (case_id, expected_state, expected_receipt_state) in ACTIONABLE_GAP_OUTCOMES_REQUIRED_CASES
+    {
+        match seen.get(*case_id) {
+            Some((actual_state, actual_receipt_state))
+                if actual_state == expected_state && actual_receipt_state == expected_receipt_state => {}
+            Some((actual_state, actual_receipt_state)) => violations.push(format!(
+                "actionable gap outcomes case {case_id} must have state {expected_state}/{expected_receipt_state}, got {actual_state}/{actual_receipt_state}"
+            )),
+            None => violations.push(format!(
+                "actionable gap outcomes corpus is missing case {case_id}"
+            )),
+        }
+    }
+
+    Ok(())
+}
+
+fn actionable_gap_outcomes_expected_case_state(case: &Value) -> Option<(String, String)> {
+    let outcome = audit_array(case, &["expected", "outcomes"]).first()?;
+    Some((
+        json_string_field(outcome, "outcome_state")?,
+        json_string_field(outcome, "receipt_state")?,
+    ))
+}
+
+fn validate_actionable_gap_outcomes_fixture_case(
+    case: &Value,
+    case_id: &str,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if json_string_field(case, "description").is_none() {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} is missing description"
+        ));
+    }
+    require_actionable_gap_outcomes_string_array_at(case, "must_not_claim", case_id, violations);
+
+    let Some(actionable_gaps) = case
+        .get("actionable_gaps")
+        .filter(|value| value.is_object())
+    else {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} is missing actionable_gaps object"
+        ));
+        return Ok(());
+    };
+    if audit_array(actionable_gaps, &["packets"]).is_empty() {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} actionable_gaps.packets must not be empty"
+        ));
+        return Ok(());
+    }
+    for packet in audit_array(actionable_gaps, &["packets"]) {
+        let packet_id =
+            json_string_field(packet, "canonical_gap_id").unwrap_or_else(|| "unknown".to_string());
+        if let Some(receipt_command) = audit_non_empty_string(packet, &["receipt_command_or_path"])
+            .or_else(|| audit_non_empty_string(packet, &["receipt_command"]))
+            && !ripr_swarm_plan_fixture_receipt_command_supported(&receipt_command)
+        {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} packet {packet_id} uses unsupported receipt command `{receipt_command}`"
+            ));
+        }
+    }
+
+    let Some(expected) = case.get("expected").filter(|value| value.is_object()) else {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} is missing expected object"
+        ));
+        return Ok(());
+    };
+    let expected_outcomes = audit_array(expected, &["outcomes"]);
+    if expected_outcomes.is_empty() {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} expected.outcomes must not be empty"
+        ));
+        return Ok(());
+    }
+
+    let agent_receipt = actionable_gap_outcomes_optional_fixture_input(case, "agent_receipt");
+    let targeted_test_outcome =
+        actionable_gap_outcomes_optional_fixture_input(case, "targeted_test_outcome");
+    if let Some(targeted_test_outcome) = targeted_test_outcome {
+        validate_actionable_gap_outcomes_targeted_shape(case_id, targeted_test_outcome, violations);
+    }
+    let report = match actionable_gap_outcomes_report_from_values(
+        actionable_gaps,
+        agent_receipt,
+        targeted_test_outcome,
+        format!(
+            "{}#{case_id}:actionable_gaps",
+            ACTIONABLE_GAP_OUTCOMES_CORPUS
+        ),
+        agent_receipt
+            .map(|_| format!("{}#{case_id}:agent_receipt", ACTIONABLE_GAP_OUTCOMES_CORPUS)),
+        targeted_test_outcome.map(|_| {
+            format!(
+                "{}#{case_id}:targeted_test_outcome",
+                ACTIONABLE_GAP_OUTCOMES_CORPUS
+            )
+        }),
+    ) {
+        Ok(report) => report,
+        Err(err) => {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} failed to build report: {err}"
+            ));
+            return Ok(());
+        }
+    };
+
+    for expected_outcome in expected_outcomes {
+        validate_actionable_gap_outcomes_expected_outcome(
+            case_id,
+            expected_outcome,
+            &report,
+            violations,
+        );
+    }
+
+    let rendered = match actionable_gap_outcomes_json(&report) {
+        Ok(json) => json,
+        Err(err) => {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} failed to render JSON: {err}"
+            ));
+            return Ok(());
+        }
+    };
+    let rendered: Value = match serde_json::from_str(&rendered) {
+        Ok(value) => value,
+        Err(err) => {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} rendered invalid JSON: {err}"
+            ));
+            return Ok(());
+        }
+    };
+    validate_actionable_gap_outcomes_expected_summary(case_id, expected, &rendered, violations);
+    let markdown = actionable_gap_outcomes_markdown(&report);
+    if !markdown.contains("# Actionable Gap Outcomes") {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} markdown must include report heading"
+        ));
+    }
+
+    Ok(())
+}
+
+fn actionable_gap_outcomes_optional_fixture_input<'a>(
+    case: &'a Value,
+    field: &str,
+) -> Option<&'a Value> {
+    case.get(field).filter(|value| !value.is_null())
+}
+
+fn validate_actionable_gap_outcomes_targeted_shape(
+    case_id: &str,
+    targeted_test_outcome: &Value,
+    violations: &mut Vec<String>,
+) {
+    for bucket in ["moved", "unchanged", "regressed"] {
+        for item in audit_array(targeted_test_outcome, &[bucket]) {
+            for field in ["before", "after", "direction"] {
+                if audit_non_empty_string(item, &[field]).is_none() {
+                    violations.push(format!(
+                        "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must include {field}"
+                    ));
+                }
+            }
+        }
+    }
+    for bucket in ["removed", "new"] {
+        for item in audit_array(targeted_test_outcome, &[bucket]) {
+            if audit_non_empty_string(item, &["grip_class"]).is_none() {
+                violations.push(format!(
+                    "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must include grip_class"
+                ));
+            }
+            for field in ["before", "after", "direction"] {
+                if item.get(field).is_some_and(|value| !value.is_null()) {
+                    violations.push(format!(
+                        "actionable gap outcomes case {case_id} targeted_test_outcome.{bucket} item must use one-sided grip_class instead of {field}"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn validate_actionable_gap_outcomes_expected_outcome(
+    case_id: &str,
+    expected: &Value,
+    report: &ActionableGapOutcomesReport,
+    violations: &mut Vec<String>,
+) {
+    let Some(canonical_gap_id) = json_string_field(expected, "canonical_gap_id") else {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} expected outcome is missing canonical_gap_id"
+        ));
+        return;
+    };
+    let Some(actual) = report
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.canonical_gap_id == canonical_gap_id)
+    else {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} did not produce outcome {canonical_gap_id}"
+        ));
+        return;
+    };
+
+    for (field, actual_value) in [
+        ("outcome_state", actual.outcome_state.as_str()),
+        ("receipt_state", actual.receipt_state.as_str()),
+    ] {
+        let Some(expected_value) = json_string_field(expected, field) else {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} expected outcome {canonical_gap_id} is missing {field}"
+            ));
+            continue;
+        };
+        if actual_value != expected_value.as_str() {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} outcome {canonical_gap_id} {field} must be {expected_value}, got {actual_value}"
+            ));
+        }
+    }
+
+    for (field, actual_value) in [
+        (
+            "movement_source",
+            actual.movement_source.as_deref().map(Value::from),
+        ),
+        (
+            "movement_direction",
+            actual.movement_direction.as_deref().map(Value::from),
+        ),
+        ("before", actual.before.as_deref().map(Value::from)),
+        ("after", actual.after.as_deref().map(Value::from)),
+    ] {
+        if let Some(expected_value) = expected.get(field) {
+            let actual_value = actual_value.unwrap_or(Value::Null);
+            if actual_value != *expected_value {
+                violations.push(format!(
+                    "actionable gap outcomes case {case_id} outcome {canonical_gap_id} {field} must be {expected_value}, got {actual_value}"
+                ));
+            }
+        }
+    }
+}
+
+fn validate_actionable_gap_outcomes_expected_summary(
+    case_id: &str,
+    expected: &Value,
+    rendered: &Value,
+    violations: &mut Vec<String>,
+) {
+    let Some(summary) = expected.get("summary").and_then(Value::as_object) else {
+        violations.push(format!(
+            "actionable gap outcomes case {case_id} expected.summary is missing"
+        ));
+        return;
+    };
+    let null_summary = Value::Null;
+    let actual_summary = audit_get(rendered, &["summary"]).unwrap_or(&null_summary);
+    for (key, expected_value) in summary {
+        let Some(expected_count) = expected_value.as_u64() else {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} expected.summary.{key} must be numeric"
+            ));
+            continue;
+        };
+        let actual_count = actual_summary.get(key).and_then(Value::as_u64);
+        if actual_count != Some(expected_count) {
+            violations.push(format!(
+                "actionable gap outcomes case {case_id} summary.{key} must be {expected_count}, got {}",
+                actual_count
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "missing".to_string())
+            ));
+        }
+    }
+}
+
+fn require_actionable_gap_outcomes_string_array_at(
+    value: &Value,
+    field: &str,
+    case_id: &str,
+    violations: &mut Vec<String>,
+) {
+    match value.get(field) {
+        Some(Value::Array(items))
+            if !items.is_empty() && items.iter().all(|item| item.as_str().is_some()) => {}
+        _ => violations.push(format!(
+            "actionable gap outcomes case {case_id} {field} must be a non-empty string array"
+        )),
     }
 }
 
@@ -42892,9 +43343,9 @@ mod tests {
         mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
         next_spec_id_from_ids, no_panic_toml_string, non_rust_programming_retention_reason,
         normalize_fixture_human_output, normalize_fixture_json_output, normalize_golden_text,
-        panic_family_from_pattern, parse_campaign_manifest, parse_file_policy_allowlist,
-        parse_gh_pr_status_args, parse_gh_pr_status_pull_request, parse_inline_array,
-        parse_mutation_calibration_args, parse_mutation_outcomes_json,
+        panic_family_from_pattern, parse_actionable_gap_outcomes_args, parse_campaign_manifest,
+        parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
+        parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
         parse_no_panic_allowlist_toml, parse_no_panic_allowlist_toml_v2,
         parse_pr_triage_pull_requests, parse_reason, parse_repo_exposure_static_seams,
         parse_repo_exposure_summary_counts, parse_required_status_contexts,
@@ -42927,7 +43378,9 @@ mod tests {
         suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
         targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
         test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
-        test_oracle_tests_in_text, unknown_command_message, validate_local_context_allowlist,
+        test_oracle_tests_in_text, unknown_command_message,
+        validate_actionable_gap_outcomes_fixture_case,
+        validate_actionable_gap_outcomes_fixture_corpus, validate_local_context_allowlist,
         validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
         vscode_compile_command, vscode_extension_dir, vscode_package_command,
         vscode_package_version, vscode_test_e2e_command, windows_absolute_path_tokens,
@@ -58757,6 +59210,84 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn actionable_gap_outcomes_fixture_corpus_matches_expected_states() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let mut violations = Vec::new();
+            validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+            if violations.is_empty() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "actionable gap outcomes corpus violations:\n- {}",
+                    violations.join("\n- ")
+                ))
+            }
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_fixture_rejects_incomplete_receipt_command() -> Result<(), String> {
+        let case = serde_json::json!({
+            "id": "incomplete_receipt_command",
+            "description": "outcome fixture packet with an incomplete receipt command",
+            "actionable_gaps": {
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "report": "actionable-gaps",
+                "packets": [
+                    {
+                        "canonical_gap_id": "gap:incomplete-receipt-command",
+                        "evidence_class": "predicate_boundary",
+                        "repair_kind": "add_boundary_assertion",
+                        "source_file": "src/lib.rs",
+                        "primary_anchor": {
+                            "file": "src/lib.rs",
+                            "line": 12
+                        },
+                        "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                        "receipt_command_or_path": "ripr agent receipt --root . --json"
+                    }
+                ]
+            },
+            "agent_receipt": null,
+            "targeted_test_outcome": null,
+            "expected": {
+                "summary": {
+                    "packets_total": 1,
+                    "outcomes_total": 1,
+                    "not_attempted": 1,
+                    "receipt_present": 0,
+                    "evidence_improved": 0,
+                    "receipts_present": 0
+                },
+                "outcomes": [
+                    {
+                        "canonical_gap_id": "gap:incomplete-receipt-command",
+                        "outcome_state": "not_attempted",
+                        "receipt_state": "not_attempted",
+                        "movement_source": null
+                    }
+                ]
+            },
+            "must_not_claim": [
+                "Do not accept malformed receipt commands."
+            ]
+        });
+        let mut violations = Vec::new();
+        validate_actionable_gap_outcomes_fixture_case(
+            &case,
+            "incomplete_receipt_command",
+            &mut violations,
+        )?;
+
+        violations
+            .iter()
+            .any(|violation| violation.contains("unsupported receipt command"))
+            .then_some(())
+            .ok_or_else(|| format!("missing unsupported receipt command violation: {violations:?}"))
+    }
+
+    #[test]
     fn ripr_swarm_plan_packet_corpus_rejects_unsupported_receipt_commands() {
         let case = serde_json::json!({
             "id": "unsupported_receipt_emit",
@@ -58858,6 +59389,451 @@ covered_by = ["cargo xtask check-file-policy"]
                 .iter()
                 .any(|violation| violation.contains("unsupported receipt_command"))
         );
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_fixture_corpus_reports_contract_drift() -> Result<(), String> {
+        with_temp_cwd("actionable-gap-outcomes-corpus-drift", |_| {
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("missing-corpus.json"),
+                &mut violations,
+            )?;
+            assert!(
+                violations.iter().any(
+                    |violation| violation.contains("actionable gap outcomes corpus is missing")
+                ),
+                "missing corpus path should be reported: {violations:?}"
+            );
+
+            write(
+                Path::new("bad-corpus.json"),
+                r#"{
+  "schema_version": "bad",
+  "kind": "wrong",
+  "spec": "RIPR-SPEC-0000",
+  "related_spec": "RIPR-SPEC-0000",
+  "cases": [
+    {
+      "id": "bad-outcome",
+      "description": "Bad outcome case.",
+      "must_not_claim": ["Do not trust this malformed case."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:bad-outcome",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+            "verify_command": "ripr agent verify --json",
+            "receipt_command_or_path": "ripr agent receipt --seam-id bad-outcome"
+          }
+        ]
+      },
+      "agent_receipt": null,
+      "targeted_test_outcome": null,
+      "expected": {
+        "summary": {"packets_total": 2},
+        "outcomes": [
+          {
+            "canonical_gap_id": "gap:bad-outcome",
+            "outcome_state": "resolved",
+            "receipt_state": "present",
+            "movement_source": "agent_receipt"
+          }
+        ]
+      }
+    }
+  ]
+}"#,
+            );
+
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("bad-corpus.json"),
+                &mut violations,
+            )?;
+            for expected in [
+                "kind must be actionable_gap_outcomes_corpus",
+                "schema_version must be 0.1",
+                "spec must be RIPR-SPEC-0031",
+                "related_spec must be RIPR-SPEC-0057",
+                "outcome_state must be resolved, got not_attempted",
+                "receipt_state must be present, got not_attempted",
+                "summary.packets_total must be 2, got 1",
+                "corpus is missing case not_attempted_packet",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(
+                &serde_json::json!({"id": "missing-fields"}),
+                "missing-fields",
+                &mut violations,
+            )?;
+            for expected in [
+                "missing description",
+                "must_not_claim must be a non-empty string array",
+                "is missing actionable_gaps object",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected fixture-case violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            let targeted_shape_case = serde_json::json!({
+                "id": "bad-targeted-shape",
+                "description": "Bad targeted-test outcome shape.",
+                "must_not_claim": ["Do not infer movement from malformed targeted-test outcome."],
+                "actionable_gaps": {
+                    "packets": [
+                        {
+                            "canonical_gap_id": "gap:bad-targeted-shape",
+                            "evidence_class": "predicate_boundary",
+                            "repair_kind": "add_boundary_assertion",
+                            "source_file": "src/lib.rs",
+                            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+                            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id bad-targeted-shape --json"
+                        }
+                    ]
+                },
+                "agent_receipt": {"receipts": []},
+                "targeted_test_outcome": {
+                    "schema_version": "0.1",
+                    "moved": [
+                        {
+                            "seam_id": "bad-targeted-shape",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 1
+                        }
+                    ],
+                    "unchanged": [],
+                    "regressed": [],
+                    "removed": [
+                        {
+                            "seam_id": "bad-targeted-shape-removed",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 2,
+                            "before": "weakly_gripped"
+                        }
+                    ],
+                    "new": [
+                        {
+                            "seam_id": "bad-targeted-shape-new",
+                            "seam_kind": "predicate_boundary",
+                            "file": "src/lib.rs",
+                            "line": 3,
+                            "after": "ungripped"
+                        }
+                    ]
+                },
+                "expected": {
+                    "summary": {"packets_total": 1},
+                    "outcomes": [
+                        {
+                            "canonical_gap_id": "gap:bad-targeted-shape",
+                            "outcome_state": "evidence_improved",
+                            "receipt_state": "missing",
+                            "movement_source": "targeted_test_outcome",
+                            "movement_direction": "improved",
+                            "before": "weakly_gripped",
+                            "after": "strongly_gripped"
+                        }
+                    ]
+                }
+            });
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(
+                &targeted_shape_case,
+                "bad-targeted-shape",
+                &mut violations,
+            )?;
+            for expected in [
+                "targeted_test_outcome.moved item must include before",
+                "targeted_test_outcome.moved item must include after",
+                "targeted_test_outcome.moved item must include direction",
+                "targeted_test_outcome.removed item must include grip_class",
+                "targeted_test_outcome.removed item must use one-sided grip_class instead of before",
+                "targeted_test_outcome.new item must include grip_class",
+                "targeted_test_outcome.new item must use one-sided grip_class instead of after",
+                "outcome_state must be evidence_improved, got attempted_no_receipt",
+                "movement_direction must be \"improved\", got \"move\"",
+                "before must be \"weakly_gripped\", got null",
+                "after must be \"strongly_gripped\", got null",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected targeted-shape violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_fixture_corpus_reports_spec_wrapper_drift() -> Result<(), String> {
+        with_temp_cwd("actionable-gap-outcomes-wrapper-drift", |_| {
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+            for expected in [
+                "fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/SPEC.md",
+                "fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+                "corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected wrapper violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            write(
+                Path::new("fixtures/actionable-gap-outcomes-corpus/SPEC.md"),
+                "# Bad spec\n\n## Given\n",
+            );
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+            for expected in [
+                "is missing `Spec: RIPR-SPEC-0031`",
+                "is missing `Related: RIPR-SPEC-0057`",
+                "is missing `## When`",
+                "is missing `## Then`",
+                "is missing `## Must Not`",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected spec violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_fixture_corpus_reports_manifest_edge_states() -> Result<(), String> {
+        with_temp_cwd("actionable-gap-outcomes-corpus-edge-states", |_| {
+            write(Path::new("bad-json.json"), "{");
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("bad-json.json"),
+                &mut violations,
+            )?;
+            assert!(
+                !violations.is_empty(),
+                "invalid corpus JSON should be reported"
+            );
+
+            write(
+                Path::new("no-cases.json"),
+                r#"{
+  "schema_version": "0.1",
+  "kind": "actionable_gap_outcomes_corpus",
+  "spec": "RIPR-SPEC-0031",
+  "related_spec": "RIPR-SPEC-0057"
+}"#,
+            );
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("no-cases.json"),
+                &mut violations,
+            )?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("is missing cases array")),
+                "missing cases array should be reported: {violations:?}"
+            );
+
+            write(
+                Path::new("duplicate-case.json"),
+                r#"{
+  "schema_version": "0.1",
+  "kind": "actionable_gap_outcomes_corpus",
+  "spec": "RIPR-SPEC-0031",
+  "related_spec": "RIPR-SPEC-0057",
+  "cases": [
+    {
+      "id": "not_attempted_packet",
+      "description": "Duplicate case A.",
+      "must_not_claim": ["Do not treat duplicate cases as valid."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:duplicate-a",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id duplicate-a"
+          }
+        ]
+      },
+      "expected": {
+        "summary": {"packets_total": 1},
+        "outcomes": [
+          {"canonical_gap_id": "gap:duplicate-a", "outcome_state": "not_attempted", "receipt_state": "not_attempted"}
+        ]
+      }
+    },
+    {
+      "id": "not_attempted_packet",
+      "description": "Duplicate case B.",
+      "must_not_claim": ["Do not treat duplicate cases as valid."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:duplicate-b",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id duplicate-b"
+          }
+        ]
+      },
+      "expected": {
+        "summary": {"packets_total": 1},
+        "outcomes": [
+          {"canonical_gap_id": "gap:duplicate-b", "outcome_state": "receipt_present", "receipt_state": "present"}
+        ]
+      }
+    }
+  ]
+}"#,
+            );
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_corpus_at(
+                Path::new("duplicate-case.json"),
+                &mut violations,
+            )?;
+            for expected in [
+                "case not_attempted_packet is duplicated",
+                "case not_attempted_packet must have state not_attempted/not_attempted",
+            ] {
+                assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.contains(expected)),
+                    "expected duplicate-case violation containing {expected:?}, got {violations:?}"
+                );
+            }
+
+            Ok::<(), String>(())
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_fixture_case_reports_expected_shape_drift() -> Result<(), String> {
+        let base_packet = serde_json::json!({
+            "canonical_gap_id": "gap:expected-shape",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id expected-shape --json"
+        });
+
+        for (case, expected) in [
+            (
+                serde_json::json!({
+                    "id": "empty-packets",
+                    "description": "Empty packet list.",
+                    "must_not_claim": ["Do not accept an empty packet list."],
+                    "actionable_gaps": {"packets": []}
+                }),
+                "actionable_gaps.packets must not be empty",
+            ),
+            (
+                serde_json::json!({
+                    "id": "missing-expected",
+                    "description": "Missing expected object.",
+                    "must_not_claim": ["Do not accept a missing expected object."],
+                    "actionable_gaps": {"packets": [base_packet.clone()]}
+                }),
+                "is missing expected object",
+            ),
+            (
+                serde_json::json!({
+                    "id": "empty-expected-outcomes",
+                    "description": "Empty expected outcomes.",
+                    "must_not_claim": ["Do not accept empty expected outcomes."],
+                    "actionable_gaps": {"packets": [base_packet.clone()]},
+                    "expected": {"summary": {"packets_total": 1}, "outcomes": []}
+                }),
+                "expected.outcomes must not be empty",
+            ),
+        ] {
+            let case_id = case.get("id").and_then(Value::as_str).unwrap_or_default();
+            let mut violations = Vec::new();
+            super::validate_actionable_gap_outcomes_fixture_case(&case, case_id, &mut violations)?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected fixture violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        let case = serde_json::json!({
+            "id": "bad-expected-shape",
+            "description": "Malformed expected shape.",
+            "must_not_claim": ["Do not accept malformed expected outcome fields."],
+            "actionable_gaps": {"packets": [base_packet]},
+            "agent_receipt": null,
+            "targeted_test_outcome": null,
+            "expected": {
+                "summary": {"packets_total": "one", "outcomes_total": 2},
+                "outcomes": [
+                    {},
+                    {"canonical_gap_id": "gap:missing"},
+                    {"canonical_gap_id": "gap:expected-shape"}
+                ]
+            }
+        });
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &case,
+            "bad-expected-shape",
+            &mut violations,
+        )?;
+        for expected in [
+            "expected outcome is missing canonical_gap_id",
+            "did not produce outcome gap:missing",
+            "expected outcome gap:expected-shape is missing outcome_state",
+            "expected outcome gap:expected-shape is missing receipt_state",
+            "expected.summary.packets_total must be numeric",
+            "summary.outcomes_total must be 2, got 1",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected malformed expected-shape violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        Ok(())
     }
 
     #[test]
@@ -59171,6 +60147,178 @@ covered_by = ["cargo xtask check-file-policy"]
             assert!(markdown.contains("gap:seam-a"));
             Ok(())
         })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_command_rejects_unsafe_argument_shapes() -> Result<(), String> {
+        for (args, expected) in [
+            (
+                vec!["--actionable-gaps"],
+                "missing value for `--actionable-gaps`",
+            ),
+            (
+                vec!["--agent-receipt"],
+                "missing value for `--agent-receipt`",
+            ),
+            (
+                vec!["--targeted-test-outcome"],
+                "missing value for `--targeted-test-outcome`",
+            ),
+            (vec!["--help"], "usage: cargo xtask actionable-gap-outcomes"),
+            (
+                vec!["--unknown"],
+                "unknown actionable-gap-outcomes option `--unknown`",
+            ),
+            (
+                vec!["positional"],
+                "unexpected positional argument `positional`",
+            ),
+        ] {
+            let owned_args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let err = parse_actionable_gap_outcomes_args(&owned_args)
+                .expect_err("invalid actionable-gap-outcomes args should be rejected");
+            assert!(
+                err.contains(expected),
+                "expected {expected:?} in error for {args:?}, got {err:?}"
+            );
+        }
+
+        with_temp_cwd("actionable-gap-outcomes-missing-input", |_| {
+            let err = actionable_gap_outcomes_report_impl(&[])
+                .expect_err("missing actionable-gaps artifact should fail closed");
+            assert!(
+                err.contains(
+                    "actionable-gap-outcomes requires `target/ripr/reports/actionable-gaps.json`"
+                ),
+                "missing artifact error should name regeneration target, got {err:?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_join_receipt_arrays_anchor_and_unknown_movement()
+    -> Result<(), String> {
+        let packets = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:anchor-only",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/anchor.rs",
+                    "primary_anchor": {"file": "src/anchor.rs", "line": 7},
+                    "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                    "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id anchor-only"
+                },
+                {
+                    "canonical_gap_id": "gap:changed-target",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/target.rs",
+                    "primary_anchor": {"file": "src/target.rs", "line": 11},
+                    "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                    "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id changed-target"
+                }
+            ]
+        });
+        let receipt = serde_json::json!([
+            {
+                "schema_version": "0.3",
+                "seam": {
+                    "file": "src/anchor.rs",
+                    "line": 7,
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped"
+                },
+                "summary": {"next_action": {"kind": "changed"}}
+            }
+        ]);
+        let targeted = serde_json::json!({
+            "schema_version": "0.1",
+            "moved": [
+                {
+                    "seam_id": "changed-target",
+                    "seam_kind": "predicate_boundary",
+                    "file": "src/target.rs",
+                    "line": 11,
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped",
+                    "direction": "changed",
+                    "evidence_delta": []
+                }
+            ],
+            "unchanged": [],
+            "regressed": [],
+            "removed": [],
+            "new": []
+        });
+
+        let report = actionable_gap_outcomes_report_from_values(
+            &packets,
+            Some(&receipt),
+            Some(&targeted),
+            "target/ripr/reports/actionable-gaps.json".to_string(),
+            Some("target/ripr/reports/agent-receipt.json".to_string()),
+            Some("target/ripr/reports/targeted-test-outcome.json".to_string()),
+        )?;
+        let json = actionable_gap_outcomes_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+        assert_eq!(value["summary"]["receipt_present"], 1);
+        assert_eq!(value["summary"]["attempted_no_receipt"], 1);
+        assert_eq!(value["summary"]["unknown"], 0);
+        assert_eq!(value["outcomes"][0]["canonical_gap_id"], "gap:anchor-only");
+        assert_eq!(value["outcomes"][0]["receipt_state"], "present");
+        assert_eq!(value["outcomes"][0]["outcome_state"], "receipt_present");
+        assert_eq!(value["outcomes"][0]["movement_direction"], "changed");
+        assert_eq!(
+            value["outcomes"][1]["canonical_gap_id"],
+            "gap:changed-target"
+        );
+        assert_eq!(value["outcomes"][1]["receipt_state"], "missing");
+        assert_eq!(
+            value["outcomes"][1]["outcome_state"],
+            "attempted_no_receipt"
+        );
+        assert_eq!(
+            value["outcomes"][1]["reason"],
+            "Matched targeted-test outcome `moved` bucket."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_render_empty_packet_set_as_no_action() -> Result<(), String> {
+        let packets = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "packets": []
+        });
+        let report = actionable_gap_outcomes_report_from_values(
+            &packets,
+            None,
+            None,
+            "target/ripr/reports/actionable-gaps.json".to_string(),
+            None,
+            None,
+        )?;
+        let json = actionable_gap_outcomes_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["packets_total"], 0);
+        assert_eq!(value["summary"]["outcomes_total"], 0);
+
+        let markdown = actionable_gap_outcomes_markdown(&report);
+        assert!(markdown.contains("No actionable-gap packets were present."));
+        Ok(())
     }
 
     #[test]
