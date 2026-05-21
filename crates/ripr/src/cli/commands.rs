@@ -70,13 +70,19 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent start root {} is not a directory",
-            options.root.display()
-        ));
+fn ensure_subcommand_root_dir(command_label: &str, root: &Path) -> Result<(), String> {
+    if root.is_dir() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{command_label} root {} is not a directory",
+            root.display()
+        ))
     }
+}
+
+fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+    ensure_subcommand_root_dir("agent start", &options.root)?;
 
     let config = load_for_root(&options.root)?;
     let mut input = CheckInput {
@@ -139,12 +145,7 @@ fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent brief root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_subcommand_root_dir("agent brief", &options.root)?;
 
     let config = load_for_root(&options.root)?;
     let mut input = CheckInput {
@@ -173,12 +174,7 @@ fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent packet root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_subcommand_root_dir("agent packet", &options.root)?;
 
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         let rendered = render_agent_packet_from_gap_ledger(gap_ledger, gap_id)?;
@@ -249,12 +245,7 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent receipt root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_subcommand_root_dir("agent receipt", &options.root)?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
     let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
@@ -303,12 +294,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
 }
 
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent status root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_subcommand_root_dir("agent status", &options.root)?;
 
     let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
     if options.json {
@@ -322,12 +308,7 @@ fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
 }
 
 fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent review-summary root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_subcommand_root_dir("agent review-summary", &options.root)?;
 
     let report =
         app::agent_review_summary::build_agent_review_summary_report(&options.root, &options.root);
