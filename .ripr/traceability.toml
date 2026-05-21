@@ -217,6 +217,10 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_side_effect_seam_when_event_assertion_exists_then_oracle_observes_effect",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_opaque_helper_when_values_cannot_be_seen_then_evidence_records_static_limitation",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_no_arg_owner_call_reaches_return_seam_then_activation_is_yes",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_multiline_no_arg_owner_call_reaches_return_seam_then_activation_is_yes",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_one_hop_helper_calls_owner_then_value_insensitive_activation_is_yes",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_one_hop_helper_does_not_call_owner_then_activation_stays_unknown",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_generic_helper_name_mentions_owner_then_activation_stays_unknown",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_owner_call_with_opaque_args_reaches_return_seam_then_activation_is_yes",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_let_binding_values_when_owner_call_uses_identifiers_then_observed_values_are_resolved",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_same_file_const_when_owner_call_uses_identifier_then_observed_value_is_resolved",
@@ -1051,10 +1055,16 @@ id = "RIPR-SPEC-0015"
 name = "evidence health baseline"
 spec = "docs/specs/RIPR-SPEC-0015-evidence-health-baseline.md"
 tests = [
+  "crates/ripr/src/cli/commands.rs::tests::evidence_health_parses_default_and_full_option_surface",
+  "crates/ripr/src/cli/commands.rs::tests::evidence_health_rejects_unknown_arguments",
+  "crates/ripr/src/cli/commands.rs::tests::evidence_health_help_returns_ok",
   "crates/ripr/src/output/evidence_health.rs::tests::evidence_health_counts_core_metrics",
   "crates/ripr/src/output/evidence_health.rs::tests::evidence_health_markdown_names_calibration_and_limitations",
   "xtask::tests::evidence_health_build_timeout_writes_named_limitation_reports",
   "xtask::tests::evidence_health_timeout_writes_named_limitation_reports",
+  "xtask::tests::evidence_health_output_excerpt_is_bounded",
+  "xtask::tests::evidence_health_incomplete_exit_writes_named_limitation_reports",
+  "xtask::tests::evidence_health_nonzero_exit_writes_named_limitation_reports",
 ]
 fixtures = []
 code = [
@@ -1091,6 +1101,7 @@ metrics = [
   "evidence_health_calibration_not_imported",
   "evidence_health_top_evidence_quality_risks",
   "evidence_health_timeout_limitations",
+  "evidence_health_incomplete_limitations",
 ]
 
 [[behavior]]
@@ -1709,6 +1720,9 @@ tests = [
   "xtask/src/main.rs::report_packet_index_fixture_corpus_guard_accepts_complete_contract",
   "xtask/src/main.rs::report_packet_index_fixture_corpus_guard_reports_contract_drift",
   "xtask/src/main.rs::dogfood_report_packet_index_scenarios_have_checked_receipts",
+  "xtask/src/main.rs::report_index_tracks_lane1_readiness_artifacts",
+  "xtask/src/main.rs::report_index_next_commands_include_missing_lane1_readiness",
+  "xtask/src/main.rs::report_index_json_includes_repo_ops_packet_queue",
   "crates/ripr/src/output/report_packet_index.rs::tests::report_packet_index_reports_missing_front_panel",
   "crates/ripr/src/output/report_packet_index.rs::tests::report_packet_index_preserves_blocked_gate_authority",
   "crates/ripr/src/output/report_packet_index.rs::tests::report_packet_index_groups_coverage_grip_as_calibration",
@@ -2178,6 +2192,8 @@ tests = [
   "xtask::tests::lane1_evidence_audit_markdown_names_required_sections",
   "xtask::tests::lane1_evidence_audit_limited_report_names_timeout_limitation",
   "xtask::tests::lane1_evidence_audit_limits_incomplete_success_repo_exposure_artifact",
+  "xtask::tests::lane1_evidence_audit_repo_exposure_generation_limits_incomplete_success_json",
+  "xtask::tests::lane1_evidence_audit_repo_exposure_generation_limits_missing_success_json",
   "xtask::tests::lane1_evidence_audit_rejects_repo_exposure_without_seams",
   "xtask::tests::lane1_repo_exposure_file_completion_check_requires_seams_and_closing_brace",
   "xtask::tests::xtask_command_parse_preserves_compatibility_aliases",
@@ -2313,6 +2329,7 @@ tests = [
   "xtask::tests::evidence_quality_scorecard_surfaces_limited_inputs_as_unknowns",
   "xtask::tests::evidence_quality_scorecard_names_audit_regeneration_failure",
   "xtask::tests::evidence_quality_trend_reports_no_history_explicitly",
+  "xtask::tests::evidence_quality_trend_marks_limited_current_scorecard_unknown",
   "xtask::tests::evidence_quality_trend_distinguishes_improvement_regression_and_unchanged",
   "xtask::tests::evidence_quality_trend_reports_static_limitation_category_deltas",
 ]
@@ -2366,6 +2383,7 @@ metrics = [
   "lane1_evidence_trend_unchanged_metrics",
   "lane1_evidence_trend_unknown_metrics",
   "lane1_evidence_trend_no_history",
+  "lane1_evidence_trend_current_scorecard_limited",
   "lane1_evidence_trend_static_limitation_category_rows",
   "lane1_evidence_trend_actionable_packet_projection_eligible",
   "lane1_evidence_trend_actionable_packet_projection_excluded",
@@ -2381,6 +2399,9 @@ tests = [
   "crates/ripr/src/analysis/rust_index.rs::tests::classifies_duplicative_equality_as_weak_oracle",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::opaque_custom_assertion_helper_stays_unknown_oracle",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_owner_call_with_opaque_args_reaches_return_seam_then_activation_is_yes",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_one_hop_helper_calls_owner_then_value_insensitive_activation_is_yes",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_one_hop_helper_does_not_call_owner_then_activation_stays_unknown",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_full_evidence_when_generic_helper_name_mentions_owner_then_activation_stays_unknown",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::duplicative_equality_assertion_stays_weak_oracle",
 ]
 fixtures = [
@@ -3748,4 +3769,46 @@ metrics = [
   "outcome_delta_unchanged",
   "outcome_delta_regressed",
   "outcome_delta_resolved",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0060"
+name = "Source-of-truth stack"
+spec = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
+tests = [
+  "xtask/src/main.rs::support_tiers_accept_valid_fixture",
+  "xtask/src/main.rs::support_tiers_command_accepts_valid_fixture",
+  "xtask/src/main.rs::support_tiers_reject_stable_claim_without_proof",
+  "xtask/src/main.rs::support_tiers_reject_stable_claim_with_only_markdown_links",
+  "xtask/src/main.rs::support_tiers_reject_unknown_xtask_proof_command",
+  "xtask/src/main.rs::support_tiers_resolve_workflow_proof_relative_to_root",
+  "xtask/src/main.rs::support_tiers_require_specs_with_impact_to_link_status_doc",
+  "xtask/src/main.rs::support_tiers_allow_specs_with_no_support_tier_impact",
+  "xtask/src/main.rs::support_tiers_require_readme_support_language_to_link_status_doc",
+]
+fixtures = []
+code = [
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+  "xtask/src/main.rs",
+]
+outputs = [
+  "docs/source-of-truth/README.md",
+  "docs/source-of-truth/artifact-taxonomy.md",
+  "docs/source-of-truth/linking-model.md",
+  "docs/source-of-truth/agent-operating-model.md",
+  "docs/status/SUPPORT_TIERS.md",
+  "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md",
+  "docs/specs/README.md",
+  "docs/proposals/RIPR-PROP-0015-source-of-truth-control-plane.md",
+  "docs/proposals/README.md",
+  "docs/DOCUMENTATION.md",
+  ".ripr/traceability.toml",
+]
+metrics = [
+  "source_truth_registered_artifacts",
+  "source_truth_unresolved_links",
+  "source_truth_ready_items_without_proof",
+  "source_truth_stable_claims_without_proof",
+  "source_truth_policy_exceptions_missing_review",
 ]
