@@ -278,6 +278,13 @@ runner-image/toolchain readiness label. If runner state cannot be read, or a
 runner is idle but not image-ready, the workflow fails closed to GitHub-hosted
 rather than selecting a self-hosted runner by guesswork.
 
+The route job and protected result summaries include count-only runner
+diagnostics so operators can separate missing host runners, busy runners, and
+missing `em-ci-rust-1.95` readiness labels without exposing runner names,
+registration tokens, secrets, or full label inventories. The protected result
+job also receives those values as environment variables, so downloaded result
+logs are sufficient for issue proof.
+
 The copyable self-hosted proof runbook is in
 [`docs/swarm-development.md`](swarm-development.md#self-hosted-proof-runbook).
 Use it to record CX53 primary proof, CX43 fallback proof, or the bounded
