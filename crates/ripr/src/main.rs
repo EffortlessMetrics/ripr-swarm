@@ -9,7 +9,7 @@ fn main() {
     }
 }
 
-fn report_failure(err: &String) {
+fn report_failure(err: &str) {
     eprintln!("ripr: {err}");
 }
 
