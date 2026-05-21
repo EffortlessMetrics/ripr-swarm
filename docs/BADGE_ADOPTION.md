@@ -1,7 +1,7 @@
 # Badge Adoption Guide
 
-This guide describes a **supported external-adoption flow** for `ripr` and
-`ripr+` README badges.
+This guide describes external-adoption guidance for repo-scoped public `ripr`
+README badges and the narrower, preconditioned `ripr+` badge.
 
 ## Hard rules
 
@@ -9,13 +9,22 @@ This guide describes a **supported external-adoption flow** for `ripr` and
 2. Badge JSON must be **generated**, not hand-authored.
 3. External `ripr+` adoption must not depend on `ripr` repo-only `xtask`
    internals.
+4. Do not publish a `ripr+` badge unless the downstream repo has an explicit
+   supported path that writes `target/ripr/reports/test-efficiency.json`.
 
 See [BADGE_POLICY.md](BADGE_POLICY.md) for the product contract and allowed
 claims.
 
 ## Artifact model
 
-Generate and retain both artifacts:
+For a plain `ripr` repo badge, generate and retain both artifacts:
+
+- Native audit artifact:
+  `target/ripr/reports/repo-ripr-badge.json`
+- Public Shields endpoint:
+  `badges/ripr.json`
+
+For a `ripr+` repo badge, generate and retain both artifacts:
 
 - Native audit artifact:
   `target/ripr/reports/repo-ripr-plus-badge.json`
@@ -33,12 +42,12 @@ Validate native repo artifact:
 
 ```bash
 jq -e '
-  .kind == "ripr_plus"
+  (.kind == "ripr" or .kind == "ripr_plus")
   and .scope == "repo"
   and .basis == "canonical_actionable_gap"
   and (.message | type == "string")
   and (.color | type == "string")
-' target/ripr/reports/repo-ripr-plus-badge.json
+' target/ripr/reports/repo-ripr-badge.json
 ```
 
 Validate public Shields artifact:
@@ -46,11 +55,11 @@ Validate public Shields artifact:
 ```bash
 jq -e '
   .schemaVersion == 1
-  and .label == "ripr+"
+  and (.label == "ripr" or .label == "ripr+")
   and (.message | type == "string")
   and (.color | type == "string")
   and ((keys | sort) == ["color", "label", "message", "schemaVersion"])
-' badges/ripr-plus.json
+' badges/ripr.json
 ```
 
 ## Current portability boundary for `ripr+`
@@ -86,13 +95,46 @@ Until a public contract like this exists, recommend:
 
 ## Recommended downstream command sequence
 
+### Plain `ripr` badge
+
 ```bash
 mkdir -p target/ripr/reports badges
 
-ripr reports test-efficiency \
+ripr check \
   --root . \
-  --json \
-  --out target/ripr/reports/test-efficiency.json
+  --mode ready \
+  --format repo-badge-json \
+  > target/ripr/reports/repo-ripr-badge.json
+
+ripr check \
+  --root . \
+  --mode ready \
+  --format repo-badge-shields \
+  > badges/ripr.json
+
+jq -e '
+  .kind == "ripr"
+  and .scope == "repo"
+  and .basis == "canonical_actionable_gap"
+' target/ripr/reports/repo-ripr-badge.json
+
+jq -e '
+  .schemaVersion == 1
+  and .label == "ripr"
+  and ((keys | sort) == ["color", "label", "message", "schemaVersion"])
+' badges/ripr.json
+```
+
+### Conditional `ripr+` badge
+
+First generate `target/ripr/reports/test-efficiency.json` through a supported
+downstream mechanism. In this repository that source is
+`cargo xtask test-efficiency-report`; external repositories should not copy that
+private wrapper. Do not run the `ripr+` commands below until the JSON file
+exists and is part of the downstream repo's badge refresh contract.
+
+```bash
+jq -e '.schema_version' target/ripr/reports/test-efficiency.json
 
 ripr check \
   --root . \
@@ -129,6 +171,8 @@ Minimum properties:
 - trigger: `workflow_dispatch` and schedule;
 - pin released `ripr` version;
 - generate native + Shields artifacts;
+- for `ripr+`, generate or provide `test-efficiency.json` through an explicit
+  downstream-supported path;
 - validate `kind`/`scope`/`basis` and Shields schema;
 - open a narrowly scoped badge refresh PR.
 
@@ -137,6 +181,7 @@ Minimum properties:
 Use repo-specific endpoint URLs, e.g.:
 
 ```md
+[![ripr](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FOWNER%2FREPO%2Fmain%2Fbadges%2Fripr.json)](https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_POLICY.md)
 [![ripr+](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FOWNER%2FREPO%2Fmain%2Fbadges%2Fripr-plus.json)](https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_POLICY.md)
 ```
 
