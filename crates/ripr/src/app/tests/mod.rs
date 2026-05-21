@@ -1,6 +1,6 @@
 use super::{
-    CheckOutput, Mode, OutputFormat, render_check, render_check_with_config,
-    selector::selector_matches_location,
+    CHECK_OUTPUT_SCHEMA_VERSION, CheckOutput, Mode, OutputFormat, render_check,
+    render_check_with_config, selector::selector_matches_location,
 };
 use crate::domain::{
     ActivationEvidence, Confidence, ExposureClass, Finding, OracleStrength, Probe, ProbeFamily,
@@ -66,7 +66,7 @@ fn sample_finding(file: &str, line: usize) -> Finding {
 
 fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
     CheckOutput {
-        schema_version: "0.1".to_string(),
+        schema_version: CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
         mode: Mode::Draft,
         root: PathBuf::from("."),

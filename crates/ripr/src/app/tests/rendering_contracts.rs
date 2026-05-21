@@ -1,6 +1,4 @@
-use super::{
-    OutputFormat, check_output_with, render_check_with_config, sample_finding,
-};
+use super::{OutputFormat, check_output_with, render_check_with_config, sample_finding};
 use crate::domain::Summary;
 
 #[test]
