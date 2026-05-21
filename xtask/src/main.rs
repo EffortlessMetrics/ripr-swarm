@@ -56259,6 +56259,361 @@ owner = "repo-infra"
     }
 
     #[test]
+    fn doc_artifacts_rejects_bad_schema_version() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-bad-schema", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "0.9"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("schema_version must be 1.0")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_id_missing_from_file() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-id-missing-from-file", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "Different ID",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("does not mention `RIPR-PROP-0001`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_kind_path_mismatch() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-kind-path", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("kind `proposal` does not match path")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_linked_proposal() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unknown-link", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-9999"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation
+                        .contains("linked_proposal references unknown artifact `RIPR-PROP-9999`")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_accepts_accepted_spec_with_standalone_reason() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-standalone-spec", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert_eq!(violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_superseded_without_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded-missing", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("must set superseded_by or replacement")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_superseded_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded-unknown", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+replacement = "RIPR-PROP-9999"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("superseded_by references unknown artifact `RIPR-PROP-9999`")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_active_plan_without_proposal_or_spec() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-active-plan-missing-link", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "plans/source-of-truth/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("must link to at least one proposal or spec")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_accepts_active_plan_with_spec_link() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-active-plan", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/source-of-truth/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_spec = "RIPR-SPEC-0001"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert_eq!(violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_artifact_field() {
+        with_temp_cwd("doc-artifacts-unknown-field", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+surprise = "nope"
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("unknown fields should be parse errors");
+            assert!(error.contains("unknown field `surprise`"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unsupported_toml_section() {
+        with_temp_cwd("doc-artifacts-unsupported-section", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[metadata]
+owner = "repo-infra"
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("unsupported sections should be parse errors");
+            assert!(error.contains("unsupported TOML section `[metadata]`"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unquoted_values() {
+        with_temp_cwd("doc-artifacts-unquoted", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = RIPR-PROP-0001
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("unquoted values should be parse errors");
+            assert!(error.contains("string value must be quoted"));
+        });
+    }
+
+    #[test]
     fn campaign_manifest_parses_valid_file() {
         with_temp_cwd("campaign-manifest", |root| {
             let manifest_path = root.join("campaign.toml");
