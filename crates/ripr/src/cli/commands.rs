@@ -137,12 +137,7 @@ fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent packet root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent packet")?;
 
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         let rendered = render_agent_packet_from_gap_ledger(gap_ledger, gap_id)?;
@@ -213,12 +208,7 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent receipt root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
     let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
@@ -267,12 +257,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
 }
 
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent status root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent status")?;
 
     let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
     if options.json {
@@ -286,12 +271,7 @@ fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
 }
 
 fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent review-summary root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent review-summary")?;
 
     let report =
         app::agent_review_summary::build_agent_review_summary_report(&options.root, &options.root);
