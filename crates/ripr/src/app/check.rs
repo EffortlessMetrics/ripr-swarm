@@ -1,13 +1,12 @@
 use super::{CheckInput, CheckOutput};
 use crate::analysis::{
-    AnalysisResult, run_analysis_with_oracle_policy,
-    run_repo_analysis_with_oracle_policy,
+    AnalysisResult, run_analysis_with_oracle_policy, run_repo_analysis_with_oracle_policy,
 };
 use crate::config::RiprConfig;
 use crate::domain::Summary;
 
-mod output_builder;
 mod options_builder;
+mod output_builder;
 
 /// Runs the end-to-end static exposure analysis for a workspace.
 ///
@@ -79,12 +78,18 @@ enum AnalysisMode {
     Repo,
 }
 
-fn run_check(input: CheckInput, config: &RiprConfig, mode: AnalysisMode) -> Result<CheckOutput, String> {
+fn run_check(
+    input: CheckInput,
+    config: &RiprConfig,
+    mode: AnalysisMode,
+) -> Result<CheckOutput, String> {
     let options = options_builder::analysis_options_from_input(&input);
     let analysis = match mode {
-        AnalysisMode::Diff => {
-            run_analysis_with_oracle_policy(&options, config.oracles(), config.languages().enabled())?
-        }
+        AnalysisMode::Diff => run_analysis_with_oracle_policy(
+            &options,
+            config.oracles(),
+            config.languages().enabled(),
+        )?,
         AnalysisMode::Repo => run_repo_analysis_with_oracle_policy(
             &options,
             config.oracles(),
