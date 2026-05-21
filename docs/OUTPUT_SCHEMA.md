@@ -1607,7 +1607,8 @@ Field contract:
   command, `status` (`fail` or `timeout`), timeout/duration, exit code when
   available, output byte counts, and bounded stdout/stderr excerpts. Complete
   `ripr evidence-health` reports omit this wrapper field and keep the normal
-  analyzer-health payload.
+  analyzer-health payload, so the current contract does not emit an `"ok"`
+  generation status.
 - `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero
   counts.
 - `metrics.stage_state_counts` - per-stage `StageState` buckets for `reach`,
@@ -1663,7 +1664,8 @@ Field contract:
   to 10 rows and carrying one example seam ID for inspection.
 - `run_limitations` - present on bounded xtask fallback artifacts. Timeout and
   incomplete rows name `evidence_health_timeout` or
-  `evidence_health_incomplete`, the `evidence_health_generation` phase,
+  `evidence_health_incomplete`, the `evidence_health_build` or
+  `evidence_health_generation` phase,
   timeout/duration/output byte diagnostics, bounded stdout/stderr excerpts,
   and a repair route for inspecting runtime, stdout/stderr, or increasing
   `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on slower machines.
@@ -3022,11 +3024,19 @@ Field contract:
   items, and internal no-action items. Finding-alignment and presentation-text
   metrics track raw-to-canonical quality, duplicate groups, actionability,
   static limitations, visibility unknowns, no-action/observed outcomes, and
-  actionable-gap packet public-projection readiness.
+  actionable-gap packet public-projection readiness. If the current scorecard
+  carries limited input unknowns such as `lane1_evidence_audit_limited`,
+  `evidence_health_limited`, or
+  `evidence_quality_scorecard_audit_regeneration_failed`, metric rows remain
+  present for diagnostics but their direction is `unknown` and `delta` is null.
 - `static_limitation_category_trends[]` - bounded category-level deltas for
-  normalized static limitation classes.
+  normalized static limitation classes. Current limited scorecards also force
+  these category trend directions to `unknown`.
 - `unknowns[]` - missing history or missing current metric fields that must
-  stay visible until later audit or scorecard inputs exist.
+  stay visible until later audit or scorecard inputs exist. A
+  `current_scorecard_limited` unknown means the current scorecard is itself a
+  bounded diagnostic artifact, so the trend must not claim improvement or
+  regression from its counts.
 
 The Markdown sibling prints bounded sections for summary, metric trends,
 static limitation category trends, and unknowns.
@@ -7043,6 +7053,33 @@ JSON shape:
       ]
     }
   ],
+  "lane1_readiness": {
+    "status": "warn",
+    "missing_artifacts": 2,
+    "warning_artifacts": 0,
+    "failing_artifacts": 0,
+    "packets": [
+      {
+        "id": "lane1_evidence_audit",
+        "label": "Lane 1 evidence audit",
+        "status": "missing",
+        "next_command": "cargo xtask lane1-evidence-audit",
+        "description": "Produces raw-to-canonical/actionability counts and actionable-gap packet inputs.",
+        "artifacts": [
+          {
+            "path": "target/ripr/reports/lane1-evidence-audit.json",
+            "status": "missing",
+            "available": false
+          },
+          {
+            "path": "target/ripr/reports/lane1-evidence-audit.md",
+            "status": "missing",
+            "available": false
+          }
+        ]
+      }
+    ]
+  },
   "missing_expected": [
     {
       "id": "assistant_loop_health",
@@ -7099,12 +7136,26 @@ Field contract:
   receipts, suggested-fixes, and `check-pr` artifacts with status, known output
   paths, and regeneration commands. It is advisory front-door metadata only and
   never becomes gate authority.
+- `lane1_readiness` is the Lane 1 evidence packet index used by
+  `cargo xtask reports index`. It records whether evidence-health, Lane 1
+  evidence-audit/actionable-gap, evidence-quality scorecard, evidence-quality
+  trend, and badge-basis packets are present and healthy. Missing, warning, or
+  failing Lane 1 readiness artifacts add advisory next commands, but do not
+  create gate authority, badge authority, runtime mutation proof, or coverage
+  adequacy claims.
 
 Report packet index field contract:
 
 - `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
   `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
   `unreadable`, or `not_applicable`.
+- `lane1_readiness.status` is `present`, `warn`, or `fail`.
+- `lane1_readiness.missing_artifacts`,
+  `lane1_readiness.warning_artifacts`, and
+  `lane1_readiness.failing_artifacts` are counts over the packet artifacts.
+- `lane1_readiness.packets[]` uses the same packet shape as
+  `repo_ops_packets[]`: id, label, status, next command, description, and
+  artifact availability.
 - `missing_expected[].reason` is `not_generated`, `input_not_available`,
   `configured_off`, `missing_required_input`, `stale_upstream`, or `unknown`.
 - `missing_expected[]` keeps absent expected surfaces visible with a bounded

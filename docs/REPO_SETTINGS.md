@@ -20,8 +20,8 @@ Managed from git:
 - merge policy: squash merge enabled, merge commits disabled, rebase merge
   disabled, auto-merge enabled, update branch enabled, and delete branch on
   merge enabled
-- branch protection requires only the routed `Ripr Rust Small Result` check
-  after proof
+- branch protection for `main` requires only the routed `Ripr Rust Small
+  Result` check
 - CI policy labels documented in `docs/CI.md`
 
 Not managed from `.github/settings.yml`:
@@ -160,8 +160,9 @@ Settings App managed rules:
 
 - block force pushes to `main`
 - block branch deletion for `main`
-- require conversation resolution
-- require linear history
+- leave conversation resolution disabled unless a focused policy PR promotes it
+- leave linear history disabled; merge policy is enforced by squash-only
+  repository settings
 - use squash merge for PRs
 - keep merge commits and rebase merges disabled unless an owner-approved
   exception is documented before changing `.github/settings.yml`
