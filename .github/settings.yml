@@ -26,11 +26,20 @@ repository:
   allow_update_branch: true
   delete_branch_on_merge: true
 
-# Branch protection is intentionally deferred until routed result checks land.
-# Do not copy the source repo's required contexts into ripr-swarm; branch
-# protection should require normalized result jobs such as `Ripr Rust Small
-# Result`, not conditional implementation jobs or source-repo contexts.
-branches: []
+branches:
+  - name: main
+    protection:
+      required_pull_request_reviews: null
+      required_status_checks:
+        strict: true
+        contexts:
+          - Ripr Rust Small Result
+      enforce_admins: false
+      required_conversation_resolution: false
+      required_linear_history: false
+      allow_force_pushes: false
+      allow_deletions: false
+      restrictions: null
 
 labels:
   - name: full-ci

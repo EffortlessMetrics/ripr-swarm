@@ -130,32 +130,49 @@ fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
 }
 
 fn gap_diagnostic_hover_markdown(diagnostic: &Diagnostic, data: &Value) -> String {
-    let mut lines = vec!["**ripr** gap decision".to_string(), String::new()];
-    push_gap_evidence_boundary(&mut lines, data);
-    lines.extend([
-        diagnostic.message.clone(),
-        String::new(),
-        "## Gap state".to_string(),
-    ]);
-    push_optional_data_line(&mut lines, "canonical gap", data, &["canonical_gap_id"]);
-    push_optional_data_line(&mut lines, "gap", data, &["gap_id"]);
-    push_optional_data_line(&mut lines, "kind", data, &["gap_kind"]);
-    push_optional_data_line(&mut lines, "state", data, &["gap_state"]);
-    push_optional_data_line(&mut lines, "policy", data, &["policy_state"]);
-    push_optional_data_line(&mut lines, "repairability", data, &["repairability"]);
-    push_optional_data_line(&mut lines, "authority", data, &["authority_boundary"]);
+    gap_hover::render(diagnostic, data)
+}
 
-    lines.push(String::new());
-    lines.push("## Why this matters".to_string());
-    lines.push(
-        "This diagnostic maps to a validated gap-decision ledger record. Use the bounded route below as local repair guidance; the editor is projecting existing RIPR artifacts."
-            .to_string(),
-    );
+mod gap_hover {
+    use super::{
+        Diagnostic, Value, push_gap_evidence_boundary, push_gap_hover_limits,
+        push_gap_repair_route, push_gap_verify_and_receipt, push_optional_data_line,
+    };
 
-    push_gap_repair_route(&mut lines, data);
-    push_gap_verify_and_receipt(&mut lines, data);
-    push_gap_hover_limits(&mut lines);
-    lines.join("\n")
+    pub(super) fn render(diagnostic: &Diagnostic, data: &Value) -> String {
+        let mut lines = vec!["**ripr** gap decision".to_string(), String::new()];
+        push_gap_evidence_boundary(&mut lines, data);
+        push_state_section(&mut lines, diagnostic, data);
+        push_why_this_matters(&mut lines);
+        push_gap_repair_route(&mut lines, data);
+        push_gap_verify_and_receipt(&mut lines, data);
+        push_gap_hover_limits(&mut lines);
+        lines.join("\n")
+    }
+
+    fn push_state_section(lines: &mut Vec<String>, diagnostic: &Diagnostic, data: &Value) {
+        lines.extend([
+            diagnostic.message.clone(),
+            String::new(),
+            "## Gap state".to_string(),
+        ]);
+        push_optional_data_line(lines, "canonical gap", data, &["canonical_gap_id"]);
+        push_optional_data_line(lines, "gap", data, &["gap_id"]);
+        push_optional_data_line(lines, "kind", data, &["gap_kind"]);
+        push_optional_data_line(lines, "state", data, &["gap_state"]);
+        push_optional_data_line(lines, "policy", data, &["policy_state"]);
+        push_optional_data_line(lines, "repairability", data, &["repairability"]);
+        push_optional_data_line(lines, "authority", data, &["authority_boundary"]);
+    }
+
+    fn push_why_this_matters(lines: &mut Vec<String>) {
+        lines.push(String::new());
+        lines.push("## Why this matters".to_string());
+        lines.push(
+            "This diagnostic maps to a validated gap-decision ledger record. Use the bounded route below as local repair guidance; the editor is projecting existing RIPR artifacts."
+                .to_string(),
+        );
+    }
 }
 
 fn push_gap_evidence_boundary(lines: &mut Vec<String>, data: &Value) {
