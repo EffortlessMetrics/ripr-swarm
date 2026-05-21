@@ -27,40 +27,16 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 
+#[path = "commands/agent_dispatch.rs"]
+mod agent_dispatch;
+
 pub(super) fn agent(args: &[String]) -> Result<(), String> {
-    match parse_agent_args(args)? {
-        AgentCommand::Help => {
-            help::print_agent_help();
-            Ok(())
-        }
-        AgentCommand::StartHelp => {
-            help::print_agent_start_help();
-            Ok(())
-        }
-        AgentCommand::BriefHelp => {
-            help::print_agent_brief_help();
-            Ok(())
-        }
-        AgentCommand::PacketHelp => {
-            help::print_agent_packet_help();
-            Ok(())
-        }
-        AgentCommand::VerifyHelp => {
-            help::print_agent_verify_help();
-            Ok(())
-        }
-        AgentCommand::ReceiptHelp => {
-            help::print_agent_receipt_help();
-            Ok(())
-        }
-        AgentCommand::StatusHelp => {
-            help::print_agent_status_help();
-            Ok(())
-        }
-        AgentCommand::ReviewSummaryHelp => {
-            help::print_agent_review_summary_help();
-            Ok(())
-        }
+    let command = parse_agent_args(args)?;
+    if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
+        return result;
+    }
+
+    match command {
         AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options),
         AgentCommand::Packet(options) => run_agent_packet(options),
@@ -68,6 +44,15 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
         AgentCommand::Receipt(options) => run_agent_receipt(options),
         AgentCommand::Status(options) => run_agent_status(options),
         AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        help_command @ (AgentCommand::Help
+        | AgentCommand::StartHelp
+        | AgentCommand::BriefHelp
+        | AgentCommand::PacketHelp
+        | AgentCommand::VerifyHelp
+        | AgentCommand::ReceiptHelp
+        | AgentCommand::StatusHelp
+        | AgentCommand::ReviewSummaryHelp) => agent_dispatch::run_agent_help_command(&help_command)
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
     }
 }
 
@@ -621,8 +606,8 @@ fn agent_brief_owners_for_lines(
 }
 
 fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
-    let path_text = normalized_path_text(path);
-    for root_text in normalized_root_prefixes(root) {
+    let path_text = path_normalization::normalized_path_text(path);
+    for root_text in path_normalization::normalized_root_prefixes(root) {
         let prefix = format!("{root_text}/");
         if let Some(stripped) = path_text.strip_prefix(&prefix) {
             return PathBuf::from(stripped);
@@ -631,28 +616,32 @@ fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
     PathBuf::from(path_text)
 }
 
-fn normalized_root_prefixes(root: &Path) -> Vec<String> {
-    let mut prefixes = Vec::new();
-    push_unique_normalized_path(&mut prefixes, root);
-    if let Ok(root) = std::path::absolute(root) {
-        push_unique_normalized_path(&mut prefixes, &root);
-    }
-    if let Ok(root) = root.canonicalize() {
-        push_unique_normalized_path(&mut prefixes, &root);
-    }
-    prefixes
-}
+mod path_normalization {
+    use std::path::Path;
 
-fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
-    let text = normalized_path_text(path);
-    if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
-        prefixes.push(text);
+    pub(super) fn normalized_root_prefixes(root: &Path) -> Vec<String> {
+        let mut prefixes = Vec::new();
+        push_unique_normalized_path(&mut prefixes, root);
+        if let Ok(root) = std::path::absolute(root) {
+            push_unique_normalized_path(&mut prefixes, &root);
+        }
+        if let Ok(root) = root.canonicalize() {
+            push_unique_normalized_path(&mut prefixes, &root);
+        }
+        prefixes
     }
-}
 
-fn normalized_path_text(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    text.strip_prefix("./").unwrap_or(&text).to_string()
+    fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
+        let text = normalized_path_text(path);
+        if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
+            prefixes.push(text);
+        }
+    }
+
+    pub(super) fn normalized_path_text(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('\\', "/");
+        text.strip_prefix("./").unwrap_or(&text).to_string()
+    }
 }
 
 pub(super) fn init(args: &[String]) -> Result<(), String> {
