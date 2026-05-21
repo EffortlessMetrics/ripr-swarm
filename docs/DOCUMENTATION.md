@@ -47,6 +47,7 @@ Current how-to docs:
 - [Contributing](../CONTRIBUTING.md)
 - [Testing](TESTING.md)
 - [CI strategy](CI.md)
+- [Source-of-truth control plane](source-of-truth/README.md)
 - [Security policy](../SECURITY.md)
 - [Repository settings](REPO_SETTINGS.md)
 - [Swarm development](swarm-development.md)
