@@ -3773,14 +3773,29 @@ metrics = [
 id = "RIPR-SPEC-0060"
 name = "Source-of-truth stack"
 spec = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
-tests = []
+tests = [
+  "xtask/src/main.rs::support_tiers_accept_valid_fixture",
+  "xtask/src/main.rs::support_tiers_command_accepts_valid_fixture",
+  "xtask/src/main.rs::support_tiers_reject_stable_claim_without_proof",
+  "xtask/src/main.rs::support_tiers_reject_stable_claim_with_only_markdown_links",
+  "xtask/src/main.rs::support_tiers_reject_unknown_xtask_proof_command",
+  "xtask/src/main.rs::support_tiers_resolve_workflow_proof_relative_to_root",
+  "xtask/src/main.rs::support_tiers_require_specs_with_impact_to_link_status_doc",
+  "xtask/src/main.rs::support_tiers_allow_specs_with_no_support_tier_impact",
+  "xtask/src/main.rs::support_tiers_require_readme_support_language_to_link_status_doc",
+]
 fixtures = []
-code = []
+code = [
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+  "xtask/src/main.rs",
+]
 outputs = [
   "docs/source-of-truth/README.md",
   "docs/source-of-truth/artifact-taxonomy.md",
   "docs/source-of-truth/linking-model.md",
   "docs/source-of-truth/agent-operating-model.md",
+  "docs/status/SUPPORT_TIERS.md",
   "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md",
   "docs/specs/README.md",
   "docs/proposals/RIPR-PROP-0015-source-of-truth-control-plane.md",
