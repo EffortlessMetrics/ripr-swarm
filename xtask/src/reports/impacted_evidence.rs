@@ -477,13 +477,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_rejects_blank_label_values() {
-        let err = parse_options(&["--label".to_string(), "   ".to_string()])
-            .expect_err("blank --label should fail");
+    fn parse_rejects_blank_label_values() -> Result<(), String> {
+        let err = match parse_options(&["--label".to_string(), "   ".to_string()]) {
+            Ok(_) => return Err("blank --label should fail".to_string()),
+            Err(err) => err,
+        };
         assert_eq!(
             err,
             "impacted-evidence --label requires a non-empty value".to_string()
         );
+        Ok(())
     }
 
     #[test]
