@@ -198,8 +198,10 @@ complete report is available, the command writes bounded warning artifacts with
 timeout/duration/output byte counts, bounded stdout/stderr excerpts, exit
 status when available, and a repair route. The limited artifact records
 `inputs.generation.status = "timeout"` for timed-out children and `"fail"` for
-nonzero or missing status exits. The limited artifact is diagnostic only and
-does not claim user test debt from missing health counts.
+nonzero or missing status exits. Complete `ripr evidence-health` reports keep
+`status = "advisory"` and omit the xtask-only `inputs.generation` wrapper rather
+than emitting an `"ok"` generation row. The limited artifact is diagnostic only
+and does not claim user test debt from missing health counts.
 
 ## Test Mapping
 

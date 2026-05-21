@@ -649,6 +649,7 @@ evidence = [
   "crates/ripr/src/output/evidence_health.rs",
   "RIPR-SPEC-0015 evidence health baseline contract",
   "ripr evidence-health writes advisory JSON and Markdown",
+  "CLI parser/help tests pin the evidence-health command surface",
   "cargo xtask evidence-health writes target/ripr/reports/evidence-health.json and evidence-health.md",
   "cargo xtask evidence-health bounds the child process and writes named evidence_health_timeout or evidence_health_incomplete run limitations instead of leaving stale or partial artifacts when the live report times out or exits nonzero",
   "counts grip classes, stage states, missing discriminators, observed value contexts, related-test confidence, oracle strength, oracle kind, opaque oracles, and top static limitations",
