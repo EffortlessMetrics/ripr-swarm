@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::model::{ChangedFile, ChangedLine};
+use super::path::parse_new_path_marker;
 
 pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
     let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
@@ -82,80 +83,6 @@ fn parse_hunk_header(raw: &str) -> Option<(usize, usize)> {
 fn parse_start(segment: &str) -> Option<usize> {
     let start = segment.split(',').next()?;
     start.parse::<usize>().ok()
-}
-
-fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
-    let marker = raw.strip_prefix("+++ ")?;
-    let path = parse_diff_path_token(marker)?;
-    if path == "/dev/null" {
-        return None;
-    }
-    let path = path.strip_prefix("b/").unwrap_or(&path);
-    Some(PathBuf::from(path))
-}
-
-fn parse_diff_path_token(raw: &str) -> Option<String> {
-    let raw = raw.trim_end_matches('\r');
-    if let Some(quoted) = raw.strip_prefix('"') {
-        return parse_c_quoted_path(quoted);
-    }
-
-    let token = raw.split_once('\t').map_or(raw, |(path, _metadata)| path);
-    Some(token.trim_end().to_string()).filter(|path| !path.is_empty())
-}
-
-fn parse_c_quoted_path(raw: &str) -> Option<String> {
-    let mut path = String::new();
-    let mut chars = raw.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '"' => return Some(path),
-            '\\' => path.push(parse_c_escape(&mut chars)),
-            _ => path.push(ch),
-        }
-    }
-
-    None
-}
-
-fn parse_c_escape<I>(chars: &mut std::iter::Peekable<I>) -> char
-where
-    I: Iterator<Item = char>,
-{
-    let Some(ch) = chars.next() else {
-        return '\\';
-    };
-
-    match ch {
-        'n' => '\n',
-        'r' => '\r',
-        't' => '\t',
-        '\\' => '\\',
-        '"' => '"',
-        '0'..='7' => parse_octal_escape(ch, chars),
-        _ => ch,
-    }
-}
-
-fn parse_octal_escape<I>(first: char, chars: &mut std::iter::Peekable<I>) -> char
-where
-    I: Iterator<Item = char>,
-{
-    let mut value = first.to_digit(8).unwrap_or(0);
-
-    for _ in 0..2 {
-        let Some(next) = chars.peek().copied() else {
-            break;
-        };
-        let Some(digit) = next.to_digit(8) else {
-            break;
-        };
-        let _ = chars.next();
-        value = value.saturating_mul(8).saturating_add(digit);
-    }
-
-    char::from_u32(value).unwrap_or('\u{FFFD}')
 }
 
 #[cfg(test)]
