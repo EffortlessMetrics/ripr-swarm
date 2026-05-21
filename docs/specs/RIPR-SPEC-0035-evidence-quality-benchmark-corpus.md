@@ -178,6 +178,13 @@ distinguishes field-specific observation from broad snapshot output.
 - `test_grip_evidence::tests::given_full_evidence_when_owner_call_with_opaque_args_reaches_return_seam_then_activation_is_yes`
   pins value-insensitive owner-call activation without synthetic observed
   values.
+- `test_grip_evidence::tests::given_full_evidence_when_one_hop_helper_calls_owner_then_value_insensitive_activation_is_yes`
+  pins same-file one-hop helper owner-call activation for value-insensitive
+  seams without synthetic observed values.
+- `test_grip_evidence::tests::given_full_evidence_when_one_hop_helper_does_not_call_owner_then_activation_stays_unknown`
+  pins the helper-name-only must-not-claim guard.
+- `test_grip_evidence::tests::given_full_evidence_when_generic_helper_name_mentions_owner_then_activation_stays_unknown`
+  pins the generic-owner helper guard for names such as `parse`.
 
 ## Implementation Mapping
 
