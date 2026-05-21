@@ -591,7 +591,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "repo-contract-report",
             "report_only",
-            "target/source-of-truth/graph.{md,json}",
+            "target/ripr/reports/source-of-truth-graph.{md,json}",
             false,
             "Writes the source-of-truth contract graph report.",
         ),

@@ -37450,11 +37450,11 @@ struct RepoContractSummary {
 
 fn repo_contract_report() -> Result<(), String> {
     let (markdown, json) = repo_contract_report_from_root(Path::new("."))?;
-    let out_dir = Path::new("target/source-of-truth");
-    fs::create_dir_all(out_dir)
-        .map_err(|err| format!("failed to create {}: {err}", normalize_path(out_dir)))?;
-    let markdown_path = out_dir.join("graph.md");
-    let json_path = out_dir.join("graph.json");
+    let out_dir = reports_dir();
+    fs::create_dir_all(&out_dir)
+        .map_err(|err| format!("failed to create {}: {err}", normalize_path(&out_dir)))?;
+    let markdown_path = out_dir.join("source-of-truth-graph.md");
+    let json_path = out_dir.join("source-of-truth-graph.json");
     fs::write(&markdown_path, markdown)
         .map_err(|err| format!("failed to write {}: {err}", normalize_path(&markdown_path)))?;
     fs::write(&json_path, json)
@@ -37597,6 +37597,11 @@ fn repo_contract_policy_ledgers(root: &Path) -> Result<Vec<String>, String> {
 
 fn repo_contract_report_markdown(summary: &RepoContractSummary) -> String {
     let mut body = String::from("# Source-of-Truth Contract Graph\n\n");
+    body.push_str(&format!(
+        "Status: {}\n\n",
+        repo_contract_report_status(summary)
+    ));
+    body.push_str("Mode: advisory\n\n");
     body.push_str("## Active Goal\n\n");
     body.push_str(&format!(
         "- id: `{}`\n",
@@ -37748,6 +37753,7 @@ fn write_repo_contract_artifact_list(
 
 fn repo_contract_report_json(summary: &RepoContractSummary) -> String {
     let mut body = String::new();
+    let status = repo_contract_report_status(summary);
     let artifacts = summary.artifacts.iter().collect::<Vec<_>>();
     let accepted_proposals = summary
         .artifacts
@@ -37777,6 +37783,10 @@ fn repo_contract_report_json(summary: &RepoContractSummary) -> String {
         .collect::<Vec<_>>();
 
     body.push_str("{\n");
+    body.push_str("  \"schema_version\": \"0.1\",\n");
+    body.push_str("  \"report_id\": \"source_of_truth_graph\",\n");
+    body.push_str("  \"mode\": \"advisory\",\n");
+    body.push_str(&format!("  \"status\": \"{}\",\n", json_escape(status)));
     body.push_str(&format!(
         "  \"active_goal\": {{ \"id\": {}, \"title\": {}, \"status\": {} }},\n",
         json_optional_string(summary.active_goal_id.as_deref()),
@@ -37825,6 +37835,14 @@ fn repo_contract_report_json(summary: &RepoContractSummary) -> String {
     write_json_string_array(&mut body, &summary.missing_links);
     body.push_str("]\n}\n");
     body
+}
+
+fn repo_contract_report_status(summary: &RepoContractSummary) -> &'static str {
+    if summary.missing_links.is_empty() {
+        "pass"
+    } else {
+        "warn"
+    }
 }
 
 fn write_repo_contract_artifact_json_array(body: &mut String, artifacts: &[&RepoContractArtifact]) {
@@ -58774,12 +58792,22 @@ commands = ["cargo xtask repo-contract-report"]
 
             let (markdown, json) = super::repo_contract_report_from_root(root)?;
             assert!(markdown.contains("## Active Goal"));
+            assert!(markdown.contains("Status: pass"));
             assert!(markdown.contains("`docs/report`"));
             assert!(markdown.contains("## Support-Tier Impacts"));
-            assert!(json.contains(r#""active_goal""#));
-            assert!(json.contains(r#""accepted_proposals""#));
-            assert!(json.contains(r#""ready_work_items""#));
-            assert!(json.contains(r#""superseded_artifacts""#));
+            let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+            assert_eq!(value["schema_version"], "0.1");
+            assert_eq!(value["report_id"], "source_of_truth_graph");
+            assert_eq!(value["mode"], "advisory");
+            assert_eq!(value["status"], "pass");
+            assert_eq!(value["active_goal"]["id"], "source-of-truth-control-plane");
+            assert!(
+                value["ready_work_items"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["id"] == "docs/report"))
+            );
+            assert!(value["accepted_proposals"].is_array());
+            assert!(value["superseded_artifacts"].is_array());
             Ok(())
         })
     }
