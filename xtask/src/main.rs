@@ -52184,6 +52184,17 @@ jobs:
     }
 
     #[test]
+    fn report_index_status_keeps_non_lane1_failures_blocking() {
+        let reports = vec![ReportIndexEntry {
+            file: "check-pr.md".to_string(),
+            path: "target/ripr/reports/check-pr.md".to_string(),
+            status: "fail".to_string(),
+        }];
+
+        assert_eq!(super::report_index_status(&reports, &[], &[]), "fail");
+    }
+
+    #[test]
     fn report_index_next_commands_include_missing_lane1_readiness() {
         let packets = report_index_lane1_readiness_packets(&[]);
         let commands = report_index_next_commands(&[], &packets);
