@@ -631,4 +631,23 @@ mod tests {
         );
         assert!(md.contains("high"), "Markdown missing confidence tag: {md}");
     }
+
+    #[test]
+    fn given_repo_exposure_related_tests_when_helper_owner_call_then_additive_reason_is_emitted() {
+        let mut classified = weakly_gripped_classified();
+        classified.evidence.related_tests[0].relation_reason =
+            crate::analysis::test_grip_evidence::RelationReason::HelperOwnerCall;
+
+        let json = render_repo_exposure_json(&[classified.clone()]);
+        assert!(
+            json.contains("\"relation_reason\": \"helper_owner_call\""),
+            "JSON missing helper_owner_call relation_reason: {json}"
+        );
+
+        let md = render_repo_exposure_md(&[classified]);
+        assert!(
+            md.contains("helper_owner_call"),
+            "Markdown missing helper_owner_call tag: {md}"
+        );
+    }
 }

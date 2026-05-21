@@ -106,6 +106,16 @@ artifact_families = []
 description = "Spec, campaign, capability, and traceability checks."
 
 [[lane]]
+id = "source-of-truth"
+posture = "advisory"
+workflow = ".github/workflows/source-of-truth.yml"
+jobs = ["source-of-truth"]
+commands = ["cargo xtask check-doc-artifacts", "cargo xtask check-goals", "cargo xtask check-support-tiers"]
+estimated_lem = 3
+artifact_families = []
+description = "Proof-stack artifact, active goal, and support-tier claim map checks."
+
+[[lane]]
 id = "vscode-compile"
 posture = "required"
 workflow = ".github/workflows/ci.yml"
