@@ -2553,6 +2553,24 @@ available yet; missing outcomes do not imply failed attempts.
   },
   "next_actions": [
     {
+      "kind": "inspect_unchanged_attempts",
+      "packet_id": null,
+      "canonical_gap_id": null,
+      "evidence_class": null,
+      "repair_kind": null,
+      "command": "cargo xtask actionable-gap-outcomes",
+      "reason": "1 attempted packet(s) left evidence unchanged; refine the repair route before retrying"
+    },
+    {
+      "kind": "route_static_limitations",
+      "packet_id": null,
+      "canonical_gap_id": null,
+      "evidence_class": null,
+      "repair_kind": null,
+      "command": "cargo xtask lane1-evidence-audit",
+      "reason": "2 packet(s) are blocked by static limitations; route them to the Lane 1 analyzer backlog, not repair execution"
+    },
+    {
       "kind": "attempt_ready_packet",
       "packet_id": "packet-boundary-001",
       "canonical_gap_id": "gap:boundary",
