@@ -175,7 +175,23 @@ Each orchestrator should:
 
 ## Promotion Back To Source
 
-Promotion remains a source-repo pull request:
+Promotion remains a source-repo pull request. Before opening it, confirm the
+promotion is carrying reviewed swarm state rather than active construction:
+
+```bash
+gh pr list --repo EffortlessMetrics/ripr --state open
+gh pr list --repo EffortlessMetrics/ripr-swarm --state open
+gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection
+gh run list --repo EffortlessMetrics/ripr-swarm --workflow routed-rust.yml --branch main --limit 1
+```
+
+The operator should see no ordinary source-repo development PRs, a protected
+`ripr-swarm/main` branch requiring `Ripr Rust Small Result`, and a recent green
+routed Rust result on swarm `main`. Open swarm PRs do not block promotion by
+themselves, but each one should be classified as included, deferred, superseded,
+or not release-relevant in the promotion PR body.
+
+Create the source promotion branch with a fast-forward-only merge:
 
 ```bash
 git clone git@github.com:EffortlessMetrics/ripr.git ripr-promote
@@ -188,10 +204,51 @@ git merge --ff-only swarm/main
 git push origin promote/swarm-main
 ```
 
+If `git merge --ff-only swarm/main` fails, stop. Do not resolve conflicts inside
+the promotion branch. First reconcile the source and swarm histories with an
+explicit source-sync or owner-approved promotion plan.
+
 Open the resulting source-repo PR as:
 
 ```text
 promote: sync ripr-swarm main
 ```
 
-The source repository CI remains the final release and publish proof.
+The PR body should include:
+
+```text
+Included swarm range:
+  <first promoted commit>..<last promoted commit>
+
+Swarm proof:
+  Ripr Rust Small Result on swarm/main: <run URL>
+  latest routed target/reason: <target>/<reason>
+
+Source proof to run:
+  cargo xtask check-pr
+  cargo xtask release-readiness --version <current-version>
+  cargo package -p ripr --list
+  cargo publish -p ripr --dry-run
+  npm --prefix editors/vscode ci
+  npm --prefix editors/vscode run compile
+  npm --prefix editors/vscode run package
+
+Deferred swarm PRs:
+  <number/title/disposition>
+```
+
+Abort promotion when any of these are true:
+
+- the source repository has an ordinary development PR that should have targeted
+  `ripr-swarm`;
+- `ripr-swarm/main` is not protected by `Ripr Rust Small Result`;
+- the latest routed Rust result on swarm `main` failed or is missing;
+- the promotion is not a fast-forward from source `main` to swarm `main`;
+- release, publish, signing, marketplace, or GitHub Release secrets would need
+  to move into `ripr-swarm`;
+- badge endpoint JSON changed outside the generated badge refresh path;
+- source CI or release-readiness proof fails.
+
+The source repository CI remains the final release and publish proof. A green
+swarm route proves development readiness; it does not replace source release
+authority.
