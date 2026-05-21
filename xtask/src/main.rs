@@ -228,6 +228,8 @@ struct CampaignManifest {
     status: Option<String>,
     issue: Option<String>,
     lane: Option<String>,
+    successor: Option<String>,
+    no_current_goal: Option<bool>,
     end_state: Vec<String>,
     hard_rules: Vec<String>,
     non_goals: Vec<String>,
@@ -1228,6 +1230,7 @@ fn precommit() -> Result<(), String> {
     check_architecture()?;
     check_public_api()?;
     check_output_contracts()?;
+    check_doc_artifacts()?;
     check_doc_index()?;
     check_readme_state()?;
     markdown_links()?;
@@ -1284,6 +1287,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_architecture()?;
     check_public_api()?;
     check_output_contracts()?;
+    check_doc_artifacts()?;
     check_doc_index()?;
     check_readme_state()?;
     markdown_links()?;
@@ -4578,8 +4582,9 @@ pub(crate) fn reports_index_impl() -> Result<(), String> {
     let reports = report_index_entries()?;
     let receipts = receipt_index_entries()?;
     let missing = report_index_missing_expected(&reports, &changes);
+    let lane1_packets = report_index_lane1_readiness_packets(&reports);
     let status = report_index_status(&reports, &missing, &campaign.issues);
-    let next_commands = report_index_next_commands(&missing);
+    let next_commands = report_index_next_commands(&missing, &lane1_packets);
 
     let markdown = report_index_markdown(
         status,
@@ -4920,7 +4925,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-campaign`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-campaign`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 fn check_pr_report_body() -> String {
@@ -25455,11 +25460,23 @@ fn evidence_quality_trend_from_values(
     let root = audit_string(current, &["scope", "root"])
         .or_else(|| audit_string(current, &["inputs", "root"]))
         .unwrap_or_else(|| ".".to_string());
-    let metric_trends = evidence_quality_metric_trends(current, previous);
-    let static_limitation_category_trends =
+    let current_limited_kinds = evidence_quality_current_scorecard_limited_kinds(current);
+    let mut metric_trends = evidence_quality_metric_trends(current, previous);
+    let mut static_limitation_category_trends =
         evidence_quality_static_limitation_category_trends(current, previous);
+    if !current_limited_kinds.is_empty() {
+        evidence_quality_mark_limited_current_trends_unknown(
+            &mut metric_trends,
+            &current_limited_kinds,
+        );
+        evidence_quality_mark_limited_current_trends_unknown(
+            &mut static_limitation_category_trends,
+            &current_limited_kinds,
+        );
+    }
     let summary = evidence_quality_trend_summary(previous, &metric_trends);
-    let unknowns = evidence_quality_trend_unknowns(previous, &metric_trends);
+    let unknowns =
+        evidence_quality_trend_unknowns(previous, &metric_trends, &current_limited_kinds);
 
     Ok(EvidenceQualityTrendReport {
         generated_at,
@@ -25470,6 +25487,50 @@ fn evidence_quality_trend_from_values(
         static_limitation_category_trends,
         unknowns,
     })
+}
+
+fn evidence_quality_current_scorecard_limited_kinds(current: &Value) -> Vec<String> {
+    audit_get(current, &["unknowns"])
+        .and_then(Value::as_array)
+        .map(|unknowns| {
+            unknowns
+                .iter()
+                .filter_map(|unknown| unknown.get("kind").and_then(Value::as_str))
+                .filter(|kind| evidence_quality_current_scorecard_limited_kind(kind))
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn evidence_quality_current_scorecard_limited_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "lane1_evidence_audit_limited"
+            | "evidence_health_limited"
+            | "evidence_quality_scorecard_audit_regeneration_failed"
+    )
+}
+
+fn evidence_quality_mark_limited_current_trends_unknown(
+    trends: &mut [EvidenceQualityTrendMetric],
+    limited_kinds: &[String],
+) {
+    let interpretation = evidence_quality_limited_current_interpretation(limited_kinds);
+    for trend in trends {
+        trend.delta = None;
+        trend.direction = "unknown".to_string();
+        trend.interpretation = interpretation.clone();
+    }
+}
+
+fn evidence_quality_limited_current_interpretation(limited_kinds: &[String]) -> String {
+    format!(
+        "Current scorecard has limited input diagnostics ({}), so trend direction is not claimed.",
+        limited_kinds.join(", ")
+    )
 }
 
 fn evidence_quality_metric_trends(
@@ -25977,6 +26038,7 @@ fn evidence_quality_trend_summary(
 fn evidence_quality_trend_unknowns(
     previous: Option<&Value>,
     metric_trends: &[EvidenceQualityTrendMetric],
+    current_limited_kinds: &[String],
 ) -> Vec<EvidenceQualityTrendUnknown> {
     let mut unknowns = Vec::new();
     if previous.is_none() {
@@ -25985,6 +26047,19 @@ fn evidence_quality_trend_unknowns(
             "trend_history_unavailable",
             "No previous scorecard or audit snapshot was available, so the report cannot claim improvement or regression.",
             Some("report/evidence-quality-trend"),
+        );
+    }
+    if !current_limited_kinds.is_empty() {
+        trend_push_unknown(
+            &mut unknowns,
+            "current_scorecard_limited",
+            &format!(
+                "Current scorecard includes limited input diagnostics ({}), so the trend cannot claim improvement or regression.",
+                current_limited_kinds.join(", ")
+            ),
+            Some(
+                "rerun Lane 1 audit, evidence-health, and scorecard after resolving limited input diagnostics",
+            ),
         );
     }
     for trend in metric_trends
@@ -36524,6 +36599,495 @@ fn check_doc_index() -> Result<(), String> {
     )
 }
 
+const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
+const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
+const DOC_ARTIFACT_KINDS: &[&str] = &[
+    "adr",
+    "closeout",
+    "goal",
+    "plan",
+    "policy-ledger",
+    "policy_ledger",
+    "proposal",
+    "roadmap",
+    "spec",
+    "support-tier",
+    "support_tier",
+];
+const DOC_ARTIFACT_STATUSES: &[&str] = &[
+    "accepted",
+    "active",
+    "blocked",
+    "deprecated",
+    "done",
+    "draft",
+    "implemented",
+    "planned",
+    "proposed",
+    "ready",
+    "rejected",
+    "superseded",
+    "withdrawn",
+];
+
+#[derive(Clone, Debug, Default)]
+struct DocArtifactLedger {
+    schema_version: Option<String>,
+    artifacts: Vec<DocArtifactEntry>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DocArtifactEntry {
+    line: usize,
+    seen_fields: BTreeSet<String>,
+    id: Option<String>,
+    kind: Option<String>,
+    path: Option<String>,
+    status: Option<String>,
+    owner: Option<String>,
+    linked_proposal: Option<String>,
+    linked_spec: Option<String>,
+    linked_adr: Option<String>,
+    linked_plan: Option<String>,
+    standalone_reason: Option<String>,
+    superseded_by: Option<String>,
+    replacement: Option<String>,
+}
+
+fn check_doc_artifacts() -> Result<(), String> {
+    let violations = doc_artifact_violations(Path::new("."), Path::new(DOC_ARTIFACT_LEDGER))?;
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "doc-artifacts.md",
+            check: "check-doc-artifacts",
+            why_it_matters: "The document artifact ledger is the machine-readable source-of-truth graph for proposals, specs, ADRs, plans, goals, support tiers, policy ledgers, and closeouts.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Keep policy/doc-artifacts.toml parseable with schema_version = \"1.0\".",
+                "Register each source-of-truth artifact with a unique id, kind, path, status, and owner.",
+                "Keep artifact files present and make sure the artifact id appears in the registered file.",
+                "Link accepted specs to a proposal or provide a standalone_reason.",
+                "Point superseded artifacts at a registered replacement.",
+            ],
+            rerun_command: "cargo xtask check-doc-artifacts",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String>, String> {
+    let ledger = parse_doc_artifact_ledger(ledger_path)?;
+    let ledger_display = display_repo_path(root, ledger_path);
+    let mut violations = Vec::new();
+
+    match ledger.schema_version.as_deref() {
+        Some(DOC_ARTIFACT_SCHEMA_VERSION) => {}
+        Some(version) => violations.push(format!(
+            "{ledger_display} schema_version must be {DOC_ARTIFACT_SCHEMA_VERSION} (got {version})"
+        )),
+        None => violations.push(format!(
+            "{ledger_display} is missing schema_version = \"{DOC_ARTIFACT_SCHEMA_VERSION}\""
+        )),
+    }
+
+    if ledger.artifacts.is_empty() {
+        violations.push(format!("{ledger_display} has no [[artifact]] entries"));
+    }
+
+    let mut ids_by_line = BTreeMap::new();
+    for artifact in &ledger.artifacts {
+        let Some(id) = artifact.id.as_deref() else {
+            violations.push(format!(
+                "{ledger_display}:{} artifact is missing required field `id`",
+                artifact.line
+            ));
+            continue;
+        };
+        if let Some(previous_line) = ids_by_line.insert(id.to_string(), artifact.line) {
+            violations.push(format!(
+                "{ledger_display}:{} duplicate artifact id `{id}`; first defined at line {previous_line}",
+                artifact.line
+            ));
+        }
+    }
+    let artifact_ids = ids_by_line.keys().cloned().collect::<BTreeSet<_>>();
+
+    for artifact in &ledger.artifacts {
+        validate_doc_artifact_entry(
+            root,
+            &ledger_display,
+            artifact,
+            &artifact_ids,
+            &mut violations,
+        )?;
+    }
+
+    Ok(violations)
+}
+
+fn parse_doc_artifact_ledger(path: &Path) -> Result<DocArtifactLedger, String> {
+    let text = read_text_lossy(path)?;
+    let display = normalize_path(path);
+    parse_doc_artifact_ledger_text(&display, &text)
+}
+
+fn parse_doc_artifact_ledger_text(display: &str, text: &str) -> Result<DocArtifactLedger, String> {
+    let mut ledger = DocArtifactLedger::default();
+    let mut current: Option<DocArtifactEntry> = None;
+
+    for (index, line) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed == "[[artifact]]" {
+            if let Some(artifact) = current.take() {
+                ledger.artifacts.push(artifact);
+            }
+            current = Some(DocArtifactEntry {
+                line: line_number,
+                ..DocArtifactEntry::default()
+            });
+            continue;
+        }
+
+        if trimmed.starts_with('[') {
+            return Err(format!(
+                "{display}:{line_number} unsupported TOML section `{trimmed}`; use [[artifact]]"
+            ));
+        }
+
+        let Some((key, value)) = parse_toml_key_value(trimmed) else {
+            return Err(format!(
+                "{display}:{line_number} expected `key = \"value\"`"
+            ));
+        };
+        let parsed = parse_string_value(value, display, line_number)?;
+
+        if let Some(artifact) = current.as_mut() {
+            set_doc_artifact_field(artifact, key, parsed, display, line_number)?;
+        } else if key == "schema_version" {
+            ledger.schema_version = Some(parsed);
+        } else {
+            return Err(format!(
+                "{display}:{line_number} `{key}` must appear inside [[artifact]]"
+            ));
+        }
+    }
+
+    if let Some(artifact) = current {
+        ledger.artifacts.push(artifact);
+    }
+
+    Ok(ledger)
+}
+
+fn set_doc_artifact_field(
+    artifact: &mut DocArtifactEntry,
+    key: &str,
+    value: String,
+    display: &str,
+    line_number: usize,
+) -> Result<(), String> {
+    if !matches!(
+        key,
+        "id" | "kind"
+            | "path"
+            | "status"
+            | "owner"
+            | "linked_proposal"
+            | "linked_spec"
+            | "linked_adr"
+            | "linked_plan"
+            | "standalone_reason"
+            | "superseded_by"
+            | "replacement"
+            | "notes"
+            | "reason"
+            | "review_posture"
+    ) {
+        return Err(format!(
+            "{display}:{line_number} unknown field `{key}` in [[artifact]] section"
+        ));
+    }
+    if !artifact.seen_fields.insert(key.to_string()) {
+        return Err(format!(
+            "{display}:{line_number} duplicate field `{key}` in [[artifact]] section"
+        ));
+    }
+    match key {
+        "id" => artifact.id = Some(value),
+        "kind" => artifact.kind = Some(value),
+        "path" => artifact.path = Some(value),
+        "status" => artifact.status = Some(value),
+        "owner" => artifact.owner = Some(value),
+        "linked_proposal" => artifact.linked_proposal = Some(value),
+        "linked_spec" => artifact.linked_spec = Some(value),
+        "linked_adr" => artifact.linked_adr = Some(value),
+        "linked_plan" => artifact.linked_plan = Some(value),
+        "standalone_reason" => artifact.standalone_reason = Some(value),
+        "superseded_by" => artifact.superseded_by = Some(value),
+        "replacement" => artifact.replacement = Some(value),
+        "notes" | "reason" | "review_posture" => {}
+        _ => {
+            return Err(format!(
+                "{display}:{line_number} unknown field `{key}` in [[artifact]] section"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_doc_artifact_entry(
+    root: &Path,
+    ledger_display: &str,
+    artifact: &DocArtifactEntry,
+    artifact_ids: &BTreeSet<String>,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let id_label = artifact.id.as_deref().unwrap_or("<missing id>");
+    let Some(id) = artifact.id.as_deref() else {
+        return Ok(());
+    };
+    let Some(kind) = require_doc_artifact_field(ledger_display, artifact, "kind", violations)
+    else {
+        return Ok(());
+    };
+    let Some(path) = require_doc_artifact_field(ledger_display, artifact, "path", violations)
+    else {
+        return Ok(());
+    };
+    let Some(status) = require_doc_artifact_field(ledger_display, artifact, "status", violations)
+    else {
+        return Ok(());
+    };
+    let _owner = require_doc_artifact_field(ledger_display, artifact, "owner", violations);
+
+    let path_is_safe = match doc_artifact_path_safety_violation(path) {
+        Some(message) => {
+            violations.push(format!(
+                "{ledger_display}:{} artifact `{id_label}` path {message}: `{path}`",
+                artifact.line
+            ));
+            false
+        }
+        None => true,
+    };
+
+    if !DOC_ARTIFACT_KINDS.contains(&kind) {
+        violations.push(format!(
+            "{ledger_display}:{} artifact `{id_label}` has unsupported kind `{kind}`",
+            artifact.line
+        ));
+    } else if path_is_safe && !doc_artifact_kind_matches_path(kind, path) {
+        violations.push(format!(
+            "{ledger_display}:{} artifact `{id_label}` kind `{kind}` does not match path `{path}`",
+            artifact.line
+        ));
+    }
+
+    if !DOC_ARTIFACT_STATUSES.contains(&status) {
+        violations.push(format!(
+            "{ledger_display}:{} artifact `{id_label}` has unsupported status `{status}`",
+            artifact.line
+        ));
+    }
+
+    if path_is_safe {
+        let artifact_path = root.join(path);
+        if !artifact_path.exists() {
+            violations.push(format!(
+                "{ledger_display}:{} artifact `{id_label}` points at missing file `{path}`",
+                artifact.line
+            ));
+        } else {
+            let text = read_text_lossy(&artifact_path)?;
+            if !text.contains(id) {
+                violations.push(format!(
+                    "{ledger_display}:{} artifact `{id_label}` file `{path}` does not mention `{id}`",
+                    artifact.line
+                ));
+            }
+        }
+    }
+
+    for (field, linked_id) in [
+        ("linked_proposal", artifact.linked_proposal.as_deref()),
+        ("linked_spec", artifact.linked_spec.as_deref()),
+        ("linked_adr", artifact.linked_adr.as_deref()),
+        ("linked_plan", artifact.linked_plan.as_deref()),
+    ] {
+        if let Some(linked_id) = linked_id {
+            validate_doc_artifact_link(
+                ledger_display,
+                artifact,
+                id_label,
+                field,
+                linked_id,
+                artifact_ids,
+                violations,
+            );
+        }
+    }
+
+    if status == "superseded" {
+        match doc_artifact_replacement_id(artifact) {
+            Some(replacement_id) => {
+                if replacement_id == id {
+                    violations.push(format!(
+                        "{ledger_display}:{} superseded artifact `{id_label}` must not replace itself",
+                        artifact.line
+                    ));
+                } else {
+                    validate_doc_artifact_link(
+                        ledger_display,
+                        artifact,
+                        id_label,
+                        "superseded_by",
+                        replacement_id,
+                        artifact_ids,
+                        violations,
+                    );
+                }
+            }
+            None => violations.push(format!(
+                "{ledger_display}:{} superseded artifact `{id_label}` must set superseded_by or replacement",
+                artifact.line
+            )),
+        }
+    }
+
+    if kind == "spec"
+        && status == "accepted"
+        && artifact.linked_proposal.is_none()
+        && artifact
+            .standalone_reason
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        violations.push(format!(
+            "{ledger_display}:{} accepted spec `{id_label}` must set linked_proposal or standalone_reason",
+            artifact.line
+        ));
+    }
+
+    if kind == "plan"
+        && status == "active"
+        && artifact.linked_proposal.is_none()
+        && artifact.linked_spec.is_none()
+    {
+        violations.push(format!(
+            "{ledger_display}:{} active plan `{id_label}` must link to at least one proposal or spec",
+            artifact.line
+        ));
+    }
+
+    Ok(())
+}
+
+fn require_doc_artifact_field<'a>(
+    ledger_display: &str,
+    artifact: &'a DocArtifactEntry,
+    field: &str,
+    violations: &mut Vec<String>,
+) -> Option<&'a str> {
+    let value = match field {
+        "kind" => artifact.kind.as_deref(),
+        "path" => artifact.path.as_deref(),
+        "status" => artifact.status.as_deref(),
+        "owner" => artifact.owner.as_deref(),
+        _ => None,
+    };
+
+    match value {
+        Some(value) if !value.trim().is_empty() => Some(value),
+        _ => {
+            let id = artifact.id.as_deref().unwrap_or("<missing id>");
+            violations.push(format!(
+                "{ledger_display}:{} artifact `{id}` is missing required field `{field}`",
+                artifact.line
+            ));
+            None
+        }
+    }
+}
+
+fn validate_doc_artifact_link(
+    ledger_display: &str,
+    artifact: &DocArtifactEntry,
+    id_label: &str,
+    field: &str,
+    linked_id: &str,
+    artifact_ids: &BTreeSet<String>,
+    violations: &mut Vec<String>,
+) {
+    if !artifact_ids.contains(linked_id) {
+        violations.push(format!(
+            "{ledger_display}:{} artifact `{id_label}` {field} references unknown artifact `{linked_id}`",
+            artifact.line
+        ));
+    }
+}
+
+fn doc_artifact_path_safety_violation(path: &str) -> Option<&'static str> {
+    if path.trim().is_empty() {
+        return Some("must be a non-empty repo-relative path");
+    }
+
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Some("must be repo-relative");
+    }
+
+    for component in candidate.components() {
+        match component {
+            std::path::Component::ParentDir => return Some("must not contain `..` traversal"),
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                return Some("must be repo-relative");
+            }
+            std::path::Component::CurDir | std::path::Component::Normal(_) => {}
+        }
+    }
+
+    None
+}
+
+fn doc_artifact_replacement_id(artifact: &DocArtifactEntry) -> Option<&str> {
+    artifact
+        .superseded_by
+        .as_deref()
+        .or(artifact.replacement.as_deref())
+}
+
+fn doc_artifact_kind_matches_path(kind: &str, path: &str) -> bool {
+    match kind {
+        "adr" => path.starts_with("docs/adr/") && path.ends_with(".md"),
+        "closeout" => {
+            (path.starts_with("docs/handoffs/") || path.starts_with("plans/"))
+                && path.ends_with(".md")
+        }
+        "goal" => path.starts_with(".ripr/goals/") && path.ends_with(".toml"),
+        "plan" => path.starts_with("plans/") && path.ends_with(".md"),
+        "policy-ledger" | "policy_ledger" => path.starts_with("policy/") && path.ends_with(".toml"),
+        "proposal" => path.starts_with("docs/proposals/") && path.ends_with(".md"),
+        "roadmap" => path == "docs/ROADMAP.md" || path == "ROADMAP.md",
+        "spec" => path.starts_with("docs/specs/") && path.ends_with(".md"),
+        "support-tier" | "support_tier" => {
+            path == "docs/status/SUPPORT_TIERS.md"
+                || (path.starts_with("docs/status/") && path.ends_with(".md"))
+        }
+        _ => false,
+    }
+}
+
+fn display_repo_path(root: &Path, path: &Path) -> String {
+    let display_path = path.strip_prefix(root).unwrap_or(path);
+    normalize_path(display_path)
+}
+
 fn check_readme_state() -> Result<(), String> {
     let readme_path = Path::new("README.md");
     let readme = read_text_lossy(readme_path)?;
@@ -37330,6 +37894,36 @@ fn validate_campaign_manifest(
                 unfinished.join(", ")
             ));
         }
+
+        let successor = manifest
+            .successor
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let has_no_current_goal_marker = manifest.no_current_goal == Some(true);
+        if successor.is_none() && !has_no_current_goal_marker {
+            violations.push(
+                "closed active campaign must declare `successor = \"<campaign-id>\"` or `no_current_goal = true` before it can remain in `.ripr/goals/active.toml`"
+                    .to_string(),
+            );
+        }
+        if let Some(successor) = successor {
+            if !is_kebab_case_id(successor) {
+                violations.push(format!(
+                    "campaign successor `{successor}` must use kebab-case"
+                ));
+            }
+            if successor == id {
+                violations.push(format!(
+                    "campaign successor `{successor}` must not match the closed campaign id"
+                ));
+            }
+            if !docs.contains(successor) {
+                violations.push(format!(
+                    "docs/IMPLEMENTATION_CAMPAIGNS.md does not mention campaign successor `{successor}`"
+                ));
+            }
+        }
     }
 
     for item in &manifest.work_items {
@@ -37973,6 +38567,12 @@ fn assign_campaign_scalar(
                 manifest.issue = Some(parsed);
             }),
             "lane" => manifest.lane = Some(value.trim_matches('"').to_string()),
+            "successor" => assign_quoted_campaign_value(value, line_number, violations, |parsed| {
+                manifest.successor = Some(parsed);
+            }),
+            "no_current_goal" => {
+                manifest.no_current_goal = parse_campaign_bool(value, line_number, violations);
+            }
             _ => violations.push(format!(
                 "campaign manifest line {line_number} uses unsupported campaign field `{key}`"
             )),
@@ -39710,6 +40310,160 @@ fn receipt_index_entries() -> Result<Vec<ReportIndexEntry>, String> {
     file_index_entries(&receipts_dir(), &[])
 }
 
+fn report_index_lane1_readiness_packets(
+    reports: &[ReportIndexEntry],
+) -> Vec<ReportIndexRepoOpsPacket> {
+    lane1_readiness_packet_specs()
+        .iter()
+        .map(|spec| {
+            let artifacts = spec
+                .artifacts
+                .iter()
+                .map(|path| report_index_report_artifact(path, reports))
+                .collect::<Vec<_>>();
+            ReportIndexRepoOpsPacket {
+                id: spec.id,
+                label: spec.label,
+                status: report_index_lane1_readiness_status(&artifacts),
+                command: spec.command,
+                description: spec.description,
+                artifacts,
+            }
+        })
+        .collect()
+}
+
+fn lane1_readiness_packet_specs() -> &'static [RepoOpsPacketSpec] {
+    &[
+        RepoOpsPacketSpec {
+            id: "evidence_health",
+            label: "Evidence health",
+            command: "cargo xtask evidence-health",
+            description: "Checks Lane 1 evidence-health generation and bounded limited-artifact diagnostics.",
+            artifacts: &[
+                "target/ripr/reports/evidence-health.json",
+                "target/ripr/reports/evidence-health.md",
+            ],
+        },
+        RepoOpsPacketSpec {
+            id: "lane1_evidence_audit",
+            label: "Lane 1 evidence audit",
+            command: "cargo xtask lane1-evidence-audit",
+            description: "Produces raw-to-canonical/actionability counts and actionable-gap packet inputs.",
+            artifacts: &[
+                "target/ripr/reports/lane1-evidence-audit.json",
+                "target/ripr/reports/lane1-evidence-audit.md",
+                "target/ripr/reports/actionable-gaps.json",
+                "target/ripr/reports/actionable-gaps.md",
+            ],
+        },
+        RepoOpsPacketSpec {
+            id: "evidence_quality_scorecard",
+            label: "Evidence quality scorecard",
+            command: "cargo xtask evidence-quality-scorecard",
+            description: "Summarizes Lane 1 counts, unknowns, repair-route coverage, and verify-command coverage.",
+            artifacts: &[
+                "target/ripr/reports/evidence-quality-scorecard.json",
+                "target/ripr/reports/evidence-quality-scorecard.md",
+            ],
+        },
+        RepoOpsPacketSpec {
+            id: "evidence_quality_trend",
+            label: "Evidence quality trend",
+            command: "cargo xtask evidence-quality-trend",
+            description: "Compares scorecard movement while keeping limited current inputs unknown.",
+            artifacts: &[
+                "target/ripr/reports/evidence-quality-trend.json",
+                "target/ripr/reports/evidence-quality-trend.md",
+            ],
+        },
+        RepoOpsPacketSpec {
+            id: "badge_basis",
+            label: "Badge basis",
+            command: "cargo xtask badge-basis",
+            description: "Audits whether canonical actionable gaps are ready to support badge semantics.",
+            artifacts: &[
+                "target/ripr/reports/badge-basis.json",
+                "target/ripr/reports/badge-basis.md",
+            ],
+        },
+    ]
+}
+
+fn report_index_report_artifact(
+    path: &str,
+    reports: &[ReportIndexEntry],
+) -> ReportIndexRepoOpsArtifact {
+    let source = path
+        .strip_prefix("target/ripr/reports/")
+        .and_then(|file| reports.iter().find(|entry| entry.file == file));
+    let status = source
+        .map(|entry| entry.status.clone())
+        .unwrap_or_else(|| "missing".to_string());
+    ReportIndexRepoOpsArtifact {
+        path: path.to_string(),
+        available: source.is_some(),
+        status,
+    }
+}
+
+fn report_index_lane1_readiness_status(artifacts: &[ReportIndexRepoOpsArtifact]) -> String {
+    if artifacts.iter().all(|artifact| !artifact.available) {
+        return "missing".to_string();
+    }
+    if artifacts.iter().any(|artifact| artifact.status == "fail") {
+        return "fail".to_string();
+    }
+    if artifacts
+        .iter()
+        .any(|artifact| !artifact.available || is_warning_report_status(&artifact.status))
+    {
+        return "warn".to_string();
+    }
+    "present".to_string()
+}
+
+fn report_index_lane1_overall_status(packets: &[ReportIndexRepoOpsPacket]) -> String {
+    if packets.iter().any(|packet| packet.status == "fail") {
+        return "fail".to_string();
+    }
+    if packets.iter().any(|packet| packet.status != "present") {
+        return "warn".to_string();
+    }
+    "present".to_string()
+}
+
+fn report_index_missing_artifact_count(packets: &[ReportIndexRepoOpsPacket]) -> usize {
+    packets
+        .iter()
+        .flat_map(|packet| packet.artifacts.iter())
+        .filter(|artifact| !artifact.available)
+        .count()
+}
+
+fn report_index_warning_artifact_count(packets: &[ReportIndexRepoOpsPacket]) -> usize {
+    packets
+        .iter()
+        .flat_map(|packet| packet.artifacts.iter())
+        .filter(|artifact| artifact.available && is_warning_report_status(&artifact.status))
+        .count()
+}
+
+fn report_index_failing_artifact_count(packets: &[ReportIndexRepoOpsPacket]) -> usize {
+    packets
+        .iter()
+        .flat_map(|packet| packet.artifacts.iter())
+        .filter(|artifact| artifact.status == "fail")
+        .count()
+}
+
+fn is_warning_report_status(status: &str) -> bool {
+    matches!(
+        status,
+        "warn" | "timeout" | "incomplete" | "unreadable" | "stale" | "unknown"
+    )
+}
+
 fn report_index_repo_ops_packets(
     reports: &[ReportIndexEntry],
     receipts: &[ReportIndexEntry],
@@ -40092,8 +40846,12 @@ fn report_index_status(
     if reports.iter().any(|entry| entry.status == "fail") {
         return "fail";
     }
+    let lane1_packets = report_index_lane1_readiness_packets(reports);
     if !missing.is_empty()
         || !campaign_issues.is_empty()
+        || lane1_packets
+            .iter()
+            .any(|packet| packet.status != "present")
         || reports.iter().any(|entry| entry.status == "warn")
     {
         "warn"
@@ -40102,7 +40860,10 @@ fn report_index_status(
     }
 }
 
-fn report_index_next_commands(missing: &[String]) -> Vec<String> {
+fn report_index_next_commands(
+    missing: &[String],
+    lane1_packets: &[ReportIndexRepoOpsPacket],
+) -> Vec<String> {
     let mut commands = BTreeSet::<String>::new();
     if missing
         .iter()
@@ -40151,6 +40912,11 @@ fn report_index_next_commands(missing: &[String]) -> Vec<String> {
         .any(|path| path.ends_with("/capabilities.md") || path.ends_with("\\capabilities.md"))
     {
         commands.insert("cargo xtask check-capabilities".to_string());
+    }
+    for packet in lane1_packets {
+        if packet.status != "present" {
+            commands.insert(packet.command.to_string());
+        }
     }
     commands.insert("cargo xtask check-pr".to_string());
     commands.insert("cargo xtask reports index".to_string());
@@ -40336,6 +41102,15 @@ fn report_index_markdown(
             .filter(|entry| entry.status == "warn")
             .count()
     ));
+    let lane1_packets = report_index_lane1_readiness_packets(reports);
+    body.push_str(&format!(
+        "- lane1 readiness status: `{}`\n",
+        report_index_lane1_overall_status(&lane1_packets)
+    ));
+    body.push_str(&format!(
+        "- missing lane1 readiness artifacts: {}\n",
+        report_index_missing_artifact_count(&lane1_packets)
+    ));
 
     body.push_str("\n## Suggested Reviewer Path\n\n");
     body.push_str("1. Read `target/ripr/reports/pr-summary.md`.\n");
@@ -40365,6 +41140,20 @@ fn report_index_markdown(
         body.push_str(&format!(
             "- `{file}`: {}\n",
             status_for_report(reports, file)
+        ));
+    }
+
+    body.push_str("\n## Lane 1 Evidence Readiness\n\n");
+    body.push_str(
+        "| Artifact group | Status | Artifacts | Next command |\n| --- | --- | --- | --- |\n",
+    );
+    for packet in &lane1_packets {
+        body.push_str(&format!(
+            "| {} | `{}` | {} | `{}` |\n",
+            markdown_cell(packet.label),
+            markdown_cell(&packet.status),
+            markdown_cell(&repo_ops_artifacts_markdown(&packet.artifacts)),
+            markdown_cell(packet.command)
         ));
     }
 
@@ -40455,6 +41244,28 @@ fn report_index_json(
         &report_index_repo_ops_packets(reports, receipts),
     );
     body.push_str("  ],\n");
+    let lane1_packets = report_index_lane1_readiness_packets(reports);
+    body.push_str("  \"lane1_readiness\": {\n");
+    body.push_str(&format!(
+        "    \"status\": \"{}\",\n",
+        json_escape(&report_index_lane1_overall_status(&lane1_packets))
+    ));
+    body.push_str(&format!(
+        "    \"missing_artifacts\": {},\n",
+        report_index_missing_artifact_count(&lane1_packets)
+    ));
+    body.push_str(&format!(
+        "    \"warning_artifacts\": {},\n",
+        report_index_warning_artifact_count(&lane1_packets)
+    ));
+    body.push_str(&format!(
+        "    \"failing_artifacts\": {},\n",
+        report_index_failing_artifact_count(&lane1_packets)
+    ));
+    body.push_str("    \"packets\": [\n");
+    write_report_index_repo_ops_packet_array(&mut body, &lane1_packets);
+    body.push_str("    ]\n");
+    body.push_str("  },\n");
     body.push_str("  \"missing_expected_reports\": [");
     write_json_string_array(&mut body, missing);
     body.push_str("],\n");
@@ -45038,11 +45849,12 @@ mod tests {
         BadgeArtifactJob, BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection,
         BadgeCountBreakdown, BadgeEndpointSnapshot, BadgeNativeAuditSnapshot, BadgeNativeSlot,
         CampaignManifest, Capability, ChangedPath, CheckReport, CheckStatus, CheckViolation,
-        CiFullEvidenceGate, CommandCatalogEntry, CwdCommand, DogfoodEditorFirstPrBridgeRun,
-        DogfoodEditorGapCockpitRun, DogfoodFindingAlignmentRun, DogfoodFindingAlignmentScenario,
-        DogfoodFirstActionRun, DogfoodFirstPrRun, DogfoodFrontPanelRun, DogfoodGateRun,
-        DogfoodGeneratedCiCockpitRun, DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun,
-        DogfoodPreviewProjectionRuns, DogfoodReportInputs, DogfoodReportPacketIndexRun, DogfoodRun,
+        CiFullEvidenceGate, CommandCatalogEntry, CwdCommand, DOC_ARTIFACT_LEDGER,
+        DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun, DogfoodFindingAlignmentRun,
+        DogfoodFindingAlignmentScenario, DogfoodFirstActionRun, DogfoodFirstPrRun,
+        DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
+        DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun, DogfoodPreviewProjectionRuns,
+        DogfoodReportInputs, DogfoodReportPacketIndexRun, DogfoodRun,
         EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED, EvidenceQualityScorecardInput,
         EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
         EvidenceQualityTrendReport, FixKind, GENERATED_CI_FIRST_ACTION_REPAIR,
@@ -45065,12 +45877,13 @@ mod tests {
         build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
         build_repo_exposure_latency_report, build_targeted_test_outcome_report,
         campaign_source_truth_violations_for_root, check_allow_attributes,
-        check_badge_diff_policy_with_context, check_droid_review_config, check_executable_files,
-        check_file_policy, check_local_context, check_network_policy, check_no_panic_family,
-        check_process_policy, check_static_language, check_workflows, ci_full_evidence_gates,
-        cockpit_json, cockpit_markdown, collect_panic_findings, collect_semantic_panic_findings,
-        command_catalog, command_catalog_violations, commands_report_json,
-        commands_report_markdown, critic_findings, days_from_civil, dogfood_class_counts,
+        check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+        check_executable_files, check_file_policy, check_local_context, check_network_policy,
+        check_no_panic_family, check_process_policy, check_static_language, check_workflows,
+        ci_full_evidence_gates, cockpit_json, cockpit_markdown, collect_panic_findings,
+        collect_semantic_panic_findings, command_catalog, command_catalog_violations,
+        commands_report_json, commands_report_markdown, critic_findings, days_from_civil,
+        doc_artifact_kind_matches_path, doc_artifact_violations, dogfood_class_counts,
         dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
         dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios,
         dogfood_finding_alignment_run, dogfood_finding_alignment_scenarios,
@@ -45104,53 +45917,56 @@ mod tests {
         lane1_evidence_audit_json, lane1_evidence_audit_limited_report,
         lane1_evidence_audit_markdown, lane1_evidence_audit_repo_exposure_args,
         lane1_evidence_audit_report_from_complete_repo_exposure,
-        lane1_evidence_audit_timeout_error, limited_badge_artifacts_json,
-        limited_badge_artifacts_markdown, local_context_line_findings, local_markdown_target,
-        lsp_cockpit_report, lsp_cockpit_report_json, lsp_cockpit_report_markdown,
-        markdown_links_in_text, mutation_calibration_report_json,
-        mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
-        next_spec_id_from_ids, no_panic_toml_string, non_rust_programming_retention_reason,
-        normalize_fixture_human_output, normalize_fixture_json_output, normalize_golden_text,
-        panic_family_from_pattern, parse_actionable_gap_outcomes_args, parse_campaign_manifest,
-        parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
-        parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
-        parse_no_panic_allowlist_toml, parse_no_panic_allowlist_toml_v2,
-        parse_pr_triage_pull_requests, parse_reason, parse_repo_exposure_static_seams,
-        parse_repo_exposure_summary_counts, parse_required_status_contexts, parse_ripr_swarm_args,
-        parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
-        parse_static_language_allowlist, parse_string_value, parse_targeted_test_outcome_args,
-        pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
-        pr_ready_next_action, pr_ready_status, pr_ready_status_from_report_status,
-        pr_sensitive_file_reason, pr_shape_warnings, pr_summary_body, pr_title_family,
-        pr_triage_findings, pr_triage_json, pr_triage_markdown, pr_triage_queue_dispositions,
-        precommit_report_body, public_badge_basis_violations, public_contract_rows,
-        read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json, receipt_specs,
-        receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
+        lane1_evidence_audit_timeout_error, lane1_readiness_packet_specs,
+        limited_badge_artifacts_json, limited_badge_artifacts_markdown,
+        local_context_line_findings, local_markdown_target, lsp_cockpit_report,
+        lsp_cockpit_report_json, lsp_cockpit_report_markdown, markdown_links_in_text,
+        mutation_calibration_report_json, mutation_calibration_report_markdown,
+        next_checkpoints_from_capabilities, next_spec_id_from_ids, no_panic_toml_string,
+        non_rust_programming_retention_reason, normalize_fixture_human_output,
+        normalize_fixture_json_output, normalize_golden_text, panic_family_from_pattern,
+        parse_actionable_gap_outcomes_args, parse_campaign_manifest,
+        parse_doc_artifact_ledger_text, parse_file_policy_allowlist, parse_gh_pr_status_args,
+        parse_gh_pr_status_pull_request, parse_inline_array, parse_mutation_calibration_args,
+        parse_mutation_outcomes_json, parse_no_panic_allowlist_toml,
+        parse_no_panic_allowlist_toml_v2, parse_pr_triage_pull_requests, parse_reason,
+        parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
+        parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
+        parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
+        parse_string_value, parse_targeted_test_outcome_args, pr_body_validation_warning,
+        pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+        pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
+        pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+        pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
+        public_contract_rows, read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json,
+        receipt_specs, receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
         render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
         repo_badge_artifact_jobs, repo_badge_artifacts_summary_markdown,
         repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
         repo_exposure_latency_trace, repo_root, repo_seam_inventory_command_args_for_root,
-        report_index_json, report_index_markdown, report_index_missing_expected,
-        report_index_repo_ops_packets, report_index_repo_ops_status, report_status_from_text,
-        ripr_command_literals_in_text, ripr_debug_binary, ripr_pre_commit_hook,
-        ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
-        ripr_swarm_plan_blocked_packets, ripr_swarm_plan_blocked_report,
-        ripr_swarm_plan_from_actionable_gaps_value, ripr_swarm_plan_json, ripr_swarm_plan_markdown,
-        ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
-        ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
-        ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions,
-        ripr_swarm_readiness_summary, run_ci_full_evidence_gates, sarif_policy_report_json,
-        sarif_policy_report_markdown, semantic_selector_matches, should_scan_static_language_path,
-        should_skip_path, sorted_allowlist_content, sorted_capability_blocks_content,
-        sorted_command_catalog_content, sorted_markdown_index_table_content,
-        sorted_traceability_behavior_blocks_content, spec_id_from_path, spec_ids_in_text,
-        spec_numbering_violations, specs, static_language_allowlist_covers, status_for_report,
-        suggested_fixes_patch, suspicious_runtime_file_names, targeted_test_outcome,
-        targeted_test_outcome_report_json, targeted_test_outcome_report_markdown,
-        test_efficiency_entry, test_efficiency_report_json, test_efficiency_report_markdown,
-        test_oracle_report_json, test_oracle_report_markdown, test_oracle_tests_in_text,
-        unknown_command_message, validate_actionable_gap_outcomes_fixture_case,
+        report_index_json, report_index_lane1_overall_status, report_index_lane1_readiness_packets,
+        report_index_markdown, report_index_missing_artifact_count, report_index_missing_expected,
+        report_index_next_commands, report_index_repo_ops_packets, report_index_repo_ops_status,
+        report_status_from_text, ripr_command_literals_in_text, ripr_debug_binary,
+        ripr_pre_commit_hook, ripr_swarm_attempt_dry_run_from_actionable_gaps_value,
+        ripr_swarm_attempt_dry_run_markdown, ripr_swarm_plan_blocked_packets,
+        ripr_swarm_plan_blocked_report, ripr_swarm_plan_from_actionable_gaps_value,
+        ripr_swarm_plan_json, ripr_swarm_plan_markdown, ripr_swarm_plan_packet_is_high_confidence,
+        ripr_swarm_plan_ready_packets, ripr_swarm_read_optional_json,
+        ripr_swarm_readiness_from_values, ripr_swarm_readiness_json, ripr_swarm_readiness_markdown,
+        ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
+        run_ci_full_evidence_gates, sarif_policy_report_json, sarif_policy_report_markdown,
+        semantic_selector_matches, should_scan_static_language_path, should_skip_path,
+        sorted_allowlist_content, sorted_capability_blocks_content, sorted_command_catalog_content,
+        sorted_markdown_index_table_content, sorted_traceability_behavior_blocks_content,
+        spec_id_from_path, spec_ids_in_text, spec_numbering_violations, specs,
+        static_language_allowlist_covers, status_for_report, suggested_fixes_patch,
+        suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
+        targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
+        test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
+        test_oracle_tests_in_text, unknown_command_message,
+        validate_actionable_gap_outcomes_fixture_case,
         validate_actionable_gap_outcomes_fixture_corpus, validate_local_context_allowlist,
         validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
         vscode_compile_command, vscode_extension_dir, vscode_package_command,
@@ -51297,9 +52113,59 @@ jobs:
         assert!(body.contains("# ripr report index"));
         assert!(body.contains("output/unknown-stop-reason-invariant"));
         assert!(body.contains("Suggested Reviewer Path"));
+        assert!(body.contains("Lane 1 Evidence Readiness"));
+        assert!(body.contains("cargo xtask lane1-evidence-audit"));
         assert!(body.contains("Repo-Ops Packets"));
         assert_eq!(status_for_report(&reports, "pr-summary.md"), "pass");
         assert_eq!(status_for_report(&reports, "missing.md"), "missing");
+    }
+
+    #[test]
+    fn report_index_tracks_lane1_readiness_artifacts() {
+        let missing_packets = report_index_lane1_readiness_packets(&[]);
+
+        assert_eq!(report_index_lane1_overall_status(&missing_packets), "warn");
+        assert_eq!(report_index_missing_artifact_count(&missing_packets), 12);
+        assert!(
+            missing_packets
+                .iter()
+                .all(|packet| packet.status == "missing")
+        );
+
+        let complete_reports = lane1_readiness_packet_specs()
+            .iter()
+            .flat_map(|spec| spec.artifacts.iter())
+            .filter_map(|path| path.strip_prefix("target/ripr/reports/"))
+            .map(|file| ReportIndexEntry {
+                file: file.to_string(),
+                path: format!("target/ripr/reports/{file}"),
+                status: "advisory".to_string(),
+            })
+            .collect::<Vec<_>>();
+        let complete_packets = report_index_lane1_readiness_packets(&complete_reports);
+
+        assert_eq!(
+            report_index_lane1_overall_status(&complete_packets),
+            "present"
+        );
+        assert_eq!(report_index_missing_artifact_count(&complete_packets), 0);
+        assert!(
+            complete_packets
+                .iter()
+                .all(|packet| packet.status == "present")
+        );
+    }
+
+    #[test]
+    fn report_index_next_commands_include_missing_lane1_readiness() {
+        let packets = report_index_lane1_readiness_packets(&[]);
+        let commands = report_index_next_commands(&[], &packets);
+
+        assert!(commands.contains(&"cargo xtask evidence-health".to_string()));
+        assert!(commands.contains(&"cargo xtask lane1-evidence-audit".to_string()));
+        assert!(commands.contains(&"cargo xtask evidence-quality-scorecard".to_string()));
+        assert!(commands.contains(&"cargo xtask evidence-quality-trend".to_string()));
+        assert!(commands.contains(&"cargo xtask badge-basis".to_string()));
     }
 
     #[test]
@@ -51405,6 +52271,9 @@ jobs:
         let packets = value["repo_ops_packets"]
             .as_array()
             .ok_or_else(|| "repo_ops_packets must be an array".to_string())?;
+        let lane1 = value["lane1_readiness"]
+            .as_object()
+            .ok_or_else(|| "lane1_readiness must be an object".to_string())?;
 
         assert!(packets.iter().any(|packet| {
             packet["id"] == "command_mutability_catalog"
@@ -51414,6 +52283,16 @@ jobs:
         assert!(packets.iter().any(|packet| packet["id"] == "pr_ready"));
         assert!(packets.iter().any(|packet| packet["id"] == "repo_cockpit"));
         assert!(packets.iter().any(|packet| packet["id"] == "pr_triage"));
+        assert_eq!(lane1["status"], "warn");
+        assert_eq!(lane1["missing_artifacts"], 12);
+        assert!(
+            lane1["packets"]
+                .as_array()
+                .ok_or_else(|| "lane1_readiness.packets must be an array".to_string())?
+                .iter()
+                .any(|packet| packet["id"] == "lane1_evidence_audit"
+                    && packet["next_command"] == "cargo xtask lane1-evidence-audit")
+        );
         Ok(())
     }
 
@@ -51659,6 +52538,8 @@ jobs:
         let source = r#"id = "agentic-devex-foundation"
 title = "Agentic DevEx Foundation"
 status = "active"
+successor = "next-campaign"
+no_current_goal = false
 
 objective = """
 Build the repo operating system.
@@ -51687,6 +52568,8 @@ commands = [
 
         assert!(violations.is_empty());
         assert_eq!(manifest.id, Some("agentic-devex-foundation".to_string()));
+        assert_eq!(manifest.successor, Some("next-campaign".to_string()));
+        assert_eq!(manifest.no_current_goal, Some(false));
         assert_eq!(manifest.work_items.len(), 1);
         assert_eq!(
             manifest.work_items[0].id,
@@ -55653,6 +56536,1084 @@ reason = "second"
         assert_eq!(target, Some("../sibling.md".to_string()));
     }
 
+    fn write_doc_artifact_fixture(root: &Path, path: &str, id: &str) {
+        write(&root.join(path), &format!("# {id}\n"));
+    }
+
+    fn write_doc_artifact_ledger_fixture(root: &Path, body: &str) {
+        write(&root.join(DOC_ARTIFACT_LEDGER), body);
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_duplicate_artifact_id() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-duplicate", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-beta.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-beta.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("duplicate artifact id `RIPR-PROP-0001`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_duplicate_artifact_field() {
+        let error = parse_doc_artifact_ledger_text(
+            "policy/doc-artifacts.toml",
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        )
+        .expect_err("duplicate keys should be rejected");
+
+        assert!(error.contains("duplicate field `id`"), "{error}");
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_artifact_file() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-file", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-missing.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("points at missing file")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_status() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unknown-status", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "maybe"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("unsupported status `maybe`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_linked_proposal() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-linked-proposal", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("must set linked_proposal or standalone_reason")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_accepts_superseded_with_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0002-new.md",
+                "RIPR-PROP-0002",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+superseded_by = "RIPR-PROP-0002"
+
+[[artifact]]
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0002-new.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert_eq!(violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_superseded_self_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded-self", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+superseded_by = "RIPR-PROP-0001"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("must not replace itself")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_bad_schema_version() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-bad-schema", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "0.9"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("schema_version must be 1.0")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_id_missing_from_file() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-id-missing-from-file", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "Different ID",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("does not mention `RIPR-PROP-0001`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_kind_path_mismatch() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-kind-path", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("kind `proposal` does not match path")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_linked_proposal() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unknown-link", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-9999"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation
+                        .contains("linked_proposal references unknown artifact `RIPR-PROP-9999`")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_linked_plan() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unknown-plan-link", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+linked_plan = "PLAN-9999"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("linked_plan references unknown artifact `PLAN-9999`")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_path_traversal_before_kind_match() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-path-traversal", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/../proposals/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("must not contain `..` traversal")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_accepts_accepted_spec_with_standalone_reason() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-standalone-spec", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert_eq!(violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_superseded_without_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded-missing", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("must set superseded_by or replacement")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_superseded_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded-unknown", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+replacement = "RIPR-PROP-9999"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("superseded_by references unknown artifact `RIPR-PROP-9999`")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_active_plan_without_proposal_or_spec() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-active-plan-missing-link", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "plans/source-of-truth/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("must link to at least one proposal or spec")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_accepts_active_plan_with_spec_link() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-active-plan", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/source-of-truth/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_spec = "RIPR-SPEC-0001"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert_eq!(violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_artifact_field() {
+        with_temp_cwd("doc-artifacts-unknown-field", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+surprise = "nope"
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("unknown fields should be parse errors");
+            assert!(error.contains("unknown field `surprise`"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unsupported_toml_section() {
+        with_temp_cwd("doc-artifacts-unsupported-section", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[metadata]
+owner = "repo-infra"
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("unsupported sections should be parse errors");
+            assert!(error.contains("unsupported TOML section `[metadata]`"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unquoted_values() {
+        with_temp_cwd("doc-artifacts-unquoted", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = RIPR-PROP-0001
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("unquoted values should be parse errors");
+            assert!(error.contains("string value must be quoted"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_command_accepts_valid_fixture() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-command-valid", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+            );
+
+            check_doc_artifacts()
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_command_rejects_invalid_fixture() {
+        with_temp_cwd("doc-artifacts-command-invalid", |root| {
+            write_doc_artifact_ledger_fixture(root, "schema_version = \"1.0\"\n");
+
+            let error = check_doc_artifacts().expect_err("empty ledgers should fail the command");
+            assert!(error.contains("check-doc-artifacts failed"));
+            assert!(error.contains("has no [[artifact]] entries"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_command_reports_missing_ledger() {
+        with_temp_cwd("doc-artifacts-command-missing-ledger", |_root| {
+            let error = check_doc_artifacts().expect_err("missing ledgers should fail the command");
+            assert!(error.contains("failed to read policy/doc-artifacts.toml"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_schema_and_empty_ledger() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-empty", |root| {
+            write_doc_artifact_ledger_fixture(root, "");
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("is missing schema_version")),
+                "{violations:#?}"
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("has no [[artifact]] entries")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_artifact_id() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-id", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("artifact is missing required field `id`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_required_fields() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-required", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("missing required field `kind`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_path_after_kind() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-path", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("missing required field `path`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_status_after_path() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-status", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("missing required field `status`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_missing_owner() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-missing-owner", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("missing required field `owner`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_kind() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unknown-kind", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "memo"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("unsupported kind `memo`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_absolute_path() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-absolute-path", |root| {
+            let absolute_path = root
+                .join("docs/proposals/RIPR-PROP-0001-alpha.md")
+                .display()
+                .to_string()
+                .replace('\\', "\\\\");
+            write_doc_artifact_ledger_fixture(
+                root,
+                &format!(
+                    r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "{absolute_path}"
+status = "proposed"
+owner = "repo-infra"
+"#
+                ),
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("path must be repo-relative")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_reports_unreadable_artifact_path() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unreadable-path", |root| {
+            fs::create_dir_all(root.join("docs/proposals/RIPR-PROP-0001-alpha.md"))
+                .map_err(|err| format!("failed to create fixture directory: {err}"))?;
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("directories should fail artifact reads");
+            assert!(error.contains("failed to read"));
+            assert!(error.contains("docs/proposals/RIPR-PROP-0001-alpha.md"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_key_value_before_artifact() {
+        with_temp_cwd("doc-artifacts-key-before-artifact", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+owner = "repo-infra"
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("artifact fields before a section should be parse errors");
+            assert!(error.contains("`owner` must appear inside [[artifact]]"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_malformed_line() {
+        with_temp_cwd("doc-artifacts-malformed-line", |root| {
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+not a key value
+"#,
+            );
+
+            let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+                .expect_err("malformed lines should be parse errors");
+            assert!(error.contains("expected `key = \"value\"`"));
+        });
+    }
+
+    #[test]
+    fn doc_artifacts_accepts_adr_links_and_ignored_metadata_fields() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-adr-links", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-alpha.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(root, "docs/adr/RIPR-ADR-0001-alpha.md", "RIPR-ADR-0001");
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-alpha.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/source-of-truth/implementation-plan.md",
+                "PLAN-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+notes = "metadata ignored by validator"
+reason = "policy context"
+review_posture = "advisory"
+
+[[artifact]]
+id = "RIPR-ADR-0001"
+kind = "adr"
+path = "docs/adr/RIPR-ADR-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+linked_adr = "RIPR-ADR-0001"
+linked_plan = "PLAN-0001"
+
+[[artifact]]
+id = "PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_spec = "RIPR-SPEC-0001"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(violations.is_empty(), "{violations:#?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifact_kind_path_rules_cover_supported_surfaces() {
+        let cases = [
+            ("adr", "docs/adr/ADR-0001.md", true),
+            ("closeout", "docs/handoffs/2026-closeout.md", true),
+            ("closeout", "plans/source-of-truth/closeout.md", true),
+            ("goal", ".ripr/goals/active.toml", true),
+            ("plan", "plans/source-of-truth/implementation-plan.md", true),
+            ("policy-ledger", "policy/doc-artifacts.toml", true),
+            ("policy_ledger", "policy/doc-artifacts.toml", true),
+            ("support-tier", "docs/status/SUPPORT_TIERS.md", true),
+            ("support_tier", "docs/status/SUPPORT_TIERS.md", true),
+            ("support_tier", "docs/status/CLAIMS.md", true),
+            ("roadmap", "docs/ROADMAP.md", true),
+            ("roadmap", "ROADMAP.md", true),
+            ("unknown", "docs/ROADMAP.md", false),
+        ];
+
+        for (kind, path, expected) in cases {
+            assert_eq!(
+                doc_artifact_kind_matches_path(kind, path),
+                expected,
+                "{kind} {path}"
+            );
+        }
+    }
+
     #[test]
     fn campaign_manifest_parses_valid_file() {
         with_temp_cwd("campaign-manifest", |root| {
@@ -55777,8 +57738,92 @@ stackable = true
     }
 
     #[test]
-    fn campaign_manifest_accepts_closed_when_all_work_items_are_done() {
+    fn campaign_manifest_accepts_closed_when_all_work_items_are_done_with_successor() {
         with_temp_cwd("campaign-closed", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "closed-campaign\nnext-campaign\n\n| `docs/test` | done |\n",
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "closed-campaign"
+title = "Closed Campaign"
+status = "closed"
+successor = "next-campaign"
+end_state = ["Closed proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "done"
+branch = "docs-test"
+stackable = false
+acceptance = "Closed proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(violations.is_empty(), "{violations:?}");
+        });
+    }
+
+    #[test]
+    fn campaign_manifest_accepts_closed_with_no_current_goal_marker() {
+        with_temp_cwd("campaign-closed-no-current-goal", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "closed-campaign\n\n| `docs/test` | done |\n",
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "closed-campaign"
+title = "Closed Campaign"
+status = "closed"
+no_current_goal = true
+end_state = ["Closed proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "done"
+branch = "docs-test"
+stackable = false
+acceptance = "Closed proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(violations.is_empty(), "{violations:?}");
+        });
+    }
+
+    #[test]
+    fn campaign_manifest_rejects_closed_without_successor_or_no_current_goal_marker() {
+        with_temp_cwd("campaign-closed-stale", |root| {
             write(
                 &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
                 "closed-campaign\n\n| `docs/test` | done |\n",
@@ -55813,7 +57858,12 @@ commands = ["cargo xtask check-pr"]
             let validation = super::validate_campaign_manifest(&manifest, &mut violations);
             assert!(validation.is_ok(), "{validation:?}");
 
-            assert!(violations.is_empty(), "{violations:?}");
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("closed active campaign must declare")),
+                "{violations:?}"
+            );
         });
     }
 
@@ -58638,6 +60688,10 @@ jobs:
         assert_eq!(
             XtaskCommand::parse(["check-badge-diff-policy".to_string()]),
             XtaskCommand::CheckBadgeDiffPolicy
+        );
+        assert_eq!(
+            XtaskCommand::parse(["check-doc-artifacts".to_string()]),
+            XtaskCommand::CheckDocArtifacts
         );
         assert_eq!(
             XtaskCommand::parse(["pr-triage-report".to_string()]),
@@ -64544,6 +66598,81 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn evidence_quality_trend_marks_limited_current_scorecard_unknown() -> Result<(), String> {
+        let mut current = scorecard_minimal_audit_value(0, 1, 0, 5, 2);
+        let mut previous = scorecard_minimal_audit_value(4, 8, 5, 2, 6);
+        push_scorecard_unknown(&mut current, "lane1_evidence_audit_limited")?;
+        push_scorecard_unknown(&mut current, "evidence_health_limited")?;
+        push_scorecard_unknown(
+            &mut current,
+            "evidence_quality_scorecard_audit_regeneration_failed",
+        )?;
+        set_static_category_count(&mut current, "opaque_helper_call", 1)?;
+        set_static_category_count(&mut previous, "opaque_helper_call", 8)?;
+
+        let report = evidence_quality_trend_from_values(
+            "unix_ms:1".to_string(),
+            trend_inputs_for_test(true),
+            &current,
+            Some(&previous),
+        )?;
+
+        assert_eq!(report.summary.status, "unknown");
+        assert_eq!(report.summary.compared_metrics, 0);
+        assert_eq!(report.summary.improved_metrics, 0);
+        assert_eq!(report.summary.regressed_metrics, 0);
+        assert_eq!(report.summary.unchanged_metrics, 0);
+        assert_eq!(report.summary.unknown_metrics, report.metric_trends.len());
+        assert!(
+            report
+                .metric_trends
+                .iter()
+                .all(|trend| trend.direction == "unknown" && trend.delta.is_none())
+        );
+        assert!(
+            report
+                .static_limitation_category_trends
+                .iter()
+                .all(|trend| trend.direction == "unknown" && trend.delta.is_none())
+        );
+        let current_limited = report
+            .unknowns
+            .iter()
+            .find(|unknown| unknown.kind == "current_scorecard_limited")
+            .ok_or_else(|| "missing current_scorecard_limited trend unknown".to_string())?;
+        assert!(
+            current_limited
+                .summary
+                .contains("lane1_evidence_audit_limited")
+        );
+        assert!(current_limited.summary.contains("evidence_health_limited"));
+        assert!(
+            current_limited
+                .summary
+                .contains("evidence_quality_scorecard_audit_regeneration_failed")
+        );
+
+        let json = evidence_quality_trend_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["status"], "unknown");
+        assert_eq!(
+            value["summary"]["compared_metrics"],
+            serde_json::Value::from(0)
+        );
+        assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
+            unknowns
+                .iter()
+                .any(|unknown| unknown["kind"] == "current_scorecard_limited")
+        }));
+
+        let markdown = evidence_quality_trend_markdown(&report);
+        assert!(markdown.contains("current_scorecard_limited"));
+        assert!(markdown.contains("cannot claim improvement or regression"));
+        Ok(())
+    }
+
+    #[test]
     fn evidence_quality_trend_distinguishes_improvement_regression_and_unchanged()
     -> Result<(), String> {
         let current = scorecard_minimal_audit_value(0, 3, 1, 5, 4);
@@ -64812,6 +66941,23 @@ covered_by = ["cargo xtask check-file-policy"]
                 "uncalibrated_records": uncalibrated_records
             }
         })
+    }
+
+    fn push_scorecard_unknown(value: &mut serde_json::Value, kind: &str) -> Result<(), String> {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "scorecard value should be an object".to_string())?;
+        let unknowns = object
+            .entry("unknowns".to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| "scorecard unknowns should be an array".to_string())?;
+        unknowns.push(serde_json::json!({
+            "kind": kind,
+            "summary": "limited input",
+            "next_repair": "rerun Lane 1 reports"
+        }));
+        Ok(())
     }
 
     fn scorecard_inputs_for_test(previous_loaded: bool) -> EvidenceQualityScorecardInputs {

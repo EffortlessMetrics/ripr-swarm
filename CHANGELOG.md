@@ -9,6 +9,14 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- `cargo xtask reports index` now surfaces Lane 1 evidence readiness for
+  evidence-health, Lane 1 audit, actionable-gap, scorecard, trend, and
+  badge-basis artifacts. Missing or limited artifacts warn with regeneration
+  commands instead of letting the index look healthy while the badge-readiness
+  evidence chain is absent.
+- Evidence-quality trend now treats current scorecards with limited input
+  unknowns as `current_scorecard_limited`, preserving rows for diagnostics while
+  refusing improvement or regression claims from bounded diagnostic counts.
 - Evidence-health fallback artifacts now use the current evidence-health schema
   version and carry explicit generation phase/status plus bounded stdout/stderr
   excerpts for timeout and nonzero-exit warning reports. The output contract,
