@@ -36639,6 +36639,7 @@ struct DocArtifactLedger {
 #[derive(Clone, Debug, Default)]
 struct DocArtifactEntry {
     line: usize,
+    seen_fields: BTreeSet<String>,
     id: Option<String>,
     kind: Option<String>,
     path: Option<String>,
@@ -36791,6 +36792,32 @@ fn set_doc_artifact_field(
     display: &str,
     line_number: usize,
 ) -> Result<(), String> {
+    if !matches!(
+        key,
+        "id" | "kind"
+            | "path"
+            | "status"
+            | "owner"
+            | "linked_proposal"
+            | "linked_spec"
+            | "linked_adr"
+            | "linked_plan"
+            | "standalone_reason"
+            | "superseded_by"
+            | "replacement"
+            | "notes"
+            | "reason"
+            | "review_posture"
+    ) {
+        return Err(format!(
+            "{display}:{line_number} unknown field `{key}` in [[artifact]] section"
+        ));
+    }
+    if !artifact.seen_fields.insert(key.to_string()) {
+        return Err(format!(
+            "{display}:{line_number} duplicate field `{key}` in [[artifact]] section"
+        ));
+    }
     match key {
         "id" => artifact.id = Some(value),
         "kind" => artifact.kind = Some(value),
@@ -36805,11 +36832,7 @@ fn set_doc_artifact_field(
         "superseded_by" => artifact.superseded_by = Some(value),
         "replacement" => artifact.replacement = Some(value),
         "notes" | "reason" | "review_posture" => {}
-        _ => {
-            return Err(format!(
-                "{display}:{line_number} unknown field `{key}` in [[artifact]] section"
-            ));
-        }
+        _ => unreachable!("allowed document artifact fields are checked before assignment"),
     }
     Ok(())
 }
@@ -36908,15 +36931,24 @@ fn validate_doc_artifact_entry(
 
     if status == "superseded" {
         match doc_artifact_replacement_id(artifact) {
-            Some(replacement_id) => validate_doc_artifact_link(
-                ledger_display,
-                artifact,
-                id_label,
-                "superseded_by",
-                replacement_id,
-                artifact_ids,
-                violations,
-            ),
+            Some(replacement_id) => {
+                if replacement_id == id {
+                    violations.push(format!(
+                        "{ledger_display}:{} superseded artifact `{id_label}` must not replace itself",
+                        artifact.line
+                    ));
+                } else {
+                    validate_doc_artifact_link(
+                        ledger_display,
+                        artifact,
+                        id_label,
+                        "superseded_by",
+                        replacement_id,
+                        artifact_ids,
+                        violations,
+                    );
+                }
+            }
             None => violations.push(format!(
                 "{ledger_display}:{} superseded artifact `{id_label}` must set superseded_by or replacement",
                 artifact.line
@@ -45889,21 +45921,21 @@ mod tests {
         next_checkpoints_from_capabilities, next_spec_id_from_ids, no_panic_toml_string,
         non_rust_programming_retention_reason, normalize_fixture_human_output,
         normalize_fixture_json_output, normalize_golden_text, panic_family_from_pattern,
-        parse_actionable_gap_outcomes_args, parse_campaign_manifest, parse_file_policy_allowlist,
-        parse_gh_pr_status_args, parse_gh_pr_status_pull_request, parse_inline_array,
-        parse_mutation_calibration_args, parse_mutation_outcomes_json,
-        parse_no_panic_allowlist_toml, parse_no_panic_allowlist_toml_v2,
-        parse_pr_triage_pull_requests, parse_reason, parse_repo_exposure_static_seams,
-        parse_repo_exposure_summary_counts, parse_required_status_contexts, parse_ripr_swarm_args,
-        parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
-        parse_static_language_allowlist, parse_string_value, parse_targeted_test_outcome_args,
-        pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
-        pr_ready_next_action, pr_ready_status, pr_ready_status_from_report_status,
-        pr_sensitive_file_reason, pr_shape_warnings, pr_summary_body, pr_title_family,
-        pr_triage_findings, pr_triage_json, pr_triage_markdown, pr_triage_queue_dispositions,
-        precommit_report_body, public_badge_basis_violations, public_contract_rows,
-        read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json, receipt_specs,
-        receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
+        parse_actionable_gap_outcomes_args, parse_campaign_manifest,
+        parse_doc_artifact_ledger_text, parse_file_policy_allowlist, parse_gh_pr_status_args,
+        parse_gh_pr_status_pull_request, parse_inline_array, parse_mutation_calibration_args,
+        parse_mutation_outcomes_json, parse_no_panic_allowlist_toml,
+        parse_no_panic_allowlist_toml_v2, parse_pr_triage_pull_requests, parse_reason,
+        parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
+        parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
+        parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
+        parse_string_value, parse_targeted_test_outcome_args, pr_body_validation_warning,
+        pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+        pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
+        pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+        pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
+        public_contract_rows, read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json,
+        receipt_specs, receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
         render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
         repo_badge_artifact_jobs, repo_badge_artifacts_summary_markdown,
         repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
@@ -56553,6 +56585,26 @@ owner = "repo-infra"
     }
 
     #[test]
+    fn doc_artifacts_rejects_duplicate_artifact_field() {
+        let error = parse_doc_artifact_ledger_text(
+            "policy/doc-artifacts.toml",
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        )
+        .expect_err("duplicate keys should be rejected");
+
+        assert!(error.contains("duplicate field `id`"), "{error}");
+    }
+
+    #[test]
     fn doc_artifacts_rejects_missing_artifact_file() -> Result<(), String> {
         with_temp_cwd("doc-artifacts-missing-file", |root| {
             write_doc_artifact_ledger_fixture(
@@ -56679,6 +56731,39 @@ owner = "repo-infra"
 
             let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
             assert_eq!(violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_superseded_self_replacement() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-superseded-self", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-old.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+superseded_by = "RIPR-PROP-0001"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("must not replace itself")),
+                "{violations:#?}"
+            );
             Ok(())
         })
     }
