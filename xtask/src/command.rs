@@ -1257,16 +1257,17 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
     let rhs_len = rhs.chars().count();
     let mut previous_row: Vec<usize> = (0..=rhs_len).collect();
+    let mut current_row = vec![0; rhs_len + 1];
 
     for (left_index, left_char) in lhs.chars().enumerate() {
-        let mut current_row = vec![left_index + 1];
+        current_row[0] = left_index + 1;
         for (right_index, right_char) in rhs.chars().enumerate() {
             let insertion = current_row[right_index] + 1;
             let deletion = previous_row[right_index + 1] + 1;
             let substitution = previous_row[right_index] + usize::from(left_char != right_char);
-            current_row.push(insertion.min(deletion).min(substitution));
+            current_row[right_index + 1] = insertion.min(deletion).min(substitution);
         }
-        previous_row = current_row;
+        std::mem::swap(&mut previous_row, &mut current_row);
     }
 
     previous_row[rhs_len]
@@ -1274,7 +1275,7 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_catalog, help_message};
+    use super::{command_catalog, help_message, levenshtein};
 
     #[test]
     fn top_level_help_pins_start_here_front_door_language() -> Result<(), String> {
@@ -1314,5 +1315,12 @@ mod tests {
             note("badge-basis [--gap-ledger <path>] [--include-seam-classes]")
                 .contains("Audits public badge endpoint counts")
         );
+    }
+
+    #[test]
+    fn levenshtein_distance_handles_ascii_and_unicode_inputs() {
+        assert_eq!(levenshtein("check-pr", "check-pr"), 0);
+        assert_eq!(levenshtein("chek-pr", "check-pr"), 1);
+        assert_eq!(levenshtein("réport", "report"), 1);
     }
 }
