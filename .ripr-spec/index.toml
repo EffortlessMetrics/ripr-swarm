@@ -1,0 +1,23 @@
+schema_version = "1.0"
+
+repo = "ripr"
+namespace = ".ripr-spec"
+
+[conventions]
+proposal_prefix = "RIPR-PROP"
+spec_prefix = "RIPR-SPEC"
+adr_prefix = "RIPR-ADR"
+lane_prefix = "RIPR-LANE"
+
+[external_namespaces]
+codex = ".codex"
+speckit = ".spec"
+claude = ".claude"
+jules = ".jules"
+
+[[lane]]
+id = "spec-system"
+name = "Repo-native spec rails"
+path = ".ripr-spec/lanes/spec-system/tracker.toml"
+status = "active"
+owner = "repo-architecture"

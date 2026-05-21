@@ -1,0 +1,16 @@
+schema_version = "1.0"
+
+id = "<lane-id>"
+name = "<Lane name>"
+status = "active"
+owner = "<owner>"
+objective = "<objective>"
+
+end_state = [
+  "<state-1>",
+]
+
+[[work_item]]
+id = "<work-item-id>"
+status = "ready"
+proof = ["git diff --check"]

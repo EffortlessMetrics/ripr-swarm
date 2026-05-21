@@ -1,0 +1,24 @@
+schema_version = "1.0"
+
+id = "spec-system"
+name = "Repo-native spec rails"
+status = "active"
+owner = "repo-architecture"
+
+objective = "Install a durable repo-owned spec namespace independent of agent/tool state."
+
+end_state = [
+  "Durable proposal/spec/ADR/lane/closeout rails exist under .ripr-spec/.",
+  "Contributor docs explain ownership boundaries.",
+  "External namespaces are awareness-only and not owned artifacts.",
+]
+
+[[work_item]]
+id = "namespace-doctrine"
+status = "done"
+proof = ["git diff --check"]
+
+[[work_item]]
+id = "templates-and-indexing"
+status = "ready"
+proof = ["git diff --check"]
