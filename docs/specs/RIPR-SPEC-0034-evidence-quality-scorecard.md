@@ -159,6 +159,12 @@ their directions unknown, leave deltas null, and emit
 `unknowns[].kind = "current_scorecard_limited"` instead of claiming
 improvement or regression.
 
+If an explicit previous artifact path is missing or malformed, the trend command
+must still write bounded JSON/Markdown with
+`unknowns[].kind = "evidence_quality_trend_previous_artifact_unavailable"`,
+mark the previous input status as `missing` or `malformed`, and avoid movement
+or badge-readiness delta claims.
+
 ## Outputs
 
 The JSON output includes:
@@ -319,6 +325,11 @@ metric and static-limitation rows visible for diagnostics, leaves deltas null,
 marks direction `unknown`, and emits `current_scorecard_limited` rather than
 claiming improvement or regression.
 
+Given a missing or malformed explicit previous artifact input, the trend report
+emits a bounded diagnostic artifact with
+`evidence_quality_trend_previous_artifact_unavailable` instead of leaving stale
+or missing trend output.
+
 Given a previous scorecard with fewer calibrated records and more
 duplicate-looking groups, the trend report marks calibrated records and
 duplicate-looking groups as improvement.
@@ -358,6 +369,11 @@ any gate behavior.
 - `xtask::tests::evidence_quality_trend_marks_limited_current_scorecard_unknown`
   pins the current-limited scorecard state so bounded diagnostic scorecards do
   not produce improvement or regression claims.
+- `xtask::tests::evidence_quality_trend_missing_previous_writes_limited_report`
+  and
+  `xtask::tests::evidence_quality_trend_malformed_previous_writes_limited_report`
+  pin bounded diagnostic trend artifacts for unavailable explicit previous
+  artifacts.
 - `xtask::tests::evidence_quality_trend_distinguishes_improvement_regression_and_unchanged`
   pins metric direction semantics.
 - `xtask::tests::evidence_quality_trend_reports_static_limitation_category_deltas`
