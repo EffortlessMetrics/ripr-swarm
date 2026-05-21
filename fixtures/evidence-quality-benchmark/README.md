@@ -26,8 +26,9 @@ promote any capability globally.
   pattern is added.
 - Activation-value resolution must not invent synthetic values. Direct owner
   calls may satisfy activation for value-insensitive seams, including multiline
-  no-argument calls and calls with opaque arguments, while predicate-boundary
-  checks still require concrete activation values.
+  no-argument calls, calls with opaque arguments, and one-hop same-file helpers
+  that directly call the owner, while predicate-boundary checks still require
+  concrete activation values.
 - Oracle cases must distinguish clear exact-value helpers from opaque helpers
   and must keep tautological equality assertions from claiming strong
   exact-value grip.

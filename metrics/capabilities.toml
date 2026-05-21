@@ -501,8 +501,8 @@ evidence = [
   "boundary_gap fixture",
   "weak_error_oracle fixture",
   "snapshot_oracle fixture",
-  "syntactic value resolution for let bindings, same-file constants, table rows, rstest cases, builder/fixture overrides, enum variants, Option/Result constructors, and source-order-scoped same-test struct literal field projections",
-  "negative guards for comment/string shadows, cross-file constants, unresolved helpers, unrelated builder methods, helper-built structs, before-call shadowed struct bindings, fixture parameter collisions, common non-let binders, non-simple let pattern binders, and non-literal struct fields",
+  "syntactic value resolution for let bindings, same-file constants, table rows, rstest cases, builder/fixture overrides, enum variants, Option/Result constructors, source-order-scoped same-test struct literal field projections, and value-insensitive activation through conservative one-hop same-file helper owner calls",
+  "negative guards for comment/string shadows, cross-file constants, unresolved helpers, unrelated builder methods, helper-built structs, before-call shadowed struct bindings, fixture parameter collisions, common non-let binders, non-simple let pattern binders, non-literal struct fields, helper-name-only affinity, and generic owner helper names",
   "evidence-first activation output",
   "docs/lanes/LANE_1_EVIDENCE_SPINE.md documents stable syntax-first activation/value scope and keeps unsupported value sources as explicit limitations"
 ]
@@ -721,7 +721,7 @@ status = "alpha"
 spec = "RIPR-SPEC-0035"
 evidence = [
   "fixtures/evidence-quality-benchmark/corpus.json defines a manifest-only Lane 1 benchmark corpus",
-  "the corpus covers duplicate canonical gap, match-arm discriminator split, wrong related-test top choice, broad versus exact error oracle, self-computed expected value and duplicative equality guards, value-insensitive owner-call activation for no-argument and opaque-argument calls, opaque helper limitation, cross-file constant limitation, presentation text constants, config/policy constants including behavior selectors with and without discriminators, side-effect observer, snapshot discriminator, mock expectation, runtime-only signal, and ambiguous runtime join classes",
+  "the corpus covers duplicate canonical gap, match-arm discriminator split, wrong related-test top choice, broad versus exact error oracle, self-computed expected value and duplicative equality guards, value-insensitive owner-call activation for no-argument, opaque-argument, and one-hop same-file helper calls, opaque helper limitation, cross-file constant limitation, presentation text constants, config/policy constants including behavior selectors with and without discriminators, side-effect observer, snapshot discriminator, mock expectation, runtime-only signal, and ambiguous runtime join classes",
   "each case records expected claims, must-not-claim guards, expected repo-exposure evidence_record subsets or runtime-only nonstatic calibration, audit signals, maturity scope, and repair route",
   "cargo xtask check-fixture-contracts validates the corpus shape through xtask/src/main.rs",
   "xtask unit tests pin required config/policy case IDs, required case kinds, missing guard detection, runtime-only nonstatic behavior, and line-movement canonical identity"

@@ -1263,7 +1263,9 @@ Field contract:
   entries gained `relation_reason` and `relation_confidence` fields
   (`analysis/related-test-precision-v1`). `0.2` -> `0.3`: seams gained
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
-  preserving existing top-level seam fields.
+  preserving existing top-level seam fields. `relation_reason` is an
+  additive string enum within `0.3`; `helper_owner_call` extends the
+  existing relation taxonomy without changing the field shape.
 - `scope` — always `"repo"`.
 - `metrics` — totals plus a per-`SeamGripClass` count bucket. Keys mirror
   `SeamGripClass::as_str()`. The renderer emits all 11 buckets even when
@@ -1282,13 +1284,16 @@ Field contract:
   total field always carries the unbounded count.
 - `seams[].related_tests[].relation_reason` — single highest-priority
   reason this test is related to the seam. One of:
-  `direct_owner_call`, `assertion_target_affinity`, `same_test_file`,
-  `same_module`, `owner_named_test`, `import_path_affinity`,
-  `fixture_owner_affinity`. Detection lives in
+  `direct_owner_call`, `helper_owner_call`, `assertion_target_affinity`,
+  `same_test_file`, `same_module`, `owner_named_test`,
+  `import_path_affinity`, `fixture_owner_affinity`. Detection lives in
   `crates/ripr/src/analysis/test_grip_evidence.rs`.
+  `helper_owner_call` is limited to a one-hop same-file helper that
+  directly calls the owner and carries the owner token in the helper name.
 - `seams[].related_tests[].relation_confidence` — `high`, `medium`,
-  `low`, or `opaque`. Mapping from reason: `direct_owner_call` and
-  `assertion_target_affinity` → `high`; `same_test_file`,
+  `low`, or `opaque`. Mapping from reason: `direct_owner_call`,
+  `helper_owner_call`, and `assertion_target_affinity` → `high`;
+  `same_test_file`,
   `same_module`, `owner_named_test`, `import_path_affinity` →
   `medium`; `fixture_owner_affinity` → `low`. Independent of
   `oracle_strength`: a `low` relation can still carry a strong oracle.
