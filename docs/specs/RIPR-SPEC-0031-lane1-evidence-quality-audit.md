@@ -335,6 +335,10 @@ movement remains static evidence movement rather than mutation proof.
 - `xtask::tests::lane1_evidence_audit_limits_incomplete_success_repo_exposure_artifact`
   pins bounded diagnostics when a successful repo-exposure subprocess leaves an
   incomplete captured JSON artifact.
+- `xtask::tests::lane1_evidence_audit_repo_exposure_generation_limits_incomplete_success_json`
+  pins the runner branch where a zero-exit repo-exposure subprocess writes a
+  truncated capture, ensuring the partial artifact is removed and the limited
+  audit/actionable-gap reports carry `lane1_repo_exposure_incomplete`.
 - `xtask::run::tests::latency_progress_reader_preserves_captured_stderr` pins
   that streamed latency progress remains available to timeout and report
   diagnostics.

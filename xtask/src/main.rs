@@ -17038,9 +17038,36 @@ where
     let diagnostics =
         lane1_evidence_audit_repo_exposure_generation(binary, &args, timeout, &output);
     match output.status {
-        Some(status) if status.success() => {
-            Ok(Lane1EvidenceAuditRepoExposureOutcome::Complete(diagnostics))
-        }
+        Some(status) if status.success() => match lane1_repo_exposure_file_looks_complete(path) {
+            Ok(true) => Ok(Lane1EvidenceAuditRepoExposureOutcome::Complete(diagnostics)),
+            Ok(false) => {
+                let _ = fs::remove_file(path);
+                Ok(Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(
+                    Lane1EvidenceAuditRepoExposureGeneration {
+                        status: "pass_incomplete".to_string(),
+                        failure_reason: Some(
+                            "repo exposure exited successfully but captured JSON was incomplete"
+                                .to_string(),
+                        ),
+                        ..diagnostics
+                    },
+                ))
+            }
+            Err(inspect_err) => {
+                eprintln!(
+                    "warning: failed to inspect captured repo exposure {} after {status}: {inspect_err}",
+                    path.display()
+                );
+                let _ = fs::remove_file(path);
+                Ok(Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(
+                    Lane1EvidenceAuditRepoExposureGeneration {
+                        status: "pass_incomplete".to_string(),
+                        failure_reason: Some(inspect_err),
+                        ..diagnostics
+                    },
+                ))
+            }
+        },
         Some(status) => match lane1_repo_exposure_file_looks_complete(path) {
             Ok(true) => {
                 eprintln!(
@@ -61629,6 +61656,71 @@ covered_by = ["cargo xtask check-file-policy"]
             }
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn lane1_evidence_audit_repo_exposure_generation_limits_incomplete_success_json()
+    -> Result<(), String> {
+        let root = temp_dir("lane1-repo-exposure-success-incomplete");
+        let output_path = root.join("repo-exposure.json");
+        let partial = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": [\n";
+
+        let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+            &output_path,
+            Path::new("ripr"),
+            Duration::from_millis(50),
+            |_binary, _args, output_path_seen, _timeout_seen| {
+                write(output_path_seen, partial);
+                Ok(TimedFileOutput {
+                    status: Some(success_exit_status()),
+                    stderr: "ripr_repo_exposure_latency phase=total status=computed duration_ms=867012\n".to_string(),
+                    duration: Duration::from_millis(867),
+                    timed_out: false,
+                    stdout_bytes: partial.len(),
+                })
+            },
+        )?;
+
+        let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
+            return Err(
+                "incomplete success repo-exposure JSON should produce a bounded limitation"
+                    .to_string(),
+            );
+        };
+        assert_eq!(diagnostics.status, "pass_incomplete");
+        assert_eq!(
+            diagnostics.failure_reason.as_deref(),
+            Some("repo exposure exited successfully but captured JSON was incomplete")
+        );
+        assert_eq!(diagnostics.exit_code, Some(0));
+        assert_eq!(diagnostics.stdout_bytes, partial.len());
+        assert!(
+            !output_path.exists(),
+            "incomplete success capture should be removed"
+        );
+
+        let report = lane1_evidence_audit_limited_report(".", diagnostics);
+        let json = lane1_evidence_audit_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "lane1_repo_exposure_incomplete"
+        );
+        assert_eq!(
+            value["inputs"]["repo_exposure_generation"]["status"],
+            "pass_incomplete"
+        );
+        assert_eq!(value["summary"]["raw_headline_gaps"], 0);
+
+        let packets_json = lane1_actionable_gap_packets_json(&report)?;
+        let packets: Value = serde_json::from_str(&packets_json).map_err(|err| err.to_string())?;
+        assert_eq!(packets["summary"]["actionable_gaps"], 0);
+
+        let markdown = lane1_evidence_audit_markdown(&report);
+        assert!(markdown.contains("Run Limitations"));
+        assert!(markdown.contains("lane1_repo_exposure_incomplete"));
         Ok(())
     }
 
