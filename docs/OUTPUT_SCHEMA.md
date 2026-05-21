@@ -1418,8 +1418,12 @@ entry. The default matches the Lane 1 audit live-repo budget so normal dogfood
 runs can complete useful health counts, while pathological runs still produce
 bounded diagnostics before abnormal termination can drop the artifact. During
 generation, xtask enables repo-exposure latency tracing so timeout artifacts can
-include analyzer phase breadcrumbs when available. That limited artifact is
-diagnostic only; it does not claim user test debt from missing health counts.
+include analyzer phase breadcrumbs when available. Limited artifacts expose those
+breadcrumbs as bounded `latency_trace_events_total` and `latency_trace_tail`
+fields on both `inputs.generation` and `run_limitations[]`, so operators can see
+which repo-exposure phase was active without scraping stderr. That limited
+artifact is diagnostic only; it does not claim user test debt from missing health
+counts.
 
 ```json
 {
@@ -1606,10 +1610,11 @@ Field contract:
   `phase` (`evidence_health_build` or `evidence_health_generation`), bounded
   command, `status` (`fail`, `timeout`, or `pass_incomplete`),
   timeout/duration, exit code when available, output byte counts, optional
-  `failure_reason`, and bounded stdout/stderr excerpts. Complete `ripr
-  evidence-health` reports omit this wrapper field and keep the normal
-  analyzer-health payload, so the current contract does not emit an `"ok"`
-  generation status.
+  `failure_reason`, bounded stdout/stderr excerpts,
+  `latency_trace_events_total`, and `latency_trace_tail` repo-exposure phase
+  diagnostics when available. Complete `ripr evidence-health` reports omit this
+  wrapper field and keep the normal analyzer-health payload, so the current
+  contract does not emit an `"ok"` generation status.
 - `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero
   counts.
 - `metrics.stage_state_counts` - per-stage `StageState` buckets for `reach`,
@@ -1668,10 +1673,12 @@ Field contract:
   `evidence_health_incomplete`, the `evidence_health_build` or
   `evidence_health_generation` phase,
   timeout/duration/output byte diagnostics, bounded stdout/stderr excerpts,
-  optional `failure_reason`, and a repair route for inspecting runtime,
-  stdout/stderr, or increasing `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on slower
-  machines. If the child exits successfully but the expected JSON/Markdown
-  artifacts are missing or incomplete, the fallback uses
+  optional `failure_reason`, bounded `latency_trace_events_total` and
+  `latency_trace_tail` repo-exposure phase diagnostics when available, and a
+  repair route for inspecting runtime, stdout/stderr, or increasing
+  `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on slower machines. If the child exits
+  successfully but the expected JSON/Markdown artifacts are missing or
+  incomplete, the fallback uses
   `inputs.generation.status = "pass_incomplete"` and overwrites stale prior
   artifacts.
 
