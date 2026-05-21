@@ -4,87 +4,121 @@ use std::path::PathBuf;
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{parse_new_path_marker, parse_old_path_marker};
 
-pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
-    let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
-    let mut current_path: Option<PathBuf> = None;
-    let mut old_line = 0usize;
-    let mut new_line = 0usize;
-    let mut in_hunk = false;
-    let mut saw_old_path_marker = false;
+#[derive(Debug, Default)]
+struct ParseState {
+    files: BTreeMap<PathBuf, ChangedFile>,
+    current_path: Option<PathBuf>,
+    old_line: usize,
+    new_line: usize,
+    in_hunk: bool,
+    saw_old_path_marker: bool,
+}
 
-    for raw in input.lines() {
-        if raw.starts_with("diff --git ") {
-            current_path = None;
-            in_hunk = false;
-            saw_old_path_marker = false;
-            continue;
+impl ParseState {
+    fn on_git_file_header(&mut self) {
+        self.current_path = None;
+        self.in_hunk = false;
+        self.saw_old_path_marker = false;
+    }
+
+    fn on_pre_hunk_header_line(&mut self, raw: &str) -> bool {
+        if self.in_hunk {
+            return false;
         }
 
-        if !in_hunk {
-            if parse_old_path_marker(raw) {
-                saw_old_path_marker = true;
-                continue;
-            }
+        if parse_old_path_marker(raw) {
+            self.saw_old_path_marker = true;
+            return true;
+        }
 
-            if let Some(path) = parse_new_path_marker(raw) {
-                if current_path.is_none() || saw_old_path_marker {
-                    current_path = Some(path.clone());
-                    files.entry(path.clone()).or_insert_with(|| ChangedFile {
+        if let Some(path) = parse_new_path_marker(raw) {
+            if self.current_path.is_none() || self.saw_old_path_marker {
+                self.current_path = Some(path.clone());
+                self.files
+                    .entry(path.clone())
+                    .or_insert_with(|| ChangedFile {
                         path,
                         ..ChangedFile::default()
                     });
-                }
-                saw_old_path_marker = false;
-                continue;
             }
+            self.saw_old_path_marker = false;
+            return true;
         }
 
-        if raw.starts_with("@@") {
-            saw_old_path_marker = false;
-            if let Some((old_start, new_start)) = parse_hunk_header(raw) {
-                old_line = old_start;
-                new_line = new_start;
-                in_hunk = true;
-            } else {
-                in_hunk = false;
-            }
-            continue;
-        }
+        false
+    }
 
-        if !in_hunk {
-            saw_old_path_marker = false;
+    fn on_hunk_header(&mut self, raw: &str) {
+        self.saw_old_path_marker = false;
+        if let Some((old_start, new_start)) = parse_hunk_header(raw) {
+            self.old_line = old_start;
+            self.new_line = new_start;
+            self.in_hunk = true;
+        } else {
+            self.in_hunk = false;
         }
+    }
 
-        let Some(path) = current_path.clone() else {
-            continue;
+    fn clear_stale_old_marker_when_not_in_hunk(&mut self) {
+        if !self.in_hunk {
+            self.saw_old_path_marker = false;
+        }
+    }
+
+    fn on_hunk_payload_line(&mut self, raw: &str) {
+        let Some(path) = self.current_path.clone() else {
+            return;
         };
-        let Some(file) = files.get_mut(&path) else {
-            continue;
+        let Some(file) = self.files.get_mut(&path) else {
+            return;
         };
 
-        if !in_hunk {
-            continue;
+        if !self.in_hunk {
+            return;
         }
 
         if let Some(text) = raw.strip_prefix('+') {
             file.added_lines.push(ChangedLine {
-                line: new_line,
+                line: self.new_line,
                 text: text.to_string(),
             });
-            new_line = new_line.saturating_add(1);
+            self.new_line = self.new_line.saturating_add(1);
         } else if let Some(text) = raw.strip_prefix('-') {
             file.removed_lines.push(ChangedLine {
-                line: old_line,
+                line: self.old_line,
                 text: text.to_string(),
             });
-            old_line = old_line.saturating_add(1);
+            self.old_line = self.old_line.saturating_add(1);
         } else if raw.starts_with(' ') || raw.is_empty() {
-            old_line = old_line.saturating_add(1);
-            new_line = new_line.saturating_add(1);
+            self.old_line = self.old_line.saturating_add(1);
+            self.new_line = self.new_line.saturating_add(1);
         }
     }
+}
 
-    files.into_values().collect()
+pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
+    let mut state = ParseState::default();
+
+    for raw in input.lines() {
+        if raw.starts_with("diff --git ") {
+            state.on_git_file_header();
+            continue;
+        }
+
+        if state.on_pre_hunk_header_line(raw) {
+            continue;
+        }
+
+        if raw.starts_with("@@") {
+            state.on_hunk_header(raw);
+            continue;
+        }
+
+        state.clear_stale_old_marker_when_not_in_hunk();
+        state.on_hunk_payload_line(raw);
+    }
+
+    state.files.into_values().collect()
 }
 
 fn parse_hunk_header(raw: &str) -> Option<(usize, usize)> {
