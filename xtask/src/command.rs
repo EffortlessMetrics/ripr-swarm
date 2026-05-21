@@ -23,6 +23,8 @@ pub(crate) enum XtaskCommand {
     RepoSeamInventory,
     RepoExposureReport,
     RepoExposureLatencyReport,
+    RepoContractReport,
+    PrBody(Vec<String>),
     EvidenceHealth,
     Lane1EvidenceAudit,
     EvidenceQualityScorecard,
@@ -76,6 +78,8 @@ pub(crate) enum XtaskCommand {
     CheckArchitecture,
     CheckPublicApi,
     CheckOutputContracts,
+    CheckDocArtifacts,
+    CheckSupportTiers,
     CheckDocIndex,
     CheckReadmeState,
     MarkdownLinks,
@@ -136,6 +140,8 @@ impl XtaskCommand {
             "repo-seam-inventory" => Self::RepoSeamInventory,
             "repo-exposure-report" => Self::RepoExposureReport,
             "repo-exposure-latency-report" => Self::RepoExposureLatencyReport,
+            "repo-contract-report" => Self::RepoContractReport,
+            "pr-body" => Self::PrBody(rest),
             "evidence-health" => Self::EvidenceHealth,
             "lane1-evidence-audit" | "evidence-quality-audit" => Self::Lane1EvidenceAudit,
             "evidence-quality-scorecard" => Self::EvidenceQualityScorecard,
@@ -194,6 +200,8 @@ impl XtaskCommand {
             "check-architecture" => Self::CheckArchitecture,
             "check-public-api" => Self::CheckPublicApi,
             "check-output-contracts" => Self::CheckOutputContracts,
+            "check-doc-artifacts" => Self::CheckDocArtifacts,
+            "check-support-tiers" => Self::CheckSupportTiers,
             "check-doc-index" => Self::CheckDocIndex,
             "check-readme-state" => Self::CheckReadmeState,
             "markdown-links" => Self::MarkdownLinks,
@@ -298,6 +306,8 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "repo-seam-inventory",
         "repo-exposure-report",
         "repo-exposure-latency-report",
+        "repo-contract-report",
+        "pr-body --work-item <id>",
         "evidence-health",
         "lane1-evidence-audit",
         "evidence-quality-audit",
@@ -357,6 +367,8 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-architecture",
         "check-public-api",
         "check-output-contracts",
+        "check-doc-artifacts",
+        "check-support-tiers",
         "check-doc-index",
         "check-readme-state",
         "markdown-links",
@@ -578,6 +590,20 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/repo-exposure-latency.{json,md}",
             false,
             "Writes repo exposure latency reports.",
+        ),
+        command_entry(
+            "repo-contract-report",
+            "report_only",
+            "target/ripr/reports/source-of-truth-graph.{md,json}",
+            false,
+            "Writes the source-of-truth contract graph report.",
+        ),
+        command_entry(
+            "pr-body --work-item <id>",
+            "report_only",
+            "target/ripr/reports/source-of-truth-pr-body.md",
+            false,
+            "Writes a PR body scaffold from the active goal work item.",
         ),
         command_entry(
             "evidence-health",
@@ -1000,6 +1026,20 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks output contract registry.",
         ),
         command_entry(
+            "check-doc-artifacts",
+            "non_mutating_check",
+            "target/ripr/reports/doc-artifacts.md",
+            false,
+            "Checks the source-of-truth document artifact ledger.",
+        ),
+        command_entry(
+            "check-support-tiers",
+            "non_mutating_check",
+            "target/ripr/reports/support-tiers.md",
+            false,
+            "Checks support-tier claim proof mapping.",
+        ),
+        command_entry(
             "check-doc-index",
             "non_mutating_check",
             "target/ripr/reports/doc-index.md",
@@ -1237,16 +1277,17 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
     let rhs_len = rhs.chars().count();
     let mut previous_row: Vec<usize> = (0..=rhs_len).collect();
+    let mut current_row = vec![0; rhs_len + 1];
 
     for (left_index, left_char) in lhs.chars().enumerate() {
-        let mut current_row = vec![left_index + 1];
+        current_row[0] = left_index + 1;
         for (right_index, right_char) in rhs.chars().enumerate() {
             let insertion = current_row[right_index] + 1;
             let deletion = previous_row[right_index + 1] + 1;
             let substitution = previous_row[right_index] + usize::from(left_char != right_char);
-            current_row.push(insertion.min(deletion).min(substitution));
+            current_row[right_index + 1] = insertion.min(deletion).min(substitution);
         }
-        previous_row = current_row;
+        std::mem::swap(&mut previous_row, &mut current_row);
     }
 
     previous_row[rhs_len]
@@ -1254,7 +1295,7 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_catalog, help_message};
+    use super::{command_catalog, help_message, levenshtein};
 
     #[test]
     fn top_level_help_pins_start_here_front_door_language() -> Result<(), String> {
@@ -1294,5 +1335,12 @@ mod tests {
             note("badge-basis [--gap-ledger <path>] [--include-seam-classes]")
                 .contains("Audits public badge endpoint counts")
         );
+    }
+
+    #[test]
+    fn levenshtein_distance_handles_ascii_and_unicode_inputs() {
+        assert_eq!(levenshtein("check-pr", "check-pr"), 0);
+        assert_eq!(levenshtein("chek-pr", "check-pr"), 1);
+        assert_eq!(levenshtein("réport", "report"), 1);
     }
 }

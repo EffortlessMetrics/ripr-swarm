@@ -1263,7 +1263,9 @@ Field contract:
   entries gained `relation_reason` and `relation_confidence` fields
   (`analysis/related-test-precision-v1`). `0.2` -> `0.3`: seams gained
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
-  preserving existing top-level seam fields.
+  preserving existing top-level seam fields. `relation_reason` is an
+  additive string enum within `0.3`; `helper_owner_call` extends the
+  existing relation taxonomy without changing the field shape.
 - `scope` — always `"repo"`.
 - `metrics` — totals plus a per-`SeamGripClass` count bucket. Keys mirror
   `SeamGripClass::as_str()`. The renderer emits all 11 buckets even when
@@ -1282,13 +1284,16 @@ Field contract:
   total field always carries the unbounded count.
 - `seams[].related_tests[].relation_reason` — single highest-priority
   reason this test is related to the seam. One of:
-  `direct_owner_call`, `assertion_target_affinity`, `same_test_file`,
-  `same_module`, `owner_named_test`, `import_path_affinity`,
-  `fixture_owner_affinity`. Detection lives in
+  `direct_owner_call`, `helper_owner_call`, `assertion_target_affinity`,
+  `same_test_file`, `same_module`, `owner_named_test`,
+  `import_path_affinity`, `fixture_owner_affinity`. Detection lives in
   `crates/ripr/src/analysis/test_grip_evidence.rs`.
+  `helper_owner_call` is limited to a one-hop same-file helper that
+  directly calls the owner and carries the owner token in the helper name.
 - `seams[].related_tests[].relation_confidence` — `high`, `medium`,
-  `low`, or `opaque`. Mapping from reason: `direct_owner_call` and
-  `assertion_target_affinity` → `high`; `same_test_file`,
+  `low`, or `opaque`. Mapping from reason: `direct_owner_call`,
+  `helper_owner_call`, and `assertion_target_affinity` → `high`;
+  `same_test_file`,
   `same_module`, `owner_named_test`, `import_path_affinity` →
   `medium`; `fixture_owner_affinity` → `low`. Independent of
   `oracle_strength`: a `low` relation can still carry a strong oracle.
@@ -1404,15 +1409,17 @@ without changing analyzer behavior. The same report lands at
 
 The xtask facade bounds both the preflight `cargo build -p ripr` phase and the
 live `ripr evidence-health` subprocess with `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS`
-(default 5 minutes). If either phase times out or exits before a complete
+(default 20 minutes). If either phase times out or exits before a complete
 report is available, xtask discards stale or partial outputs and writes warning
 JSON and Markdown with `status = "warn"`, phase context such as
 `evidence_health_build` or `evidence_health_generation`, and a named
 `evidence_health_timeout` or `evidence_health_incomplete` `run_limitations[]`
-entry. The default is deliberately below known pathological live-repo runtimes
-so the report produces bounded diagnostics before abnormal termination can drop
-the artifact. That limited artifact is diagnostic only; it does not claim user
-test debt from missing health counts.
+entry. The default matches the Lane 1 audit live-repo budget so normal dogfood
+runs can complete useful health counts, while pathological runs still produce
+bounded diagnostics before abnormal termination can drop the artifact. During
+generation, xtask enables repo-exposure latency tracing so timeout artifacts can
+include analyzer phase breadcrumbs when available. That limited artifact is
+diagnostic only; it does not claim user test debt from missing health counts.
 
 ```json
 {
@@ -1595,6 +1602,14 @@ Field contract:
 - `inputs.root` - the analyzed workspace root as supplied to the command.
 - `inputs.mutation_calibration` - optional imported calibration report path;
   `null` when not provided.
+- `inputs.generation` - present on bounded xtask fallback artifacts. It records
+  `phase` (`evidence_health_build` or `evidence_health_generation`), bounded
+  command, `status` (`fail`, `timeout`, or `pass_incomplete`),
+  timeout/duration, exit code when available, output byte counts, optional
+  `failure_reason`, and bounded stdout/stderr excerpts. Complete `ripr
+  evidence-health` reports omit this wrapper field and keep the normal
+  analyzer-health payload, so the current contract does not emit an `"ok"`
+  generation status.
 - `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero
   counts.
 - `metrics.stage_state_counts` - per-stage `StageState` buckets for `reach`,
@@ -1650,10 +1665,15 @@ Field contract:
   to 10 rows and carrying one example seam ID for inspection.
 - `run_limitations` - present on bounded xtask fallback artifacts. Timeout and
   incomplete rows name `evidence_health_timeout` or
-  `evidence_health_incomplete`, the `evidence_health_generation` phase,
-  timeout/duration/output byte diagnostics, and a repair route for inspecting
-  runtime, stdout/stderr, or increasing `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on
-  slower machines.
+  `evidence_health_incomplete`, the `evidence_health_build` or
+  `evidence_health_generation` phase,
+  timeout/duration/output byte diagnostics, bounded stdout/stderr excerpts,
+  optional `failure_reason`, and a repair route for inspecting runtime,
+  stdout/stderr, or increasing `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on slower
+  machines. If the child exits successfully but the expected JSON/Markdown
+  artifacts are missing or incomplete, the fallback uses
+  `inputs.generation.status = "pass_incomplete"` and overwrites stale prior
+  artifacts.
 
 The Markdown sibling prints the same summary, grip-class, top missing
 discriminator, oracle-strength, related-test confidence, evidence-quality,
@@ -2068,7 +2088,10 @@ Field contract:
 - `finding_alignment.coverage.alignment_coverage_by_class` - per-class raw
   finding, canonical item, state, and aligned/unaligned counts. The grain is
   `evidence_class`, using `canonical_item.evidence_class` when available and a
-  conservative seam/raw-finding fallback otherwise.
+  conservative seam/raw-finding fallback otherwise. Rows also carry
+  `static_limitation_categories` and `static_limitation_repair_routes` maps so
+  static-dominated classes keep their named analyzer limitation and repair
+  route instead of collapsing to a generic `static_unknown` bucket.
 - `finding_alignment.coverage.unaligned_raw_findings_by_class` - raw finding
   counts by class for evidence records that do not carry `canonical_item`.
 - `finding_alignment.coverage.top_unaligned_examples` - bounded examples of
@@ -2080,8 +2103,11 @@ Field contract:
 - `finding_alignment.coverage.evidence_class_work_queue` - ranked evidence
   classes that still need Lane 1 work, derived from alignment coverage rows.
   Rows include `work_score`, `dominant_signal`, raw/canonical/actionable/
-  limitation/unknown/unaligned/duplicate counts, and `next_repair`. This is the
-  audit-local "choose the next class from live output" queue.
+  limitation/unknown/unaligned/duplicate counts, dominant static limitation
+  category/count/repair route when present, and `next_repair`. When static
+  limitations dominate a class, `next_repair` is the dominant named limitation
+  repair route. This is the audit-local "choose the next class from live
+  output" queue.
 - `finding_alignment.coverage.static_unknown_without_named_limitation` -
   count of static-unknown or limitation-shaped canonical items without a named
   static limitation category plus repair route. Generic `static_unknown` or
@@ -2886,7 +2912,9 @@ Field contract:
 - `evidence_class_work_queue` - the audit-derived
   `finding_alignment.coverage.evidence_class_work_queue` section carried
   forward so the scorecard names the next evidence classes to burn down from
-  live output rather than static roadmap guesses.
+  live output rather than static roadmap guesses. Static-dominated rows retain
+  the dominant named limitation category and repair route, matching the audit
+  queue.
 - `recommended_repairs` - bounded Lane 1 repair slices ordered by product risk
   priority first, then signal count. These are advisory next steps, not policy
   decisions.
@@ -3001,11 +3029,19 @@ Field contract:
   items, and internal no-action items. Finding-alignment and presentation-text
   metrics track raw-to-canonical quality, duplicate groups, actionability,
   static limitations, visibility unknowns, no-action/observed outcomes, and
-  actionable-gap packet public-projection readiness.
+  actionable-gap packet public-projection readiness. If the current scorecard
+  carries limited input unknowns such as `lane1_evidence_audit_limited`,
+  `evidence_health_limited`, or
+  `evidence_quality_scorecard_audit_regeneration_failed`, metric rows remain
+  present for diagnostics but their direction is `unknown` and `delta` is null.
 - `static_limitation_category_trends[]` - bounded category-level deltas for
-  normalized static limitation classes.
+  normalized static limitation classes. Current limited scorecards also force
+  these category trend directions to `unknown`.
 - `unknowns[]` - missing history or missing current metric fields that must
-  stay visible until later audit or scorecard inputs exist.
+  stay visible until later audit or scorecard inputs exist. A
+  `current_scorecard_limited` unknown means the current scorecard is itself a
+  bounded diagnostic artifact, so the trend must not claim improvement or
+  regression from its counts.
 
 The Markdown sibling prints bounded sections for summary, metric trends,
 static limitation category trends, and unknowns.
@@ -7022,6 +7058,33 @@ JSON shape:
       ]
     }
   ],
+  "lane1_readiness": {
+    "status": "warn",
+    "missing_artifacts": 2,
+    "warning_artifacts": 0,
+    "failing_artifacts": 0,
+    "packets": [
+      {
+        "id": "lane1_evidence_audit",
+        "label": "Lane 1 evidence audit",
+        "status": "missing",
+        "next_command": "cargo xtask lane1-evidence-audit",
+        "description": "Produces raw-to-canonical/actionability counts and actionable-gap packet inputs.",
+        "artifacts": [
+          {
+            "path": "target/ripr/reports/lane1-evidence-audit.json",
+            "status": "missing",
+            "available": false
+          },
+          {
+            "path": "target/ripr/reports/lane1-evidence-audit.md",
+            "status": "missing",
+            "available": false
+          }
+        ]
+      }
+    ]
+  },
   "missing_expected": [
     {
       "id": "assistant_loop_health",
@@ -7078,12 +7141,26 @@ Field contract:
   receipts, suggested-fixes, and `check-pr` artifacts with status, known output
   paths, and regeneration commands. It is advisory front-door metadata only and
   never becomes gate authority.
+- `lane1_readiness` is the Lane 1 evidence packet index used by
+  `cargo xtask reports index`. It records whether evidence-health, Lane 1
+  evidence-audit/actionable-gap, evidence-quality scorecard, evidence-quality
+  trend, and badge-basis packets are present and healthy. Missing, warning, or
+  failing Lane 1 readiness artifacts add advisory next commands, but do not
+  create gate authority, badge authority, runtime mutation proof, or coverage
+  adequacy claims.
 
 Report packet index field contract:
 
 - `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
   `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
   `unreadable`, or `not_applicable`.
+- `lane1_readiness.status` is `present`, `warn`, or `fail`.
+- `lane1_readiness.missing_artifacts`,
+  `lane1_readiness.warning_artifacts`, and
+  `lane1_readiness.failing_artifacts` are counts over the packet artifacts.
+- `lane1_readiness.packets[]` uses the same packet shape as
+  `repo_ops_packets[]`: id, label, status, next command, description, and
+  artifact availability.
 - `missing_expected[].reason` is `not_generated`, `input_not_available`,
   `configured_off`, `missing_required_input`, `stale_upstream`, or `unknown`.
 - `missing_expected[]` keeps absent expected surfaces visible with a bounded
