@@ -2993,7 +2993,7 @@ values, but movement and badge-readiness deltas remain unknown.
       "status": "missing",
       "schema_version": null,
       "sha256": null,
-      "note": "optional previous scorecard or audit snapshot for trend comparison"
+      "note": "optional previous scorecard or audit snapshot unavailable; movement is diagnostic only"
     }
   },
   "summary": {
@@ -3021,6 +3021,11 @@ values, but movement and badge-readiness deltas remain unknown.
     {
       "kind": "trend_history_unavailable",
       "summary": "No previous scorecard or audit snapshot was available, so the report cannot claim improvement or regression.",
+      "next_repair": "report/evidence-quality-trend"
+    },
+    {
+      "kind": "evidence_quality_trend_previous_artifact_unavailable",
+      "summary": "Evidence-quality trend could not load the requested previous artifact. No movement or badge-readiness delta claim is made from this limited trend.",
       "next_repair": "report/evidence-quality-trend"
     }
   ]
