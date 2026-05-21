@@ -10,6 +10,24 @@ pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
+pub(super) fn parse_old_path_marker(raw: &str) -> bool {
+    let Some(marker) = raw.strip_prefix("--- ") else {
+        return false;
+    };
+    let Some(path) = parse_diff_path_token(marker) else {
+        return false;
+    };
+    if path == "/dev/null" {
+        return true;
+    }
+    let path = path.strip_prefix("a/").unwrap_or(&path);
+    is_plausible_unquoted_diff_path(path)
+}
+
+fn is_plausible_unquoted_diff_path(path: &str) -> bool {
+    !path.is_empty() && !path.chars().any(char::is_whitespace)
+}
+
 fn parse_diff_path_token(raw: &str) -> Option<String> {
     let raw = raw.trim_end_matches('\r');
     if let Some(quoted) = raw.strip_prefix('"') {
