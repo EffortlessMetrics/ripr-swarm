@@ -626,8 +626,8 @@ fn agent_brief_owners_for_lines(
 }
 
 fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
-    let path_text = normalized_path_text(path);
-    for root_text in normalized_root_prefixes(root) {
+    let path_text = path_normalization::normalized_path_text(path);
+    for root_text in path_normalization::normalized_root_prefixes(root) {
         let prefix = format!("{root_text}/");
         if let Some(stripped) = path_text.strip_prefix(&prefix) {
             return PathBuf::from(stripped);
@@ -636,28 +636,32 @@ fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
     PathBuf::from(path_text)
 }
 
-fn normalized_root_prefixes(root: &Path) -> Vec<String> {
-    let mut prefixes = Vec::new();
-    push_unique_normalized_path(&mut prefixes, root);
-    if let Ok(root) = std::path::absolute(root) {
-        push_unique_normalized_path(&mut prefixes, &root);
-    }
-    if let Ok(root) = root.canonicalize() {
-        push_unique_normalized_path(&mut prefixes, &root);
-    }
-    prefixes
-}
+mod path_normalization {
+    use std::path::Path;
 
-fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
-    let text = normalized_path_text(path);
-    if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
-        prefixes.push(text);
+    pub(super) fn normalized_root_prefixes(root: &Path) -> Vec<String> {
+        let mut prefixes = Vec::new();
+        push_unique_normalized_path(&mut prefixes, root);
+        if let Ok(root) = std::path::absolute(root) {
+            push_unique_normalized_path(&mut prefixes, &root);
+        }
+        if let Ok(root) = root.canonicalize() {
+            push_unique_normalized_path(&mut prefixes, &root);
+        }
+        prefixes
     }
-}
 
-fn normalized_path_text(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    text.strip_prefix("./").unwrap_or(&text).to_string()
+    fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
+        let text = normalized_path_text(path);
+        if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
+            prefixes.push(text);
+        }
+    }
+
+    pub(super) fn normalized_path_text(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('\\', "/");
+        text.strip_prefix("./").unwrap_or(&text).to_string()
+    }
 }
 
 pub(super) fn init(args: &[String]) -> Result<(), String> {
