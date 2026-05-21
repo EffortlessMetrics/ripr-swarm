@@ -162,65 +162,125 @@ fn workflow_commands(
     seam_id: &str,
 ) -> Vec<AgentWorkflowCommand> {
     vec![
-        AgentWorkflowCommand {
-            step: "workflow_manifest".to_string(),
-            artifact: paths.workflow_manifest.clone(),
-            purpose: "Regenerate this source-edit-free workflow manifest.".to_string(),
-            command: agent_start_command(root, seam_id, &paths.out_dir),
-        },
-        AgentWorkflowCommand {
-            step: "before_snapshot".to_string(),
-            artifact: paths.before_snapshot.clone(),
-            purpose: "Capture static seam evidence before editing tests.".to_string(),
-            command: check_repo_exposure_command(root, mode.as_str(), &paths.before_snapshot),
-        },
-        AgentWorkflowCommand {
-            step: "agent_seam_packets".to_string(),
-            artifact: paths.agent_seam_packets.clone(),
-            purpose: "Render the full agent seam packet set for reference.".to_string(),
-            command: agent_seam_packets_command(root, mode.as_str(), &paths.agent_seam_packets),
-        },
-        AgentWorkflowCommand {
-            step: "agent_packet".to_string(),
-            artifact: paths.agent_packet.clone(),
-            purpose: "Expand the selected seam into a bounded agent packet.".to_string(),
-            command: agent_packet_command(root, seam_id, &paths.agent_packet),
-        },
-        AgentWorkflowCommand {
-            step: "agent_brief".to_string(),
-            artifact: paths.agent_brief.clone(),
-            purpose: "Refresh this seam's working-set brief.".to_string(),
-            command: agent_brief_command(root, seam_id, &paths.agent_brief),
-        },
-        AgentWorkflowCommand {
-            step: "after_snapshot".to_string(),
-            artifact: paths.after_snapshot.clone(),
-            purpose: "Capture static seam evidence after adding one focused test.".to_string(),
-            command: check_repo_exposure_command(root, mode.as_str(), &paths.after_snapshot),
-        },
-        AgentWorkflowCommand {
-            step: "agent_verify".to_string(),
-            artifact: paths.agent_verify.clone(),
-            purpose: "Compare before and after static evidence for the agent loop.".to_string(),
-            command: agent_verify_command(
-                root,
-                &paths.before_snapshot,
-                &paths.after_snapshot,
-                Some(&paths.agent_verify),
-            ),
-        },
-        AgentWorkflowCommand {
-            step: "agent_receipt".to_string(),
-            artifact: paths.agent_receipt.clone(),
-            purpose: "Write a review handoff receipt for the selected seam.".to_string(),
-            command: agent_receipt_command(
-                root,
-                &paths.agent_verify,
-                seam_id,
-                Some(&paths.agent_receipt),
-            ),
-        },
+        workflow_manifest_command(root, seam_id, paths),
+        before_snapshot_command(root, mode, paths),
+        agent_seam_packets_command_item(root, mode, paths),
+        agent_packet_command_item(root, seam_id, paths),
+        agent_brief_command_item(root, seam_id, paths),
+        after_snapshot_command(root, mode, paths),
+        agent_verify_command_item(root, paths),
+        agent_receipt_command_item(root, seam_id, paths),
     ]
+}
+
+fn workflow_manifest_command(
+    root: &str,
+    seam_id: &str,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "workflow_manifest".to_string(),
+        artifact: paths.workflow_manifest.clone(),
+        purpose: "Regenerate this source-edit-free workflow manifest.".to_string(),
+        command: agent_start_command(root, seam_id, &paths.out_dir),
+    }
+}
+
+fn before_snapshot_command(
+    root: &str,
+    mode: &Mode,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "before_snapshot".to_string(),
+        artifact: paths.before_snapshot.clone(),
+        purpose: "Capture static seam evidence before editing tests.".to_string(),
+        command: check_repo_exposure_command(root, mode.as_str(), &paths.before_snapshot),
+    }
+}
+
+fn agent_seam_packets_command_item(
+    root: &str,
+    mode: &Mode,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "agent_seam_packets".to_string(),
+        artifact: paths.agent_seam_packets.clone(),
+        purpose: "Render the full agent seam packet set for reference.".to_string(),
+        command: agent_seam_packets_command(root, mode.as_str(), &paths.agent_seam_packets),
+    }
+}
+
+fn agent_packet_command_item(
+    root: &str,
+    seam_id: &str,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "agent_packet".to_string(),
+        artifact: paths.agent_packet.clone(),
+        purpose: "Expand the selected seam into a bounded agent packet.".to_string(),
+        command: agent_packet_command(root, seam_id, &paths.agent_packet),
+    }
+}
+
+fn agent_brief_command_item(
+    root: &str,
+    seam_id: &str,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "agent_brief".to_string(),
+        artifact: paths.agent_brief.clone(),
+        purpose: "Refresh this seam's working-set brief.".to_string(),
+        command: agent_brief_command(root, seam_id, &paths.agent_brief),
+    }
+}
+
+fn after_snapshot_command(
+    root: &str,
+    mode: &Mode,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "after_snapshot".to_string(),
+        artifact: paths.after_snapshot.clone(),
+        purpose: "Capture static seam evidence after adding one focused test.".to_string(),
+        command: check_repo_exposure_command(root, mode.as_str(), &paths.after_snapshot),
+    }
+}
+
+fn agent_verify_command_item(root: &str, paths: &AgentWorkflowPaths) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "agent_verify".to_string(),
+        artifact: paths.agent_verify.clone(),
+        purpose: "Compare before and after static evidence for the agent loop.".to_string(),
+        command: agent_verify_command(
+            root,
+            &paths.before_snapshot,
+            &paths.after_snapshot,
+            Some(&paths.agent_verify),
+        ),
+    }
+}
+
+fn agent_receipt_command_item(
+    root: &str,
+    seam_id: &str,
+    paths: &AgentWorkflowPaths,
+) -> AgentWorkflowCommand {
+    AgentWorkflowCommand {
+        step: "agent_receipt".to_string(),
+        artifact: paths.agent_receipt.clone(),
+        purpose: "Write a review handoff receipt for the selected seam.".to_string(),
+        command: agent_receipt_command(
+            root,
+            &paths.agent_verify,
+            seam_id,
+            Some(&paths.agent_receipt),
+        ),
+    }
 }
 
 fn workflow_artifact_path_with_default(
