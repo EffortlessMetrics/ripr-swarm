@@ -36,36 +36,48 @@ pub fn expected_sinks(text: &str, family: &ProbeFamily) -> Vec<String> {
 }
 
 pub fn required_oracles(text: &str, family: &ProbeFamily) -> Vec<String> {
-    let mut out = Vec::new();
-    match family {
-        ProbeFamily::Predicate => {
-            out.push("boundary input".to_string());
-            out.push("exact assertion on branch output".to_string());
-        }
-        ProbeFamily::ReturnValue => {
-            out.push("exact or property assertion on returned value".to_string())
-        }
-        ProbeFamily::ErrorPath => out.push("exact error variant assertion".to_string()),
-        ProbeFamily::CallDeletion => {
-            out.push("assertion that notices removed call behavior".to_string())
-        }
-        ProbeFamily::FieldConstruction => out.push("field or whole-struct assertion".to_string()),
-        ProbeFamily::SideEffect => {
-            out.push("mock, event, persisted-state, or metric assertion".to_string())
-        }
-        ProbeFamily::MatchArm => {
-            out.push("input selecting changed match arm and exact assertion".to_string())
-        }
-        ProbeFamily::StaticUnknown => out.push("manual review or real mutation".to_string()),
-    }
-    for token in extract_identifier_tokens(text).into_iter().take(3) {
-        if token.chars().any(|c| c.is_uppercase()) {
-            out.push(format!("assertion mentioning {token}"));
-        }
-    }
+    let mut out = oracle_templates::family_oracles(family);
+    out.extend(oracle_templates::uppercase_token_oracles(text));
     out.sort();
     out.dedup();
     out
+}
+
+mod oracle_templates {
+    use super::*;
+
+    pub(super) fn family_oracles(family: &ProbeFamily) -> Vec<String> {
+        match family {
+            ProbeFamily::Predicate => vec![
+                "boundary input".to_string(),
+                "exact assertion on branch output".to_string(),
+            ],
+            ProbeFamily::ReturnValue => {
+                vec!["exact or property assertion on returned value".to_string()]
+            }
+            ProbeFamily::ErrorPath => vec!["exact error variant assertion".to_string()],
+            ProbeFamily::CallDeletion => {
+                vec!["assertion that notices removed call behavior".to_string()]
+            }
+            ProbeFamily::FieldConstruction => vec!["field or whole-struct assertion".to_string()],
+            ProbeFamily::SideEffect => {
+                vec!["mock, event, persisted-state, or metric assertion".to_string()]
+            }
+            ProbeFamily::MatchArm => {
+                vec!["input selecting changed match arm and exact assertion".to_string()]
+            }
+            ProbeFamily::StaticUnknown => vec!["manual review or real mutation".to_string()],
+        }
+    }
+
+    pub(super) fn uppercase_token_oracles(text: &str) -> Vec<String> {
+        extract_identifier_tokens(text)
+            .into_iter()
+            .take(3)
+            .filter(|token| token.chars().any(|c| c.is_uppercase()))
+            .map(|token| format!("assertion mentioning {token}"))
+            .collect()
+    }
 }
 
 #[cfg(test)]
