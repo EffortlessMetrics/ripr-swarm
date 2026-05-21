@@ -37385,6 +37385,458 @@ fn spec_support_tier_impact_is_none(text: &str) -> bool {
     normalized == "none" || normalized.starts_with("none for ")
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RepoContractArtifact {
+    id: String,
+    kind: String,
+    path: String,
+    status: String,
+    owner: String,
+    linked_proposal: Option<String>,
+    linked_spec: Option<String>,
+    linked_adr: Option<String>,
+    linked_plan: Option<String>,
+    superseded_by: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RepoContractWorkItem {
+    id: String,
+    status: String,
+    branch: String,
+    commands: Vec<String>,
+    acceptance: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RepoContractSummary {
+    active_goal_id: Option<String>,
+    active_goal_title: Option<String>,
+    active_goal_status: Option<String>,
+    artifacts: Vec<RepoContractArtifact>,
+    ready_work_items: Vec<RepoContractWorkItem>,
+    done_work_items: Vec<RepoContractWorkItem>,
+    support_rows: Vec<SupportTierRow>,
+    policy_ledgers: Vec<String>,
+    missing_links: Vec<String>,
+}
+
+fn repo_contract_report() -> Result<(), String> {
+    let (markdown, json) = repo_contract_report_from_root(Path::new("."))?;
+    let out_dir = Path::new("target/source-of-truth");
+    fs::create_dir_all(out_dir)
+        .map_err(|err| format!("failed to create {}: {err}", normalize_path(out_dir)))?;
+    let markdown_path = out_dir.join("graph.md");
+    let json_path = out_dir.join("graph.json");
+    fs::write(&markdown_path, markdown)
+        .map_err(|err| format!("failed to write {}: {err}", normalize_path(&markdown_path)))?;
+    fs::write(&json_path, json)
+        .map_err(|err| format!("failed to write {}: {err}", normalize_path(&json_path)))?;
+    println!(
+        "wrote {} and {}",
+        normalize_path(&markdown_path),
+        normalize_path(&json_path)
+    );
+    Ok(())
+}
+
+fn repo_contract_report_from_root(root: &Path) -> Result<(String, String), String> {
+    let summary = repo_contract_summary(root)?;
+    Ok((
+        repo_contract_report_markdown(&summary),
+        repo_contract_report_json(&summary),
+    ))
+}
+
+fn repo_contract_summary(root: &Path) -> Result<RepoContractSummary, String> {
+    let ledger_path = root.join(DOC_ARTIFACT_LEDGER);
+    let ledger = parse_doc_artifact_ledger(&ledger_path)?;
+    let artifacts = ledger
+        .artifacts
+        .iter()
+        .map(repo_contract_artifact_from_entry)
+        .collect::<Vec<_>>();
+
+    let mut missing_links = Vec::new();
+    missing_links.extend(doc_artifact_violations(root, &ledger_path)?);
+
+    let active_path = root.join(".ripr/goals/active.toml");
+    let mut active_goal_id = None;
+    let mut active_goal_title = None;
+    let mut active_goal_status = None;
+    let mut ready_work_items = Vec::new();
+    let mut done_work_items = Vec::new();
+    if active_path.exists() {
+        let (manifest, parse_violations) = parse_campaign_manifest(&active_path)?;
+        missing_links.extend(parse_violations);
+        validate_campaign_manifest(&manifest, &mut missing_links)?;
+        missing_links.extend(campaign_source_truth_violations_for_root(root)?);
+        active_goal_id = manifest.id.clone();
+        active_goal_title = manifest.title.clone();
+        active_goal_status = manifest.status.clone();
+        for item in &manifest.work_items {
+            match item.status.as_deref() {
+                Some("ready") => ready_work_items.push(repo_contract_work_item_from_campaign(item)),
+                Some("done") => done_work_items.push(repo_contract_work_item_from_campaign(item)),
+                _ => {}
+            }
+        }
+    } else {
+        missing_links.push(".ripr/goals/active.toml is missing".to_string());
+    }
+
+    let support_path = root.join(SUPPORT_TIERS_PATH);
+    let support_rows = if support_path.exists() {
+        let support_text = read_text_lossy(&support_path)?;
+        support_tier_rows(&support_text, &display_repo_path(root, &support_path))?
+    } else {
+        Vec::new()
+    };
+    missing_links.extend(support_tier_violations(root, &support_path)?);
+    missing_links.sort();
+    missing_links.dedup();
+
+    Ok(RepoContractSummary {
+        active_goal_id,
+        active_goal_title,
+        active_goal_status,
+        artifacts,
+        ready_work_items,
+        done_work_items,
+        support_rows,
+        policy_ledgers: repo_contract_policy_ledgers(root)?,
+        missing_links,
+    })
+}
+
+fn repo_contract_artifact_from_entry(entry: &DocArtifactEntry) -> RepoContractArtifact {
+    RepoContractArtifact {
+        id: entry.id.clone().unwrap_or_else(|| "<missing>".to_string()),
+        kind: entry
+            .kind
+            .clone()
+            .unwrap_or_else(|| "<missing>".to_string()),
+        path: entry
+            .path
+            .clone()
+            .unwrap_or_else(|| "<missing>".to_string()),
+        status: entry
+            .status
+            .clone()
+            .unwrap_or_else(|| "<missing>".to_string()),
+        owner: entry
+            .owner
+            .clone()
+            .unwrap_or_else(|| "<missing>".to_string()),
+        linked_proposal: entry.linked_proposal.clone(),
+        linked_spec: entry.linked_spec.clone(),
+        linked_adr: entry.linked_adr.clone(),
+        linked_plan: entry.linked_plan.clone(),
+        superseded_by: entry
+            .superseded_by
+            .clone()
+            .or_else(|| entry.replacement.clone()),
+    }
+}
+
+fn repo_contract_work_item_from_campaign(item: &CampaignWorkItem) -> RepoContractWorkItem {
+    RepoContractWorkItem {
+        id: item.id.clone().unwrap_or_else(|| "<missing>".to_string()),
+        status: item
+            .status
+            .clone()
+            .unwrap_or_else(|| "<missing>".to_string()),
+        branch: item
+            .branch
+            .clone()
+            .unwrap_or_else(|| "<missing>".to_string()),
+        commands: item.commands.clone(),
+        acceptance: item.acceptance.clone(),
+    }
+}
+
+fn repo_contract_policy_ledgers(root: &Path) -> Result<Vec<String>, String> {
+    let mut ledgers = Vec::new();
+    for path in collect_files(&root.join("policy"))? {
+        if path.extension().and_then(|value| value.to_str()) == Some("toml")
+            || path.file_name().and_then(|value| value.to_str()) == Some("workflow_allowlist.txt")
+        {
+            ledgers.push(display_repo_path(root, &path));
+        }
+    }
+    ledgers.sort();
+    Ok(ledgers)
+}
+
+fn repo_contract_report_markdown(summary: &RepoContractSummary) -> String {
+    let mut body = String::from("# Source-of-Truth Contract Graph\n\n");
+    body.push_str("## Active Goal\n\n");
+    body.push_str(&format!(
+        "- id: `{}`\n",
+        summary.active_goal_id.as_deref().unwrap_or("<missing>")
+    ));
+    body.push_str(&format!(
+        "- title: {}\n",
+        summary.active_goal_title.as_deref().unwrap_or("<missing>")
+    ));
+    body.push_str(&format!(
+        "- status: `{}`\n\n",
+        summary.active_goal_status.as_deref().unwrap_or("<missing>")
+    ));
+
+    body.push_str("## Ready Work Items\n\n");
+    write_repo_contract_work_items(&mut body, &summary.ready_work_items);
+
+    body.push_str("## Accepted Proposals\n\n");
+    write_repo_contract_artifact_list(&mut body, &summary.artifacts, "proposal", "accepted");
+
+    body.push_str("## Accepted Specs\n\n");
+    write_repo_contract_artifact_list(&mut body, &summary.artifacts, "spec", "accepted");
+
+    body.push_str("## Open ADRs\n\n");
+    let open_adrs = summary
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.kind == "adr"
+                && !matches!(
+                    artifact.status.as_str(),
+                    "accepted" | "done" | "superseded" | "rejected" | "withdrawn"
+                )
+        })
+        .collect::<Vec<_>>();
+    if open_adrs.is_empty() {
+        body.push_str("None registered.\n\n");
+    } else {
+        for artifact in open_adrs {
+            body.push_str(&format!(
+                "- `{}`: `{}` at `{}`\n",
+                artifact.id, artifact.status, artifact.path
+            ));
+        }
+        body.push('\n');
+    }
+
+    body.push_str("## Support-Tier Impacts\n\n");
+    if summary.support_rows.is_empty() {
+        body.push_str("No support-tier rows found.\n\n");
+    } else {
+        body.push_str("| Capability | Tier | Proof |\n| --- | --- | --- |\n");
+        for row in &summary.support_rows {
+            body.push_str(&format!(
+                "| {} | {} | {} |\n",
+                markdown_cell(&row.capability),
+                markdown_cell(&row.tier),
+                markdown_cell(&row.proof)
+            ));
+        }
+        body.push('\n');
+    }
+
+    body.push_str("## Policy Impacts\n\n");
+    if summary.policy_ledgers.is_empty() {
+        body.push_str("No policy ledgers found.\n\n");
+    } else {
+        for ledger in &summary.policy_ledgers {
+            body.push_str(&format!("- `{ledger}`\n"));
+        }
+        body.push('\n');
+    }
+
+    body.push_str("## Missing Links\n\n");
+    if summary.missing_links.is_empty() {
+        body.push_str("None detected.\n\n");
+    } else {
+        for violation in &summary.missing_links {
+            body.push_str(&format!("- {violation}\n"));
+        }
+        body.push('\n');
+    }
+
+    body.push_str("## Superseded Artifacts\n\n");
+    let superseded = summary
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.status == "superseded" || artifact.superseded_by.is_some())
+        .collect::<Vec<_>>();
+    if superseded.is_empty() {
+        body.push_str("None registered.\n\n");
+    } else {
+        for artifact in superseded {
+            body.push_str(&format!(
+                "- `{}` -> `{}`\n",
+                artifact.id,
+                artifact.superseded_by.as_deref().unwrap_or("<missing>")
+            ));
+        }
+        body.push('\n');
+    }
+
+    body.push_str("## Recently Completed Work\n\n");
+    write_repo_contract_work_items(&mut body, &summary.done_work_items);
+    body
+}
+
+fn write_repo_contract_work_items(body: &mut String, items: &[RepoContractWorkItem]) {
+    if items.is_empty() {
+        body.push_str("None registered.\n\n");
+        return;
+    }
+    for item in items {
+        body.push_str(&format!(
+            "- `{}` on branch `{}` with {} command(s)\n",
+            item.id,
+            item.branch,
+            item.commands.len()
+        ));
+        if let Some(acceptance) = item.acceptance.as_ref() {
+            body.push_str(&format!("  acceptance: {acceptance}\n"));
+        }
+    }
+    body.push('\n');
+}
+
+fn write_repo_contract_artifact_list(
+    body: &mut String,
+    artifacts: &[RepoContractArtifact],
+    kind: &str,
+    status: &str,
+) {
+    let filtered = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == kind && artifact.status == status)
+        .collect::<Vec<_>>();
+    if filtered.is_empty() {
+        body.push_str("None registered.\n\n");
+        return;
+    }
+    for artifact in filtered {
+        body.push_str(&format!(
+            "- `{}` owned by `{}` at `{}`\n",
+            artifact.id, artifact.owner, artifact.path
+        ));
+    }
+    body.push('\n');
+}
+
+fn repo_contract_report_json(summary: &RepoContractSummary) -> String {
+    let mut body = String::new();
+    let artifacts = summary.artifacts.iter().collect::<Vec<_>>();
+    let accepted_proposals = summary
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == "proposal" && artifact.status == "accepted")
+        .collect::<Vec<_>>();
+    let accepted_specs = summary
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == "spec" && artifact.status == "accepted")
+        .collect::<Vec<_>>();
+    let open_adrs = summary
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.kind == "adr"
+                && !matches!(
+                    artifact.status.as_str(),
+                    "accepted" | "done" | "superseded" | "rejected" | "withdrawn"
+                )
+        })
+        .collect::<Vec<_>>();
+    let superseded_artifacts = summary
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.status == "superseded" || artifact.superseded_by.is_some())
+        .collect::<Vec<_>>();
+
+    body.push_str("{\n");
+    body.push_str(&format!(
+        "  \"active_goal\": {{ \"id\": {}, \"title\": {}, \"status\": {} }},\n",
+        json_optional_string(summary.active_goal_id.as_deref()),
+        json_optional_string(summary.active_goal_title.as_deref()),
+        json_optional_string(summary.active_goal_status.as_deref())
+    ));
+    body.push_str("  \"artifacts\": [");
+    write_repo_contract_artifact_json_array(&mut body, &artifacts);
+    body.push_str("],\n");
+    body.push_str("  \"accepted_proposals\": [");
+    write_repo_contract_artifact_json_array(&mut body, &accepted_proposals);
+    body.push_str("],\n");
+    body.push_str("  \"accepted_specs\": [");
+    write_repo_contract_artifact_json_array(&mut body, &accepted_specs);
+    body.push_str("],\n");
+    body.push_str("  \"open_adrs\": [");
+    write_repo_contract_artifact_json_array(&mut body, &open_adrs);
+    body.push_str("],\n");
+    body.push_str("  \"ready_work_items\": [");
+    write_repo_contract_work_item_json_array(&mut body, &summary.ready_work_items);
+    body.push_str("],\n");
+    body.push_str("  \"recently_completed_work\": [");
+    write_repo_contract_work_item_json_array(&mut body, &summary.done_work_items);
+    body.push_str("],\n");
+    body.push_str("  \"superseded_artifacts\": [");
+    write_repo_contract_artifact_json_array(&mut body, &superseded_artifacts);
+    body.push_str("],\n");
+    body.push_str("  \"support_tiers\": [\n");
+    for (index, row) in summary.support_rows.iter().enumerate() {
+        if index > 0 {
+            body.push_str(",\n");
+        }
+        body.push_str(&format!(
+            "    {{ \"capability\": \"{}\", \"tier\": \"{}\", \"surface\": \"{}\", \"proof\": \"{}\" }}",
+            json_escape(&row.capability),
+            json_escape(&row.tier),
+            json_escape(&row.surface),
+            json_escape(&row.proof)
+        ));
+    }
+    body.push_str("\n  ],\n");
+    body.push_str("  \"policy_ledgers\": [");
+    write_json_string_array(&mut body, &summary.policy_ledgers);
+    body.push_str("],\n");
+    body.push_str("  \"missing_links\": [");
+    write_json_string_array(&mut body, &summary.missing_links);
+    body.push_str("]\n}\n");
+    body
+}
+
+fn write_repo_contract_artifact_json_array(body: &mut String, artifacts: &[&RepoContractArtifact]) {
+    for (index, artifact) in artifacts.iter().enumerate() {
+        if index > 0 {
+            body.push_str(", ");
+        }
+        body.push_str(&format!(
+            "{{ \"id\": \"{}\", \"kind\": \"{}\", \"path\": \"{}\", \"status\": \"{}\", \"owner\": \"{}\", \"linked_proposal\": {}, \"linked_spec\": {}, \"linked_adr\": {}, \"linked_plan\": {}, \"superseded_by\": {} }}",
+            json_escape(&artifact.id),
+            json_escape(&artifact.kind),
+            json_escape(&artifact.path),
+            json_escape(&artifact.status),
+            json_escape(&artifact.owner),
+            json_optional_string(artifact.linked_proposal.as_deref()),
+            json_optional_string(artifact.linked_spec.as_deref()),
+            json_optional_string(artifact.linked_adr.as_deref()),
+            json_optional_string(artifact.linked_plan.as_deref()),
+            json_optional_string(artifact.superseded_by.as_deref())
+        ));
+    }
+}
+
+fn write_repo_contract_work_item_json_array(body: &mut String, items: &[RepoContractWorkItem]) {
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            body.push_str(", ");
+        }
+        body.push_str(&format!(
+            "{{ \"id\": \"{}\", \"status\": \"{}\", \"branch\": \"{}\", \"commands\": [",
+            json_escape(&item.id),
+            json_escape(&item.status),
+            json_escape(&item.branch)
+        ));
+        write_json_string_array(body, &item.commands);
+        body.push_str("] }");
+    }
+}
+
 fn validate_readme_support_tier_pointer(
     root: &Path,
     violations: &mut Vec<String>,
@@ -58174,6 +58626,86 @@ linked_spec = "RIPR-SPEC-0001"
     }
 
     #[test]
+    fn repo_contract_report_writes_graph_markdown_and_json() -> Result<(), String> {
+        with_temp_cwd("repo-contract-report", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-source-of-truth.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+"#,
+            );
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            );
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "# Campaigns\n\nsource-of-truth-control-plane\n\n| Work item | Status |\n| --- | --- |\n| `docs/report` | ready |\n| `docs/ledger` | done |\n",
+            );
+            write(
+                &root.join(".ripr/goals/active.toml"),
+                r#"id = "source-of-truth-control-plane"
+title = "Source of Truth Control Plane"
+status = "active"
+end_state = [
+  "Repo carries a contract graph.",
+]
+
+[[work_item]]
+id = "docs/ledger"
+status = "done"
+branch = "docs-ledger"
+stackable = false
+acceptance = "Ledger exists."
+commands = ["cargo xtask check-doc-artifacts"]
+
+[[work_item]]
+id = "docs/report"
+status = "ready"
+branch = "xtask-repo-contract-report"
+stackable = false
+acceptance = "Generate graph report."
+commands = ["cargo xtask repo-contract-report"]
+"#,
+            );
+
+            let (markdown, json) = super::repo_contract_report_from_root(root)?;
+            assert!(markdown.contains("## Active Goal"));
+            assert!(markdown.contains("`docs/report`"));
+            assert!(markdown.contains("## Support-Tier Impacts"));
+            assert!(json.contains(r#""active_goal""#));
+            assert!(json.contains(r#""accepted_proposals""#));
+            assert!(json.contains(r#""ready_work_items""#));
+            assert!(json.contains(r#""superseded_artifacts""#));
+            Ok(())
+        })
+    }
+
+    #[test]
     fn campaign_manifest_parses_valid_file() {
         with_temp_cwd("campaign-manifest", |root| {
             let manifest_path = root.join("campaign.toml");
@@ -61255,6 +61787,10 @@ jobs:
         assert_eq!(
             XtaskCommand::parse(["check-support-tiers".to_string()]),
             XtaskCommand::CheckSupportTiers
+        );
+        assert_eq!(
+            XtaskCommand::parse(["repo-contract-report".to_string()]),
+            XtaskCommand::RepoContractReport
         );
         assert_eq!(
             XtaskCommand::parse(["pr-triage-report".to_string()]),
