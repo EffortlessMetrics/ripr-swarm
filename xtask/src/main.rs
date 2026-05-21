@@ -16394,6 +16394,53 @@ fn evidence_health_report_artifacts_are_complete() -> Result<(), String> {
             json_path.display()
         ));
     }
+    for field in ["inputs", "metrics", "evidence_quality", "calibration"] {
+        require_evidence_health_json_object(&value, field, json_path)?;
+    }
+    require_evidence_health_json_array(&value, "top_static_limitations", json_path)?;
+
+    for field in ["seams_total", "headline_eligible_total"] {
+        require_evidence_health_json_number(&value, &format!("metrics.{field}"), json_path)?;
+    }
+    for field in [
+        "grip_class_counts",
+        "stage_state_counts",
+        "unknown_stage_counts",
+        "oracle_strength_counts",
+    ] {
+        require_evidence_health_json_object(&value, &format!("metrics.{field}"), json_path)?;
+    }
+    require_evidence_health_json_array(&value, "metrics.missing_discriminator_counts", json_path)?;
+
+    require_evidence_health_json_number(
+        &value,
+        "evidence_quality.canonical_gap_groups_total",
+        json_path,
+    )?;
+    for field in ["largest_canonical_groups", "top_evidence_quality_risks"] {
+        require_evidence_health_json_array(
+            &value,
+            &format!("evidence_quality.{field}"),
+            json_path,
+        )?;
+    }
+    for field in ["actionability_class_counts", "movement_availability"] {
+        require_evidence_health_json_object(
+            &value,
+            &format!("evidence_quality.{field}"),
+            json_path,
+        )?;
+    }
+    if value["calibration"]
+        .get("status")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Err(format!(
+            "evidence-health JSON artifact {} was missing calibration.status",
+            json_path.display()
+        ));
+    }
 
     let markdown = fs::read_to_string(md_path).map_err(|err| {
         format!(
@@ -16414,6 +16461,56 @@ fn evidence_health_report_artifacts_are_complete() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn require_evidence_health_json_object(
+    value: &Value,
+    dotted_path: &str,
+    json_path: &Path,
+) -> Result<(), String> {
+    if evidence_health_json_path(value, dotted_path).is_some_and(Value::is_object) {
+        return Ok(());
+    }
+    Err(format!(
+        "evidence-health JSON artifact {} was missing {dotted_path} object",
+        json_path.display()
+    ))
+}
+
+fn require_evidence_health_json_array(
+    value: &Value,
+    dotted_path: &str,
+    json_path: &Path,
+) -> Result<(), String> {
+    if evidence_health_json_path(value, dotted_path).is_some_and(Value::is_array) {
+        return Ok(());
+    }
+    Err(format!(
+        "evidence-health JSON artifact {} was missing {dotted_path} array",
+        json_path.display()
+    ))
+}
+
+fn require_evidence_health_json_number(
+    value: &Value,
+    dotted_path: &str,
+    json_path: &Path,
+) -> Result<(), String> {
+    if evidence_health_json_path(value, dotted_path).is_some_and(Value::is_number) {
+        return Ok(());
+    }
+    Err(format!(
+        "evidence-health JSON artifact {} was missing {dotted_path} number",
+        json_path.display()
+    ))
+}
+
+fn evidence_health_json_path<'a>(value: &'a Value, dotted_path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for part in dotted_path.split('.') {
+        current = current.get(part)?;
+    }
+    Some(current)
 }
 
 fn limited_evidence_health_json(
@@ -63791,7 +63888,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 |_binary, _args, _timeout| {
                     write(
                         Path::new("target/ripr/reports/evidence-health.json"),
-                        r#"{"schema_version":"0.2","status":"advisory"}"#,
+                        &complete_evidence_health_json(),
                     );
                     write(
                         Path::new("target/ripr/reports/evidence-health.md"),
@@ -63814,6 +63911,57 @@ covered_by = ["cargo xtask check-file-policy"]
             let markdown = fs::read_to_string("target/ripr/reports/evidence-health.md")
                 .map_err(|err| err.to_string())?;
             assert!(markdown.contains("Status: advisory"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn evidence_health_success_with_status_only_stub_writes_named_limitation_reports()
+    -> Result<(), String> {
+        with_temp_cwd("evidence-health-success-stub", |_root| {
+            let timeout = Duration::from_secs(30);
+            let args = evidence_health_args();
+            write_evidence_health_report_with_runner(
+                Path::new("ripr"),
+                &args,
+                timeout,
+                |_binary, _args, _timeout| {
+                    write(
+                        Path::new("target/ripr/reports/evidence-health.json"),
+                        r#"{"schema_version":"0.2","status":"advisory"}"#,
+                    );
+                    write(
+                        Path::new("target/ripr/reports/evidence-health.md"),
+                        "# RIPR evidence health report\n\nStatus: advisory\n",
+                    );
+                    Ok(TimedOutput {
+                        status: Some(success_exit_status()),
+                        stdout: "ok".to_string(),
+                        stderr: String::new(),
+                        duration: Duration::from_secs(1),
+                        timed_out: false,
+                    })
+                },
+            )?;
+
+            let json_text = fs::read_to_string("target/ripr/reports/evidence-health.json")
+                .map_err(|err| err.to_string())?;
+            let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+            assert_eq!(value["status"], "warn");
+            assert_eq!(
+                value["inputs"]["generation"]["status"],
+                serde_json::Value::from("pass_incomplete")
+            );
+            assert!(
+                value["run_limitations"][0]["failure_reason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("missing inputs object")
+            );
+            let markdown = fs::read_to_string("target/ripr/reports/evidence-health.md")
+                .map_err(|err| err.to_string())?;
+            assert!(markdown.contains("Status: warn"));
+            assert!(markdown.contains("evidence_health_incomplete"));
             Ok(())
         })
     }
@@ -63893,6 +64041,10 @@ covered_by = ["cargo xtask check-file-policy"]
                     r#"{"schema_version":"0.2","status":"warn"}"#,
                     "did not report advisory status",
                 ),
+                (
+                    r#"{"schema_version":"0.2","status":"advisory"}"#,
+                    "missing inputs object",
+                ),
             ];
             for (json, expected) in cases {
                 write(json_path, json);
@@ -63901,7 +64053,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 assert!(err.contains(expected), "expected {expected:?} in {err:?}");
             }
 
-            write(json_path, r#"{"schema_version":"0.2","status":"advisory"}"#);
+            write(json_path, &complete_evidence_health_json());
             let _ = fs::remove_file(md_path);
             let err = super::evidence_health_report_artifacts_are_complete()
                 .expect_err("missing Markdown artifact should be rejected");
@@ -63917,10 +64069,45 @@ covered_by = ["cargo xtask check-file-policy"]
                 .expect_err("warning Markdown artifact should be rejected as incomplete success");
             assert!(err.contains("did not report advisory status"));
 
+            write(json_path, &complete_evidence_health_json());
             write(md_path, "Status: advisory\n");
             super::evidence_health_report_artifacts_are_complete()?;
             Ok(())
         })
+    }
+
+    fn complete_evidence_health_json() -> String {
+        serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "scope": "repo",
+            "status": "advisory",
+            "inputs": {
+                "root": ".",
+                "mutation_calibration": null,
+            },
+            "metrics": {
+                "seams_total": 0,
+                "headline_eligible_total": 0,
+                "grip_class_counts": {},
+                "stage_state_counts": {},
+                "unknown_stage_counts": {},
+                "missing_discriminator_counts": [],
+                "oracle_strength_counts": {},
+            },
+            "evidence_quality": {
+                "canonical_gap_groups_total": 0,
+                "largest_canonical_groups": [],
+                "actionability_class_counts": {},
+                "movement_availability": {},
+                "top_evidence_quality_risks": [],
+            },
+            "calibration": {
+                "status": "not_evaluated",
+            },
+            "top_static_limitations": [],
+        })
+        .to_string()
     }
 
     #[test]
