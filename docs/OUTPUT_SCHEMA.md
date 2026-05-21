@@ -1604,9 +1604,10 @@ Field contract:
   `null` when not provided.
 - `inputs.generation` - present on bounded xtask fallback artifacts. It records
   `phase` (`evidence_health_build` or `evidence_health_generation`), bounded
-  command, `status` (`fail` or `timeout`), timeout/duration, exit code when
-  available, output byte counts, and bounded stdout/stderr excerpts. Complete
-  `ripr evidence-health` reports omit this wrapper field and keep the normal
+  command, `status` (`fail`, `timeout`, or `pass_incomplete`),
+  timeout/duration, exit code when available, output byte counts, optional
+  `failure_reason`, and bounded stdout/stderr excerpts. Complete `ripr
+  evidence-health` reports omit this wrapper field and keep the normal
   analyzer-health payload, so the current contract does not emit an `"ok"`
   generation status.
 - `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero

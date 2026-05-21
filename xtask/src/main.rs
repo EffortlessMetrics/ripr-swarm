@@ -16394,6 +16394,7 @@ fn evidence_health_report_artifacts_are_complete() -> Result<(), String> {
             json_path.display()
         ));
     }
+    validate_complete_evidence_health_json(&value, &json_path)?;
 
     let markdown = fs::read_to_string(md_path).map_err(|err| {
         format!(
@@ -16414,6 +16415,176 @@ fn evidence_health_report_artifacts_are_complete() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn validate_complete_evidence_health_json(value: &Value, json_path: &Path) -> Result<(), String> {
+    for path in [
+        &["inputs"][..],
+        &["metrics"],
+        &["evidence_quality"],
+        &["calibration"],
+    ] {
+        require_json_object(value, path, json_path)?;
+    }
+    require_json_array(value, &["top_static_limitations"], json_path)?;
+
+    for path in [&["inputs", "root"][..], &["calibration", "status"]] {
+        require_json_string(value, path, json_path)?;
+    }
+    require_json_present(value, &["inputs", "mutation_calibration"], json_path)?;
+
+    for path in [
+        &["metrics", "seams_total"][..],
+        &["metrics", "headline_eligible_total"],
+        &["metrics", "weakly_gripped_total"],
+        &["metrics", "ungripped_total"],
+        &["metrics", "missing_discriminators_total"],
+        &["metrics", "seams_with_missing_discriminators"],
+        &["metrics", "observed_values_total"],
+        &["metrics", "seams_with_observed_values"],
+        &["metrics", "related_tests_total"],
+        &["metrics", "seams_with_related_tests"],
+        &["metrics", "opaque_oracle_count"],
+    ] {
+        require_json_number(value, path, json_path)?;
+    }
+
+    for path in [
+        &["metrics", "grip_class_counts"][..],
+        &["metrics", "stage_state_counts"],
+        &["metrics", "unknown_stage_counts"],
+        &["metrics", "unknown_stop_reason_counts"],
+        &["metrics", "observed_value_context_counts"],
+        &["metrics", "related_test_confidence_counts"],
+        &["metrics", "oracle_strength_counts"],
+        &["metrics", "oracle_kind_counts"],
+        &["evidence_quality", "actionability_class_counts"],
+        &["evidence_quality", "static_limitation_stage_counts"],
+        &["evidence_quality", "static_limitation_category_counts"],
+        &["evidence_quality", "calibration_availability_counts"],
+        &["evidence_quality", "movement_availability"],
+    ] {
+        require_json_object(value, path, json_path)?;
+    }
+
+    for path in [
+        &["metrics", "missing_discriminator_counts"][..],
+        &["evidence_quality", "largest_canonical_groups"],
+        &["evidence_quality", "static_limitation_reason_counts"],
+        &["evidence_quality", "top_evidence_quality_risks"],
+    ] {
+        require_json_array(value, path, json_path)?;
+    }
+
+    for path in [
+        &["evidence_quality", "canonical_gap_groups_total"][..],
+        &["evidence_quality", "duplicate_looking_groups_total"],
+        &[
+            "evidence_quality",
+            "movement_availability",
+            "records_with_seam_id",
+        ],
+        &[
+            "evidence_quality",
+            "movement_availability",
+            "records_with_canonical_gap_id",
+        ],
+        &[
+            "evidence_quality",
+            "movement_availability",
+            "records_with_complete_evidence_path",
+        ],
+        &[
+            "evidence_quality",
+            "movement_availability",
+            "records_with_recommendation",
+        ],
+        &[
+            "evidence_quality",
+            "movement_availability",
+            "records_with_verify_command",
+        ],
+        &["calibration", "matched_total"],
+        &["calibration", "static_without_runtime_total"],
+        &["calibration", "runtime_without_static_total"],
+        &["calibration", "ambiguous_file_line_total"],
+        &["calibration", "unmatched_runtime_total"],
+    ] {
+        require_json_number(value, path, json_path)?;
+    }
+
+    require_json_present(value, &["calibration", "source"], json_path)?;
+    Ok(())
+}
+
+fn require_json_present<'a>(
+    value: &'a Value,
+    path: &[&str],
+    json_path: &Path,
+) -> Result<&'a Value, String> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment).ok_or_else(|| {
+            format!(
+                "evidence-health JSON artifact {} is missing `{}`",
+                json_path.display(),
+                path.join(".")
+            )
+        })?;
+    }
+    Ok(current)
+}
+
+fn require_json_object(value: &Value, path: &[&str], json_path: &Path) -> Result<(), String> {
+    let field = require_json_present(value, path, json_path)?;
+    if field.is_object() {
+        Ok(())
+    } else {
+        Err(format!(
+            "evidence-health JSON artifact {} expected `{}` to be an object",
+            json_path.display(),
+            path.join(".")
+        ))
+    }
+}
+
+fn require_json_array(value: &Value, path: &[&str], json_path: &Path) -> Result<(), String> {
+    let field = require_json_present(value, path, json_path)?;
+    if field.is_array() {
+        Ok(())
+    } else {
+        Err(format!(
+            "evidence-health JSON artifact {} expected `{}` to be an array",
+            json_path.display(),
+            path.join(".")
+        ))
+    }
+}
+
+fn require_json_number(value: &Value, path: &[&str], json_path: &Path) -> Result<(), String> {
+    let field = require_json_present(value, path, json_path)?;
+    if field.is_number() {
+        Ok(())
+    } else {
+        Err(format!(
+            "evidence-health JSON artifact {} expected `{}` to be a number",
+            json_path.display(),
+            path.join(".")
+        ))
+    }
+}
+
+fn require_json_string(value: &Value, path: &[&str], json_path: &Path) -> Result<(), String> {
+    let field = require_json_present(value, path, json_path)?;
+    if field.is_string() {
+        Ok(())
+    } else {
+        Err(format!(
+            "evidence-health JSON artifact {} expected `{}` to be a string",
+            json_path.display(),
+            path.join(".")
+        ))
+    }
 }
 
 fn limited_evidence_health_json(
@@ -63791,7 +63962,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 |_binary, _args, _timeout| {
                     write(
                         Path::new("target/ripr/reports/evidence-health.json"),
-                        r#"{"schema_version":"0.2","status":"advisory"}"#,
+                        &complete_evidence_health_json_fixture(),
                     );
                     write(
                         Path::new("target/ripr/reports/evidence-health.md"),
@@ -63811,6 +63982,9 @@ covered_by = ["cargo xtask check-file-policy"]
                 .map_err(|err| err.to_string())?;
             let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
             assert_eq!(value["status"], "advisory");
+            assert!(value["metrics"]["grip_class_counts"].is_object());
+            assert!(value["evidence_quality"]["movement_availability"].is_object());
+            assert!(value["top_static_limitations"].is_array());
             let markdown = fs::read_to_string("target/ripr/reports/evidence-health.md")
                 .map_err(|err| err.to_string())?;
             assert!(markdown.contains("Status: advisory"));
@@ -63893,6 +64067,14 @@ covered_by = ["cargo xtask check-file-policy"]
                     r#"{"schema_version":"0.2","status":"warn"}"#,
                     "did not report advisory status",
                 ),
+                (
+                    r#"{"schema_version":"0.2","status":"advisory"}"#,
+                    "is missing `inputs`",
+                ),
+                (
+                    r#"{"schema_version":"0.2","status":"advisory","inputs":{},"metrics":{},"evidence_quality":{},"calibration":{},"top_static_limitations":[]}"#,
+                    "is missing `inputs.root`",
+                ),
             ];
             for (json, expected) in cases {
                 write(json_path, json);
@@ -63901,7 +64083,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 assert!(err.contains(expected), "expected {expected:?} in {err:?}");
             }
 
-            write(json_path, r#"{"schema_version":"0.2","status":"advisory"}"#);
+            write(json_path, &complete_evidence_health_json_fixture());
             let _ = fs::remove_file(md_path);
             let err = super::evidence_health_report_artifacts_are_complete()
                 .expect_err("missing Markdown artifact should be rejected");
@@ -63921,6 +64103,70 @@ covered_by = ["cargo xtask check-file-policy"]
             super::evidence_health_report_artifacts_are_complete()?;
             Ok(())
         })
+    }
+
+    fn complete_evidence_health_json_fixture() -> String {
+        serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "scope": "repo",
+            "status": "advisory",
+            "inputs": {
+                "root": ".",
+                "mutation_calibration": Value::Null,
+            },
+            "metrics": {
+                "seams_total": 0,
+                "headline_eligible_total": 0,
+                "weakly_gripped_total": 0,
+                "ungripped_total": 0,
+                "grip_class_counts": {},
+                "stage_state_counts": {},
+                "unknown_stage_counts": {},
+                "unknown_stop_reason_counts": {},
+                "missing_discriminators_total": 0,
+                "seams_with_missing_discriminators": 0,
+                "missing_discriminator_counts": [],
+                "observed_values_total": 0,
+                "seams_with_observed_values": 0,
+                "observed_value_context_counts": {},
+                "related_tests_total": 0,
+                "seams_with_related_tests": 0,
+                "related_test_confidence_counts": {},
+                "oracle_strength_counts": {},
+                "oracle_kind_counts": {},
+                "opaque_oracle_count": 0,
+            },
+            "evidence_quality": {
+                "canonical_gap_groups_total": 0,
+                "duplicate_looking_groups_total": 0,
+                "largest_canonical_groups": [],
+                "actionability_class_counts": {},
+                "static_limitation_stage_counts": {},
+                "static_limitation_reason_counts": [],
+                "static_limitation_category_counts": {},
+                "calibration_availability_counts": {},
+                "movement_availability": {
+                    "records_with_seam_id": 0,
+                    "records_with_canonical_gap_id": 0,
+                    "records_with_complete_evidence_path": 0,
+                    "records_with_recommendation": 0,
+                    "records_with_verify_command": 0,
+                },
+                "top_evidence_quality_risks": [],
+            },
+            "calibration": {
+                "status": "not_provided",
+                "source": Value::Null,
+                "matched_total": 0,
+                "static_without_runtime_total": 0,
+                "runtime_without_static_total": 0,
+                "ambiguous_file_line_total": 0,
+                "unmatched_runtime_total": 0,
+            },
+            "top_static_limitations": [],
+        })
+        .to_string()
     }
 
     #[test]
