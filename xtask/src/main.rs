@@ -40843,7 +40843,10 @@ fn report_index_status(
     missing: &[String],
     campaign_issues: &[String],
 ) -> &'static str {
-    if reports.iter().any(|entry| entry.status == "fail") {
+    if reports
+        .iter()
+        .any(|entry| entry.status == "fail" && !report_index_is_lane1_readiness_file(&entry.file))
+    {
         return "fail";
     }
     let lane1_packets = report_index_lane1_readiness_packets(reports);
@@ -40858,6 +40861,14 @@ fn report_index_status(
     } else {
         "pass"
     }
+}
+
+fn report_index_is_lane1_readiness_file(file: &str) -> bool {
+    lane1_readiness_packet_specs()
+        .iter()
+        .flat_map(|spec| spec.artifacts.iter())
+        .filter_map(|path| path.strip_prefix("target/ripr/reports/"))
+        .any(|expected| expected == file)
 }
 
 fn report_index_next_commands(
@@ -52154,6 +52165,22 @@ jobs:
                 .iter()
                 .all(|packet| packet.status == "present")
         );
+    }
+
+    #[test]
+    fn report_index_status_keeps_failing_lane1_artifacts_advisory() {
+        let reports = vec![ReportIndexEntry {
+            file: "badge-basis.json".to_string(),
+            path: "target/ripr/reports/badge-basis.json".to_string(),
+            status: "fail".to_string(),
+        }];
+        let packets = report_index_lane1_readiness_packets(&reports);
+        let commands = report_index_next_commands(&[], &packets);
+
+        assert_eq!(super::report_index_status(&reports, &[], &[]), "warn");
+        assert_eq!(report_index_lane1_overall_status(&packets), "fail");
+        assert_eq!(super::report_index_failing_artifact_count(&packets), 1);
+        assert!(commands.contains(&"cargo xtask badge-basis".to_string()));
     }
 
     #[test]
