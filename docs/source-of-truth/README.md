@@ -46,10 +46,10 @@ can answer these questions from the repository instead of from chat history:
 
 ## Current repo path
 
-This repo uses `.ripr/goals/active.toml` as the active execution manifest. A
-reusable proof-stack bootstrap may choose `.codex/goals/active.toml`, but `ripr`
-agents should follow the repo-local `.ripr` path unless a later PR changes the
-schema and documentation together.
+This repo uses `.ripr/goals/active.toml` as the active execution manifest.
+Reusable proof-stack bootstraps may choose another repo-specific active-goal
+path, but `ripr` agents should follow the repo-local `.ripr` path unless a
+later PR changes the schema and documentation together.
 
 ## Enforcement state
 
