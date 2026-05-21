@@ -312,6 +312,13 @@ silently dropping the report.
 Given no previous scorecard or audit snapshot, the trend report marks history
 unavailable and emits `unknown` rather than claiming improvement.
 
+Given a current scorecard with `lane1_evidence_audit_limited`,
+`evidence_health_limited`, or
+`evidence_quality_scorecard_audit_regeneration_failed`, the trend report keeps
+metric and static-limitation rows visible for diagnostics, leaves deltas null,
+marks direction `unknown`, and emits `current_scorecard_limited` rather than
+claiming improvement or regression.
+
 Given a previous scorecard with fewer calibrated records and more
 duplicate-looking groups, the trend report marks calibrated records and
 duplicate-looking groups as improvement.
