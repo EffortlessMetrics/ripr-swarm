@@ -642,8 +642,8 @@ fn agent_brief_owners_for_lines(
 }
 
 fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
-    let path_text = normalized_path_text(path);
-    for root_text in normalized_root_prefixes(root) {
+    let path_text = path_normalization::normalized_path_text(path);
+    for root_text in path_normalization::normalized_root_prefixes(root) {
         let prefix = format!("{root_text}/");
         if let Some(stripped) = path_text.strip_prefix(&prefix) {
             return PathBuf::from(stripped);
@@ -652,28 +652,32 @@ fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
     PathBuf::from(path_text)
 }
 
-fn normalized_root_prefixes(root: &Path) -> Vec<String> {
-    let mut prefixes = Vec::new();
-    push_unique_normalized_path(&mut prefixes, root);
-    if let Ok(root) = std::path::absolute(root) {
-        push_unique_normalized_path(&mut prefixes, &root);
-    }
-    if let Ok(root) = root.canonicalize() {
-        push_unique_normalized_path(&mut prefixes, &root);
-    }
-    prefixes
-}
+mod path_normalization {
+    use std::path::Path;
 
-fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
-    let text = normalized_path_text(path);
-    if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
-        prefixes.push(text);
+    pub(super) fn normalized_root_prefixes(root: &Path) -> Vec<String> {
+        let mut prefixes = Vec::new();
+        push_unique_normalized_path(&mut prefixes, root);
+        if let Ok(root) = std::path::absolute(root) {
+            push_unique_normalized_path(&mut prefixes, &root);
+        }
+        if let Ok(root) = root.canonicalize() {
+            push_unique_normalized_path(&mut prefixes, &root);
+        }
+        prefixes
     }
-}
 
-fn normalized_path_text(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    text.strip_prefix("./").unwrap_or(&text).to_string()
+    fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
+        let text = normalized_path_text(path);
+        if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
+            prefixes.push(text);
+        }
+    }
+
+    pub(super) fn normalized_path_text(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('\\', "/");
+        text.strip_prefix("./").unwrap_or(&text).to_string()
+    }
 }
 
 pub(super) fn init(args: &[String]) -> Result<(), String> {
@@ -4949,35 +4953,75 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
 }
 
 fn parse_baseline_create_options(args: &[String]) -> Result<BaselineCreateOptions, String> {
-    let mut from = None;
-    let mut out = PathBuf::from(output::baseline::DEFAULT_BASELINE_OUT);
-    let mut dry_run = false;
-    let mut force = false;
+    let mut parse = BaselineCreateParseState::default();
 
     let mut i = 0usize;
     while i < args.len() {
-        match args[i].as_str() {
-            "--from" => {
-                i += 1;
-                from = Some(non_empty_path_arg(args, i, "--from", "baseline create")?);
-            }
-            "--out" => {
-                i += 1;
-                out = non_empty_path_arg(args, i, "--out", "baseline create")?;
-            }
-            "--dry-run" => dry_run = true,
-            "--force" => force = true,
-            other => return Err(format!("unknown baseline create argument {other:?}")),
-        }
+        parse.apply_arg(args, &mut i)?;
         i += 1;
     }
 
-    Ok(BaselineCreateOptions {
-        from: from.ok_or_else(|| "baseline create requires --from <path>".to_string())?,
-        out,
-        dry_run,
-        force,
-    })
+    parse.into_options()
+}
+
+#[derive(Debug)]
+struct BaselineCreateParseState {
+    from: Option<PathBuf>,
+    out: PathBuf,
+    dry_run: bool,
+    force: bool,
+}
+
+impl Default for BaselineCreateParseState {
+    fn default() -> Self {
+        Self {
+            from: None,
+            out: PathBuf::from(output::baseline::DEFAULT_BASELINE_OUT),
+            dry_run: false,
+            force: false,
+        }
+    }
+}
+
+impl BaselineCreateParseState {
+    fn apply_arg(&mut self, args: &[String], i: &mut usize) -> Result<(), String> {
+        match args[*i].as_str() {
+            "--from" => self.parse_from(args, i),
+            "--out" => self.parse_out(args, i),
+            "--dry-run" => {
+                self.dry_run = true;
+                Ok(())
+            }
+            "--force" => {
+                self.force = true;
+                Ok(())
+            }
+            other => Err(format!("unknown baseline create argument {other:?}")),
+        }
+    }
+
+    fn parse_from(&mut self, args: &[String], i: &mut usize) -> Result<(), String> {
+        *i += 1;
+        self.from = Some(non_empty_path_arg(args, *i, "--from", "baseline create")?);
+        Ok(())
+    }
+
+    fn parse_out(&mut self, args: &[String], i: &mut usize) -> Result<(), String> {
+        *i += 1;
+        self.out = non_empty_path_arg(args, *i, "--out", "baseline create")?;
+        Ok(())
+    }
+
+    fn into_options(self) -> Result<BaselineCreateOptions, String> {
+        Ok(BaselineCreateOptions {
+            from: self
+                .from
+                .ok_or_else(|| "baseline create requires --from <path>".to_string())?,
+            out: self.out,
+            dry_run: self.dry_run,
+            force: self.force,
+        })
+    }
 }
 
 fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, String> {

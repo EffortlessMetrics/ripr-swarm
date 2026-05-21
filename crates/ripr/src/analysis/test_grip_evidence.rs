@@ -72,6 +72,7 @@ pub(crate) struct CompactGripContext<'a> {
     index: &'a RustIndex,
     tests: Vec<CompactTest<'a>>,
     tests_by_call_name: BTreeMap<String, Vec<usize>>,
+    tests_by_helper_owner_call_name: BTreeMap<String, Vec<usize>>,
     tests_by_assertion_token: BTreeMap<String, Vec<usize>>,
     tests_by_file_stem: BTreeMap<String, Vec<usize>>,
     tests_by_import_token: BTreeMap<String, Vec<usize>>,
@@ -85,6 +86,7 @@ struct CompactTest<'a> {
     module_path: Option<String>,
     name_lower: String,
     call_names: BTreeSet<String>,
+    helper_owner_call_names: BTreeSet<String>,
     code_lines: Vec<String>,
     value_facts: OnceCell<super::value_resolution::ValueEnvFacts>,
 }
@@ -92,9 +94,11 @@ struct CompactTest<'a> {
 impl<'a> CompactGripContext<'a> {
     pub(crate) fn new(index: &'a RustIndex) -> Self {
         let mut tests_by_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut tests_by_helper_owner_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let helper_owner_calls_by_file = helper_owner_calls_by_file(index);
         let tests = index
             .tests
             .iter()
@@ -116,9 +120,20 @@ impl<'a> CompactGripContext<'a> {
                     .lines()
                     .map(strip_comments_and_strings)
                     .collect::<Vec<_>>();
+                let helper_owner_call_names = helper_owner_call_names_for_test(
+                    test,
+                    &call_names,
+                    &helper_owner_calls_by_file,
+                );
                 for call_name in &call_names {
                     tests_by_call_name
                         .entry(call_name.clone())
+                        .or_default()
+                        .push(test_index);
+                }
+                for owner_name in &helper_owner_call_names {
+                    tests_by_helper_owner_call_name
+                        .entry(owner_name.clone())
                         .or_default()
                         .push(test_index);
                 }
@@ -146,6 +161,7 @@ impl<'a> CompactGripContext<'a> {
                     module_path: module_path_for(&test.file),
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
+                    helper_owner_call_names,
                     code_lines,
                     value_facts: OnceCell::new(),
                 }
@@ -155,6 +171,7 @@ impl<'a> CompactGripContext<'a> {
             index,
             tests,
             tests_by_call_name,
+            tests_by_helper_owner_call_name,
             tests_by_assertion_token,
             tests_by_file_stem,
             tests_by_import_token,
@@ -207,6 +224,78 @@ impl<'a> CompactGripContext<'a> {
     }
 }
 
+type HelperOwnerCallsByFile = BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>>;
+
+fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
+    let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
+    for function in index.functions.iter().filter(|function| !function.is_test) {
+        let helper_name_lower = function.name.to_ascii_lowercase();
+        let owner_calls = function
+            .calls
+            .iter()
+            .filter(|call| {
+                helper_name_carries_owner_token(&helper_name_lower, &call.name)
+                    && call.text.contains(&format!("{}(", call.name))
+            })
+            .map(|call| call.name.clone())
+            .collect::<BTreeSet<_>>();
+        if owner_calls.is_empty() {
+            continue;
+        }
+        helpers
+            .entry(function.file.clone())
+            .or_default()
+            .insert(function.name.clone(), owner_calls);
+    }
+    helpers
+}
+
+fn helper_name_carries_owner_token(helper_name_lower: &str, owner_name: &str) -> bool {
+    let owner_name_lower = owner_name.to_ascii_lowercase();
+    if !owner_token_is_specific_enough(&owner_name_lower) {
+        return false;
+    }
+    helper_name_lower
+        .match_indices(&owner_name_lower)
+        .any(|(start, _)| {
+            let before = helper_name_lower[..start].chars().next_back();
+            let after = helper_name_lower[start + owner_name_lower.len()..]
+                .chars()
+                .next();
+            is_helper_token_boundary(before) && is_helper_token_boundary(after)
+        })
+}
+
+fn owner_token_is_specific_enough(owner_name_lower: &str) -> bool {
+    owner_name_lower.contains('_')
+        || (owner_name_lower.len() >= 8
+            && !matches!(
+                owner_name_lower,
+                "builder" | "convert" | "fixture" | "helper" | "parse" | "render"
+            ))
+}
+
+fn is_helper_token_boundary(ch: Option<char>) -> bool {
+    ch.is_none_or(|ch| ch == '_' || !ch.is_alphanumeric())
+}
+
+fn helper_owner_call_names_for_test(
+    test: &TestSummary,
+    call_names: &BTreeSet<String>,
+    helpers: &HelperOwnerCallsByFile,
+) -> BTreeSet<String> {
+    let Some(file_helpers) = helpers.get(&test.file) else {
+        return BTreeSet::new();
+    };
+    let mut owner_names = BTreeSet::new();
+    for helper_name in call_names {
+        if let Some(helper_owner_names) = file_helpers.get(helper_name) {
+            owner_names.extend(helper_owner_names.iter().cloned());
+        }
+    }
+    owner_names
+}
+
 /// Why this test is related to the seam. v1: a single highest-priority
 /// reason per test (no multi-reason public shape). Priority is pinned
 /// by `RelationReason::priority` and exercised by ranking tests.
@@ -214,6 +303,7 @@ impl<'a> CompactGripContext<'a> {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RelationReason {
     DirectOwnerCall,
+    HelperOwnerCall,
     AssertionTargetAffinity,
     SameTestFile,
     SameModule,
@@ -226,6 +316,7 @@ impl RelationReason {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::DirectOwnerCall => "direct_owner_call",
+            Self::HelperOwnerCall => "helper_owner_call",
             Self::AssertionTargetAffinity => "assertion_target_affinity",
             Self::SameTestFile => "same_test_file",
             Self::SameModule => "same_module",
@@ -239,18 +330,21 @@ impl RelationReason {
     fn priority(self) -> u8 {
         match self {
             Self::DirectOwnerCall => 0,
-            Self::AssertionTargetAffinity => 1,
-            Self::SameTestFile => 2,
-            Self::SameModule => 3,
-            Self::OwnerNamedTest => 4,
-            Self::ImportPathAffinity => 5,
-            Self::FixtureOwnerAffinity => 6,
+            Self::HelperOwnerCall => 1,
+            Self::AssertionTargetAffinity => 2,
+            Self::SameTestFile => 3,
+            Self::SameModule => 4,
+            Self::OwnerNamedTest => 5,
+            Self::ImportPathAffinity => 6,
+            Self::FixtureOwnerAffinity => 7,
         }
     }
 
     fn confidence(self) -> RelationConfidence {
         match self {
-            Self::DirectOwnerCall | Self::AssertionTargetAffinity => RelationConfidence::High,
+            Self::DirectOwnerCall | Self::HelperOwnerCall | Self::AssertionTargetAffinity => {
+                RelationConfidence::High
+            }
             Self::SameTestFile
             | Self::SameModule
             | Self::OwnerNamedTest
@@ -434,6 +528,7 @@ fn find_related_tests_with_context<'context, 'index>(
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
     match_same_test_file(&mut candidates, context, prefix, &owner);
     match_same_module(&mut candidates, context, prefix, &owner);
@@ -516,6 +611,29 @@ fn match_direct_owner_call(
             prefix,
             *test_index,
             RelationReason::DirectOwnerCall,
+        );
+    }
+}
+
+fn match_helper_owner_call(
+    candidates: &mut BTreeMap<usize, RelationReason>,
+    context: &CompactGripContext<'_>,
+    prefix: Option<&str>,
+    owner: &OwnerContext,
+) {
+    if owner.name.is_empty() {
+        return;
+    }
+    let Some(indices) = context.tests_by_helper_owner_call_name.get(&owner.name) else {
+        return;
+    };
+    for test_index in indices {
+        insert_related_candidate(
+            candidates,
+            context,
+            prefix,
+            *test_index,
+            RelationReason::HelperOwnerCall,
         );
     }
 }
@@ -1049,10 +1167,18 @@ fn activate_evidence(
         && related
             .iter()
             .any(|indexed| has_direct_owner_call(indexed, owner_name));
+    let helper_value_insensitive_owner_call = !owner_name.is_empty()
+        && !requires_concrete_activation_values(seam)
+        && related
+            .iter()
+            .any(|indexed| has_owner_call_via_one_hop_helper(indexed, owner_name));
 
     let state = if related.is_empty() {
         StageState::No
-    } else if !observed.is_empty() || direct_value_insensitive_owner_call {
+    } else if !observed.is_empty()
+        || direct_value_insensitive_owner_call
+        || helper_value_insensitive_owner_call
+    {
         StageState::Yes
     } else {
         // Reach exists but no concrete value seen — most often a helper
@@ -1061,7 +1187,10 @@ fn activate_evidence(
     };
     let stage = StageEvidence::new(
         state,
-        if !observed.is_empty() || direct_value_insensitive_owner_call {
+        if !observed.is_empty()
+            || direct_value_insensitive_owner_call
+            || helper_value_insensitive_owner_call
+        {
             Confidence::Medium
         } else {
             Confidence::Low
@@ -1078,6 +1207,14 @@ fn activate_evidence(
         } else if direct_value_insensitive_owner_call {
             format!(
                 "Observed direct owner call for value-insensitive seam `{}`",
+                seam.expression()
+                    .lines()
+                    .next()
+                    .unwrap_or(seam.expression())
+            )
+        } else if helper_value_insensitive_owner_call {
+            format!(
+                "Observed one-hop helper owner call for value-insensitive seam `{}`",
                 seam.expression()
                     .lines()
                     .next()
@@ -1173,11 +1310,16 @@ fn observed_value_facts_for_test(
 }
 
 fn has_direct_owner_call(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
+    let call_open = format!("{owner_name}(");
     indexed
         .test
         .calls
         .iter()
-        .any(|call| call.name == owner_name && call_arguments(&call.text, owner_name).is_some())
+        .any(|call| call.name == owner_name && call.text.contains(&call_open))
+}
+
+fn has_owner_call_via_one_hop_helper(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
+    indexed.helper_owner_call_names.contains(owner_name)
 }
 
 fn observed_argument_indices(
@@ -1331,9 +1473,10 @@ fn compact_activate_evidence(
 
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let direct_owner_call = !owner_name.is_empty()
-        && related
-            .iter()
-            .any(|indexed| indexed.call_names.contains(owner_name));
+        && related.iter().any(|indexed| {
+            indexed.call_names.contains(owner_name)
+                || indexed.helper_owner_call_names.contains(owner_name)
+        });
     let state = if related.is_empty() {
         StageState::No
     } else if direct_owner_call {
@@ -2635,6 +2778,235 @@ fn device_labels_start_empty() {
     }
 
     #[test]
+    fn given_full_evidence_when_multiline_no_arg_owner_call_reaches_return_seam_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/labels.rs");
+        let prod_src = r#"
+pub fn device_labels() -> Vec<&'static str> {
+    Vec::new()
+}
+"#;
+        let tests = PathBuf::from("tests/labels_tests.rs");
+        let tests_src = r#"
+#[test]
+fn device_labels_start_empty() {
+    let labels = device_labels(
+    );
+    assert!(labels.is_empty());
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/labels.rs")], &index);
+        let return_seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ReturnValue && s.expression().contains("Vec::new()"))
+            .ok_or_else(|| "expected Vec::new return_value seam".to_string())?;
+
+        let evidence = evidence_for_seam(return_seam, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence.observed_values.is_empty(),
+            "multiline no-arg activation should not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("direct owner call for value-insensitive seam"),
+            "activation summary should explain the value-insensitive owner-call route: {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "multiline value-insensitive direct owner calls must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_full_evidence_when_one_hop_helper_calls_owner_then_value_insensitive_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/labels.rs");
+        let source_src = r#"
+pub fn device_labels() -> Vec<&'static str> {
+    Vec::new()
+}
+
+fn exercise_device_labels() -> Vec<&'static str> {
+    device_labels()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_reaches_device_labels() {
+        let labels = exercise_device_labels();
+        assert!(labels.is_empty());
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/labels.rs")], &index);
+        let return_seam = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::ReturnValue
+                    && s.owner().ends_with("::device_labels")
+                    && s.expression().contains("Vec::new()")
+            })
+            .ok_or_else(|| "expected Vec::new return_value seam".to_string())?;
+
+        let evidence = evidence_for_seam(return_seam, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected helper owner-call related test, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "one-hop helper activation should not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("one-hop helper owner call for value-insensitive seam"),
+            "activation summary should explain the helper owner-call route: {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "one-hop helper owner calls must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_full_evidence_when_one_hop_helper_does_not_call_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/labels.rs");
+        let source_src = r#"
+pub fn device_labels() -> Vec<&'static str> {
+    Vec::new()
+}
+
+fn exercise_device_labels() -> Vec<&'static str> {
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn return_value_contract_mentions_empty_output() {
+        let return_value = exercise_device_labels();
+        assert!(return_value.is_empty());
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/labels.rs")], &index);
+        let return_seam = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::ReturnValue
+                    && s.owner().ends_with("::device_labels")
+                    && s.expression().contains("Vec::new()")
+            })
+            .ok_or_else(|| "expected Vec::new return_value seam".to_string())?;
+
+        let evidence = evidence_for_seam(return_seam, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "helper that does not call the owner must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("No direct owner call observed for value-insensitive seam"),
+            "activation summary should keep owner-call limitation, got {}",
+            evidence.activate.summary
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_full_evidence_when_generic_helper_name_mentions_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/parser.rs");
+        let source_src = r#"
+pub fn parse() -> String {
+    String::new()
+}
+
+fn parse_fixture() -> String {
+    parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_checks_empty_output() {
+        let parsed = parse_fixture();
+        assert!(parsed.is_empty());
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/parser.rs")], &index);
+        let return_seam = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::ReturnValue
+                    && s.owner().ends_with("::parse")
+                    && s.expression().contains("String::new()")
+            })
+            .ok_or_else(|| "expected String::new return_value seam".to_string())?;
+
+        let evidence = evidence_for_seam(return_seam, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "generic helper-owner token must not get helper relation: {:?}",
+            evidence.related_tests
+        );
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence.observed_values.is_empty(),
+            "generic helper route must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_value_insensitive_seam_when_only_affinity_related_then_activation_names_owner_call_limitation()
     -> Result<(), String> {
         let prod = PathBuf::from("src/labels.rs");
@@ -3353,39 +3725,45 @@ fn wrapper_mentions_owner_only_in_non_code() {
                 RelationConfidence::High,
             ),
             (
+                RelationReason::HelperOwnerCall,
+                "helper_owner_call",
+                1,
+                RelationConfidence::High,
+            ),
+            (
                 RelationReason::AssertionTargetAffinity,
                 "assertion_target_affinity",
-                1,
+                2,
                 RelationConfidence::High,
             ),
             (
                 RelationReason::SameTestFile,
                 "same_test_file",
-                2,
+                3,
                 RelationConfidence::Medium,
             ),
             (
                 RelationReason::SameModule,
                 "same_module",
-                3,
+                4,
                 RelationConfidence::Medium,
             ),
             (
                 RelationReason::OwnerNamedTest,
                 "owner_named_test",
-                4,
+                5,
                 RelationConfidence::Medium,
             ),
             (
                 RelationReason::ImportPathAffinity,
                 "import_path_affinity",
-                5,
+                6,
                 RelationConfidence::Medium,
             ),
             (
                 RelationReason::FixtureOwnerAffinity,
                 "fixture_owner_affinity",
-                6,
+                7,
                 RelationConfidence::Low,
             ),
         ];
