@@ -41047,9 +41047,22 @@ fn report_entry_status(path: &Path) -> String {
         return "present".to_string();
     }
     match read_text_lossy(path) {
-        Ok(text) => report_status_from_text(&text).unwrap_or_else(|| "present".to_string()),
+        Ok(text) => {
+            let status = report_status_from_text(&text).unwrap_or_else(|| "present".to_string());
+            if status != "fail" && report_text_has_run_limitations(&text) {
+                "warn".to_string()
+            } else {
+                status
+            }
+        }
         Err(_) => "unreadable".to_string(),
     }
+}
+
+fn report_text_has_run_limitations(text: &str) -> bool {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .is_some_and(|value| report_has_run_limitations(&value))
 }
 
 fn report_status_from_text(text: &str) -> Option<String> {
@@ -52531,6 +52544,45 @@ jobs:
         assert_eq!(report_index_lane1_overall_status(&packets), "fail");
         assert_eq!(super::report_index_failing_artifact_count(&packets), 1);
         assert!(commands.contains(&"cargo xtask badge-basis".to_string()));
+    }
+
+    #[test]
+    fn report_index_marks_limited_lane1_artifacts_as_warning() -> Result<(), String> {
+        with_temp_cwd("report-index-limited-lane1", |root| {
+            write(
+                &root.join("target/ripr/reports/lane1-evidence-audit.json"),
+                r#"{
+  "schema_version": "0.9",
+  "status": "advisory",
+  "run_limitations": [
+    {
+      "category": "lane1_repo_exposure_incomplete",
+      "summary": "Repo exposure capture was incomplete."
+    }
+  ],
+  "summary": {
+    "raw_headline_gaps": 0
+  }
+}
+"#,
+            );
+
+            let reports = super::report_index_entries()?;
+            let audit_entry = reports
+                .iter()
+                .find(|entry| entry.file == "lane1-evidence-audit.json")
+                .ok_or_else(|| "missing lane1 audit report entry".to_string())?;
+            assert_eq!(audit_entry.status, "warn");
+
+            let packets = super::report_index_lane1_readiness_packets(&reports);
+            let audit_packet = packets
+                .iter()
+                .find(|packet| packet.id == "lane1_evidence_audit")
+                .ok_or_else(|| "missing lane1 evidence audit packet".to_string())?;
+            assert_eq!(audit_packet.status, "warn");
+            assert_eq!(super::report_index_status(&reports, &[], &[]), "warn");
+            Ok(())
+        })
     }
 
     #[test]
