@@ -37450,15 +37450,10 @@ struct RepoContractSummary {
 
 fn repo_contract_report() -> Result<(), String> {
     let (markdown, json) = repo_contract_report_from_root(Path::new("."))?;
-    let out_dir = reports_dir();
-    fs::create_dir_all(&out_dir)
-        .map_err(|err| format!("failed to create {}: {err}", normalize_path(&out_dir)))?;
-    let markdown_path = out_dir.join("source-of-truth-graph.md");
-    let json_path = out_dir.join("source-of-truth-graph.json");
-    fs::write(&markdown_path, markdown)
-        .map_err(|err| format!("failed to write {}: {err}", normalize_path(&markdown_path)))?;
-    fs::write(&json_path, json)
-        .map_err(|err| format!("failed to write {}: {err}", normalize_path(&json_path)))?;
+    write_report("source-of-truth-graph.md", &markdown)?;
+    write_report("source-of-truth-graph.json", &json)?;
+    let markdown_path = reports_dir().join("source-of-truth-graph.md");
+    let json_path = reports_dir().join("source-of-truth-graph.json");
     println!(
         "wrote {} and {}",
         normalize_path(&markdown_path),
@@ -57478,6 +57473,118 @@ reason = "second"
         );
     }
 
+    fn write_repo_contract_report_fixture(root: &Path, include_active_goal: bool) {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-source-of-truth.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0002-old.md",
+            "RIPR-PROP-0002",
+        );
+        write_doc_artifact_fixture(root, "docs/adr/RIPR-ADR-0001-open.md", "RIPR-ADR-0001");
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+
+[[artifact]]
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0002-old.md"
+status = "superseded"
+owner = "repo-infra"
+replacement = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "RIPR-ADR-0001"
+kind = "adr"
+path = "docs/adr/RIPR-ADR-0001-open.md"
+status = "proposed"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+"#,
+        );
+        write(
+            &root.join("policy/workflow_allowlist.txt"),
+            "# workflow allowlist\n",
+        );
+        write_support_tier_fixture(
+            root,
+            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n| Source-of-truth workflow | `stable building block` | CI | `cargo xtask check-doc-artifacts` | Workflow contract only. |\n",
+        );
+
+        if include_active_goal {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "# Campaigns\n\nsource-of-truth-control-plane\n\n| Work item | Status |\n| --- | --- |\n| `docs/ledger` | done |\n| `docs/report` | ready |\n| `docs/report-json` | ready |\n| `docs/wait` | blocked |\n",
+            );
+            write(
+                &root.join(".ripr/goals/active.toml"),
+                r#"id = "source-of-truth-control-plane"
+title = "Source of Truth Control Plane"
+status = "active"
+end_state = [
+  "Repo carries a contract graph.",
+]
+
+[[work_item]]
+id = "docs/ledger"
+status = "done"
+branch = "docs-ledger"
+stackable = false
+acceptance = "Ledger exists."
+commands = ["cargo xtask check-doc-artifacts"]
+
+[[work_item]]
+id = "docs/report"
+status = "ready"
+branch = "xtask-repo-contract-report"
+stackable = false
+acceptance = "Generate graph report."
+commands = ["cargo xtask repo-contract-report"]
+
+[[work_item]]
+id = "docs/report-json"
+status = "ready"
+branch = "xtask-repo-contract-report-json"
+stackable = false
+acceptance = "Generate graph JSON."
+commands = ["cargo xtask repo-contract-report"]
+
+[[work_item]]
+id = "docs/wait"
+status = "blocked"
+branch = "docs-wait"
+stackable = false
+acceptance = "Blocked item is recorded."
+blocked_reason = "Waiting on runner proof."
+"#,
+            );
+        }
+    }
+
     #[test]
     fn doc_artifacts_rejects_duplicate_artifact_id() -> Result<(), String> {
         with_temp_cwd("doc-artifacts-duplicate", |root| {
@@ -58725,75 +58832,14 @@ linked_spec = "RIPR-SPEC-0001"
     #[test]
     fn repo_contract_report_writes_graph_markdown_and_json() -> Result<(), String> {
         with_temp_cwd("repo-contract-report", |root| {
-            write_doc_artifact_fixture(
-                root,
-                "docs/proposals/RIPR-PROP-0001-source-of-truth.md",
-                "RIPR-PROP-0001",
-            );
-            write_doc_artifact_fixture(
-                root,
-                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
-                "RIPR-SPEC-0001",
-            );
-            write_doc_artifact_ledger_fixture(
-                root,
-                r#"schema_version = "1.0"
-
-[[artifact]]
-id = "RIPR-PROP-0001"
-kind = "proposal"
-path = "docs/proposals/RIPR-PROP-0001-source-of-truth.md"
-status = "accepted"
-owner = "repo-infra"
-
-[[artifact]]
-id = "RIPR-SPEC-0001"
-kind = "spec"
-path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
-status = "accepted"
-owner = "repo-infra"
-linked_proposal = "RIPR-PROP-0001"
-"#,
-            );
-            write_support_tier_fixture(
-                root,
-                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
-            );
-            write(
-                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
-                "# Campaigns\n\nsource-of-truth-control-plane\n\n| Work item | Status |\n| --- | --- |\n| `docs/report` | ready |\n| `docs/ledger` | done |\n",
-            );
-            write(
-                &root.join(".ripr/goals/active.toml"),
-                r#"id = "source-of-truth-control-plane"
-title = "Source of Truth Control Plane"
-status = "active"
-end_state = [
-  "Repo carries a contract graph.",
-]
-
-[[work_item]]
-id = "docs/ledger"
-status = "done"
-branch = "docs-ledger"
-stackable = false
-acceptance = "Ledger exists."
-commands = ["cargo xtask check-doc-artifacts"]
-
-[[work_item]]
-id = "docs/report"
-status = "ready"
-branch = "xtask-repo-contract-report"
-stackable = false
-acceptance = "Generate graph report."
-commands = ["cargo xtask repo-contract-report"]
-"#,
-            );
+            write_repo_contract_report_fixture(root, true);
 
             let (markdown, json) = super::repo_contract_report_from_root(root)?;
             assert!(markdown.contains("## Active Goal"));
             assert!(markdown.contains("Status: pass"));
             assert!(markdown.contains("`docs/report`"));
+            assert!(markdown.contains("`RIPR-ADR-0001`: `proposed`"));
+            assert!(markdown.contains("`RIPR-PROP-0002` -> `RIPR-PROP-0001`"));
             assert!(markdown.contains("## Support-Tier Impacts"));
             let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
             assert_eq!(value["schema_version"], "0.1");
@@ -58806,10 +58852,132 @@ commands = ["cargo xtask repo-contract-report"]
                     .as_array()
                     .is_some_and(|items| items.iter().any(|item| item["id"] == "docs/report"))
             );
+            assert!(
+                value["ready_work_items"]
+                    .as_array()
+                    .is_some_and(|items| items.len() == 2)
+            );
             assert!(value["accepted_proposals"].is_array());
-            assert!(value["superseded_artifacts"].is_array());
+            assert!(
+                value["open_adrs"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["id"] == "RIPR-ADR-0001"))
+            );
+            assert!(
+                value["superseded_artifacts"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["id"] == "RIPR-PROP-0002"))
+            );
+            assert!(value["policy_ledgers"].as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item == "policy/workflow_allowlist.txt")
+            }));
             Ok(())
         })
+    }
+
+    #[test]
+    fn repo_contract_report_command_writes_indexable_report_files() -> Result<(), String> {
+        with_temp_cwd("repo-contract-report-command", |root| {
+            write_repo_contract_report_fixture(root, true);
+
+            dispatch::execute(XtaskCommand::RepoContractReport)?;
+
+            let markdown_path = root
+                .join(super::reports_dir())
+                .join("source-of-truth-graph.md");
+            let json_path = root
+                .join(super::reports_dir())
+                .join("source-of-truth-graph.json");
+            let markdown = fs::read_to_string(markdown_path)
+                .map_err(|err| format!("failed to read graph markdown: {err}"))?;
+            let json = fs::read_to_string(json_path)
+                .map_err(|err| format!("failed to read graph json: {err}"))?;
+            assert!(markdown.contains("Mode: advisory"));
+            let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+            assert_eq!(value["schema_version"], "0.1");
+            assert_eq!(value["report_id"], "source_of_truth_graph");
+            assert_eq!(value["status"], "pass");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn repo_contract_report_warns_when_active_goal_is_missing() -> Result<(), String> {
+        with_temp_cwd("repo-contract-report-missing-active-goal", |root| {
+            write_repo_contract_report_fixture(root, false);
+
+            let summary = super::repo_contract_summary(root)?;
+            assert_eq!(super::repo_contract_report_status(&summary), "warn");
+            assert!(
+                summary
+                    .missing_links
+                    .iter()
+                    .any(|link| link.contains(".ripr/goals/active.toml is missing")),
+                "{:#?}",
+                summary.missing_links
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn repo_contract_report_requires_support_tier_file() {
+        with_temp_cwd("repo-contract-report-missing-support-tier", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-source-of-truth.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+            );
+
+            let error = super::repo_contract_summary(root)
+                .expect_err("missing support tiers should fail summary generation");
+            assert!(error.contains(SUPPORT_TIERS_PATH), "{error}");
+        });
+    }
+
+    #[test]
+    fn repo_contract_report_renders_empty_and_warning_states() -> Result<(), String> {
+        let summary = super::RepoContractSummary {
+            active_goal_id: None,
+            active_goal_title: None,
+            active_goal_status: None,
+            artifacts: Vec::new(),
+            ready_work_items: Vec::new(),
+            done_work_items: Vec::new(),
+            support_rows: Vec::new(),
+            policy_ledgers: Vec::new(),
+            missing_links: vec!["missing source-of-truth edge".to_string()],
+        };
+
+        let markdown = super::repo_contract_report_markdown(&summary);
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("No support-tier rows found."));
+        assert!(markdown.contains("No policy ledgers found."));
+        assert!(markdown.contains("- missing source-of-truth edge"));
+        assert!(markdown.contains("None registered."));
+
+        let json = super::repo_contract_report_json(&summary);
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "warn");
+        assert_eq!(value["active_goal"]["id"], Value::Null);
+        assert_eq!(value["support_tiers"].as_array().map(Vec::len), Some(0));
+        assert_eq!(value["policy_ledgers"].as_array().map(Vec::len), Some(0));
+        assert_eq!(value["missing_links"][0], "missing source-of-truth edge");
+        Ok(())
     }
 
     #[test]
