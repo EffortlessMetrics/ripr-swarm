@@ -63993,6 +63993,57 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn evidence_health_success_with_status_only_stub_writes_named_limitation_reports()
+    -> Result<(), String> {
+        with_temp_cwd("evidence-health-success-stub", |_root| {
+            let timeout = Duration::from_secs(30);
+            let args = evidence_health_args();
+            write_evidence_health_report_with_runner(
+                Path::new("ripr"),
+                &args,
+                timeout,
+                |_binary, _args, _timeout| {
+                    write(
+                        Path::new("target/ripr/reports/evidence-health.json"),
+                        r#"{"schema_version":"0.2","status":"advisory"}"#,
+                    );
+                    write(
+                        Path::new("target/ripr/reports/evidence-health.md"),
+                        "# RIPR evidence health report\n\nStatus: advisory\n",
+                    );
+                    Ok(TimedOutput {
+                        status: Some(success_exit_status()),
+                        stdout: "ok".to_string(),
+                        stderr: String::new(),
+                        duration: Duration::from_secs(1),
+                        timed_out: false,
+                    })
+                },
+            )?;
+
+            let json_text = fs::read_to_string("target/ripr/reports/evidence-health.json")
+                .map_err(|err| err.to_string())?;
+            let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+            assert_eq!(value["status"], "warn");
+            assert_eq!(
+                value["inputs"]["generation"]["status"],
+                serde_json::Value::from("pass_incomplete")
+            );
+            assert!(
+                value["run_limitations"][0]["failure_reason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("is missing `inputs`")
+            );
+            let markdown = fs::read_to_string("target/ripr/reports/evidence-health.md")
+                .map_err(|err| err.to_string())?;
+            assert!(markdown.contains("Status: warn"));
+            assert!(markdown.contains("evidence_health_incomplete"));
+            Ok(())
+        })
+    }
+
+    #[test]
     fn evidence_health_success_without_artifacts_writes_named_limitation_reports()
     -> Result<(), String> {
         with_temp_cwd("evidence-health-success-missing", |_root| {
@@ -64099,6 +64150,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 .expect_err("warning Markdown artifact should be rejected as incomplete success");
             assert!(err.contains("did not report advisory status"));
 
+            write(json_path, &complete_evidence_health_json_fixture());
             write(md_path, "Status: advisory\n");
             super::evidence_health_report_artifacts_are_complete()?;
             Ok(())
