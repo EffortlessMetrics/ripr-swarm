@@ -65,6 +65,15 @@ Reusable proof-stack bootstraps may choose another repo-specific active-goal
 path, but `ripr` agents should follow the repo-local `.ripr` path unless a
 later PR changes the schema and documentation together.
 
+`cargo xtask pr-body --work-item <id>` can generate
+`target/ripr/reports/source-of-truth-pr-body.md` from one active-goal work item.
+`cargo xtask closeout --goal <goal-id>` can generate a handoff scaffold under
+`docs/handoffs/` and an archive copy under `.ripr/goals/archive/`.
+
+Both commands produce scaffolds. Support-tier impact, policy impact, proof
+results, and final closeout status stay unchecked until the PR author reviews
+the actual diff and validation evidence.
+
 ## Enforcement state
 
 This docs slice defines doctrine only. It does not add validators or CI gates.

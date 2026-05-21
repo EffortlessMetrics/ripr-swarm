@@ -38126,6 +38126,7 @@ fn closeout_from_root(
             display_repo_path(root, &active_path)
         ));
     }
+    validate_closeout_archivable_manifest(&manifest)?;
 
     let slug = closeout_slug(goal_id)?;
     let handoff_path = root.join(format!("docs/handoffs/{date}-{slug}-closeout.md"));
@@ -38133,13 +38134,53 @@ fn closeout_from_root(
     let handoff = closeout_markdown(&manifest, goal_id, date, &handoff_path, &archive_path);
     let archive = closeout_archive_text(&active_text, goal_id, date);
 
-    write_new_text_file(&handoff_path, &handoff)?;
-    write_new_text_file(&archive_path, &archive)?;
+    ensure_new_text_file(&handoff_path)?;
+    ensure_new_text_file(&archive_path)?;
+    write_text_file(&handoff_path, &handoff)?;
+    write_text_file(&archive_path, &archive)?;
 
     Ok(CloseoutWriteResult {
         handoff_path,
         archive_path,
     })
+}
+
+fn validate_closeout_archivable_manifest(manifest: &CampaignManifest) -> Result<(), String> {
+    let id = manifest.active_id();
+    if manifest.status.as_deref() != Some("closed") {
+        return Err(format!(
+            "closeout requires active goal `{id}` to have status `closed` before archiving"
+        ));
+    }
+
+    let unfinished = manifest
+        .work_items
+        .iter()
+        .filter_map(|item| {
+            let item_id = item.id.as_deref().unwrap_or("<missing>");
+            (item.status.as_deref() != Some("done")).then_some(item_id)
+        })
+        .collect::<Vec<_>>();
+    if !unfinished.is_empty() {
+        return Err(format!(
+            "closeout requires all work items to be done before archiving; unfinished: {}",
+            unfinished.join(", ")
+        ));
+    }
+
+    let successor = manifest
+        .successor
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if successor.is_none() && manifest.no_current_goal != Some(true) {
+        return Err(
+            "closeout requires closed active goal to declare `successor = \"<campaign-id>\"` or `no_current_goal = true` before archiving"
+                .to_string(),
+        );
+    }
+
+    Ok(())
 }
 
 fn closeout_markdown(
@@ -38447,7 +38488,7 @@ fn validate_closeout_date(date: &str) -> Result<(), String> {
     }
 }
 
-fn write_new_text_file(path: &Path, body: &str) -> Result<(), String> {
+fn ensure_new_text_file(path: &Path) -> Result<(), String> {
     if path.exists() {
         return Err(format!("{} already exists", normalize_path(path)));
     }
@@ -38455,6 +38496,10 @@ fn write_new_text_file(path: &Path, body: &str) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", normalize_path(parent)))?;
     }
+    Ok(())
+}
+
+fn write_text_file(path: &Path, body: &str) -> Result<(), String> {
     fs::write(path, body).map_err(|err| format!("failed to write {}: {err}", normalize_path(path)))
 }
 
@@ -58209,6 +58254,21 @@ blocked_reason = "Waiting on runner proof."
         }
     }
 
+    fn mark_repo_contract_active_goal_closed(root: &Path) -> Result<(), String> {
+        let path = root.join(".ripr/goals/active.toml");
+        let text = fs::read_to_string(&path)
+            .map_err(|err| format!("active goal fixture should be readable: {err}"))?;
+        let text = text
+            .replace(
+                "status = \"active\"",
+                "status = \"closed\"\nno_current_goal = true",
+            )
+            .replace("status = \"ready\"", "status = \"done\"")
+            .replace("status = \"blocked\"", "status = \"done\"");
+        write(&path, &text);
+        Ok(())
+    }
+
     #[test]
     fn doc_artifacts_rejects_duplicate_artifact_id() -> Result<(), String> {
         with_temp_cwd("doc-artifacts-duplicate", |root| {
@@ -59654,6 +59714,7 @@ owner = "repo-infra"
     fn closeout_writes_handoff_and_archive_from_goal_contract() -> Result<(), String> {
         with_temp_cwd("closeout-command", |root| {
             write_repo_contract_report_fixture(root, true);
+            mark_repo_contract_active_goal_closed(root)?;
 
             let result =
                 super::closeout_from_root(root, "source-of-truth-control-plane", "2026-05-21")?;
@@ -59677,11 +59738,69 @@ owner = "repo-infra"
             assert!(handoff.contains("## What landed"));
             assert!(handoff.contains("`docs/ledger`"));
             assert!(handoff.contains("## Remaining work"));
-            assert!(handoff.contains("`docs/report`"));
+            assert!(handoff.contains("No remaining work items are recorded."));
             assert!(handoff.contains("cargo xtask repo-contract-report"));
             assert!(handoff.contains("docs/status/SUPPORT_TIERS.md"));
+            assert!(
+                handoff
+                    .contains("The active manifest explicitly records no current successor goal.")
+            );
             assert!(archive.contains("id = \"source-of-truth-control-plane\""));
+            assert!(archive.contains("status = \"closed\""));
+            assert!(archive.contains("no_current_goal = true"));
             assert!(archive.contains("cargo xtask closeout --goal source-of-truth-control-plane"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn closeout_rejects_active_goal_before_archive() -> Result<(), String> {
+        with_temp_cwd("closeout-active-goal", |root| {
+            write_repo_contract_report_fixture(root, true);
+
+            let error = match super::closeout_from_root(
+                root,
+                "source-of-truth-control-plane",
+                "2026-05-21",
+            ) {
+                Ok(_) => return Err("active goal should not be archived".to_string()),
+                Err(error) => error,
+            };
+            assert!(error.contains("status `closed`"), "{error}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn closeout_rejects_closed_goal_without_successor_marker() -> Result<(), String> {
+        with_temp_cwd("closeout-closed-without-successor", |root| {
+            write_repo_contract_report_fixture(root, true);
+            let path = root.join(".ripr/goals/active.toml");
+            let text = fs::read_to_string(&path)
+                .map_err(|err| format!("active goal fixture should be readable: {err}"))?;
+            let text = text
+                .replace("status = \"active\"", "status = \"closed\"")
+                .replace("status = \"ready\"", "status = \"done\"")
+                .replace("status = \"blocked\"", "status = \"done\"");
+            write(&path, &text);
+
+            let error = match super::closeout_from_root(
+                root,
+                "source-of-truth-control-plane",
+                "2026-05-21",
+            ) {
+                Ok(_) => {
+                    return Err(
+                        "closed goal without successor marker should not be archived".to_string(),
+                    );
+                }
+                Err(error) => error,
+            };
+            assert!(
+                error.contains("successor = \"<campaign-id>\"")
+                    && error.contains("no_current_goal = true"),
+                "{error}"
+            );
             Ok(())
         })
     }
@@ -59706,12 +59825,41 @@ owner = "repo-infra"
     fn closeout_refuses_to_overwrite_existing_files() -> Result<(), String> {
         with_temp_cwd("closeout-existing-file", |root| {
             write_repo_contract_report_fixture(root, true);
+            mark_repo_contract_active_goal_closed(root)?;
             super::closeout_from_root(root, "source-of-truth-control-plane", "2026-05-21")?;
 
             let error =
                 super::closeout_from_root(root, "source-of-truth-control-plane", "2026-05-21")
                     .expect_err("existing closeout files should not be overwritten");
             assert!(error.contains("already exists"), "{error}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn closeout_preflights_all_outputs_before_writing() -> Result<(), String> {
+        with_temp_cwd("closeout-existing-archive-only", |root| {
+            write_repo_contract_report_fixture(root, true);
+            mark_repo_contract_active_goal_closed(root)?;
+            let handoff_path =
+                root.join("docs/handoffs/2026-05-21-source-of-truth-control-plane-closeout.md");
+            let archive_path =
+                root.join(".ripr/goals/archive/2026-05-21-source-of-truth-control-plane.toml");
+            if let Some(parent) = archive_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|err| format!("failed to create archive parent: {err}"))?;
+            }
+            fs::write(&archive_path, "existing archive")
+                .map_err(|err| format!("failed to write existing archive: {err}"))?;
+
+            let error =
+                super::closeout_from_root(root, "source-of-truth-control-plane", "2026-05-21")
+                    .expect_err("existing archive should fail before writing handoff");
+            assert!(error.contains("already exists"), "{error}");
+            assert!(
+                !handoff_path.exists(),
+                "closeout should not write a handoff when any output path is unsafe"
+            );
             Ok(())
         })
     }
