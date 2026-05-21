@@ -3,6 +3,8 @@
 <p align="center">
   <a href="https://github.com/EffortlessMetrics/ripr/actions/workflows/ci.yml"><img src="https://github.com/EffortlessMetrics/ripr/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <a href="https://codecov.io/gh/EffortlessMetrics/ripr"><img src="https://codecov.io/gh/EffortlessMetrics/ripr/graph/badge.svg?branch=main" alt="Codecov" /></a>
+  <a href="https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_POLICY.md"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/EffortlessMetrics/ripr/main/badges/unsafe-review.json" alt="unsafe-review open gaps" /></a>
+  <a href="https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_POLICY.md"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/EffortlessMetrics/ripr/main/badges/unsafe-review-plus.json" alt="unsafe-review contract guard witness gaps" /></a>
   <a href="https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_POLICY.md"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/EffortlessMetrics/ripr/main/badges/ripr-plus.json" alt="ripr+" /></a>
 </p>
 

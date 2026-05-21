@@ -34,6 +34,15 @@ now project unresolved actionable static repair gaps instead of seam-native
 inventory counts. Use `cargo xtask badge-basis` to audit the current endpoint
 basis before refreshing public JSON.
 
+## unsafe-review badge policy
+
+`unsafe-review` badges are advisory static-review evidence, not safety claims.
+
+- `unsafe-review` means open static review gaps.
+- `unsafe-review+` means contract / guard / witness gap summary.
+- No badge implies memory safety, soundness, UB-freedom, Miri-clean status, or
+  witness execution.
+
 ## What each badge means
 
 ### `ripr 0`

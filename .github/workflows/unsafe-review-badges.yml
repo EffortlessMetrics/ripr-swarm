@@ -1,0 +1,24 @@
+name: unsafe-review badges
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  badges:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install unsafe-review
+        run: cargo install unsafe-review --locked
+
+      - name: Regenerate badge endpoints
+        run: unsafe-review badges --out badges/
+
+      - name: Ensure badge endpoints are committed
+        run: git diff --exit-code -- badges/
