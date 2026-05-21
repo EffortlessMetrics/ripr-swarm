@@ -26,40 +26,16 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 
+#[path = "commands/agent_dispatch.rs"]
+mod agent_dispatch;
+
 pub(super) fn agent(args: &[String]) -> Result<(), String> {
-    match parse_agent_args(args)? {
-        AgentCommand::Help => {
-            help::print_agent_help();
-            Ok(())
-        }
-        AgentCommand::StartHelp => {
-            help::print_agent_start_help();
-            Ok(())
-        }
-        AgentCommand::BriefHelp => {
-            help::print_agent_brief_help();
-            Ok(())
-        }
-        AgentCommand::PacketHelp => {
-            help::print_agent_packet_help();
-            Ok(())
-        }
-        AgentCommand::VerifyHelp => {
-            help::print_agent_verify_help();
-            Ok(())
-        }
-        AgentCommand::ReceiptHelp => {
-            help::print_agent_receipt_help();
-            Ok(())
-        }
-        AgentCommand::StatusHelp => {
-            help::print_agent_status_help();
-            Ok(())
-        }
-        AgentCommand::ReviewSummaryHelp => {
-            help::print_agent_review_summary_help();
-            Ok(())
-        }
+    let command = parse_agent_args(args)?;
+    if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
+        return result;
+    }
+
+    match command {
         AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options),
         AgentCommand::Packet(options) => run_agent_packet(options),
@@ -67,6 +43,15 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
         AgentCommand::Receipt(options) => run_agent_receipt(options),
         AgentCommand::Status(options) => run_agent_status(options),
         AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        help_command @ (AgentCommand::Help
+        | AgentCommand::StartHelp
+        | AgentCommand::BriefHelp
+        | AgentCommand::PacketHelp
+        | AgentCommand::VerifyHelp
+        | AgentCommand::ReceiptHelp
+        | AgentCommand::StatusHelp
+        | AgentCommand::ReviewSummaryHelp) => agent_dispatch::run_agent_help_command(&help_command)
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
     }
 }
 
