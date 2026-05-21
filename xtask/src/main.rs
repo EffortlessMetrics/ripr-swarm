@@ -36644,6 +36644,7 @@ struct DocArtifactEntry {
     linked_proposal: Option<String>,
     linked_spec: Option<String>,
     linked_adr: Option<String>,
+    linked_plan: Option<String>,
     standalone_reason: Option<String>,
     superseded_by: Option<String>,
     replacement: Option<String>,
@@ -36796,10 +36797,11 @@ fn set_doc_artifact_field(
         "linked_proposal" => artifact.linked_proposal = Some(value),
         "linked_spec" => artifact.linked_spec = Some(value),
         "linked_adr" => artifact.linked_adr = Some(value),
+        "linked_plan" => artifact.linked_plan = Some(value),
         "standalone_reason" => artifact.standalone_reason = Some(value),
         "superseded_by" => artifact.superseded_by = Some(value),
         "replacement" => artifact.replacement = Some(value),
-        "linked_plan" | "notes" | "reason" | "review_posture" => {}
+        "notes" | "reason" | "review_posture" => {}
         _ => {
             return Err(format!(
                 "{display}:{line_number} unknown field `{key}` in [[artifact]] section"
@@ -36834,6 +36836,17 @@ fn validate_doc_artifact_entry(
     };
     let _owner = require_doc_artifact_field(ledger_display, artifact, "owner", violations);
 
+    let path_is_safe = match doc_artifact_path_safety_violation(path) {
+        Some(message) => {
+            violations.push(format!(
+                "{ledger_display}:{} artifact `{id_label}` path `{path}` {message}",
+                artifact.line
+            ));
+            false
+        }
+        None => true,
+    };
+
     if !DOC_ARTIFACT_KINDS.contains(&kind) {
         violations.push(format!(
             "{ledger_display}:{} artifact `{id_label}` has unsupported kind `{kind}`",
@@ -36853,12 +36866,7 @@ fn validate_doc_artifact_entry(
         ));
     }
 
-    if Path::new(path).is_absolute() {
-        violations.push(format!(
-            "{ledger_display}:{} artifact `{id_label}` path must be repo-relative",
-            artifact.line
-        ));
-    } else {
+    if path_is_safe {
         let artifact_path = root.join(path);
         if !artifact_path.exists() {
             violations.push(format!(
@@ -36880,6 +36888,7 @@ fn validate_doc_artifact_entry(
         ("linked_proposal", artifact.linked_proposal.as_deref()),
         ("linked_spec", artifact.linked_spec.as_deref()),
         ("linked_adr", artifact.linked_adr.as_deref()),
+        ("linked_plan", artifact.linked_plan.as_deref()),
     ] {
         if let Some(linked_id) = linked_id {
             validate_doc_artifact_link(
@@ -36982,6 +36991,29 @@ fn validate_doc_artifact_link(
             artifact.line
         ));
     }
+}
+
+fn doc_artifact_path_safety_violation(path: &str) -> Option<&'static str> {
+    if path.trim().is_empty() {
+        return Some("must be a non-empty repo-relative path");
+    }
+
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Some("must be repo-relative");
+    }
+
+    for component in candidate.components() {
+        match component {
+            std::path::Component::ParentDir => return Some("must not contain `..` traversal"),
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                return Some("must be repo-relative");
+            }
+            std::path::Component::CurDir | std::path::Component::Normal(_) => {}
+        }
+    }
+
+    None
 }
 
 fn doc_artifact_replacement_id(artifact: &DocArtifactEntry) -> Option<&str> {
@@ -56494,6 +56526,73 @@ linked_proposal = "RIPR-PROP-9999"
                     violation
                         .contains("linked_proposal references unknown artifact `RIPR-PROP-9999`")
                 }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_unknown_linked_plan() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-unknown-plan-link", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+linked_plan = "PLAN-9999"
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("linked_plan references unknown artifact `PLAN-9999`")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn doc_artifacts_rejects_path_traversal_before_kind_match() -> Result<(), String> {
+        with_temp_cwd("doc-artifacts-path-traversal", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-SPEC-0001-source-of-truth.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/../proposals/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+"#,
+            );
+
+            let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("must not contain `..` traversal")),
                 "{violations:#?}"
             );
             Ok(())
