@@ -11,7 +11,10 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
     let mut in_hunk = false;
 
     for raw in input.lines() {
-        if !in_hunk && let Some(path) = parse_new_path_marker(raw) {
+        if !in_hunk
+            && current_path.is_none()
+            && let Some(path) = parse_new_path_marker(raw)
+        {
             current_path = Some(path.clone());
             files.entry(path.clone()).or_insert_with(|| ChangedFile {
                 path,
@@ -31,6 +34,8 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
                 old_line = old_start;
                 new_line = new_start;
                 in_hunk = true;
+            } else {
+                in_hunk = false;
             }
             continue;
         }
@@ -333,6 +338,26 @@ mod tests {
             files[0].added_lines[0].text,
             "++ added payload not a file marker"
         );
+    }
+
+    #[test]
+    fn malformed_hunk_header_resets_hunk_state() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,1 +1,1 @@
+-old
++new
+@@ malformed header @@
+--- metadata should be ignored
++++ metadata should be ignored
+";
+
+        let files = parse_unified_diff(diff);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].added_lines.len(), 1);
+        assert_eq!(files[0].removed_lines.len(), 1);
     }
 
     #[test]
