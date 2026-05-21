@@ -121,4 +121,34 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn required_oracles_preserve_family_default_strings() {
+        assert_eq!(
+            required_oracles("total", &ProbeFamily::ReturnValue),
+            vec!["exact or property assertion on returned value"]
+        );
+        assert_eq!(
+            required_oracles("currency", &ProbeFamily::ErrorPath),
+            vec!["exact error variant assertion"]
+        );
+    }
+
+    #[test]
+    fn required_oracles_preserve_uppercase_token_window_and_sorting() {
+        assert_eq!(
+            required_oracles("Alpha Beta Gamma Zeta", &ProbeFamily::Predicate),
+            vec![
+                "assertion mentioning Alpha",
+                "assertion mentioning Beta",
+                "assertion mentioning Gamma",
+                "boundary input",
+                "exact assertion on branch output",
+            ]
+        );
+        assert_eq!(
+            required_oracles("111 222 333 Zeta", &ProbeFamily::StaticUnknown),
+            vec!["manual review or real mutation"]
+        );
+    }
 }
