@@ -47,7 +47,7 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
             continue;
         };
 
-        if !in_hunk && (raw.starts_with("+++") || raw.starts_with("---")) {
+        if !in_hunk {
             continue;
         }
 
@@ -209,8 +209,8 @@ mod tests {
 
         assert_eq!(files.len(), 1);
         let file = &files[0];
-        assert_eq!(file.removed_lines[0].line, 0);
-        assert_eq!(file.added_lines[0].line, 0);
+        assert!(file.removed_lines.is_empty());
+        assert!(file.added_lines.is_empty());
     }
 
     #[test]
@@ -351,6 +351,8 @@ mod tests {
 @@ malformed header @@
 --- metadata should be ignored
 +++ metadata should be ignored
++line should be ignored
+-dropped should be ignored
 ";
 
         let files = parse_unified_diff(diff);
@@ -358,6 +360,38 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].added_lines.len(), 1);
         assert_eq!(files[0].removed_lines.len(), 1);
+    }
+
+    #[test]
+    fn valid_hunk_after_malformed_hunk_still_parses() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ malformed header @@
++ignored
+-dropped
+@@ -4,1 +4,1 @@
+-old
++new
+";
+
+        let files = parse_unified_diff(diff);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].removed_lines,
+            vec![ChangedLine {
+                line: 4,
+                text: "old".to_string()
+            }]
+        );
+        assert_eq!(
+            files[0].added_lines,
+            vec![ChangedLine {
+                line: 4,
+                text: "new".to_string()
+            }]
+        );
     }
 
     #[test]
