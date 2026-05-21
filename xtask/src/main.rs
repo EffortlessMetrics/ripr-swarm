@@ -36628,6 +36628,7 @@ fn check_doc_index() -> Result<(), String> {
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
+const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const DOC_ARTIFACT_KINDS: &[&str] = &[
     "adr",
     "closeout",
@@ -37108,6 +37109,328 @@ fn doc_artifact_kind_matches_path(kind: &str, path: &str) -> bool {
         }
         _ => false,
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SupportTierRow {
+    line: usize,
+    capability: String,
+    tier: String,
+    surface: String,
+    proof: String,
+    known_limits: String,
+}
+
+fn check_support_tiers() -> Result<(), String> {
+    let violations = support_tier_violations(Path::new("."), Path::new(SUPPORT_TIERS_PATH))?;
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "support-tiers.md",
+            check: "check-support-tiers",
+            why_it_matters: "Support tiers are the product claim to proof-command map. Stable and usable claims should not drift away from evidence or overstate RIPR's static-advisory boundary.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Keep docs/status/SUPPORT_TIERS.md parseable with the Current Support Map table.",
+                "Give stable building block, usable, and usable alpha rows non-empty proof cells.",
+                "Use known cargo xtask commands when proof cells name repo proof commands.",
+                "Link specs with support-tier impact back to docs/status/SUPPORT_TIERS.md.",
+            ],
+            rerun_command: "cargo xtask check-support-tiers",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+fn support_tier_violations(root: &Path, support_tiers_path: &Path) -> Result<Vec<String>, String> {
+    let support_text = read_text_lossy(support_tiers_path)?;
+    let display = display_repo_path(root, support_tiers_path);
+    let rows = support_tier_rows(&support_text, &display)?;
+    let mut violations = Vec::new();
+
+    if !has_markdown_heading(&support_text, "# Support Tiers") {
+        violations.push(format!("{display} is missing `# Support Tiers`"));
+    }
+    if rows.is_empty() {
+        violations.push(format!(
+            "{display} is missing the `Current Support Map` table"
+        ));
+    }
+
+    for row in &rows {
+        validate_support_tier_row(root, &display, row, &mut violations);
+    }
+
+    validate_support_tier_spec_links(root, &mut violations)?;
+    validate_readme_support_tier_pointer(root, &mut violations)?;
+    Ok(violations)
+}
+
+fn support_tier_rows(text: &str, display: &str) -> Result<Vec<SupportTierRow>, String> {
+    let mut rows = Vec::new();
+    let mut in_table = false;
+    let mut seen_header = false;
+
+    for (index, line) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim();
+        if trimmed == "| Capability | Tier | Surface | Proof | Known limits |" {
+            in_table = true;
+            seen_header = true;
+            continue;
+        }
+        if !in_table {
+            continue;
+        }
+        if trimmed.starts_with("| ---") {
+            continue;
+        }
+        if !trimmed.starts_with('|') {
+            break;
+        }
+
+        let cells = markdown_table_cells(trimmed);
+        if cells.len() != 5 {
+            return Err(format!(
+                "{display}:{line_number} support-tier row must have 5 cells"
+            ));
+        }
+        rows.push(SupportTierRow {
+            line: line_number,
+            capability: cells[0].clone(),
+            tier: cells[1].clone(),
+            surface: cells[2].clone(),
+            proof: cells[3].clone(),
+            known_limits: cells[4].clone(),
+        });
+    }
+
+    if !seen_header {
+        return Ok(Vec::new());
+    }
+    Ok(rows)
+}
+
+fn markdown_table_cells(line: &str) -> Vec<String> {
+    line.trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn validate_support_tier_row(
+    root: &Path,
+    display: &str,
+    row: &SupportTierRow,
+    violations: &mut Vec<String>,
+) {
+    for (field, value) in [
+        ("Capability", row.capability.as_str()),
+        ("Tier", row.tier.as_str()),
+        ("Surface", row.surface.as_str()),
+        ("Proof", row.proof.as_str()),
+        ("Known limits", row.known_limits.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            violations.push(format!(
+                "{display}:{} support-tier row `{}` has empty `{field}`",
+                row.line,
+                support_tier_row_label(row)
+            ));
+        }
+    }
+
+    let tier = normalized_support_tier(&row.tier);
+    if !known_support_tier(&tier) {
+        violations.push(format!(
+            "{display}:{} support-tier row `{}` has unknown tier `{}`",
+            row.line,
+            support_tier_row_label(row),
+            row.tier
+        ));
+    }
+
+    let proof_spans = inline_code_spans(&row.proof);
+    let has_known_proof_reference = proof_spans
+        .iter()
+        .any(|command| support_tier_proof_reference_is_known(root, command));
+
+    if support_tier_requires_proof(&tier) && row.proof.trim().is_empty() {
+        violations.push(format!(
+            "{display}:{} support-tier row `{}` with tier `{tier}` must name proof",
+            row.line,
+            support_tier_row_label(row)
+        ));
+    }
+    if support_tier_requires_proof(&tier) && !has_known_proof_reference {
+        violations.push(format!(
+            "{display}:{} support-tier row `{}` with tier `{tier}` must name a known proof command or proof artifact",
+            row.line,
+            support_tier_row_label(row)
+        ));
+    }
+
+    for command in proof_spans {
+        validate_support_tier_proof_command(root, display, row, &command, violations);
+    }
+}
+
+fn normalized_support_tier(tier: &str) -> String {
+    tier.trim().trim_matches('`').to_ascii_lowercase()
+}
+
+fn known_support_tier(tier: &str) -> bool {
+    matches!(
+        tier,
+        "stable building block"
+            | "usable"
+            | "usable alpha"
+            | "preview"
+            | "scaffold"
+            | "blocked"
+            | "deferred"
+    )
+}
+
+fn support_tier_requires_proof(tier: &str) -> bool {
+    matches!(tier, "stable building block" | "usable" | "usable alpha")
+}
+
+fn support_tier_row_label(row: &SupportTierRow) -> &str {
+    if row.capability.trim().is_empty() {
+        "<missing capability>"
+    } else {
+        row.capability.trim()
+    }
+}
+
+fn inline_code_spans(text: &str) -> Vec<String> {
+    let mut spans = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('`') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        spans.push(after_start[..end].trim().to_string());
+        rest = &after_start[end + 1..];
+    }
+    spans
+}
+
+fn support_tier_proof_reference_is_known(root: &Path, command: &str) -> bool {
+    if let Some(rest) = command.strip_prefix("cargo xtask ") {
+        let command_name = rest.split_whitespace().next().unwrap_or_default();
+        return known_xtask_command(command_name);
+    }
+
+    (command.starts_with(".github/workflows/") || command.starts_with("scripts/"))
+        && doc_artifact_path_safety_violation(command).is_none()
+        && root.join(command).exists()
+}
+
+fn validate_support_tier_proof_command(
+    root: &Path,
+    display: &str,
+    row: &SupportTierRow,
+    command: &str,
+    violations: &mut Vec<String>,
+) {
+    if command.is_empty() {
+        violations.push(format!(
+            "{display}:{} support-tier row `{}` has an empty proof command",
+            row.line,
+            support_tier_row_label(row)
+        ));
+        return;
+    }
+    if let Some(rest) = command.strip_prefix("cargo xtask ") {
+        let command_name = rest.split_whitespace().next().unwrap_or_default();
+        if !known_xtask_command(command_name) {
+            violations.push(format!(
+                "{display}:{} support-tier row `{}` references unknown xtask command `{command_name}`",
+                row.line,
+                support_tier_row_label(row)
+            ));
+        }
+    } else if command.starts_with(".github/workflows/") {
+        if !root.join(command).exists() {
+            violations.push(format!(
+                "{display}:{} support-tier row `{}` references missing workflow `{command}`",
+                row.line,
+                support_tier_row_label(row)
+            ));
+        }
+    } else if command.starts_with("scripts/") && !root.join(command).exists() {
+        violations.push(format!(
+            "{display}:{} support-tier row `{}` references missing script `{command}`",
+            row.line,
+            support_tier_row_label(row)
+        ));
+    }
+}
+
+fn validate_support_tier_spec_links(
+    root: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let specs_root = root.join("docs/specs");
+    for path in collect_files(&specs_root)? {
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let text = read_text_lossy(&path)?;
+        if text.contains("Support-tier impact:")
+            && !spec_support_tier_impact_is_none(&text)
+            && !text.contains("SUPPORT_TIERS.md")
+        {
+            violations.push(format!(
+                "{} has support-tier impact but does not reference docs/status/SUPPORT_TIERS.md",
+                display_repo_path(root, &path)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn spec_support_tier_impact_is_none(text: &str) -> bool {
+    let Some(after_marker) = text.split("Support-tier impact:").nth(1) else {
+        return false;
+    };
+    let Some(first_entry) = after_marker
+        .lines()
+        .map(|line| line.trim().trim_start_matches("- ").trim())
+        .find(|line| !line.is_empty())
+    else {
+        return false;
+    };
+    let normalized = first_entry
+        .trim_end_matches('.')
+        .trim()
+        .to_ascii_lowercase();
+    normalized == "none" || normalized.starts_with("none for ")
+}
+
+fn validate_readme_support_tier_pointer(
+    root: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let readme_path = root.join("README.md");
+    if !readme_path.exists() {
+        return Ok(());
+    }
+    let readme = read_text_lossy(&readme_path)?;
+    let lower = readme.to_ascii_lowercase();
+    if (lower.contains("stable") || lower.contains("usable") || lower.contains("preview"))
+        && !readme.contains("docs/status/SUPPORT_TIERS.md")
+    {
+        violations.push(
+            "README.md names support-tier language but does not link docs/status/SUPPORT_TIERS.md"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn display_repo_path(root: &Path, path: &Path) -> String {
@@ -45902,9 +46225,9 @@ mod tests {
         LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink, PrTriageCheck,
         PrTriageFinding, PrTriagePullRequest, ReceiptRecord, RepoBadgeArtifactOptions,
         RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
-        ReportIndexCampaign, ReportIndexEntry, ReportIndexRepoOpsArtifact, SarifPolicyMode,
-        SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
-        TestOracleClass, WorktreeDoctorFinding, WorktreeDoctorSeverity,
+        ReportIndexCampaign, ReportIndexEntry, ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH,
+        SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
+        StaticLanguageMatcher, TestOracleClass, WorktreeDoctorFinding, WorktreeDoctorSeverity,
         actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
         actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
         badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
@@ -45917,23 +46240,23 @@ mod tests {
         campaign_source_truth_violations_for_root, check_allow_attributes,
         check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
         check_executable_files, check_file_policy, check_local_context, check_network_policy,
-        check_no_panic_family, check_process_policy, check_static_language, check_workflows,
-        ci_full_evidence_gates, cockpit_json, cockpit_markdown, collect_panic_findings,
-        collect_semantic_panic_findings, command_catalog, command_catalog_violations,
-        commands_report_json, commands_report_markdown, critic_findings, days_from_civil,
-        doc_artifact_kind_matches_path, doc_artifact_violations, dogfood_class_counts,
-        dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-        dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios,
-        dogfood_finding_alignment_run, dogfood_finding_alignment_scenarios,
-        dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
-        dogfood_first_pr_scenarios, dogfood_gate_adoption_scenarios,
-        dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
-        dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-        dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-        dogfood_pr_review_front_panel_scenarios, dogfood_report_json, dogfood_report_markdown,
-        dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios,
-        evaluate_semantic_no_panic_policy, evidence_health_args,
-        evidence_quality_scorecard_audit_regeneration_failure_audit,
+        check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
+        check_workflows, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+        collect_panic_findings, collect_semantic_panic_findings, command_catalog,
+        command_catalog_violations, commands_report_json, commands_report_markdown,
+        critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
+        dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+        dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+        dogfood_editor_gap_cockpit_scenarios, dogfood_finding_alignment_run,
+        dogfood_finding_alignment_scenarios, dogfood_first_action_scenarios,
+        dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
+        dogfood_gate_adoption_scenarios, dogfood_generated_ci_cockpit_run_from_workflow,
+        dogfood_language_preview_run, dogfood_language_preview_scenarios,
+        dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+        dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+        dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+        dogfood_report_packet_index_scenarios, evaluate_semantic_no_panic_policy,
+        evidence_health_args, evidence_quality_scorecard_audit_regeneration_failure_audit,
         evidence_quality_scorecard_from_values, evidence_quality_scorecard_json,
         evidence_quality_scorecard_markdown, evidence_quality_trend_from_values,
         evidence_quality_trend_json, evidence_quality_trend_markdown,
@@ -56609,6 +56932,30 @@ reason = "second"
         write(&root.join(DOC_ARTIFACT_LEDGER), body);
     }
 
+    fn write_support_tier_fixture(root: &Path, rows: &str) {
+        write(
+            &root.join(SUPPORT_TIERS_PATH),
+            &format!(
+                r#"# Support Tiers
+
+## Current Support Map
+
+| Capability | Tier | Surface | Proof | Known limits |
+| --- | --- | --- | --- | --- |
+{rows}
+"#
+            ),
+        );
+        write(
+            &root.join("README.md"),
+            "See [Support tiers](docs/status/SUPPORT_TIERS.md).\n",
+        );
+        write(
+            &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
+            "# RIPR-SPEC-0001: Alpha\n\nSupport-tier impact:\n\n- See [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).\n",
+        );
+    }
+
     #[test]
     fn doc_artifacts_rejects_duplicate_artifact_id() -> Result<(), String> {
         with_temp_cwd("doc-artifacts-duplicate", |root| {
@@ -57677,6 +58024,180 @@ linked_spec = "RIPR-SPEC-0001"
                 "{kind} {path}"
             );
         }
+    }
+
+    #[test]
+    fn support_tiers_accept_valid_fixture() -> Result<(), String> {
+        with_temp_cwd("support-tiers-valid", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(violations.is_empty(), "{violations:#?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_command_accepts_valid_fixture() -> Result<(), String> {
+        with_temp_cwd("support-tiers-command-valid", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            );
+
+            check_support_tiers()
+        })
+    }
+
+    #[test]
+    fn support_tiers_reject_stable_claim_without_proof() -> Result<(), String> {
+        with_temp_cwd("support-tiers-missing-proof", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Rust gap repair loop | `usable` | CLI |  | Missing proof should fail. |\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("empty `Proof`")),
+                "{violations:#?}"
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("with tier `usable` must name proof")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_reject_stable_claim_with_only_markdown_links() -> Result<(), String> {
+        with_temp_cwd("support-tiers-link-only-proof", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Rust gap repair loop | `usable` | CLI | [workflow](../FIRST_PR_WORKFLOW.md), [capability matrix](../CAPABILITY_MATRIX.md) | Links alone are not proof commands. |\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("must name a known proof command or proof artifact")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_reject_unknown_xtask_proof_command() -> Result<(), String> {
+        with_temp_cwd("support-tiers-unknown-command", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask nope` | Registered graph only. |\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("unknown xtask command `nope`")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_resolve_workflow_proof_relative_to_root() -> Result<(), String> {
+        with_temp_cwd("support-tiers-root-relative-proof", |root| {
+            let nested = root.join("nested-repo");
+            write_support_tier_fixture(
+                &nested,
+                "| Source-of-truth workflow | `stable building block` | CI | `.github/workflows/source-of-truth.yml` | Workflow file exists in repo. |\n",
+            );
+            write(
+                &nested.join(".github/workflows/source-of-truth.yml"),
+                "name: Source of Truth\n",
+            );
+
+            let violations =
+                super::support_tier_violations(&nested, &nested.join(SUPPORT_TIERS_PATH))?;
+            assert!(violations.is_empty(), "{violations:#?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_require_specs_with_impact_to_link_status_doc() -> Result<(), String> {
+        with_temp_cwd("support-tiers-spec-link", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            );
+            write(
+                &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
+                "# RIPR-SPEC-0001: Alpha\n\nSupport-tier impact:\n\n- Stable claim changes.\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("has support-tier impact")
+                        && violation.contains("SUPPORT_TIERS.md")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_allow_specs_with_no_support_tier_impact() -> Result<(), String> {
+        with_temp_cwd("support-tiers-spec-none", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            );
+            write(
+                &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
+                "# RIPR-SPEC-0001: Alpha\n\nSupport-tier impact:\n\n- None.\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(violations.is_empty(), "{violations:#?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_require_readme_support_language_to_link_status_doc() -> Result<(), String> {
+        with_temp_cwd("support-tiers-readme-link", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            );
+            write(
+                &root.join("README.md"),
+                "This stable building block is ready for users.\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("README.md names support-tier language")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
     }
 
     #[test]
@@ -60757,6 +61278,10 @@ jobs:
         assert_eq!(
             XtaskCommand::parse(["check-doc-artifacts".to_string()]),
             XtaskCommand::CheckDocArtifacts
+        );
+        assert_eq!(
+            XtaskCommand::parse(["check-support-tiers".to_string()]),
+            XtaskCommand::CheckSupportTiers
         );
         assert_eq!(
             XtaskCommand::parse(["pr-triage-report".to_string()]),
