@@ -242,10 +242,7 @@ pub(crate) fn print_help(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn help_message(args: &[String]) -> Result<String, String> {
     if args.is_empty() {
-        let commands = known_commands().join("\n  ");
-        return Ok(format!(
-            "xtask commands:\n\n  {commands}\n\nCommon starting points:\n  cargo xtask doctor      # setup and worktree hygiene\n  cargo xtask first-pr    # start-here packet with one safe next action\n  cargo xtask pr-ready    # local PR readiness packet\n  cargo xtask cockpit     # repo maintainer front panel\n  cargo xtask check-pr    # review-ready non-release gate\n\nStart-here language uses the same words for safe next action, missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence, verify command, receipt command, and receipt path.\n\nRun `cargo xtask help <command>` for mutability, writes, and notes.\nRun `cargo xtask commands` to write the full command catalog report."
-        ));
+        return Ok(format_top_level_help(&known_commands()));
     }
 
     let query = args.join(" ");
@@ -254,17 +251,7 @@ pub(crate) fn help_message(args: &[String]) -> Result<String, String> {
         return Err(unknown_command_message(&query));
     }
 
-    let mut lines = vec![format!("xtask help: `{query}`"), String::new()];
-    for entry in matches {
-        lines.push(format!("Usage: cargo xtask {}", entry.command));
-        lines.push(format!("Mutability: {}", entry.mutability));
-        lines.push(format!("Writes: {}", entry.writes));
-        lines.push(format!("Judgment required: {}", entry.judgment_required));
-        lines.push(format!("Notes: {}", entry.notes));
-        lines.push(String::new());
-    }
-    lines.push("Run `cargo xtask help` for the full command list.".to_string());
-    Ok(lines.join("\n"))
+    Ok(format_help_entries(&query, &matches))
 }
 
 fn help_entries_for_query(query: &str) -> Vec<CommandCatalogEntry> {
@@ -1354,3 +1341,7 @@ mod tests {
         assert_eq!(levenshtein("réport", "report"), 1);
     }
 }
+#[path = "command/help.rs"]
+mod help;
+
+use help::{format_help_entries, format_top_level_help};
