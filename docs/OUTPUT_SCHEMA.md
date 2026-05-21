@@ -1610,10 +1610,11 @@ Field contract:
   `phase` (`evidence_health_build` or `evidence_health_generation`), bounded
   command, `status` (`fail`, `timeout`, or `pass_incomplete`),
   timeout/duration, exit code when available, output byte counts, optional
-  `failure_reason`, and bounded stdout/stderr excerpts. Complete `ripr
-  evidence-health` reports omit this wrapper field and keep the normal
-  analyzer-health payload, so the current contract does not emit an `"ok"`
-  generation status.
+  `failure_reason`, bounded stdout/stderr excerpts,
+  `latency_trace_events_total`, and `latency_trace_tail` repo-exposure phase
+  diagnostics when available. Complete `ripr evidence-health` reports omit this
+  wrapper field and keep the normal analyzer-health payload, so the current
+  contract does not emit an `"ok"` generation status.
 - `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero
   counts.
 - `metrics.stage_state_counts` - per-stage `StageState` buckets for `reach`,
