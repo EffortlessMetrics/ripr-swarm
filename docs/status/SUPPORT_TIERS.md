@@ -38,6 +38,7 @@ adequacy, coverage adequacy, or general correctness.
 | Agent repair packets | `usable alpha` | CLI, editor handoff, reports | [Quickstart agent path](../QUICKSTART.md#agent-or-reviewer-first-hour), [agent workflows](../AGENT_WORKFLOWS.md), [capability matrix](../CAPABILITY_MATRIX.md) | Source-edit-free packet generation only; agents or developers write the test outside RIPR and then attach a receipt. |
 | Repo-scoped public badges | `usable alpha` | README, crate page, extension store, checked badge endpoints | [Badge policy](../BADGE_POLICY.md), [verification](../VERIFICATION.md), checked `badges/ripr*.json` endpoints | Public badges count unresolved actionable canonical repair items; seam-native inventory remains internal analyzer-health pressure. They must not imply PR-local test adequacy, full test adequacy, runtime mutation confirmation, coverage, or merge approval. |
 | PR-local evidence and gates | `usable alpha` | PR summaries, artifacts, optional gate decision | [Blocking readiness](../BLOCKING_READINESS.md), [calibrated gate policy](../CALIBRATED_GATE_POLICY.md), [verification](../VERIFICATION.md) | Advisory by default; only explicit gate-decision artifacts own configured pass/fail authority. |
+| Source-of-truth artifact graph | `stable building block` | Source-of-truth docs, proposal/spec ledger, and xtask validator | [Source-of-truth proposal](../proposals/RIPR-PROP-0015-source-of-truth-control-plane.md), [source-of-truth spec](../specs/RIPR-SPEC-0060-source-of-truth-stack.md), [`policy/doc-artifacts.toml`](../../policy/doc-artifacts.toml), `cargo xtask check-doc-artifacts` | Validates registered document artifact IDs, paths, statuses, kind/path fit, links, and supersession only. Active-goal references, support-tier drift, PR body generation, graph reports, closeouts, and CI promotion remain future slices. |
 | TypeScript and JavaScript preview | `preview` | Opt-in CLI/report evidence, editor routing, and grouped generated CI | [Language adapter preview workflow](../LANGUAGE_ADAPTER_PREVIEW.md), [RIPR-SPEC-0027](../specs/RIPR-SPEC-0027-typescript-preview-static-facts.md), [Campaign 27 closeout](../handoffs/2026-05-13-campaign-27-closeout.md), TypeScript fixture families | Syntax-first; preview-labeled; no default blocking; static limits such as mocked modules are visible instead of hidden. |
 | Python preview | `preview` | Opt-in CLI/report owner, test, assertion/oracle, probe, related-test, static-limit, editor, and generated-CI grouping evidence | [Language adapter preview workflow](../LANGUAGE_ADAPTER_PREVIEW.md), [RIPR-SPEC-0028](../specs/RIPR-SPEC-0028-python-preview-static-facts.md), [ADR 0009](../adr/0009-python-parser-substrate.md), [Campaign 27 closeout](../handoffs/2026-05-13-campaign-27-closeout.md), Python owner/test, assertion/oracle, probe, related-test, and static-limit fixture families | Owner, test, assertion/oracle, core probe, conservative related-test, and static-limit facts are fixture-backed; generated CI grouping remains advisory and opt-in. |
 | Editor preview language routing | `preview` | VS Code/LSP | [Language adapter preview workflow](../LANGUAGE_ADAPTER_PREVIEW.md), [Lane 3 tracker](../lanes/LANE_3_EDITOR_LSP.md), [RIPR-SPEC-0036](../specs/RIPR-SPEC-0036-editor-preview-routing.md), [RIPR-SPEC-0037](../specs/RIPR-SPEC-0037-editor-preview-static-limit-projection.md), [Campaign 27 closeout](../handoffs/2026-05-13-campaign-27-closeout.md) | VS Code registers TypeScript/JavaScript/Python selectors and LSP diagnostics preserve preview metadata and static limits; `[languages]` remains the analysis gate and Rust editor behavior remains the default. |
@@ -66,6 +67,12 @@ preview + Python:
 preview + editor routing:
   useful for opt-in editor projection, but not a Rust maturity or runtime
   adequacy claim.
+
+stable building block + source-of-truth artifact graph:
+  safe to rely on registered proposal/spec artifact links being mechanically
+  checked by `cargo xtask check-doc-artifacts`; not yet a claim that every
+  support-tier row, active-goal item, PR body, graph report, or closeout is
+  generated or validated.
 ```
 
 ## Trust Boundaries
@@ -79,6 +86,8 @@ preview + editor routing:
   normal output is static evidence.
 - Preview-language evidence must stay opt-in, visibly labeled, and advisory
   until an explicit policy promotes it.
+- Source-of-truth artifact validation proves the registered document graph,
+  not the correctness of product behavior beyond the named proof commands.
 
 ## Next Adoption Steps
 
