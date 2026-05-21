@@ -210,8 +210,11 @@ verification commands, or named static-limitation categories.
 Given alignment coverage rows, the audit reports bounded
 `evidence_class_work_queue` rows so the next class to improve is selected from
 live output. Rows must name the evidence class, dominant signal, work score,
-actionable/static-limitation/unknown/unaligned/duplicate counts, and next
-repair route.
+actionable/static-limitation/unknown/unaligned/duplicate counts, dominant
+static limitation category/count/repair route when present, and next repair
+route. Static-dominated rows must use the dominant named limitation repair route
+as `next_repair` so the queue points at a concrete analyzer slice instead of a
+generic static-limitation taxonomy bucket.
 
 Given a static-unknown or limitation-shaped canonical item, a limitation is
 named only when it carries a non-generic category and repair route. Generic
@@ -332,6 +335,13 @@ movement remains static evidence movement rather than mutation proof.
 - `xtask::tests::lane1_evidence_audit_limits_incomplete_success_repo_exposure_artifact`
   pins bounded diagnostics when a successful repo-exposure subprocess leaves an
   incomplete captured JSON artifact.
+- `xtask::tests::lane1_evidence_audit_repo_exposure_generation_limits_incomplete_success_json`
+  pins the runner branch where a zero-exit repo-exposure subprocess writes a
+  truncated capture, ensuring the partial artifact is removed and the limited
+  audit/actionable-gap reports carry `lane1_repo_exposure_incomplete`.
+- `xtask::tests::lane1_evidence_audit_repo_exposure_generation_limits_missing_success_json`
+  pins the zero-exit runner branch where no captured JSON file exists, ensuring
+  the inspection failure is recorded as a bounded incomplete artifact.
 - `xtask::run::tests::latency_progress_reader_preserves_captured_stderr` pins
   that streamed latency progress remains available to timeout and report
   diagnostics.

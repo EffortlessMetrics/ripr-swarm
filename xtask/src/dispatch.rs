@@ -25,6 +25,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RepoSeamInventory => super::reports::repo_seam_inventory(),
         XtaskCommand::RepoExposureReport => super::reports::repo_exposure_report(),
         XtaskCommand::RepoExposureLatencyReport => super::reports::repo_exposure_latency_report(),
+        XtaskCommand::RepoContractReport => super::repo_contract_report(),
+        XtaskCommand::PrBody(args) => super::pr_body(&args),
+        XtaskCommand::Closeout(args) => super::closeout(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),
         XtaskCommand::EvidenceQualityScorecard => {
@@ -88,6 +91,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckArchitecture => super::check_architecture(),
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
+        XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
+        XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
