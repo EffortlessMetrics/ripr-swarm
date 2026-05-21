@@ -5,7 +5,7 @@ mod util;
 
 use super::write_parented_file;
 use io::load_json;
-use render::render_pr_evidence_summary;
+use render::{SummaryRenderInput, render_pr_evidence_summary};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,16 +40,16 @@ pub(crate) fn ripr_pr_summary(args: &[String]) -> Result<(), String> {
 fn summary_text(repo: &Path) -> String {
     let pr_evidence = load_json(repo, PR_EVIDENCE_JSON);
     let review_comments = load_json(repo, REVIEW_COMMENTS_JSON);
-    render_pr_evidence_summary(
+    render_pr_evidence_summary(&SummaryRenderInput {
         repo,
-        PR_EVIDENCE_JSON,
-        REVIEW_COMMENTS_JSON,
-        PR_EVIDENCE_MD,
-        REVIEW_COMMENTS_MD,
-        PR_SUMMARY_MD,
-        &pr_evidence,
-        &review_comments,
-    )
+        pr_evidence_json: PR_EVIDENCE_JSON,
+        review_comments_json: REVIEW_COMMENTS_JSON,
+        pr_evidence_md: PR_EVIDENCE_MD,
+        review_comments_md: REVIEW_COMMENTS_MD,
+        pr_summary_md: PR_SUMMARY_MD,
+        pr_evidence: &pr_evidence,
+        review_comments: &review_comments,
+    })
 }
 
 fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {

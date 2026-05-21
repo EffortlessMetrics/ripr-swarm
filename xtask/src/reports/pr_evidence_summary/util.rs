@@ -37,7 +37,9 @@ pub(super) fn summary_string_or_null(value: Option<&Value>, key: &str) -> String
 }
 
 fn summary_field<'a>(value: Option<&'a Value>, key: &str) -> Option<&'a Value> {
-    value.and_then(|value| value.get("summary")).and_then(|summary| summary.get(key))
+    value
+        .and_then(|value| value.get("summary"))
+        .and_then(|summary| summary.get(key))
 }
 
 pub(super) fn md_escape(value: &str) -> String {
