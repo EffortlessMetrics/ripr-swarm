@@ -61763,6 +61763,52 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_evidence_audit_repo_exposure_generation_limits_missing_success_json()
+    -> Result<(), String> {
+        let root = temp_dir("lane1-repo-exposure-success-missing");
+        let output_path = root.join("repo-exposure.json");
+
+        let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+            &output_path,
+            Path::new("ripr"),
+            Duration::from_millis(50),
+            |_binary, _args, _output_path_seen, _timeout_seen| {
+                Ok(TimedFileOutput {
+                    status: Some(success_exit_status()),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(2),
+                    timed_out: false,
+                    stdout_bytes: 0,
+                })
+            },
+        )?;
+
+        let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
+            return Err(
+                "missing success repo-exposure JSON should produce a bounded limitation"
+                    .to_string(),
+            );
+        };
+        assert_eq!(diagnostics.status, "pass_incomplete");
+        let Some(reason) = diagnostics.failure_reason.as_deref() else {
+            return Err("missing success capture should record an inspection failure".to_string());
+        };
+        assert!(
+            reason.contains("failed to open captured repo exposure"),
+            "unexpected inspection failure reason: {reason}"
+        );
+        assert_eq!(diagnostics.exit_code, Some(0));
+        assert!(!output_path.exists());
+
+        let report = lane1_evidence_audit_limited_report(".", diagnostics);
+        assert_eq!(
+            report.run_limitations[0].category,
+            "lane1_repo_exposure_incomplete"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn lane1_repo_exposure_cache_store_skip_becomes_named_run_limitation() -> Result<(), String> {
         let generation = Lane1EvidenceAuditRepoExposureGeneration {
             command: "target/debug/ripr check --format repo-exposure-json".to_string(),
