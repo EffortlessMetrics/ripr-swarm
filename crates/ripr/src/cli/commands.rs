@@ -6935,6 +6935,9 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::agent_brief::AgentBriefLine;
+    use crate::cli::agent::AgentBriefWorkingSet;
+    use crate::cli::commands_agent_support::normalize_agent_brief_path;
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()

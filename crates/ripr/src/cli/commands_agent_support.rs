@@ -288,7 +288,7 @@ pub(super) fn agent_brief_owners_for_lines(
         .collect()
 }
 
-fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
+pub(super) fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
     let path_text = normalized_path_text(path);
     for root_text in normalized_root_prefixes(root) {
         let prefix = format!("{root_text}/");
