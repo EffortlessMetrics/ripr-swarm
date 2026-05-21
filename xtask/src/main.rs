@@ -61720,12 +61720,8 @@ covered_by = ["cargo xtask check-file-policy"]
             },
         )?;
 
-        let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
-            return Err(
-                "incomplete success repo-exposure JSON should produce a bounded limitation"
-                    .to_string(),
-            );
-        };
+        let diagnostics =
+            lane1_failed_incomplete_outcome(outcome, "incomplete success repo-exposure JSON")?;
         assert_eq!(diagnostics.status, "pass_incomplete");
         assert_eq!(
             diagnostics.failure_reason.as_deref(),
@@ -61783,16 +61779,14 @@ covered_by = ["cargo xtask check-file-policy"]
             },
         )?;
 
-        let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
-            return Err(
-                "missing success repo-exposure JSON should produce a bounded limitation"
-                    .to_string(),
-            );
-        };
+        let diagnostics =
+            lane1_failed_incomplete_outcome(outcome, "missing success repo-exposure JSON")?;
         assert_eq!(diagnostics.status, "pass_incomplete");
-        let Some(reason) = diagnostics.failure_reason.as_deref() else {
-            return Err("missing success capture should record an inspection failure".to_string());
-        };
+        assert!(
+            diagnostics.failure_reason.is_some(),
+            "missing success capture should record an inspection failure"
+        );
+        let reason = diagnostics.failure_reason.as_deref().unwrap_or("");
         assert!(
             reason.contains("failed to open captured repo exposure"),
             "unexpected inspection failure reason: {reason}"
@@ -61806,6 +61800,18 @@ covered_by = ["cargo xtask check-file-policy"]
             "lane1_repo_exposure_incomplete"
         );
         Ok(())
+    }
+
+    fn lane1_failed_incomplete_outcome(
+        outcome: Lane1EvidenceAuditRepoExposureOutcome,
+        context: &str,
+    ) -> Result<Lane1EvidenceAuditRepoExposureGeneration, String> {
+        match outcome {
+            Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) => Ok(diagnostics),
+            _ => Err(format!(
+                "{context} should produce a bounded incomplete limitation"
+            )),
+        }
     }
 
     #[test]
