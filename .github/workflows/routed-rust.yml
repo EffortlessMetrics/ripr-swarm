@@ -28,6 +28,14 @@ jobs:
       repo: ${{ steps.route.outputs.repo }}
       workflow: ${{ steps.route.outputs.workflow }}
       run_id: ${{ steps.route.outputs.run_id }}
+      runner_query: ${{ steps.route.outputs.runner_query }}
+      runner_total: ${{ steps.route.outputs.runner_total }}
+      cx53_online: ${{ steps.route.outputs.cx53_online }}
+      cx53_idle_ready: ${{ steps.route.outputs.cx53_idle_ready }}
+      cx53_online_without_image: ${{ steps.route.outputs.cx53_online_without_image }}
+      cx43_online: ${{ steps.route.outputs.cx43_online }}
+      cx43_idle_ready: ${{ steps.route.outputs.cx43_idle_ready }}
+      cx43_online_without_image: ${{ steps.route.outputs.cx43_online_without_image }}
     steps:
       - name: Select runner
         id: route
@@ -75,9 +83,10 @@ jobs:
           {
             echo "router_target=$target"
             echo "router_reason=$reason"
-            echo "repo=$REPOSITORY"
-            echo "workflow=routed-rust"
-            echo "run_id=$RUN_ID"
+            repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID
+            for name in repo workflow run_id runner_query runner_total cx53_online cx53_idle_ready cx53_online_without_image cx43_online cx43_idle_ready cx43_online_without_image; do
+              echo "$name=${!name}"
+            done
           } >> "$GITHUB_OUTPUT"
           {
             echo "### Ripr Rust Small Router"
@@ -87,14 +96,9 @@ jobs:
             echo "- run: \`$RUN_ID\`"
             echo "- target: \`$target\`"
             echo "- reason: \`$reason\`"
-            echo "- runner query: \`$runner_query\`"
-            echo "- visible runners: \`$runner_total\`"
-            echo "- cx53 online: \`$cx53_online\`"
-            echo "- cx53 idle image-ready: \`$cx53_idle_ready\`"
-            echo "- cx53 online missing image: \`$cx53_online_without_image\`"
-            echo "- cx43 online: \`$cx43_online\`"
-            echo "- cx43 idle image-ready: \`$cx43_idle_ready\`"
-            echo "- cx43 online missing image: \`$cx43_online_without_image\`"
+            for row in "runner query:$runner_query" "visible runners:$runner_total" "cx53 online:$cx53_online" "cx53 idle image-ready:$cx53_idle_ready" "cx53 online missing image:$cx53_online_without_image" "cx43 online:$cx43_online" "cx43 idle image-ready:$cx43_idle_ready" "cx43 online missing image:$cx43_online_without_image"; do
+              echo "- ${row%%:*}: \`${row#*:}\`"
+            done
           } >> "$GITHUB_STEP_SUMMARY"
 
   rust-cx53:
@@ -367,6 +371,14 @@ jobs:
           CX53_RESULT: ${{ needs.rust-cx53.result }}
           CX43_RESULT: ${{ needs.rust-cx43.result }}
           GITHUB_RESULT: ${{ needs.rust-github.result }}
+          RUNNER_QUERY: ${{ needs.route.outputs.runner_query }}
+          RUNNER_TOTAL: ${{ needs.route.outputs.runner_total }}
+          CX53_ONLINE: ${{ needs.route.outputs.cx53_online }}
+          CX53_IDLE_READY: ${{ needs.route.outputs.cx53_idle_ready }}
+          CX53_ONLINE_WITHOUT_IMAGE: ${{ needs.route.outputs.cx53_online_without_image }}
+          CX43_ONLINE: ${{ needs.route.outputs.cx43_online }}
+          CX43_IDLE_READY: ${{ needs.route.outputs.cx43_idle_ready }}
+          CX43_ONLINE_WITHOUT_IMAGE: ${{ needs.route.outputs.cx43_online_without_image }}
         run: |
           status=pass
           message="selected implementation job succeeded"
@@ -409,4 +421,12 @@ jobs:
           echo "- cx53: \`$CX53_RESULT\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- cx43: \`$CX43_RESULT\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- github: \`$GITHUB_RESULT\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- runner query: \`$RUNNER_QUERY\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- visible runners: \`$RUNNER_TOTAL\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cx53 online: \`$CX53_ONLINE\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cx53 idle image-ready: \`$CX53_IDLE_READY\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cx53 online missing image: \`$CX53_ONLINE_WITHOUT_IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cx43 online: \`$CX43_ONLINE\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cx43 idle image-ready: \`$CX43_IDLE_READY\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cx43 online missing image: \`$CX43_ONLINE_WITHOUT_IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
           [ "$status" = "pass" ]

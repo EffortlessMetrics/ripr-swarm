@@ -61,10 +61,13 @@ runner is available but not image-ready, the workflow falls back to GitHub-hoste
 `router_reason=runner_image_unavailable`. Fork PRs route to GitHub-hosted with
 `router_reason=fork_or_untrusted_pr`.
 
-The route job summary reports count-only diagnostics for runner visibility:
-visible runner count, CX53/CX43 online counts, idle image-ready counts, and
-online-but-missing-image counts. It must not print runner names, registration
-tokens, secret values, or full runner label inventories.
+The route and protected result summaries report count-only diagnostics for
+runner visibility: visible runner count, CX53/CX43 online counts, idle
+image-ready counts, and online-but-missing-image counts. The protected result
+job also receives those values as environment variables so issue comments can
+cite downloaded result logs without relying on the web UI summary. The workflow
+must not print runner names, registration tokens, secret values, or full runner
+label inventories.
 
 The VS Code lane should remain hosted until a separate Node 24 / VS Code / Xvfb
 runner image is proven.
