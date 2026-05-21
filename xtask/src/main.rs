@@ -16167,7 +16167,7 @@ pub(crate) fn evidence_health_report_impl() -> Result<(), String> {
 }
 
 const EVIDENCE_HEALTH_TIMEOUT_ENV: &str = "RIPR_EVIDENCE_HEALTH_TIMEOUT_MS";
-const EVIDENCE_HEALTH_DEFAULT_TIMEOUT_MS: u64 = 300_000;
+const EVIDENCE_HEALTH_DEFAULT_TIMEOUT_MS: u64 = 1_200_000;
 
 fn evidence_health_args() -> Vec<String> {
     let mut args = vec![
@@ -16214,10 +16214,14 @@ fn evidence_health_run_binary(
     capture_output_with_timeout(
         &binary_text,
         args,
-        &[],
+        &evidence_health_child_envs(),
         timeout,
         "Lane 1 evidence-health report",
     )
+}
+
+fn evidence_health_child_envs() -> [(&'static str, &'static str); 1] {
+    [(REPO_EXPOSURE_LATENCY_TRACE_ENV, "1")]
 }
 
 fn write_evidence_health_report_with_runners<BuildRunner, ReportRunner>(
@@ -59926,7 +59930,15 @@ covered_by = ["cargo xtask check-file-policy"]
 
     #[test]
     fn evidence_health_default_timeout_is_bounded_for_live_repo_pathologies() {
-        assert_eq!(super::EVIDENCE_HEALTH_DEFAULT_TIMEOUT_MS, 300_000);
+        assert_eq!(super::EVIDENCE_HEALTH_DEFAULT_TIMEOUT_MS, 1_200_000);
+    }
+
+    #[test]
+    fn evidence_health_child_envs_enable_latency_trace() {
+        assert_eq!(
+            super::evidence_health_child_envs(),
+            [(super::REPO_EXPOSURE_LATENCY_TRACE_ENV, "1")]
+        );
     }
 
     #[test]
