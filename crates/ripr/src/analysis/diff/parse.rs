@@ -383,6 +383,8 @@ mod tests {
 @@ malformed header @@
 --- metadata should be ignored
 +++ metadata should be ignored
++line should be ignored
+-dropped should be ignored
 ";
 
         let files = parse_unified_diff(diff);
@@ -420,6 +422,38 @@ mod tests {
         assert_eq!(files[1].added_lines[0].text, "new b");
         assert_eq!(files[1].removed_lines[0].line, 5);
         assert_eq!(files[1].removed_lines[0].text, "old b");
+    }
+
+    #[test]
+    fn valid_hunk_after_malformed_hunk_still_parses() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ malformed header @@
++ignored
+-dropped
+@@ -4,1 +4,1 @@
+-old
++new
+";
+
+        let files = parse_unified_diff(diff);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].removed_lines,
+            vec![ChangedLine {
+                line: 4,
+                text: "old".to_string()
+            }]
+        );
+        assert_eq!(
+            files[0].added_lines,
+            vec![ChangedLine {
+                line: 4,
+                text: "new".to_string()
+            }]
+        );
     }
 
     #[test]
