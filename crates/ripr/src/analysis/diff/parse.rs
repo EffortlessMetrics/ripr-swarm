@@ -9,27 +9,37 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
     let mut old_line = 0usize;
     let mut new_line = 0usize;
     let mut in_hunk = false;
+    let mut saw_old_path_marker = false;
 
     for raw in input.lines() {
-        if !in_hunk
-            && current_path.is_none()
-            && let Some(path) = parse_new_path_marker(raw)
-        {
-            current_path = Some(path.clone());
-            files.entry(path.clone()).or_insert_with(|| ChangedFile {
-                path,
-                ..ChangedFile::default()
-            });
-            continue;
-        }
-
         if raw.starts_with("diff --git ") {
             current_path = None;
             in_hunk = false;
+            saw_old_path_marker = false;
             continue;
         }
 
+        if !in_hunk {
+            if parse_old_path_marker(raw) {
+                saw_old_path_marker = true;
+                continue;
+            }
+
+            if let Some(path) = parse_new_path_marker(raw) {
+                if current_path.is_none() || saw_old_path_marker {
+                    current_path = Some(path.clone());
+                    files.entry(path.clone()).or_insert_with(|| ChangedFile {
+                        path,
+                        ..ChangedFile::default()
+                    });
+                }
+                saw_old_path_marker = false;
+                continue;
+            }
+        }
+
         if raw.starts_with("@@") {
+            saw_old_path_marker = false;
             if let Some((old_start, new_start)) = parse_hunk_header(raw) {
                 old_line = old_start;
                 new_line = new_start;
@@ -40,6 +50,10 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
             continue;
         }
 
+        if !in_hunk {
+            saw_old_path_marker = false;
+        }
+
         let Some(path) = current_path.clone() else {
             continue;
         };
@@ -47,7 +61,7 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
             continue;
         };
 
-        if !in_hunk && (raw.starts_with("+++") || raw.starts_with("---")) {
+        if !in_hunk {
             continue;
         }
 
@@ -97,6 +111,24 @@ fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     }
     let path = path.strip_prefix("b/").unwrap_or(&path);
     Some(PathBuf::from(path))
+}
+
+fn parse_old_path_marker(raw: &str) -> bool {
+    let Some(marker) = raw.strip_prefix("--- ") else {
+        return false;
+    };
+    let Some(path) = parse_diff_path_token(marker) else {
+        return false;
+    };
+    if path == "/dev/null" {
+        return true;
+    }
+    let path = path.strip_prefix("a/").unwrap_or(&path);
+    is_plausible_unquoted_diff_path(path)
+}
+
+fn is_plausible_unquoted_diff_path(path: &str) -> bool {
+    !path.is_empty() && !path.chars().any(char::is_whitespace)
 }
 
 fn parse_diff_path_token(raw: &str) -> Option<String> {
@@ -209,8 +241,8 @@ mod tests {
 
         assert_eq!(files.len(), 1);
         let file = &files[0];
-        assert_eq!(file.removed_lines[0].line, 0);
-        assert_eq!(file.added_lines[0].line, 0);
+        assert!(file.removed_lines.is_empty());
+        assert!(file.added_lines.is_empty());
     }
 
     #[test]
@@ -358,6 +390,36 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].added_lines.len(), 1);
         assert_eq!(files[0].removed_lines.len(), 1);
+    }
+
+    #[test]
+    fn malformed_hunk_header_allows_following_plain_file_section() {
+        let diff = "--- src/a.rs
++++ src/a.rs
+@@ -1,1 +1,1 @@
+-old a
++new a
+@@ malformed header @@
+--- metadata should be ignored
++++ metadata should be ignored
+--- src/b.rs
++++ src/b.rs
+@@ -5,1 +5,1 @@
+-old b
++new b
+";
+
+        let files = parse_unified_diff(diff);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, PathBuf::from("src/a.rs"));
+        assert_eq!(files[0].added_lines.len(), 1);
+        assert_eq!(files[0].removed_lines.len(), 1);
+        assert_eq!(files[1].path, PathBuf::from("src/b.rs"));
+        assert_eq!(files[1].added_lines[0].line, 5);
+        assert_eq!(files[1].added_lines[0].text, "new b");
+        assert_eq!(files[1].removed_lines[0].line, 5);
+        assert_eq!(files[1].removed_lines[0].text, "old b");
     }
 
     #[test]
