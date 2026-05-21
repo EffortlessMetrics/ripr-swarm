@@ -9,6 +9,34 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Limited `cargo xtask evidence-health` warning artifacts now expose structured
+  repo-exposure latency diagnostics. Timeout and incomplete reports carry
+  bounded `latency_trace_events_total` and `latency_trace_tail` fields on
+  `inputs.generation` and `run_limitations[]`, and Markdown includes the trace
+  tail so slow live-repo phases are visible without scraping stderr.
+- `cargo xtask evidence-health` now removes stale evidence-health artifacts
+  before running the child report generator and validates zero-exit JSON and
+  Markdown outputs before accepting success. Missing, malformed, or incomplete
+  success-exit artifacts now become bounded `evidence_health_incomplete`
+  warning reports with `inputs.generation.status = "pass_incomplete"` and a
+  diagnostic failure reason.
+- Lane 1 evidence audit now validates zero-exit repo-exposure captures before
+  treating them as complete. A truncated success-exit JSON capture is removed
+  and downgraded to a bounded `lane1_repo_exposure_incomplete` warning artifact
+  instead of leaving only a partial temp artifact.
+- `cargo xtask reports index` now surfaces Lane 1 evidence readiness for
+  evidence-health, Lane 1 audit, actionable-gap, scorecard, trend, and
+  badge-basis artifacts. Missing or limited artifacts warn with regeneration
+  commands instead of letting the index look healthy while the badge-readiness
+  evidence chain is absent.
+- Evidence-quality trend now treats current scorecards with limited input
+  unknowns as `current_scorecard_limited`, preserving rows for diagnostics while
+  refusing improvement or regression claims from bounded diagnostic counts.
+- Evidence-health fallback artifacts now use the current evidence-health schema
+  version and carry explicit generation phase/status plus bounded stdout/stderr
+  excerpts for timeout and nonzero-exit warning reports. The output contract,
+  capability metadata, and traceability now document both
+  `evidence_health_timeout` and `evidence_health_incomplete` limited artifacts.
 - Added `RIPR-SPEC-0058` for the `ripr-swarm` external-agent handoff. The spec
   defines the packet-only input, operator review boundary, patch and receipt
   metadata response, outcome join, and hard non-goals for provider SDKs,

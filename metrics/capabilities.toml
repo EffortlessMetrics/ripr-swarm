@@ -501,8 +501,8 @@ evidence = [
   "boundary_gap fixture",
   "weak_error_oracle fixture",
   "snapshot_oracle fixture",
-  "syntactic value resolution for let bindings, same-file constants, table rows, rstest cases, builder/fixture overrides, enum variants, Option/Result constructors, and source-order-scoped same-test struct literal field projections",
-  "negative guards for comment/string shadows, cross-file constants, unresolved helpers, unrelated builder methods, helper-built structs, before-call shadowed struct bindings, fixture parameter collisions, common non-let binders, non-simple let pattern binders, and non-literal struct fields",
+  "syntactic value resolution for let bindings, same-file constants, table rows, rstest cases, builder/fixture overrides, enum variants, Option/Result constructors, source-order-scoped same-test struct literal field projections, and value-insensitive activation through conservative one-hop same-file helper owner calls",
+  "negative guards for comment/string shadows, cross-file constants, unresolved helpers, unrelated builder methods, helper-built structs, before-call shadowed struct bindings, fixture parameter collisions, common non-let binders, non-simple let pattern binders, non-literal struct fields, helper-name-only affinity, and generic owner helper names",
   "evidence-first activation output",
   "docs/lanes/LANE_1_EVIDENCE_SPINE.md documents stable syntax-first activation/value scope and keeps unsupported value sources as explicit limitations"
 ]
@@ -649,8 +649,10 @@ evidence = [
   "crates/ripr/src/output/evidence_health.rs",
   "RIPR-SPEC-0015 evidence health baseline contract",
   "ripr evidence-health writes advisory JSON and Markdown",
+  "CLI parser/help tests pin the evidence-health command surface",
   "cargo xtask evidence-health writes target/ripr/reports/evidence-health.json and evidence-health.md",
-  "cargo xtask evidence-health bounds the child process and writes a named evidence_health_timeout run limitation instead of leaving stale or partial artifacts when the live report times out",
+  "cargo xtask evidence-health bounds the child process and writes named evidence_health_timeout or evidence_health_incomplete run limitations instead of leaving stale or partial artifacts when the live report times out or exits nonzero",
+  "limited evidence-health artifacts carry bounded repo-exposure latency trace totals and tail rows so slow live-repo phases remain inspectable without treating the limitation as user test debt",
   "counts grip classes, stage states, missing discriminators, observed value contexts, related-test confidence, oracle strength, oracle kind, opaque oracles, and top static limitations",
   "folds durable Lane 1 audit fields into evidence-health from the shared evidence_record: canonical gap group totals, largest groups, duplicate-looking groups, actionability classes, static limitation reason/stage/category distributions, evidence-record calibration coverage, movement availability, and top evidence-quality risks",
   "optional imported mutation-calibration JSON contributes calibration availability counts without changing static classification",
@@ -658,7 +660,7 @@ evidence = [
 ]
 fixtures = []
 next = "maintenance"
-metric = "evidence_health_seams_total, evidence_health_missing_discriminators_total, evidence_health_observed_values_total, evidence_health_related_tests_total, evidence_health_opaque_oracle_count, evidence_health_calibration_matched_total, evidence_health_canonical_gap_groups, evidence_health_duplicate_looking_groups, evidence_health_records_with_canonical_gap_id, evidence_health_static_limitation_reasons, evidence_health_static_limitation_categories, evidence_health_calibration_not_imported, evidence_health_top_evidence_quality_risks, evidence_health_timeout_limitations"
+metric = "evidence_health_seams_total, evidence_health_missing_discriminators_total, evidence_health_observed_values_total, evidence_health_related_tests_total, evidence_health_opaque_oracle_count, evidence_health_calibration_matched_total, evidence_health_canonical_gap_groups, evidence_health_duplicate_looking_groups, evidence_health_records_with_canonical_gap_id, evidence_health_static_limitation_reasons, evidence_health_static_limitation_categories, evidence_health_calibration_not_imported, evidence_health_top_evidence_quality_risks, evidence_health_timeout_limitations, evidence_health_incomplete_limitations"
 
 [[capability]]
 id = "lane1_evidence_quality_audit"
@@ -706,13 +708,14 @@ spec = "RIPR-SPEC-0034"
 evidence = [
   "cargo xtask evidence-quality-trend writes target/ripr/reports/evidence-quality-trend.json and evidence-quality-trend.md",
   "trend consumes the current evidence-quality scorecard and optional previous scorecard or audit snapshot, reporting missing history as an explicit no-history unknown",
+  "trend treats current scorecards with limited input unknowns as current_scorecard_limited, preserving metric rows for diagnostics while refusing improvement/regression claims",
   "xtask/src/main.rs distinguishes improvement, regression, unchanged, mixed, and unknown states for Lane 1 evidence-quality metrics and normalized static limitation categories",
   "docs/OUTPUT_SCHEMA.md documents the Evidence Quality Trend JSON and Markdown contract",
-  "xtask unit tests pin no-history output, metric direction semantics, and static limitation category deltas"
+  "xtask unit tests pin no-history output, current-limited scorecards, metric direction semantics, and static limitation category deltas"
 ]
 fixtures = []
 next = "maintenance"
-metric = "lane1_evidence_trend_compared_metrics, lane1_evidence_trend_improved_metrics, lane1_evidence_trend_regressed_metrics, lane1_evidence_trend_unchanged_metrics, lane1_evidence_trend_unknown_metrics, lane1_evidence_trend_no_history, lane1_evidence_trend_static_limitation_category_rows"
+metric = "lane1_evidence_trend_compared_metrics, lane1_evidence_trend_improved_metrics, lane1_evidence_trend_regressed_metrics, lane1_evidence_trend_unchanged_metrics, lane1_evidence_trend_unknown_metrics, lane1_evidence_trend_no_history, lane1_evidence_trend_current_scorecard_limited, lane1_evidence_trend_static_limitation_category_rows"
 
 [[capability]]
 id = "evidence_quality_benchmark_corpus"
@@ -721,7 +724,7 @@ status = "alpha"
 spec = "RIPR-SPEC-0035"
 evidence = [
   "fixtures/evidence-quality-benchmark/corpus.json defines a manifest-only Lane 1 benchmark corpus",
-  "the corpus covers duplicate canonical gap, match-arm discriminator split, wrong related-test top choice, broad versus exact error oracle, self-computed expected value and duplicative equality guards, value-insensitive owner-call activation for no-argument and opaque-argument calls, opaque helper limitation, cross-file constant limitation, presentation text constants, config/policy constants including behavior selectors with and without discriminators, side-effect observer, snapshot discriminator, mock expectation, runtime-only signal, and ambiguous runtime join classes",
+  "the corpus covers duplicate canonical gap, match-arm discriminator split, wrong related-test top choice, broad versus exact error oracle, self-computed expected value and duplicative equality guards, value-insensitive owner-call activation for no-argument, opaque-argument, and one-hop same-file helper calls, opaque helper limitation, cross-file constant limitation, presentation text constants, config/policy constants including behavior selectors with and without discriminators, side-effect observer, snapshot discriminator, mock expectation, runtime-only signal, and ambiguous runtime join classes",
   "each case records expected claims, must-not-claim guards, expected repo-exposure evidence_record subsets or runtime-only nonstatic calibration, audit signals, maturity scope, and repair route",
   "cargo xtask check-fixture-contracts validates the corpus shape through xtask/src/main.rs",
   "xtask unit tests pin required config/policy case IDs, required case kinds, missing guard detection, runtime-only nonstatic behavior, and line-movement canonical identity"
@@ -1095,6 +1098,7 @@ evidence = [
   "ripr reports index writes advisory target/ripr/reports/index.{json,md} from explicit artifact directories without rerunning analysis or changing gate authority",
   "crates/ripr/src/output/report_packet_index.rs groups artifacts by reviewer use, identifies the start-here front panel, preserves gate-decision authority, records missing expected surfaces, and emits regeneration commands when known",
   "docs/OUTPUT_SCHEMA.md documents the implemented report_packet_index JSON and Markdown shape, group vocabulary, status vocabulary, missing-surface reasons, generated-CI projection boundary, and advisory limits",
+  "cargo xtask reports index adds repo-local lane1_readiness for evidence-health, lane1-evidence-audit, actionable-gaps, evidence-quality-scorecard, evidence-quality-trend, and badge-basis artifacts without running those expensive reports",
   "generated GitHub CI runs ripr reports index only when indexed artifacts exist, uploads target/ripr/reports/index.{json,md} with the normal report packet, and appends packet-index status, start-here, gate-authority, missing-surface, and warning summaries without changing pass/fail authority",
   "docs/REPORT_PACKET_INDEX_WORKFLOW.md documents reviewer, maintainer, developer, and coding-agent use of the grouped packet map, missing-surface regeneration, and advisory gate boundary",
   "fixtures/boundary_gap/expected/report-packet-index/ pins complete, sparse advisory, missing-front-panel, blocked-gate, missing-proof, missing-receipt, and coverage/grip-present packet cases",
