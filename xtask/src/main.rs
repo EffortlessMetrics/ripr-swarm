@@ -37877,6 +37877,210 @@ fn write_repo_contract_work_item_json_array(body: &mut String, items: &[RepoCont
     }
 }
 
+fn pr_body(args: &[String]) -> Result<(), String> {
+    let work_item_id = parse_pr_body_args(args)?;
+    let body = pr_body_from_root(Path::new("."), &work_item_id)?;
+    ensure_reports_dir()?;
+    let path = reports_dir().join("source-of-truth-pr-body.md");
+    fs::write(&path, body)
+        .map_err(|err| format!("failed to write {}: {err}", normalize_path(&path)))?;
+    println!("wrote {}", normalize_path(&path));
+    Ok(())
+}
+
+fn parse_pr_body_args(args: &[String]) -> Result<String, String> {
+    match args {
+        [flag, value] if flag == "--work-item" && !value.trim().is_empty() => Ok(value.clone()),
+        _ => Err("usage: cargo xtask pr-body --work-item <id>".to_string()),
+    }
+}
+
+fn pr_body_from_root(root: &Path, work_item_id: &str) -> Result<String, String> {
+    let active_path = root.join(".ripr/goals/active.toml");
+    let (manifest, parse_violations) = parse_campaign_manifest(&active_path)?;
+    if !parse_violations.is_empty() {
+        return Err(format!(
+            "{} has parse violations:\n- {}",
+            display_repo_path(root, &active_path),
+            parse_violations.join("\n- ")
+        ));
+    }
+    let item = manifest
+        .work_items
+        .iter()
+        .find(|item| item.id.as_deref() == Some(work_item_id))
+        .ok_or_else(|| {
+            format!(
+                "{} does not contain work item `{work_item_id}`",
+                display_repo_path(root, &active_path)
+            )
+        })?;
+
+    let ledger_path = root.join(DOC_ARTIFACT_LEDGER);
+    let artifacts = if ledger_path.exists() {
+        parse_doc_artifact_ledger(&ledger_path)?.artifacts
+    } else {
+        Vec::new()
+    };
+
+    let proposal = pr_body_artifact_reference(root, &artifacts, item.proposal.as_deref())?;
+    let spec_id = item
+        .spec
+        .as_deref()
+        .or_else(|| item.specs.first().map(String::as_str));
+    let spec = pr_body_artifact_reference(root, &artifacts, spec_id)?;
+    let plan = pr_body_artifact_reference(root, &artifacts, item.plan.as_deref())?;
+    let issue = manifest.issue.as_deref().unwrap_or("none");
+    let branch = item.branch.as_deref().unwrap_or("<missing>");
+    let status = item.status.as_deref().unwrap_or("<missing>");
+    let acceptance = item
+        .acceptance
+        .as_deref()
+        .unwrap_or("No acceptance text is recorded for this work item.");
+    let proof = pr_body_proof_block(&item.commands);
+    let non_goals =
+        pr_body_manifest_list(&manifest.non_goals, "No explicit non-goals are recorded.");
+
+    Ok(format!(
+        r#"## Summary
+
+{acceptance}
+
+## Links
+
+Proposal: {proposal}
+Spec: {spec}
+ADR: none
+Plan item: {plan}
+Issue: {issue}
+Active goal: `{goal_id}`
+Work item: `{work_item_id}`
+
+## Scope
+
+- Work item status: `{status}`
+- Branch: `{branch}`
+- Acceptance: {acceptance}
+
+## Non-goals
+
+{non_goals}
+
+## Support-tier impact
+
+- [x] none
+- [ ] updates `docs/status/SUPPORT_TIERS.md`
+
+## Policy impact
+
+- [x] none
+- [ ] doc artifacts
+- [ ] CI lane
+- [ ] package boundary
+- [ ] lint / Clippy
+- [ ] no-panic
+- [ ] file policy
+
+## Proof
+
+```bash
+{proof}
+```
+
+## Claim boundary
+
+This PR body is generated from `.ripr/goals/active.toml` and linked artifacts where present. It does not claim the work is complete until the proof commands above are run and their results are reported.
+
+## Rollback
+
+Revert the PR commit or commits for `{work_item_id}` and rerun the proof commands that still apply.
+"#,
+        goal_id = manifest.active_id()
+    ))
+}
+
+fn pr_body_artifact_reference(
+    root: &Path,
+    artifacts: &[DocArtifactEntry],
+    id: Option<&str>,
+) -> Result<String, String> {
+    let Some(id) = id else {
+        return Ok("none".to_string());
+    };
+    if id.ends_with(".md") || id.contains('/') || id.contains('\\') {
+        let path = root.join(id);
+        let title = pr_body_artifact_title(&path)?;
+        return Ok(format!(
+            "`{}` - {} (`{}`)",
+            id,
+            markdown_inline(&title),
+            id.replace('\\', "/")
+        ));
+    }
+    if let Some(artifact) = artifacts
+        .iter()
+        .find(|artifact| artifact.id.as_deref() == Some(id))
+    {
+        let Some(path) = artifact.path.as_deref() else {
+            return Ok(format!("`{id}` (registered without a path)"));
+        };
+        let title = pr_body_artifact_title(&root.join(path))?;
+        return Ok(format!("`{id}` - {} (`{path}`)", markdown_inline(&title)));
+    }
+    Ok(format!(
+        "`{id}` (not registered in `{DOC_ARTIFACT_LEDGER}`)"
+    ))
+}
+
+fn pr_body_artifact_title(path: &Path) -> Result<String, String> {
+    let text = read_text_lossy(path)?;
+    Ok(text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("# "))
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("artifact")
+        })
+        .to_string())
+}
+
+fn pr_body_proof_block(commands: &[String]) -> String {
+    if commands.is_empty() {
+        "# No proof commands are recorded for this work item.".to_string()
+    } else {
+        commands.join("\n")
+    }
+}
+
+fn pr_body_manifest_list(items: &[String], fallback: &str) -> String {
+    if items.is_empty() {
+        fallback.to_string()
+    } else {
+        items
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn markdown_inline(value: &str) -> String {
+    value.replace('\n', " ").replace('|', "\\|")
+}
+
+trait CampaignManifestPrBodyExt {
+    fn active_id(&self) -> &str;
+}
+
+impl CampaignManifestPrBodyExt for CampaignManifest {
+    fn active_id(&self) -> &str {
+        self.id.as_deref().unwrap_or("<missing>")
+    }
+}
+
 fn validate_readme_support_tier_pointer(
     root: &Path,
     violations: &mut Vec<String>,
@@ -57490,6 +57694,11 @@ reason = "second"
             "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
             "RIPR-SPEC-0001",
         );
+        write_doc_artifact_fixture(
+            root,
+            "plans/source-of-truth/implementation-plan.md",
+            "PLAN-0001",
+        );
         write_doc_artifact_ledger_fixture(
             root,
             r#"schema_version = "1.0"
@@ -57524,6 +57733,15 @@ path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
 status = "accepted"
 owner = "repo-infra"
 linked_proposal = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+linked_spec = "RIPR-SPEC-0001"
 "#,
         );
         write(
@@ -57562,6 +57780,9 @@ id = "docs/report"
 status = "ready"
 branch = "xtask-repo-contract-report"
 stackable = false
+proposal = "RIPR-PROP-0001"
+spec = "RIPR-SPEC-0001"
+plan = "PLAN-0001"
 acceptance = "Generate graph report."
 commands = ["cargo xtask repo-contract-report"]
 
@@ -58978,6 +59199,52 @@ owner = "repo-infra"
         assert_eq!(value["policy_ledgers"].as_array().map(Vec::len), Some(0));
         assert_eq!(value["missing_links"][0], "missing source-of-truth edge");
         Ok(())
+    }
+
+    #[test]
+    fn pr_body_writes_body_from_work_item_contract() -> Result<(), String> {
+        with_temp_cwd("pr-body-command", |root| {
+            write_repo_contract_report_fixture(root, true);
+
+            dispatch::execute(XtaskCommand::PrBody(vec![
+                "--work-item".to_string(),
+                "docs/report".to_string(),
+            ]))?;
+
+            let body_path = root
+                .join(super::reports_dir())
+                .join("source-of-truth-pr-body.md");
+            let body = fs::read_to_string(body_path)
+                .map_err(|err| format!("failed to read generated PR body: {err}"))?;
+            assert!(body.contains("Proposal: `RIPR-PROP-0001`"));
+            assert!(body.contains("Spec: `RIPR-SPEC-0001`"));
+            assert!(body.contains("Plan item: `PLAN-0001`"));
+            assert!(body.contains("Work item: `docs/report`"));
+            assert!(body.contains("cargo xtask repo-contract-report"));
+            assert!(body.contains("## Claim boundary"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn pr_body_rejects_missing_work_item() {
+        with_temp_cwd("pr-body-missing-work-item", |root| {
+            write_repo_contract_report_fixture(root, true);
+
+            let error = super::pr_body_from_root(root, "docs/missing")
+                .expect_err("unknown work item should fail PR body generation");
+            assert!(
+                error.contains("does not contain work item `docs/missing`"),
+                "{error}"
+            );
+        });
+    }
+
+    #[test]
+    fn pr_body_requires_work_item_argument() {
+        let error = super::parse_pr_body_args(&["--work-item".to_string()])
+            .expect_err("missing work item id should fail argument parsing");
+        assert!(error.contains("cargo xtask pr-body --work-item <id>"));
     }
 
     #[test]
@@ -62066,6 +62333,14 @@ jobs:
         assert_eq!(
             XtaskCommand::parse(["repo-contract-report".to_string()]),
             XtaskCommand::RepoContractReport
+        );
+        assert_eq!(
+            XtaskCommand::parse([
+                "pr-body".to_string(),
+                "--work-item".to_string(),
+                "docs/report".to_string(),
+            ]),
+            XtaskCommand::PrBody(vec!["--work-item".to_string(), "docs/report".to_string()])
         );
         assert_eq!(
             XtaskCommand::parse(["pr-triage-report".to_string()]),
