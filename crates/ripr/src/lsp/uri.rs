@@ -24,10 +24,15 @@ mod percent_codec {
         let mut encoded = String::new();
         for byte in path.bytes() {
             match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/'
-                | b':' => {
-                    encoded.push(byte as char)
-                }
+                b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'-'
+                | b'.'
+                | b'_'
+                | b'~'
+                | b'/'
+                | b':' => encoded.push(byte as char),
                 _ => encoded.push_str(&format!("%{byte:02X}")),
             }
         }
@@ -47,10 +52,7 @@ mod percent_codec {
 mod windows_paths {
     pub(super) fn is_windows_drive_uri_path(path: &str) -> bool {
         let bytes = path.as_bytes();
-        bytes.len() >= 3
-            && bytes[0] == b'/'
-            && bytes[2] == b':'
-            && bytes[1].is_ascii_alphabetic()
+        bytes.len() >= 3 && bytes[0] == b'/' && bytes[2] == b':' && bytes[1].is_ascii_alphabetic()
     }
 
     pub(super) fn is_windows_drive_path(path: &str) -> bool {
@@ -61,7 +63,7 @@ mod windows_paths {
 
 pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    let encoded = percent_codec::encode_uri_path(&normalized);
+    let encoded = encode_uri_path(&normalized);
     let uri = if encoded.starts_with('/') {
         format!("file://{encoded}")
     } else {
@@ -104,7 +106,6 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
     };
     Some(path.replace('\\', "/"))
 }
-
 
 pub(super) fn encode_uri_path(path: &str) -> String {
     percent_codec::encode_uri_path(path)
