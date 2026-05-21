@@ -43,14 +43,15 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
         AgentCommand::Receipt(options) => run_agent_receipt(options),
         AgentCommand::Status(options) => run_agent_status(options),
         AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
-        AgentCommand::Help
+        help_command @ (AgentCommand::Help
         | AgentCommand::StartHelp
         | AgentCommand::BriefHelp
         | AgentCommand::PacketHelp
         | AgentCommand::VerifyHelp
         | AgentCommand::ReceiptHelp
         | AgentCommand::StatusHelp
-        | AgentCommand::ReviewSummaryHelp => unreachable!("help commands are dispatched earlier"),
+        | AgentCommand::ReviewSummaryHelp) => agent_dispatch::run_agent_help_command(&help_command)
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
     }
 }
 
