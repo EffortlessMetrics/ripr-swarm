@@ -10,6 +10,7 @@ use crate::cli::agent::{
     AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions, AgentVerifyOptions,
     parse_agent_args,
 };
+use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::cli::help;
 use crate::cli::parse::{expect_value, parse_format, parse_mode};
 use crate::config::{
@@ -26,40 +27,16 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 
+#[path = "commands/agent_dispatch.rs"]
+mod agent_dispatch;
+
 pub(super) fn agent(args: &[String]) -> Result<(), String> {
-    match parse_agent_args(args)? {
-        AgentCommand::Help => {
-            help::print_agent_help();
-            Ok(())
-        }
-        AgentCommand::StartHelp => {
-            help::print_agent_start_help();
-            Ok(())
-        }
-        AgentCommand::BriefHelp => {
-            help::print_agent_brief_help();
-            Ok(())
-        }
-        AgentCommand::PacketHelp => {
-            help::print_agent_packet_help();
-            Ok(())
-        }
-        AgentCommand::VerifyHelp => {
-            help::print_agent_verify_help();
-            Ok(())
-        }
-        AgentCommand::ReceiptHelp => {
-            help::print_agent_receipt_help();
-            Ok(())
-        }
-        AgentCommand::StatusHelp => {
-            help::print_agent_status_help();
-            Ok(())
-        }
-        AgentCommand::ReviewSummaryHelp => {
-            help::print_agent_review_summary_help();
-            Ok(())
-        }
+    let command = parse_agent_args(args)?;
+    if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
+        return result;
+    }
+
+    match command {
         AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options),
         AgentCommand::Packet(options) => run_agent_packet(options),
@@ -67,23 +44,21 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
         AgentCommand::Receipt(options) => run_agent_receipt(options),
         AgentCommand::Status(options) => run_agent_status(options),
         AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        help_command @ (AgentCommand::Help
+        | AgentCommand::StartHelp
+        | AgentCommand::BriefHelp
+        | AgentCommand::PacketHelp
+        | AgentCommand::VerifyHelp
+        | AgentCommand::ReceiptHelp
+        | AgentCommand::StatusHelp
+        | AgentCommand::ReviewSummaryHelp) => agent_dispatch::run_agent_help_command(&help_command)
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
     }
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent start root {} is not a directory",
-            options.root.display()
-        ));
-    }
-
-    let config = load_for_root(&options.root)?;
-    let mut input = CheckInput {
-        root: options.root.clone(),
-        ..CheckInput::default()
-    };
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    ensure_command_root(&options.root, "agent start")?;
+    let (input, config) = load_root_input_and_config(&options.root)?;
 
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
@@ -139,19 +114,8 @@ fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent brief root {} is not a directory",
-            options.root.display()
-        ));
-    }
-
-    let config = load_for_root(&options.root)?;
-    let mut input = CheckInput {
-        root: options.root.clone(),
-        ..CheckInput::default()
-    };
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    ensure_command_root(&options.root, "agent brief")?;
+    let (input, config) = load_root_input_and_config(&options.root)?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
     let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
@@ -173,12 +137,7 @@ fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent packet root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent packet")?;
 
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         let rendered = render_agent_packet_from_gap_ledger(gap_ledger, gap_id)?;
@@ -249,12 +208,7 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent receipt root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
     let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
@@ -303,12 +257,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
 }
 
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent status root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent status")?;
 
     let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
     if options.json {
@@ -322,12 +271,7 @@ fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
 }
 
 fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent review-summary root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent review-summary")?;
 
     let report =
         app::agent_review_summary::build_agent_review_summary_report(&options.root, &options.root);
