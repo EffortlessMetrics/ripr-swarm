@@ -36832,7 +36832,7 @@ fn set_doc_artifact_field(
         "superseded_by" => artifact.superseded_by = Some(value),
         "replacement" => artifact.replacement = Some(value),
         "notes" | "reason" | "review_posture" => {}
-        _ => unreachable!("allowed document artifact fields are checked before assignment"),
+        _ => {}
     }
     Ok(())
 }
