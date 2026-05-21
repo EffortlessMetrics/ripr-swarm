@@ -1,0 +1,25 @@
+schema_version = "1.0"
+
+[project]
+repo = "ripr"
+framework = "rails"
+root = ".rails"
+
+[conventions]
+proposal_prefix = "RIPR-PROP"
+spec_prefix = "RIPR-SPEC"
+adr_prefix = "RIPR-ADR"
+lane_prefix = "RIPR-LANE"
+
+[external_namespaces]
+codex = ".codex"
+speckit = ".spec"
+claude = ".claude"
+jules = ".jules"
+
+[[lane]]
+id = "rails-adoption"
+name = "Rails adoption"
+path = ".rails/lanes/rails-adoption/tracker.toml"
+status = "active"
+owner = "repo"

@@ -1,0 +1,28 @@
+schema_version = "1.0"
+
+id = "rails-adoption"
+name = "Rails adoption"
+status = "active"
+owner = "repo"
+
+objective = """
+Adopt the .rails framework footprint as the durable knowledge base for this repository.
+"""
+
+end_state = [
+  "Framework footprint is present under .rails/.",
+  "Human-facing docs explain ownership boundaries.",
+]
+
+[[work_item]]
+id = "rails-adoption-footprint"
+status = "ready"
+proposal = ""
+spec = ""
+adr = ""
+implementation_plan = ".rails/lanes/rails-adoption/implementation-plan.md"
+blocks = []
+blocked_by = []
+proof = [
+  "git diff --check",
+]

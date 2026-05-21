@@ -1,0 +1,8 @@
+schema_version = "1.0"
+
+id = "<policy-ref-id>"
+name = "<Policy reference name>"
+source = "<path-or-url-to-live-ledger>"
+owner = "<owner>"
+review_interval_days = 30
+notes = "Reference only; do not duplicate governed policy content here."
