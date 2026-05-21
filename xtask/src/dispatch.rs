@@ -26,6 +26,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RepoExposureReport => super::reports::repo_exposure_report(),
         XtaskCommand::RepoExposureLatencyReport => super::reports::repo_exposure_latency_report(),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
+        XtaskCommand::PrBody(args) => super::pr_body(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),
         XtaskCommand::EvidenceQualityScorecard => {
