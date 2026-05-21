@@ -1607,7 +1607,8 @@ Field contract:
   command, `status` (`fail` or `timeout`), timeout/duration, exit code when
   available, output byte counts, and bounded stdout/stderr excerpts. Complete
   `ripr evidence-health` reports omit this wrapper field and keep the normal
-  analyzer-health payload.
+  analyzer-health payload, so the current contract does not emit an `"ok"`
+  generation status.
 - `metrics.grip_class_counts` - all `SeamGripClass` buckets, including zero
   counts.
 - `metrics.stage_state_counts` - per-stage `StageState` buckets for `reach`,
@@ -1663,7 +1664,8 @@ Field contract:
   to 10 rows and carrying one example seam ID for inspection.
 - `run_limitations` - present on bounded xtask fallback artifacts. Timeout and
   incomplete rows name `evidence_health_timeout` or
-  `evidence_health_incomplete`, the `evidence_health_generation` phase,
+  `evidence_health_incomplete`, the `evidence_health_build` or
+  `evidence_health_generation` phase,
   timeout/duration/output byte diagnostics, bounded stdout/stderr excerpts,
   and a repair route for inspecting runtime, stdout/stderr, or increasing
   `RIPR_EVIDENCE_HEALTH_TIMEOUT_MS` on slower machines.

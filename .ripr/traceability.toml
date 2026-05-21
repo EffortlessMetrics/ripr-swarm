@@ -1055,6 +1055,9 @@ id = "RIPR-SPEC-0015"
 name = "evidence health baseline"
 spec = "docs/specs/RIPR-SPEC-0015-evidence-health-baseline.md"
 tests = [
+  "crates/ripr/src/cli/commands.rs::tests::evidence_health_parses_default_and_full_option_surface",
+  "crates/ripr/src/cli/commands.rs::tests::evidence_health_rejects_unknown_arguments",
+  "crates/ripr/src/cli/commands.rs::tests::evidence_health_help_returns_ok",
   "crates/ripr/src/output/evidence_health.rs::tests::evidence_health_counts_core_metrics",
   "crates/ripr/src/output/evidence_health.rs::tests::evidence_health_markdown_names_calibration_and_limitations",
   "xtask::tests::evidence_health_build_timeout_writes_named_limitation_reports",
