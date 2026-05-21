@@ -36839,7 +36839,7 @@ fn validate_doc_artifact_entry(
     let path_is_safe = match doc_artifact_path_safety_violation(path) {
         Some(message) => {
             violations.push(format!(
-                "{ledger_display}:{} artifact `{id_label}` path `{path}` {message}",
+                "{ledger_display}:{} artifact `{id_label}` path {message}: `{path}`",
                 artifact.line
             ));
             false
@@ -36852,7 +36852,7 @@ fn validate_doc_artifact_entry(
             "{ledger_display}:{} artifact `{id_label}` has unsupported kind `{kind}`",
             artifact.line
         ));
-    } else if !doc_artifact_kind_matches_path(kind, path) {
+    } else if path_is_safe && !doc_artifact_kind_matches_path(kind, path) {
         violations.push(format!(
             "{ledger_display}:{} artifact `{id_label}` kind `{kind}` does not match path `{path}`",
             artifact.line
@@ -57165,6 +57165,11 @@ not a key value
                 "docs/specs/RIPR-SPEC-0001-alpha.md",
                 "RIPR-SPEC-0001",
             );
+            write_doc_artifact_fixture(
+                root,
+                "plans/source-of-truth/implementation-plan.md",
+                "PLAN-0001",
+            );
             write_doc_artifact_ledger_fixture(
                 root,
                 r#"schema_version = "1.0"
@@ -57195,7 +57200,15 @@ status = "accepted"
 owner = "repo-infra"
 linked_proposal = "RIPR-PROP-0001"
 linked_adr = "RIPR-ADR-0001"
-linked_plan = "plans/source-of-truth/implementation-plan.md"
+linked_plan = "PLAN-0001"
+
+[[artifact]]
+id = "PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_spec = "RIPR-SPEC-0001"
 "#,
             );
 
