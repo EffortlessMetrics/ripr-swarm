@@ -1,65 +1,47 @@
-use crate::agent::{loop_commands, provenance};
+use crate::agent::loop_commands;
 use crate::analysis;
 use crate::app::agent_brief::{
-    AgentBriefChangedOwner, AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
-    select_agent_brief_seams,
+    AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
 };
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::agent::{
-    AgentBriefOptions, AgentBriefWorkingSet, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
+    AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
     AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions, AgentVerifyOptions,
     parse_agent_args,
 };
+use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::cli::help;
 use crate::cli::parse::{expect_value, parse_format, parse_mode};
 use crate::config::{
     CONFIG_FILE_NAME, CheckInputExplicit, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig,
-    apply_to_check_input, config_fingerprint, generated_init_config, load_for_root,
+    apply_to_check_input, generated_init_config, load_for_root,
 };
 use crate::output;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 
+use crate::cli::commands_agent_support::{
+    agent_brief_lines_from_diff, agent_brief_owners_for_lines, build_agent_receipt_provenance,
+    read_agent_verify_snapshot, resolve_agent_brief_working_set,
+    validate_agent_receipt_verify_path, validate_agent_verify_snapshot_path,
+};
+use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 
+#[path = "commands/agent_dispatch.rs"]
+mod agent_dispatch;
+
 pub(super) fn agent(args: &[String]) -> Result<(), String> {
-    match parse_agent_args(args)? {
-        AgentCommand::Help => {
-            help::print_agent_help();
-            Ok(())
-        }
-        AgentCommand::StartHelp => {
-            help::print_agent_start_help();
-            Ok(())
-        }
-        AgentCommand::BriefHelp => {
-            help::print_agent_brief_help();
-            Ok(())
-        }
-        AgentCommand::PacketHelp => {
-            help::print_agent_packet_help();
-            Ok(())
-        }
-        AgentCommand::VerifyHelp => {
-            help::print_agent_verify_help();
-            Ok(())
-        }
-        AgentCommand::ReceiptHelp => {
-            help::print_agent_receipt_help();
-            Ok(())
-        }
-        AgentCommand::StatusHelp => {
-            help::print_agent_status_help();
-            Ok(())
-        }
-        AgentCommand::ReviewSummaryHelp => {
-            help::print_agent_review_summary_help();
-            Ok(())
-        }
+    let command = parse_agent_args(args)?;
+    if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
+        return result;
+    }
+
+    match command {
         AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options),
         AgentCommand::Packet(options) => run_agent_packet(options),
@@ -67,23 +49,21 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
         AgentCommand::Receipt(options) => run_agent_receipt(options),
         AgentCommand::Status(options) => run_agent_status(options),
         AgentCommand::ReviewSummary(options) => run_agent_review_summary(options),
+        help_command @ (AgentCommand::Help
+        | AgentCommand::StartHelp
+        | AgentCommand::BriefHelp
+        | AgentCommand::PacketHelp
+        | AgentCommand::VerifyHelp
+        | AgentCommand::ReceiptHelp
+        | AgentCommand::StatusHelp
+        | AgentCommand::ReviewSummaryHelp) => agent_dispatch::run_agent_help_command(&help_command)
+            .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
     }
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent start root {} is not a directory",
-            options.root.display()
-        ));
-    }
-
-    let config = load_for_root(&options.root)?;
-    let mut input = CheckInput {
-        root: options.root.clone(),
-        ..CheckInput::default()
-    };
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    ensure_command_root(&options.root, "agent start")?;
+    let (input, config) = load_root_input_and_config(&options.root)?;
 
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
@@ -139,19 +119,8 @@ fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent brief root {} is not a directory",
-            options.root.display()
-        ));
-    }
-
-    let config = load_for_root(&options.root)?;
-    let mut input = CheckInput {
-        root: options.root.clone(),
-        ..CheckInput::default()
-    };
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    ensure_command_root(&options.root, "agent brief")?;
+    let (input, config) = load_root_input_and_config(&options.root)?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
     let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
@@ -173,12 +142,7 @@ fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent packet root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent packet")?;
 
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         let rendered = render_agent_packet_from_gap_ledger(gap_ledger, gap_id)?;
@@ -249,12 +213,7 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent receipt root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
     let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
@@ -303,12 +262,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
 }
 
 fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent status root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent status")?;
 
     let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
     if options.json {
@@ -322,12 +276,7 @@ fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
 }
 
 fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent review-summary root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    ensure_command_root(&options.root, "agent review-summary")?;
 
     let report =
         app::agent_review_summary::build_agent_review_summary_report(&options.root, &options.root);
@@ -363,321 +312,6 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
             output::outcome::display_path(path)
         )
     })
-}
-
-fn validate_agent_receipt_verify_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
-    let root = root.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent receipt root {} failed: {err}",
-            root.display()
-        )
-    })?;
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent receipt --verify-json {} failed: {err}",
-            path.display()
-        )
-    })?;
-
-    if !candidate.starts_with(&root) {
-        return Err(format!(
-            "agent receipt --verify-json {} must stay under root {}",
-            path.display(),
-            root.display()
-        ));
-    }
-
-    Ok(candidate)
-}
-
-fn build_agent_receipt_provenance(
-    root: &Path,
-    verify_display_path: &Path,
-    verify_path: &Path,
-    input_paths: &output::agent_receipt::AgentReceiptInputPaths,
-) -> Result<output::agent_receipt::AgentReceiptProvenance, String> {
-    let before_artifact = agent_receipt_artifact_provenance(
-        root,
-        &input_paths.before,
-        "before artifact",
-        "before_artifact",
-    )?;
-    let after_artifact = agent_receipt_artifact_provenance(
-        root,
-        &input_paths.after,
-        "after artifact",
-        "after_artifact",
-    )?;
-    let verify_artifact = output::agent_receipt::AgentReceiptArtifactProvenance {
-        path: output::outcome::display_path(verify_display_path),
-        sha256: provenance::sha256_file(verify_path)?,
-    };
-
-    Ok(output::agent_receipt::AgentReceiptProvenance {
-        ripr_version: env!("CARGO_PKG_VERSION").to_string(),
-        repo_root: output::outcome::display_path(root),
-        config_fingerprint: agent_receipt_config_fingerprint(root)?,
-        command_template_version: loop_commands::AGENT_LOOP_COMMAND_TEMPLATE_VERSION.to_string(),
-        generated_at: agent_receipt_generated_at()?,
-        workflow_artifact: None,
-        before_artifact,
-        after_artifact,
-        verify_artifact,
-    })
-}
-
-fn agent_receipt_artifact_provenance(
-    root: &Path,
-    display_path: &str,
-    role: &str,
-    output_name: &str,
-) -> Result<output::agent_receipt::AgentReceiptArtifactProvenance, String> {
-    let resolved = validate_agent_receipt_artifact_path(root, Path::new(display_path), role)?;
-    Ok(output::agent_receipt::AgentReceiptArtifactProvenance {
-        path: display_path.replace('\\', "/"),
-        sha256: provenance::sha256_file(&resolved).map_err(|err| {
-            format!(
-                "hash agent receipt {output_name} {} failed: {err}",
-                display_path
-            )
-        })?,
-    })
-}
-
-fn validate_agent_receipt_artifact_path(
-    root: &Path,
-    path: &Path,
-    role: &str,
-) -> Result<PathBuf, String> {
-    let root = root.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent receipt root {} failed: {err}",
-            root.display()
-        )
-    })?;
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent receipt {role} {} failed: {err}",
-            path.display()
-        )
-    })?;
-
-    if !candidate.starts_with(&root) {
-        return Err(format!(
-            "agent receipt {role} {} must stay under root {}",
-            path.display(),
-            root.display()
-        ));
-    }
-
-    Ok(candidate)
-}
-
-fn agent_receipt_config_fingerprint(root: &Path) -> Result<Option<String>, String> {
-    let path = root.join(CONFIG_FILE_NAME);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => Ok(Some(config_fingerprint(&text))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(format!("read {} failed: {err}", path.display())),
-    }
-}
-
-fn agent_receipt_generated_at() -> Result<String, String> {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system clock before unix epoch: {err}"))?
-        .as_millis();
-    Ok(format!("unix_ms:{millis}"))
-}
-
-fn validate_agent_verify_snapshot_path(
-    root: &Path,
-    path: &Path,
-    flag: &str,
-) -> Result<PathBuf, String> {
-    let root = root.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent verify root {} failed: {err}",
-            root.display()
-        )
-    })?;
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent verify {flag} {} failed: {err}",
-            path.display()
-        )
-    })?;
-
-    if !candidate.starts_with(&root) {
-        return Err(format!(
-            "agent verify {flag} {} must stay under root {}",
-            path.display(),
-            root.display()
-        ));
-    }
-
-    Ok(candidate)
-}
-
-fn read_agent_verify_snapshot(path: &Path, label: &str) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
-        format!(
-            "read agent verify {label} snapshot {} failed: {err}",
-            output::outcome::display_path(path)
-        )
-    })
-}
-
-fn resolve_agent_brief_working_set(
-    root: &Path,
-    working_set: &AgentBriefWorkingSet,
-) -> Result<AgentBriefResolvedWorkingSet, String> {
-    match working_set {
-        AgentBriefWorkingSet::Diff(path) => {
-            let diff_path = validate_agent_brief_diff_path(root, path)?;
-            let diff_text = analysis::load_diff(root, None, Some(&diff_path))?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
-            let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
-            Ok(AgentBriefResolvedWorkingSet::diff(
-                path.clone(),
-                changed_lines,
-            ))
-            .map(|working_set| working_set.with_changed_owners(changed_owners))
-        }
-        AgentBriefWorkingSet::Base(base) => {
-            let diff_text = analysis::load_diff(root, Some(base.as_str()), None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
-            let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
-            Ok(AgentBriefResolvedWorkingSet::base(
-                base.clone(),
-                changed_lines,
-            ))
-            .map(|working_set| working_set.with_changed_owners(changed_owners))
-        }
-        AgentBriefWorkingSet::Files(files) => Ok(AgentBriefResolvedWorkingSet::files(
-            files
-                .iter()
-                .map(|file| normalize_agent_brief_path(root, file))
-                .collect(),
-        )),
-        AgentBriefWorkingSet::SeamId(seam_id) => {
-            Ok(AgentBriefResolvedWorkingSet::seam_id(seam_id.clone()))
-        }
-    }
-}
-
-fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
-    let root = root.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent brief root {} failed: {err}",
-            root.display()
-        )
-    })?;
-    let candidate = if path.is_absolute() || path.exists() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent brief diff {} failed: {err}",
-            path.display()
-        )
-    })?;
-
-    if !candidate.starts_with(&root) {
-        return Err(format!(
-            "agent brief --diff {} must stay under root {}",
-            path.display(),
-            root.display()
-        ));
-    }
-
-    Ok(candidate)
-}
-
-fn agent_brief_lines_from_diff(root: &Path, diff_text: &str) -> Vec<AgentBriefLine> {
-    analysis::parse_unified_diff(diff_text)
-        .into_iter()
-        .flat_map(|file| {
-            let path = normalize_agent_brief_path(root, &file.path);
-            file.added_lines
-                .into_iter()
-                .map(move |line| AgentBriefLine::new(path.clone(), line.line))
-        })
-        .collect()
-}
-
-fn agent_brief_owners_for_lines(
-    root: &Path,
-    lines: &[AgentBriefLine],
-) -> Vec<AgentBriefChangedOwner> {
-    let owner_inputs = lines
-        .iter()
-        .map(|line| (line.file.clone(), line.line))
-        .collect::<Vec<_>>();
-    let Ok(owners) = analysis::owner_symbols_for_lines(root, &owner_inputs) else {
-        return Vec::new();
-    };
-
-    owners
-        .into_iter()
-        .map(|owner| AgentBriefChangedOwner::new(owner.file, owner.line, owner.owner))
-        .collect()
-}
-
-fn normalize_agent_brief_path(root: &Path, path: &Path) -> PathBuf {
-    let path_text = path_normalization::normalized_path_text(path);
-    for root_text in path_normalization::normalized_root_prefixes(root) {
-        let prefix = format!("{root_text}/");
-        if let Some(stripped) = path_text.strip_prefix(&prefix) {
-            return PathBuf::from(stripped);
-        }
-    }
-    PathBuf::from(path_text)
-}
-
-mod path_normalization {
-    use std::path::Path;
-
-    pub(super) fn normalized_root_prefixes(root: &Path) -> Vec<String> {
-        let mut prefixes = Vec::new();
-        push_unique_normalized_path(&mut prefixes, root);
-        if let Ok(root) = std::path::absolute(root) {
-            push_unique_normalized_path(&mut prefixes, &root);
-        }
-        if let Ok(root) = root.canonicalize() {
-            push_unique_normalized_path(&mut prefixes, &root);
-        }
-        prefixes
-    }
-
-    fn push_unique_normalized_path(prefixes: &mut Vec<String>, path: &Path) {
-        let text = normalized_path_text(path);
-        if !text.is_empty() && !prefixes.iter().any(|existing| existing == &text) {
-            prefixes.push(text);
-        }
-    }
-
-    pub(super) fn normalized_path_text(path: &Path) -> String {
-        let text = path.to_string_lossy().replace('\\', "/");
-        text.strip_prefix("./").unwrap_or(&text).to_string()
-    }
 }
 
 pub(super) fn init(args: &[String]) -> Result<(), String> {
@@ -2945,26 +2579,6 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         i += 1;
     }
     Ok(options)
-}
-
-fn parse_positive_usize(value: &str, flag: &str) -> Result<usize, String> {
-    let parsed = value
-        .parse::<usize>()
-        .map_err(|err| format!("invalid {flag}: {err}"))?;
-    if parsed == 0 {
-        return Err(format!("invalid {flag}: expected a positive integer"));
-    }
-    Ok(parsed)
-}
-
-fn parse_positive_u64(value: &str, flag: &str) -> Result<u64, String> {
-    let parsed = value
-        .parse::<u64>()
-        .map_err(|err| format!("invalid {flag}: {err}"))?;
-    if parsed == 0 {
-        return Err(format!("invalid {flag}: expected a positive integer"));
-    }
-    Ok(parsed)
 }
 
 enum PilotAnalysisResult {
@@ -7246,6 +6860,9 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::agent_brief::AgentBriefLine;
+    use crate::cli::agent::AgentBriefWorkingSet;
+    use crate::cli::commands_agent_support::normalize_agent_brief_path;
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
