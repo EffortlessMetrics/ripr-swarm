@@ -69080,6 +69080,43 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn evidence_quality_scorecard_treats_incomplete_audit_as_limited() -> Result<(), String> {
+        let mut audit = lane1_scorecard_sample_audit_value()?;
+        audit
+            .as_object_mut()
+            .ok_or_else(|| "sample audit must be an object".to_string())?
+            .insert(
+                "run_limitations".to_string(),
+                serde_json::json!([
+                    {
+                        "category": "lane1_repo_exposure_incomplete",
+                        "phase": "repo_exposure_generation",
+                        "repair_route": "inspect repo-exposure generation"
+                    }
+                ]),
+            );
+        let report = evidence_quality_scorecard_from_values(
+            "unix_ms:1".to_string(),
+            scorecard_inputs_for_test(false),
+            &audit,
+            None,
+            None,
+        )?;
+        let json = evidence_quality_scorecard_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        let kinds = value["unknowns"]
+            .as_array()
+            .ok_or("unknowns must be an array")?
+            .iter()
+            .filter_map(|unknown| unknown["kind"].as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(kinds.contains("lane1_evidence_audit_limited"));
+        assert!(kinds.contains("evidence_health_unavailable"));
+        Ok(())
+    }
+
+    #[test]
     fn evidence_quality_scorecard_names_audit_regeneration_failure() -> Result<(), String> {
         let audit =
             evidence_quality_scorecard_audit_regeneration_failure_audit("repo exposure failed")?;
