@@ -591,7 +591,7 @@ canonical actionable gap
 A repo control-plane/source-of-truth model is useful, but should be treated as
 supporting infrastructure unless it directly increases repair-loop operability.
 Durable product truth remains in repo-owned docs/spec/proposal/ADR/traceability
-surfaces (or a future `.ripr-spec/` namespace), while `.codex/goals/active.toml`
+surfaces (or a future `.ripr-spec/` namespace), while tool-local goal state
 remains operator state that references those durable artifacts.
 
 Practical sequencing rule:
