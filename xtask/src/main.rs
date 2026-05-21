@@ -228,6 +228,8 @@ struct CampaignManifest {
     status: Option<String>,
     issue: Option<String>,
     lane: Option<String>,
+    successor: Option<String>,
+    no_current_goal: Option<bool>,
     end_state: Vec<String>,
     hard_rules: Vec<String>,
     non_goals: Vec<String>,
@@ -25455,11 +25457,23 @@ fn evidence_quality_trend_from_values(
     let root = audit_string(current, &["scope", "root"])
         .or_else(|| audit_string(current, &["inputs", "root"]))
         .unwrap_or_else(|| ".".to_string());
-    let metric_trends = evidence_quality_metric_trends(current, previous);
-    let static_limitation_category_trends =
+    let current_limited_kinds = evidence_quality_current_scorecard_limited_kinds(current);
+    let mut metric_trends = evidence_quality_metric_trends(current, previous);
+    let mut static_limitation_category_trends =
         evidence_quality_static_limitation_category_trends(current, previous);
+    if !current_limited_kinds.is_empty() {
+        evidence_quality_mark_limited_current_trends_unknown(
+            &mut metric_trends,
+            &current_limited_kinds,
+        );
+        evidence_quality_mark_limited_current_trends_unknown(
+            &mut static_limitation_category_trends,
+            &current_limited_kinds,
+        );
+    }
     let summary = evidence_quality_trend_summary(previous, &metric_trends);
-    let unknowns = evidence_quality_trend_unknowns(previous, &metric_trends);
+    let unknowns =
+        evidence_quality_trend_unknowns(previous, &metric_trends, &current_limited_kinds);
 
     Ok(EvidenceQualityTrendReport {
         generated_at,
@@ -25470,6 +25484,50 @@ fn evidence_quality_trend_from_values(
         static_limitation_category_trends,
         unknowns,
     })
+}
+
+fn evidence_quality_current_scorecard_limited_kinds(current: &Value) -> Vec<String> {
+    audit_get(current, &["unknowns"])
+        .and_then(Value::as_array)
+        .map(|unknowns| {
+            unknowns
+                .iter()
+                .filter_map(|unknown| unknown.get("kind").and_then(Value::as_str))
+                .filter(|kind| evidence_quality_current_scorecard_limited_kind(kind))
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn evidence_quality_current_scorecard_limited_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "lane1_evidence_audit_limited"
+            | "evidence_health_limited"
+            | "evidence_quality_scorecard_audit_regeneration_failed"
+    )
+}
+
+fn evidence_quality_mark_limited_current_trends_unknown(
+    trends: &mut [EvidenceQualityTrendMetric],
+    limited_kinds: &[String],
+) {
+    let interpretation = evidence_quality_limited_current_interpretation(limited_kinds);
+    for trend in trends {
+        trend.delta = None;
+        trend.direction = "unknown".to_string();
+        trend.interpretation = interpretation.clone();
+    }
+}
+
+fn evidence_quality_limited_current_interpretation(limited_kinds: &[String]) -> String {
+    format!(
+        "Current scorecard has limited input diagnostics ({}), so trend direction is not claimed.",
+        limited_kinds.join(", ")
+    )
 }
 
 fn evidence_quality_metric_trends(
@@ -25977,6 +26035,7 @@ fn evidence_quality_trend_summary(
 fn evidence_quality_trend_unknowns(
     previous: Option<&Value>,
     metric_trends: &[EvidenceQualityTrendMetric],
+    current_limited_kinds: &[String],
 ) -> Vec<EvidenceQualityTrendUnknown> {
     let mut unknowns = Vec::new();
     if previous.is_none() {
@@ -25985,6 +26044,19 @@ fn evidence_quality_trend_unknowns(
             "trend_history_unavailable",
             "No previous scorecard or audit snapshot was available, so the report cannot claim improvement or regression.",
             Some("report/evidence-quality-trend"),
+        );
+    }
+    if !current_limited_kinds.is_empty() {
+        trend_push_unknown(
+            &mut unknowns,
+            "current_scorecard_limited",
+            &format!(
+                "Current scorecard includes limited input diagnostics ({}), so the trend cannot claim improvement or regression.",
+                current_limited_kinds.join(", ")
+            ),
+            Some(
+                "rerun Lane 1 audit, evidence-health, and scorecard after resolving limited input diagnostics",
+            ),
         );
     }
     for trend in metric_trends
@@ -37751,6 +37823,36 @@ fn validate_campaign_manifest(
                 unfinished.join(", ")
             ));
         }
+
+        let successor = manifest
+            .successor
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let has_no_current_goal_marker = manifest.no_current_goal == Some(true);
+        if successor.is_none() && !has_no_current_goal_marker {
+            violations.push(
+                "closed active campaign must declare `successor = \"<campaign-id>\"` or `no_current_goal = true` before it can remain in `.ripr/goals/active.toml`"
+                    .to_string(),
+            );
+        }
+        if let Some(successor) = successor {
+            if !is_kebab_case_id(successor) {
+                violations.push(format!(
+                    "campaign successor `{successor}` must use kebab-case"
+                ));
+            }
+            if successor == id {
+                violations.push(format!(
+                    "campaign successor `{successor}` must not match the closed campaign id"
+                ));
+            }
+            if !docs.contains(successor) {
+                violations.push(format!(
+                    "docs/IMPLEMENTATION_CAMPAIGNS.md does not mention campaign successor `{successor}`"
+                ));
+            }
+        }
     }
 
     for item in &manifest.work_items {
@@ -38394,6 +38496,12 @@ fn assign_campaign_scalar(
                 manifest.issue = Some(parsed);
             }),
             "lane" => manifest.lane = Some(value.trim_matches('"').to_string()),
+            "successor" => assign_quoted_campaign_value(value, line_number, violations, |parsed| {
+                manifest.successor = Some(parsed);
+            }),
+            "no_current_goal" => {
+                manifest.no_current_goal = parse_campaign_bool(value, line_number, violations);
+            }
             _ => violations.push(format!(
                 "campaign manifest line {line_number} uses unsupported campaign field `{key}`"
             )),
@@ -52082,6 +52190,8 @@ jobs:
         let source = r#"id = "agentic-devex-foundation"
 title = "Agentic DevEx Foundation"
 status = "active"
+successor = "next-campaign"
+no_current_goal = false
 
 objective = """
 Build the repo operating system.
@@ -52110,6 +52220,8 @@ commands = [
 
         assert!(violations.is_empty());
         assert_eq!(manifest.id, Some("agentic-devex-foundation".to_string()));
+        assert_eq!(manifest.successor, Some("next-campaign".to_string()));
+        assert_eq!(manifest.no_current_goal, Some(false));
         assert_eq!(manifest.work_items.len(), 1);
         assert_eq!(
             manifest.work_items[0].id,
@@ -57145,8 +57257,92 @@ stackable = true
     }
 
     #[test]
-    fn campaign_manifest_accepts_closed_when_all_work_items_are_done() {
+    fn campaign_manifest_accepts_closed_when_all_work_items_are_done_with_successor() {
         with_temp_cwd("campaign-closed", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "closed-campaign\nnext-campaign\n\n| `docs/test` | done |\n",
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "closed-campaign"
+title = "Closed Campaign"
+status = "closed"
+successor = "next-campaign"
+end_state = ["Closed proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "done"
+branch = "docs-test"
+stackable = false
+acceptance = "Closed proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(violations.is_empty(), "{violations:?}");
+        });
+    }
+
+    #[test]
+    fn campaign_manifest_accepts_closed_with_no_current_goal_marker() {
+        with_temp_cwd("campaign-closed-no-current-goal", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "closed-campaign\n\n| `docs/test` | done |\n",
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "closed-campaign"
+title = "Closed Campaign"
+status = "closed"
+no_current_goal = true
+end_state = ["Closed proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "done"
+branch = "docs-test"
+stackable = false
+acceptance = "Closed proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(violations.is_empty(), "{violations:?}");
+        });
+    }
+
+    #[test]
+    fn campaign_manifest_rejects_closed_without_successor_or_no_current_goal_marker() {
+        with_temp_cwd("campaign-closed-stale", |root| {
             write(
                 &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
                 "closed-campaign\n\n| `docs/test` | done |\n",
@@ -57181,7 +57377,12 @@ commands = ["cargo xtask check-pr"]
             let validation = super::validate_campaign_manifest(&manifest, &mut violations);
             assert!(validation.is_ok(), "{validation:?}");
 
-            assert!(violations.is_empty(), "{violations:?}");
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("closed active campaign must declare")),
+                "{violations:?}"
+            );
         });
     }
 
@@ -65916,6 +66117,81 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn evidence_quality_trend_marks_limited_current_scorecard_unknown() -> Result<(), String> {
+        let mut current = scorecard_minimal_audit_value(0, 1, 0, 5, 2);
+        let mut previous = scorecard_minimal_audit_value(4, 8, 5, 2, 6);
+        push_scorecard_unknown(&mut current, "lane1_evidence_audit_limited")?;
+        push_scorecard_unknown(&mut current, "evidence_health_limited")?;
+        push_scorecard_unknown(
+            &mut current,
+            "evidence_quality_scorecard_audit_regeneration_failed",
+        )?;
+        set_static_category_count(&mut current, "opaque_helper_call", 1)?;
+        set_static_category_count(&mut previous, "opaque_helper_call", 8)?;
+
+        let report = evidence_quality_trend_from_values(
+            "unix_ms:1".to_string(),
+            trend_inputs_for_test(true),
+            &current,
+            Some(&previous),
+        )?;
+
+        assert_eq!(report.summary.status, "unknown");
+        assert_eq!(report.summary.compared_metrics, 0);
+        assert_eq!(report.summary.improved_metrics, 0);
+        assert_eq!(report.summary.regressed_metrics, 0);
+        assert_eq!(report.summary.unchanged_metrics, 0);
+        assert_eq!(report.summary.unknown_metrics, report.metric_trends.len());
+        assert!(
+            report
+                .metric_trends
+                .iter()
+                .all(|trend| trend.direction == "unknown" && trend.delta.is_none())
+        );
+        assert!(
+            report
+                .static_limitation_category_trends
+                .iter()
+                .all(|trend| trend.direction == "unknown" && trend.delta.is_none())
+        );
+        let current_limited = report
+            .unknowns
+            .iter()
+            .find(|unknown| unknown.kind == "current_scorecard_limited")
+            .ok_or_else(|| "missing current_scorecard_limited trend unknown".to_string())?;
+        assert!(
+            current_limited
+                .summary
+                .contains("lane1_evidence_audit_limited")
+        );
+        assert!(current_limited.summary.contains("evidence_health_limited"));
+        assert!(
+            current_limited
+                .summary
+                .contains("evidence_quality_scorecard_audit_regeneration_failed")
+        );
+
+        let json = evidence_quality_trend_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["status"], "unknown");
+        assert_eq!(
+            value["summary"]["compared_metrics"],
+            serde_json::Value::from(0)
+        );
+        assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
+            unknowns
+                .iter()
+                .any(|unknown| unknown["kind"] == "current_scorecard_limited")
+        }));
+
+        let markdown = evidence_quality_trend_markdown(&report);
+        assert!(markdown.contains("current_scorecard_limited"));
+        assert!(markdown.contains("cannot claim improvement or regression"));
+        Ok(())
+    }
+
+    #[test]
     fn evidence_quality_trend_distinguishes_improvement_regression_and_unchanged()
     -> Result<(), String> {
         let current = scorecard_minimal_audit_value(0, 3, 1, 5, 4);
@@ -66184,6 +66460,23 @@ covered_by = ["cargo xtask check-file-policy"]
                 "uncalibrated_records": uncalibrated_records
             }
         })
+    }
+
+    fn push_scorecard_unknown(value: &mut serde_json::Value, kind: &str) -> Result<(), String> {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "scorecard value should be an object".to_string())?;
+        let unknowns = object
+            .entry("unknowns".to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| "scorecard unknowns should be an array".to_string())?;
+        unknowns.push(serde_json::json!({
+            "kind": kind,
+            "summary": "limited input",
+            "next_repair": "rerun Lane 1 reports"
+        }));
+        Ok(())
     }
 
     fn scorecard_inputs_for_test(previous_loaded: bool) -> EvidenceQualityScorecardInputs {
