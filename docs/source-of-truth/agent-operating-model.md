@@ -51,9 +51,11 @@ later PR implements them and a run succeeds.
 ## Policy rule
 
 Do not invent repo policies. In particular, do not add fields such as
-`requires_human_merge`, stronger branch-protection claims, release authority
-changes, or new support-tier promises unless current repo docs and schemas
-explicitly define them.
+custom merge approval markers, stronger branch-protection claims, release
+authority changes, or new support-tier promises unless current repo docs and
+schemas explicitly define them. For scoped implementation, review, repair,
+validation, merge, and post-merge verification should finish when checks and
+review are clean unless a repo policy or user instruction says otherwise.
 
 ## Claim rule
 
