@@ -8,7 +8,10 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::PilotCommands;
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
 use crate::output::pilot::{PILOT_SUMMARY_SCHEMA_VERSION, PilotSummaryContext};
-use render_helpers::{push_markdown_recommendation, push_path_field, push_top_seam_json, yes_no};
+use render_helpers::{
+    push_markdown_outputs, push_markdown_recommendation, push_path_field, push_top_seam_json,
+    yes_no,
+};
 
 pub(crate) fn render_pilot_summary_json(
     classified: &[ClassifiedSeam],
@@ -179,23 +182,7 @@ pub(crate) fn render_pilot_summary_md(
         }
     }
 
-    out.push_str("## Outputs\n\n");
-    out.push_str(&format!(
-        "- Repo exposure JSON: `{}`\n",
-        display_path(&context.artifacts.repo_exposure_json)
-    ));
-    out.push_str(&format!(
-        "- Repo exposure Markdown: `{}`\n",
-        display_path(&context.artifacts.repo_exposure_md)
-    ));
-    out.push_str(&format!(
-        "- Agent seam packets: `{}`\n",
-        display_path(&context.artifacts.agent_seam_packets_json)
-    ));
-    out.push_str(&format!(
-        "- Pilot summary JSON: `{}`\n\n",
-        display_path(&context.artifacts.pilot_summary_json)
-    ));
+    push_markdown_outputs(&mut out, context);
 
     out.push_str("## Next Commands\n\n");
     out.push_str(

@@ -116,3 +116,26 @@ pub(super) fn why_line(entry: &ClassifiedSeam) -> String {
 pub(super) fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
+
+pub(super) fn push_markdown_outputs(
+    out: &mut String,
+    context: crate::output::pilot::PilotSummaryContext<'_>,
+) {
+    out.push_str("## Outputs\n\n");
+    out.push_str(&format!(
+        "- Repo exposure JSON: `{}`\n",
+        display_path(&context.artifacts.repo_exposure_json)
+    ));
+    out.push_str(&format!(
+        "- Repo exposure Markdown: `{}`\n",
+        display_path(&context.artifacts.repo_exposure_md)
+    ));
+    out.push_str(&format!(
+        "- Agent seam packets: `{}`\n",
+        display_path(&context.artifacts.agent_seam_packets_json)
+    ));
+    out.push_str(&format!(
+        "- Pilot summary JSON: `{}`\n\n",
+        display_path(&context.artifacts.pilot_summary_json)
+    ));
+}
