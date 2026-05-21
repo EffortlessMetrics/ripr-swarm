@@ -16394,7 +16394,7 @@ fn evidence_health_report_artifacts_are_complete() -> Result<(), String> {
             json_path.display()
         ));
     }
-    validate_complete_evidence_health_json(&value, &json_path)?;
+    validate_complete_evidence_health_json(&value, json_path)?;
 
     let markdown = fs::read_to_string(md_path).map_err(|err| {
         format!(
