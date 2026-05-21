@@ -37224,6 +37224,11 @@ fn validate_support_tier_row(
         ));
     }
 
+    let proof_spans = inline_code_spans(&row.proof);
+    let has_known_proof_reference = proof_spans
+        .iter()
+        .any(|command| support_tier_proof_reference_is_known(root, command));
+
     if support_tier_requires_proof(&tier) && row.proof.trim().is_empty() {
         violations.push(format!(
             "{display}:{} support-tier row `{}` with tier `{tier}` must name proof",
@@ -37231,8 +37236,15 @@ fn validate_support_tier_row(
             support_tier_row_label(row)
         ));
     }
+    if support_tier_requires_proof(&tier) && !has_known_proof_reference {
+        violations.push(format!(
+            "{display}:{} support-tier row `{}` with tier `{tier}` must name a known proof command or proof artifact",
+            row.line,
+            support_tier_row_label(row)
+        ));
+    }
 
-    for command in inline_code_spans(&row.proof) {
+    for command in proof_spans {
         validate_support_tier_proof_command(root, display, row, &command, violations);
     }
 }
@@ -37278,6 +37290,17 @@ fn inline_code_spans(text: &str) -> Vec<String> {
         rest = &after_start[end + 1..];
     }
     spans
+}
+
+fn support_tier_proof_reference_is_known(root: &Path, command: &str) -> bool {
+    if let Some(rest) = command.strip_prefix("cargo xtask ") {
+        let command_name = rest.split_whitespace().next().unwrap_or_default();
+        return known_xtask_command(command_name);
+    }
+
+    (command.starts_with(".github/workflows/") || command.starts_with("scripts/"))
+        && doc_artifact_path_safety_violation(command).is_none()
+        && root.join(command).exists()
 }
 
 fn validate_support_tier_proof_command(
@@ -58021,6 +58044,25 @@ linked_spec = "RIPR-SPEC-0001"
                 violations
                     .iter()
                     .any(|violation| violation.contains("with tier `usable` must name proof")),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn support_tiers_reject_stable_claim_with_only_markdown_links() -> Result<(), String> {
+        with_temp_cwd("support-tiers-link-only-proof", |root| {
+            write_support_tier_fixture(
+                root,
+                "| Rust gap repair loop | `usable` | CLI | [workflow](../FIRST_PR_WORKFLOW.md), [capability matrix](../CAPABILITY_MATRIX.md) | Links alone are not proof commands. |\n",
+            );
+
+            let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("must name a known proof command or proof artifact")
+                }),
                 "{violations:#?}"
             );
             Ok(())
