@@ -127,6 +127,7 @@ Current reference docs:
 - [Language adapter preview workflow](LANGUAGE_ADAPTER_PREVIEW.md)
 - [Static limits](STATIC_LIMITS.md)
 - [Badge policy](BADGE_POLICY.md)
+- [Badge adoption](BADGE_ADOPTION.md)
 - [Generated evidence discipline](GENERATED_EVIDENCE.md)
 - [Verification](VERIFICATION.md)
 - [Verification contracts](verification/README.md)
