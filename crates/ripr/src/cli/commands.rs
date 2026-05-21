@@ -25,6 +25,8 @@ const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
+mod shared;
+use shared::{load_configured_check_input, require_root_dir};
 
 pub(super) fn agent(args: &[String]) -> Result<(), String> {
     match parse_agent_args(args)? {
@@ -71,19 +73,8 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent start root {} is not a directory",
-            options.root.display()
-        ));
-    }
-
-    let config = load_for_root(&options.root)?;
-    let mut input = CheckInput {
-        root: options.root.clone(),
-        ..CheckInput::default()
-    };
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    require_root_dir("agent start", &options.root)?;
+    let (config, input) = load_configured_check_input(&options.root)?;
 
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
@@ -139,19 +130,8 @@ fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent brief root {} is not a directory",
-            options.root.display()
-        ));
-    }
-
-    let config = load_for_root(&options.root)?;
-    let mut input = CheckInput {
-        root: options.root.clone(),
-        ..CheckInput::default()
-    };
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    require_root_dir("agent brief", &options.root)?;
+    let (config, input) = load_configured_check_input(&options.root)?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
     let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
@@ -173,12 +153,7 @@ fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    if !options.root.is_dir() {
-        return Err(format!(
-            "agent packet root {} is not a directory",
-            options.root.display()
-        ));
-    }
+    require_root_dir("agent packet", &options.root)?;
 
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         let rendered = render_agent_packet_from_gap_ledger(gap_ledger, gap_id)?;
