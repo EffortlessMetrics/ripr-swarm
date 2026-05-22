@@ -118,6 +118,9 @@ Useful references:
 
 - [Output schema](OUTPUT_SCHEMA.md) for field contracts.
 - [Support tiers](status/SUPPORT_TIERS.md) for maturity and trust boundaries.
+- [Preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md) for the
+  proof required before a preview language/class can be reviewed for stronger
+  status.
 - [Capability matrix](CAPABILITY_MATRIX.md) for proof artifacts.
 - [Language adapter preview dogfood receipts](handoffs/2026-05-13-language-adapter-preview-receipts.md)
   for the checked TypeScript/Python preview receipt cases.

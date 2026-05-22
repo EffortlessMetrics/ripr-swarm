@@ -5502,6 +5502,8 @@ RIPR-SPEC-0044 defines the preview evidence promotion packet. The
 `ripr policy preview-promote` command writes a read-only advisory packet for a
 preview language and evidence class. The default result is blocked:
 `allowed_now = false` with reason `preview promotion evidence not supplied`.
+The maintainer-facing proof checklist is
+[Preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md).
 
 Command:
 

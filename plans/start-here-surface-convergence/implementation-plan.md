@@ -43,8 +43,8 @@ canonical repair unit, state names, receipt lifecycle, and non-claims.
 | #203 | `cli: converge start-here command language` | done |
 | #204 | `receipt: standardize receipt lifecycle state` | done |
 | #205 | `output: standardize no-output and fail-closed states` | done |
-| #206 | `policy(language): define preview promotion proof criteria` | ready |
-| #207 | `dogfood: record external-style start-here receipts` | blocked |
+| #206 | `policy(language): define preview promotion proof criteria` | done |
+| #207 | `dogfood: record external-style start-here receipts` | ready |
 | #208 | `campaign: close start-here surface convergence` | blocked |
 
 ## Work Item 1: docs(product): open start-here surface convergence stack

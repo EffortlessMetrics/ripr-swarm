@@ -2934,6 +2934,7 @@ code = [
   "crates/ripr/src/cli/help.rs",
 ]
 outputs = [
+  "docs/policy/PREVIEW_PROMOTION_CRITERIA.md",
   "docs/specs/RIPR-SPEC-0044-preview-evidence-promotion-packet.md",
   "docs/specs/README.md",
   "docs/OUTPUT_SCHEMA.md",
@@ -3533,6 +3534,7 @@ code = [
   "crates/ripr/src/cli/help/overview.rs",
 ]
 outputs = [
+  "docs/policy/PREVIEW_PROMOTION_CRITERIA.md",
   "fixtures/first_successful_pr/boundary-gap/expected/start-here.md",
   "fixtures/first_successful_pr/blocked-ledger/expected/start-here.md",
   "fixtures/first_successful_pr/empty-diff/expected/start-here.md",
