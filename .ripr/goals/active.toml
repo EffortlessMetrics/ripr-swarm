@@ -217,7 +217,7 @@ commands = [
 
 [[work_item]]
 id = "calibration/runtime-confidence-coverage-audit"
-status = "ready"
+status = "done"
 branch = "calibration-runtime-confidence-coverage-audit"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
@@ -231,5 +231,22 @@ commands = [
   "cargo xtask evidence-quality-scorecard",
   "cargo xtask evidence-quality-trend",
   "cargo xtask check-static-language",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "dogfood/finding-alignment-examples-refresh"
+status = "ready"
+branch = "dogfood-finding-alignment-examples-refresh"
+stackable = false
+plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
+specs = [
+  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
+]
+acceptance = "Refresh finding-alignment dogfood examples only for material burn-down deltas; examples include canonical_gap_id, evidence_class, gap_state, actionability, raw finding summary, repair route or no-action reason, verify route where applicable, and before/after audit or scorecard context; existing presentation-text and config/policy examples are not duplicated without a new delta."
+commands = [
+  "cargo xtask dogfood",
+  "cargo xtask check-doc-index",
+  "cargo xtask markdown-links",
   "cargo xtask check-pr",
 ]
