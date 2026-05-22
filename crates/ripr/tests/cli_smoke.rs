@@ -432,7 +432,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         "--root",
         ".",
         "--base",
-        "origin/main",
+        "HEAD",
         "--head",
         "HEAD",
         "--gap-ledger",
@@ -457,7 +457,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         json_pointer_str(&report, "/selected/repair/route")?,
         "AddBoundaryAssertion"
     );
-    assert_eq!(json_pointer_str(&report, "/inputs/base")?, "origin/main");
+    assert_eq!(json_pointer_str(&report, "/inputs/base")?, "HEAD");
     assert_eq!(json_pointer_str(&report, "/inputs/head")?, "HEAD");
     assert_eq!(json_pointer_str(&report, "/preflight/mode")?, "write");
     assert!(
