@@ -7458,22 +7458,23 @@ Field contract:
   canonical gap id when present.
 - `selected.language` and `selected.language_status` keep Rust stable evidence
   distinct from preview evidence when a top gap is selected.
-- `selected.current_evidence_strength` names the conservative static evidence
-  strength for the selected top gap.
-- `selected.missing_discriminator` names the exact discriminator the current
-  evidence does not show.
+- `selected.current_evidence_strength`,
+  `selected.missing_discriminator`, and `selected.focused_proof_intent`
+  provide the one-screen recommendation contract. They are derived from typed
+  gap kind and repair-route fields; consumers must not infer them from
+  Markdown prose.
 - `selected.repair.route`, `selected.repair.target_file`,
   `selected.repair.related_test`, and `selected.repair.suggested_assertion`
   describe the bounded repair route when present.
-- `selected.repair.focused_proof_intent` states the one focused test or output
-  proof intent for the selected repair.
 - `selected.static_limit_kind` and `selected.static_limit_detail` are optional;
   surfaces must show them before suggested action language when they are
   present.
 - `selected.verify_command`, `selected.receipt_command`,
-  `selected.receipt_unavailable_reason`, and `selected.receipt_state` are the
-  static movement proof path. A missing receipt command must be explicit and is
-  not failure, merge approval, mutation proof, or runtime adequacy.
+  `selected.receipt_path`, `selected.receipt_command_source`, and
+  `selected.receipt_state` are the static movement proof path. When the source
+  gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
+  `ripr outcome` command under the configured receipts directory. A missing
+  receipt is not failure, merge approval, mutation proof, or runtime adequacy.
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
@@ -7510,8 +7511,10 @@ Field contract:
 
 Markdown should fit in a PR summary, local handoff, or generated CI summary. It
 should show the selected top gap, no-action state, or blocked recovery state
-first, followed by artifacts, authority, and limits. `empty_diff` must render
-as a no-action state, not a blocked repair.
+first. For a top gap, the first screen must include changed behavior, current
+evidence strength, missing discriminator, focused proof intent, verify command,
+receipt command, and the static advisory boundary before deeper artifact links.
+`empty_diff` must render as a no-action state, not a blocked repair.
 
 ### Review Guidance Outcome Receipt
 
