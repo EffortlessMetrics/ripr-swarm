@@ -76,6 +76,14 @@ Older 0.6.x release-readable counts remain in the shippable closeout snapshot:
 actionable canonical items missing repair routes, verify commands, or named
 static limitations.
 
+Final closeout validation also refreshed the bounded sampled audit on
+2026-05-22. That sampled report covered 5,000 canonical alignment items, 5,630
+raw alignment signals, 61 actionable canonical items, 1,506 alignment static
+limitations, and zero unaligned raw findings, unnamed static unknowns, missing
+repair routes, or missing verify commands. It explicitly recorded
+`repo_exposure_seam_limit = limit_5000_of_40233`, so this is a bounded
+selection signal rather than a full-repo exposure completion claim.
+
 ## Remaining Limits
 
 - `primary_anchor` and `raw_spans[]` are a projection contract, not a promise
@@ -125,7 +133,7 @@ These surfaces can consume the refreshed v2 contract:
 
 ## Closeout Validation
 
-This closeout PR should run:
+Closeout validation for this PR:
 
 ```bash
 cargo xtask goals status
