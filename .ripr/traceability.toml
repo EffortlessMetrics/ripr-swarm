@@ -3485,6 +3485,9 @@ id = "RIPR-SPEC-0053"
 name = "Start-here surface convergence"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 tests = [
+  "crates/ripr/src/output/receipt_lifecycle.rs",
+  "crates/ripr/src/output/agent_receipt.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
@@ -3494,10 +3497,17 @@ tests = [
   "xtask/src/main.rs",
 ]
 fixtures = [
+  "fixtures/actionable-gap-outcomes-corpus/corpus.json",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
   "fixtures/boundary_gap/expected/pr-review-front-panel",
+  "fixtures/editor_actionable_gap_queue",
+  "fixtures/editor_adoption_assurance",
+  "fixtures/editor_first_pr_bridge",
 ]
 code = [
+  "crates/ripr/src/output/receipt_lifecycle.rs",
+  "crates/ripr/src/output/agent_receipt.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
@@ -3524,6 +3534,7 @@ outputs = [
   "docs/adr/0015-start-here-surfaces-use-canonical-gap-records.md",
   "docs/adr/README.md",
   "docs/DOCUMENTATION.md",
+  "docs/OUTPUT_SCHEMA.md",
   "docs/IMPLEMENTATION_PLAN.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
   "plans/start-here-surface-convergence/implementation-plan.md",

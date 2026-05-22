@@ -51,7 +51,7 @@
     "agent_command": null,
     "receipt": {
       "artifact": null,
-      "status": "not_available"
+      "status": "receipt_not_applicable"
     }
   },
   "movement": {
