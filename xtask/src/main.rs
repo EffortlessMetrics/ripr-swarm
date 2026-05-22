@@ -64558,6 +64558,76 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_evidence_audit_complete_report_counts_cache_store_run_limitation() -> Result<(), String>
+    {
+        let root = temp_dir("lane1-repo-exposure-cache-store-limitation");
+        let output_path = root.join("repo-exposure.json");
+        write(
+            &output_path,
+            r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "evidence_record": {"schema_version":"0.1","seam_id":"seam-cache","location":{"file":"src/cache.rs","line":10},"seam_kind":"predicate_boundary","headline_eligible":true,"related_tests_total":0,"related_tests":[],"static_limitations":[],"raw_findings":[]}
+    }
+  ]
+}"#,
+        );
+        let generation = Lane1EvidenceAuditRepoExposureGeneration {
+            command: "target/debug/ripr check --format repo-exposure-json".to_string(),
+            timeout_ms: 1_200_000,
+            status: "pass".to_string(),
+            failure_reason: None,
+            duration_ms: 1_086_312,
+            exit_code: Some(0),
+            stdout_bytes: 1_234,
+            stderr_bytes: 456,
+            latency_trace_events_total: 2,
+            latency_trace_tail: vec![
+                RepoExposureLatencyTrace {
+                    phase: "cache_store".to_string(),
+                    status: "ignored_skipped_large_entry_seams_38927_limit_20000".to_string(),
+                    duration_ms: 12,
+                },
+                RepoExposureLatencyTrace {
+                    phase: "total".to_string(),
+                    status: "computed".to_string(),
+                    duration_ms: 1_086_312,
+                },
+            ],
+        };
+
+        let report =
+            lane1_evidence_audit_report_from_complete_repo_exposure(".", &output_path, generation);
+        let json = lane1_evidence_audit_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+        assert_eq!(value["summary"]["static_limitations_total"], 1);
+        assert_eq!(
+            value["static_limitations"]["by_category"]["lane1_repo_exposure_cache_store_skipped_large_entry"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["static_limitations"]["repair_routes"]["report/lane1-audit-bounded-diagnostics"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "lane1_repo_exposure_cache_store_skipped_large_entry"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["input"],
+            "classified_seams_38927_limit_20000"
+        );
+        assert_eq!(
+            value["inputs"]["repo_exposure_generation"]["status"],
+            "pass"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn lane1_evidence_audit_limits_incomplete_success_repo_exposure_artifact() -> Result<(), String>
     {
         let root = temp_dir("lane1-repo-exposure-complete-parse-failed");
