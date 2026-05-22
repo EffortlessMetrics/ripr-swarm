@@ -6,15 +6,14 @@ no_current_goal = true
 lane = "1"
 issue = "228"
 
-# This manifest selects the existing Lane 1 finding-alignment burn-down rail
-# after Start-Here Surface Convergence closed with `no_current_goal = true`.
-# The durable sources of truth remain:
+# This closed manifest records the Lane 1 finding-alignment burn-down rail
+# after the closeout selected by swarm #280. The durable sources of truth remain:
 #
 # - docs/lanes/LANE_1_FINDING_ALIGNMENT_BURNDOWN.md
 # - plans/lane1-finding-alignment-burndown/implementation-plan.md
 #
-# This activation PR is routing-only. Behavior work begins with the first ready
-# work item below.
+# This closed copy is historical state. Select a successor campaign before
+# starting behavior-bearing work.
 
 objective = """
 Keep RIPR operating on canonical evidence items instead of raw findings as new

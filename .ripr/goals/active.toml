@@ -5,9 +5,8 @@ no_current_goal = true
 lane = "1"
 issue = "228"
 
-# This manifest selected the existing Lane 1 finding-alignment burn-down rail
-# after Start-Here Surface Convergence closed with `no_current_goal = true`.
-# The rail is now closed and archived at:
+# This closed manifest records the Lane 1 finding-alignment burn-down rail after
+# the closeout selected by swarm #280. The rail is archived at:
 #
 # - .ripr/goals/archive/2026-05-22-lane1-finding-alignment-burndown.toml
 #
@@ -17,7 +16,8 @@ issue = "228"
 # - plans/lane1-finding-alignment-burndown/implementation-plan.md
 #
 # No successor goal is selected here. Future work should start from repo-owned
-# state, current audits, accepted specs, and a fresh active-goal selection.
+# state, current audits, accepted specs, and a fresh active-goal selection before
+# starting behavior-bearing work.
 
 objective = """
 Keep RIPR operating on canonical evidence items instead of raw findings as new
