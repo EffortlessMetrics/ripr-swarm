@@ -730,6 +730,10 @@ fn presentation_text_item(
         classification.gap_state != "actionable" || repair_route.is_some(),
         "actionable finding alignment item must carry a concrete repair route"
     );
+    debug_assert_static_limitation_metadata(
+        &classification.gap_state,
+        &classification.static_limitations,
+    );
 
     FindingAlignmentItem {
         canonical_gap_id: format!("presentation_text::{constant_name}"),
@@ -788,6 +792,10 @@ fn config_policy_item(
         classification.gap_state != "actionable" || repair_route.is_some(),
         "actionable finding alignment item must carry a concrete repair route"
     );
+    debug_assert_static_limitation_metadata(
+        &classification.gap_state,
+        &classification.static_limitations,
+    );
 
     FindingAlignmentItem {
         canonical_gap_id: format!("config_or_policy_constant::{constant_name}"),
@@ -820,6 +828,42 @@ fn config_policy_item(
             suggested_assertion: classification.suggested_assertion,
         }),
     }
+}
+
+fn debug_assert_static_limitation_metadata(
+    gap_state: &str,
+    limitations: &[FindingAlignmentStaticLimitation],
+) {
+    if gap_state != "static_limitation" {
+        return;
+    }
+
+    debug_assert!(
+        !limitations.is_empty(),
+        "static-limitation finding alignment item must carry named limitation metadata"
+    );
+    debug_assert!(
+        limitations.iter().all(|limitation| {
+            finding_alignment_limitation_category_is_named(&limitation.category)
+                && finding_alignment_limitation_repair_route_is_named(&limitation.repair_route)
+                && finding_alignment_limitation_user_actionability_is_named(
+                    &limitation.user_actionability,
+                )
+        }),
+        "static-limitation finding alignment item must carry named category, repair route, and user actionability"
+    );
+}
+
+fn finding_alignment_limitation_category_is_named(category: &str) -> bool {
+    !matches!(category.trim(), "" | "static_unknown" | "unknown")
+}
+
+fn finding_alignment_limitation_repair_route_is_named(repair_route: &str) -> bool {
+    !matches!(repair_route.trim(), "" | "unknown")
+}
+
+fn finding_alignment_limitation_user_actionability_is_named(user_actionability: &str) -> bool {
+    !matches!(user_actionability.trim(), "" | "unknown")
 }
 
 fn classify_presentation_text(
@@ -2487,6 +2531,18 @@ mod tests {
                 .map(|limitation| limitation.category.as_str()),
             Some("presentation_text_visibility_unknown")
         );
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.repair_route.as_str()),
+            Some("trace_string_constant_to_output_or_snapshot_test")
+        );
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.user_actionability.as_str()),
+            Some("unknown_until_visibility_known")
+        );
         Ok(())
     }
 
@@ -2864,6 +2920,18 @@ mod tests {
                 .map(|limitation| limitation.category.as_str()),
             Some("config_policy_flow_unknown")
         );
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.repair_route.as_str()),
+            Some("trace_constant_to_output_schema_validation_or_behavior_sink")
+        );
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.user_actionability.as_str()),
+            Some("unknown_until_config_flow_known")
+        );
         Ok(())
     }
 
@@ -2902,6 +2970,18 @@ mod tests {
                 .first()
                 .map(|limitation| limitation.category.as_str()),
             Some("opaque_config_lookup")
+        );
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.repair_route.as_str()),
+            Some("add_fixture_backed_support_for_opaque_config_lookup")
+        );
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.user_actionability.as_str()),
+            Some("unknown_until_lookup_supported")
         );
         assert!(!item.recommended_repair.contains("mutation"));
         Ok(())
