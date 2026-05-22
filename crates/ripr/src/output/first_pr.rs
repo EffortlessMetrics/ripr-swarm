@@ -2022,7 +2022,7 @@ mod tests {
 
     #[test]
     fn non_git_root_writes_recovery_packet() -> Result<(), String> {
-        let repo = temp_cargo_root("first-pr-not-git")?;
+        let repo = temp_cargo_root_outside_repo("first-pr-not-git")?;
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
         let options = FirstPrOptions::default();
         write_first_pr(&repo, &options)?;
@@ -2114,8 +2114,8 @@ mod tests {
     fn unrelated_git_range_writes_recovery_packet() -> Result<(), String> {
         let repo = temp_repo("first-pr-unrelated-range")?;
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
-        run_git(&repo, &["checkout", "--orphan", "unrelated"])?;
-        run_git(&repo, &["commit", "--allow-empty", "-m", "unrelated"])?;
+        run_git_setup(&repo, &["checkout", "--orphan", "unrelated"])?;
+        run_git_setup(&repo, &["commit", "--allow-empty", "-m", "unrelated"])?;
         let options = FirstPrOptions {
             head: "unrelated".to_string(),
             ..FirstPrOptions::default()
@@ -2459,12 +2459,24 @@ mod tests {
         Ok(path)
     }
 
+    fn temp_cargo_root_outside_repo(name: &str) -> Result<PathBuf, String> {
+        let repo_root = fixture_repo_root()?;
+        let parent = repo_root
+            .parent()
+            .ok_or_else(|| format!("{} has no parent", repo_root.display()))?;
+        write_temp_cargo_root(parent, name)
+    }
+
     fn temp_cargo_root(name: &str) -> Result<PathBuf, String> {
+        write_temp_cargo_root(&env::temp_dir(), name)
+    }
+
+    fn write_temp_cargo_root(parent: &Path, name: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|err| format!("system clock error: {err}"))?
             .as_nanos();
-        let path = env::temp_dir().join(format!("ripr-{name}-{}-{stamp}", std::process::id()));
+        let path = parent.join(format!("ripr-{name}-{}-{stamp}", std::process::id()));
         fs::create_dir_all(&path).map_err(|err| format!("mkdir {}: {err}", path.display()))?;
         fs::write(
             path.join("Cargo.toml"),
