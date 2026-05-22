@@ -85,6 +85,8 @@ calls, generated tests, source edits, or mutation execution.
 
 Issue: [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140)
 
+Status: done in swarm #229 proof on 2026-05-22.
+
 ### Goal
 
 Add the class-by-class audit map that shows where raw signals still leak or
@@ -107,6 +109,20 @@ missing repair routes, missing verify commands, and top examples.
 - `canonical_items_without_repair_route` is reported.
 - `canonical_items_without_verify_command` is reported.
 - `raw_to_canonical_ratio` remains visible.
+
+### Current Proof
+
+The 2026-05-22 live sampled audit reports:
+
+- `alignment_coverage_by_class`: 7 evidence classes;
+- `unaligned_raw_findings_by_class`: empty;
+- `top_unaligned_examples`: empty because no unaligned raw findings remain in
+  the sampled audit;
+- `same_line_duplicate_groups`: 10 groups;
+- `static_unknown_without_named_limitation`: 0;
+- `canonical_items_without_repair_route`: 0;
+- `canonical_items_without_verify_command`: 0;
+- `raw_to_canonical_ratio`: 1.1392.
 
 ### Proof Commands
 
