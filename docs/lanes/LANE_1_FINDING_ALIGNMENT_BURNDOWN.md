@@ -1,6 +1,6 @@
 # Lane 1: Finding Alignment Burn-Down
 
-Status: open planning rail
+Status: closed
 
 Opened: 2026-05-17
 
@@ -92,7 +92,7 @@ repairs.
 | 11 | [#1160](https://github.com/EffortlessMetrics/ripr/issues/1160) | `calibration/runtime-confidence-coverage-audit` | Report calibrated-supported versus static-only canonical items by evidence class. | done; source #1160 is closed and current Lane 1 audit/scorecard output reports runtime confidence coverage by canonical evidence class without adding mutation execution |
 | 12 | [swarm #267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267) / [source #1149](https://github.com/EffortlessMetrics/ripr/issues/1149) | `dogfood/finding-alignment-examples-refresh` | Refresh real examples after new burn-down deltas instead of duplicating existing dogfood fixtures. | done via swarm #276; receipts now include canonical gap identity, raw finding summary, before/after context, and the material #252/#266/#272 examples |
 | 13 | [swarm #274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274) / [source #1153](https://github.com/EffortlessMetrics/ripr/issues/1153) | `docs/canonical-alignment-contract-refresh` | Refresh the downstream handoff only after material burn-down changes. | done via swarm #281; the v2 handoff now reflects refreshed dogfood receipt fields, supported opaque config report lookup, actionable predicate-boundary lead, and runtime static-only class trend boundaries |
-| 14 | [swarm #280](https://github.com/EffortlessMetrics/ripr-swarm/issues/280) | `campaign/finding-alignment-burndown-closeout` | Close the burn-down rail with improved classes, remaining unknowns, downstream consumers, and next repair target. | ready |
+| 14 | [swarm #280](https://github.com/EffortlessMetrics/ripr-swarm/issues/280) | `campaign/finding-alignment-burndown-closeout` | Close the burn-down rail with improved classes, remaining unknowns, downstream consumers, and next repair target. | done via [closeout handoff](../handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md) |
 
 Related legacy issues stay visible but should not be treated as the only Lane 1
 burn-down rail:
@@ -180,9 +180,15 @@ cargo xtask check-pr
 git diff --check
 ```
 
-## Closeout Conditions
+## Closeout
 
-This rail can close when:
+This rail closed on 2026-05-22 in the
+[Lane 1 Finding Alignment Burn-Down closeout](../handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md).
+The closeout records the improved evidence classes, moved counts, remaining
+limitations, downstream consumers, and the next audit-driven evidence class
+selection rule.
+
+This rail could close because:
 
 - #1140 identifies remaining coverage gaps by evidence class;
 - user-facing static unknown canonical items stay named and repair-routed;

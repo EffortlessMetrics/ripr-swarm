@@ -89,6 +89,7 @@ Current how-to docs:
 - [Lane 1 evidence quality leadership tracker](lanes/LANE_1_EVIDENCE_QUALITY_LEADERSHIP.md)
 - [Lane 1 user-visible output evidence tracker](lanes/LANE_1_USER_VISIBLE_OUTPUT_EVIDENCE.md)
 - [Lane 1 finding alignment burn-down tracker](lanes/LANE_1_FINDING_ALIGNMENT_BURNDOWN.md)
+- [Lane 1 finding alignment burn-down closeout](handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md)
 - [Lane 2 policy readiness tracker](policy/POLICY_READINESS.md)
 - [Lane 2 policy operations tracker](policy/POLICY_OPERATIONS.md)
 - [Preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md)
