@@ -2,10 +2,17 @@
 
 Status: advisory
 
-Top issue:
+Start here:
+- State: baseline_only
+- Source: gate_decision
+- Identity: suppressed
 - File: src/suppressed.rs:6
+- Repair route: not_available
 - Class: weakly_exposed
 - Missing discriminator: suppressed == 6
+- Verify command: not_available
+- Receipt: not_available
+- Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.
 
 Movement:
 - New policy-eligible gaps: 0

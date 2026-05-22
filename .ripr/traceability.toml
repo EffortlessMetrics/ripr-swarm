@@ -3484,10 +3484,30 @@ metrics = [
 id = "RIPR-SPEC-0053"
 name = "Start-here surface convergence"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
-tests = []
-fixtures = []
-code = []
+tests = [
+  "crates/ripr/src/output/pr_evidence_ledger.rs",
+  "crates/ripr/src/output/pr_review_front_panel.rs",
+  "xtask/src/main.rs",
+]
+fixtures = [
+  "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel",
+]
+code = [
+  "crates/ripr/src/output/pr_evidence_ledger.rs",
+  "crates/ripr/src/output/pr_review_front_panel.rs",
+]
 outputs = [
+  "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/acknowledged/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/actionable/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/advisory-only/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/baseline-resolved/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/blocked/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/missing-proof/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/summary-only/pr-review-front-panel.md",
+  "fixtures/boundary_gap/expected/pr-review-front-panel/suppressed/pr-review-front-panel.md",
   "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md",
   "docs/specs/README.md",
   "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md",
