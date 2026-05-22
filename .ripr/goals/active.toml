@@ -237,7 +237,7 @@ commands = [
 [[work_item]]
 id = "dogfood/finding-alignment-examples-refresh"
 status = "done"
-branch = "dogfood-finding-alignment-examples-refresh-2"
+branch = "dogfood-finding-alignment-examples-refresh"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
 specs = [
