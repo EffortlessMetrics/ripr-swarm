@@ -61435,6 +61435,25 @@ commands = ["cargo xtask check-pr"]
     }
 
     #[test]
+    fn goals_next_omits_no_current_goal_guidance_without_marker() {
+        for no_current_goal in [None, Some(false)] {
+            let manifest = CampaignManifest {
+                status: Some("closed".to_string()),
+                no_current_goal,
+                ..Default::default()
+            };
+
+            let body = super::campaign_next_report_body(&manifest, &[]);
+
+            assert!(body.contains("No ready work items."));
+            assert!(!body.contains("## No Current Goal"));
+            assert!(!body.contains(
+                "do not continue the closed campaign or infer a successor from chat history"
+            ));
+        }
+    }
+
+    #[test]
     fn campaign_manifest_rejects_closed_without_successor_or_no_current_goal_marker() {
         with_temp_cwd("campaign-closed-stale", |root| {
             write(
