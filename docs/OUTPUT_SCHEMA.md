@@ -2507,7 +2507,7 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
       "source_file": "src/pricing.rs",
       "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
       "receipt_command_or_path": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id abc --json --out target/ripr/reports/agent-receipt.json",
-      "receipt_state": "present",
+      "receipt_state": "receipt_movement_improved",
       "outcome_state": "evidence_improved",
       "seam_id": "abc",
       "before": "weakly_gripped",
@@ -2545,6 +2545,10 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
 `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
 and `unknown`. Raw findings do not determine outcome state; the join is based
 on canonical packet identity, seam identity, or the packet primary anchor.
+`receipt_state` uses the canonical receipt lifecycle vocabulary:
+`receipt_missing`, `receipt_found`, `receipt_stale`,
+`receipt_gap_mismatch`, `receipt_movement_improved`,
+`receipt_movement_unchanged`, or `receipt_not_applicable`.
 `orphaned_receipts[]` preserves receipt artifacts that do not match any current
 packet so attempt history remains visible without creating new actionable gaps.
 
@@ -3534,6 +3538,7 @@ JSON shape:
     "commands_run": ["cargo test discounted_total_boundary_discriminator"]
   },
   "summary": {
+    "receipt_state": "receipt_movement_improved",
     "remaining_gap": "No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail.",
     "next_recommendation": "Keep the focused test and attach this receipt with the agent verify JSON.",
     "next_action": {
@@ -3593,6 +3598,10 @@ Field contract:
 - `summary.remaining_gap` / `summary.next_recommendation` - static advisory
   guidance derived from the verify bucket. It does not claim runtime
   confirmation.
+- `summary.receipt_state` - canonical receipt lifecycle state for the selected
+  receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
+  `receipt_gap_mismatch`, `receipt_movement_improved`,
+  `receipt_movement_unchanged`, or `receipt_not_applicable`.
 - `summary.next_action` - structured static guidance for agents and reviewers.
   `kind` is `improved`, `changed`, `regressed`, `unchanged`, `new_gap`,
   `resolved`, or `unknown`; `summary` is a short static movement statement;
@@ -6046,6 +6055,7 @@ JSON shape:
       "source": "agent_receipt",
       "canonical_gap_id": "pricing::discount::threshold_equality",
       "seam_id": "67fc764ba37d77bd",
+      "receipt_state": "receipt_movement_improved",
       "static_movement": {
         "state": "improved",
         "source": "agent_receipt",
@@ -6111,6 +6121,10 @@ Field contract:
   and are not baseline debt. `suppressions[].canonical_gap_id` is copied from
   gate or baseline-delta evidence when available.
 - `repair_receipts[]` - supplied outcome or agent receipt evidence.
+  `repair_receipts[].receipt_state` carries the canonical receipt lifecycle
+  label: `receipt_missing`, `receipt_found`, `receipt_stale`,
+  `receipt_gap_mismatch`, `receipt_movement_improved`,
+  `receipt_movement_unchanged`, or `receipt_not_applicable`.
   `repair_receipts[].static_movement` uses the same object shape as review
   guidance outcome receipts, including `state`, `source`, and `artifact`; the
   ledger must not infer receipt success from a missing artifact.
@@ -7527,6 +7541,10 @@ Field contract:
   gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
   `ripr outcome` command under the configured receipts directory. A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
+  `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
+  `receipt_missing`, `receipt_found`, `receipt_stale`,
+  `receipt_gap_mismatch`, `receipt_movement_improved`,
+  `receipt_movement_unchanged`, or `receipt_not_applicable`.
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.

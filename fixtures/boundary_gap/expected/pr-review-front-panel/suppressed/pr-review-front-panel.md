@@ -11,7 +11,7 @@ Start here:
 - Class: weakly_exposed
 - Missing discriminator: suppressed == 6
 - Verify command: not_available
-- Receipt: not_available
+- Receipt: receipt_not_applicable
 - Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.
 
 Movement:

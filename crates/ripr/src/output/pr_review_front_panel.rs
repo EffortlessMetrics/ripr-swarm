@@ -1,6 +1,11 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use super::receipt_lifecycle::{
+    RECEIPT_MISSING, RECEIPT_NOT_APPLICABLE, receipt_lifecycle_state,
+    receipt_lifecycle_state_from_receipt_value,
+};
+
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "pr_review_front_panel";
 
@@ -546,7 +551,7 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
     if let Some(issue) = &report.top_issue
         && (issue.agent_command.is_some()
             || issue.verify_command.is_some()
-            || issue.receipt.status != "not_available")
+            || issue.receipt.status != RECEIPT_NOT_APPLICABLE)
         && report.summary.policy_state != "waived"
         && report.summary.policy_state != "suppressed"
         && report.summary.top_issue_state != "summary_only"
@@ -602,7 +607,7 @@ fn issue_repair_route(issue: &PanelTopIssue) -> String {
         "agent_handoff".to_string()
     } else if issue.verify_command.is_some() {
         "verify_existing_repair".to_string()
-    } else if issue.receipt.status != "not_available" {
+    } else if issue.receipt.status != RECEIPT_NOT_APPLICABLE {
         "inspect_receipt_state".to_string()
     } else {
         "not_available".to_string()
@@ -1356,7 +1361,7 @@ fn top_issue_from_first_action(
         receipt: receipt_from_input(
             input.receipt_path.as_deref(),
             parsed.receipt.as_ref(),
-            "missing",
+            RECEIPT_MISSING,
         ),
     })
 }
@@ -1402,7 +1407,7 @@ fn top_issue_from_guidance(
         }),
         receipt: PanelReceipt {
             artifact: None,
-            status: "missing".to_string(),
+            status: RECEIPT_MISSING.to_string(),
         },
     })
 }
@@ -1450,9 +1455,9 @@ fn top_issue_from_gate_decision(
         receipt: PanelReceipt {
             artifact: None,
             status: if decision == "suppressed" {
-                "not_available".to_string()
+                RECEIPT_NOT_APPLICABLE.to_string()
             } else {
-                "missing".to_string()
+                RECEIPT_MISSING.to_string()
             },
         },
     })
@@ -1480,7 +1485,7 @@ fn top_issue_from_baseline_delta(
         agent_command: None,
         receipt: PanelReceipt {
             artifact: None,
-            status: "not_available".to_string(),
+            status: RECEIPT_NOT_APPLICABLE.to_string(),
         },
     })
 }
@@ -1513,9 +1518,16 @@ fn top_issue_from_assistant_health(
         agent_command: handoff.and_then(|value| string_path(value, &["agent_command"])),
         receipt: PanelReceipt {
             artifact: receipt.and_then(|value| string_path(value, &["artifact"])),
-            status: receipt
-                .and_then(|value| string_path(value, &["status"]))
-                .unwrap_or_else(|| "missing".to_string()),
+            status: parsed
+                .receipt
+                .as_ref()
+                .map(receipt_lifecycle_state_from_receipt_value)
+                .or_else(|| {
+                    receipt
+                        .and_then(|value| string_path(value, &["status"]))
+                        .map(|state| receipt_lifecycle_state(Some(&state)))
+                })
+                .unwrap_or_else(|| RECEIPT_MISSING.to_string()),
         },
     })
 }
@@ -1604,10 +1616,12 @@ fn receipt_from_input(
                 ])
             })
         }),
-        status: if receipt_path.is_some() || receipt_json.is_some() {
-            "present".to_string()
+        status: if let Some(receipt) = receipt_json {
+            receipt_lifecycle_state_from_receipt_value(receipt)
+        } else if receipt_path.is_some() {
+            receipt_lifecycle_state(Some("present"))
         } else {
-            missing_status.to_string()
+            receipt_lifecycle_state(Some(missing_status))
         },
     }
 }

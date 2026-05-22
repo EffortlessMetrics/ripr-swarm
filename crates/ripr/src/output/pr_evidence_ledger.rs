@@ -1,6 +1,11 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+use super::receipt_lifecycle::{
+    RECEIPT_MISSING, receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
+    receipt_lifecycle_state_from_receipt_value,
+};
+
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "pr_evidence_ledger";
 const LIMITS_NOTE: &str = "Read-only advisory PR evidence ledger over existing static RIPR artifacts; gate-decision remains the pass/fail authority.";
@@ -124,6 +129,7 @@ struct RepairReceipt {
     source: String,
     canonical_gap_id: Option<String>,
     seam_id: Option<String>,
+    receipt_state: String,
     static_movement: StaticMovement,
     focused_test: Option<String>,
     receipt: String,
@@ -370,7 +376,7 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
         }
         out.push_str(&format!(
             "- Receipt state: {}\n",
-            route.receipt_state.as_deref().unwrap_or("receipt_missing")
+            route.receipt_state.as_deref().unwrap_or(RECEIPT_MISSING)
         ));
         if let Some(language) = route.language.as_deref() {
             let status = route.language_status.as_deref().unwrap_or("unknown");
@@ -883,6 +889,7 @@ fn repair_receipts_from_sources(
             seam_id: string_path(receipt, &["provenance", "seam_id"])
                 .or_else(|| string_path(receipt, &["seam", "seam_id"]))
                 .or_else(|| string_path(receipt, &["guidance", "seam_id"])),
+            receipt_state: receipt_lifecycle_state_from_receipt_value(receipt),
             static_movement: StaticMovement {
                 state,
                 source: "agent_receipt".to_string(),
@@ -912,6 +919,9 @@ fn repair_receipts_from_sources(
                 source: "recommendation_calibration".to_string(),
                 canonical_gap_id: canonical_gap_id_from_value(recommendation),
                 seam_id: string_path(recommendation, &["seam_id"]),
+                receipt_state: receipt_lifecycle_state_from_movement(
+                    string_path(recommendation, &["static_movement", "state"]).as_deref(),
+                ),
                 static_movement: StaticMovement {
                     state: string_path(recommendation, &["static_movement", "state"])
                         .unwrap_or_else(|| "unknown".to_string()),
@@ -1063,7 +1073,8 @@ fn route_from_gap_ledger(value: &Value) -> Option<RepairRoute> {
         verify_command: first_string_array_item(record, &["verification_commands"]),
         receipt_command: string_path(record, &["receipt_command"]),
         receipt_state: string_path(record, &["receipt", "state"])
-            .or_else(|| string_path(record, &["receipt", "movement"])),
+            .or_else(|| string_path(record, &["receipt", "movement"]))
+            .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(record, &["static_limit_kind"]),
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         agent_command: string_path(route, &["agent_command"]).or_else(|| {
@@ -1136,7 +1147,8 @@ fn route_from_zero_status(value: &Value) -> Option<RepairRoute> {
         related_test: string_path(route, &["related_test"]),
         verify_command: string_path(route, &["verify_command"]),
         receipt_command: string_path(route, &["receipt_command"]),
-        receipt_state: string_path(route, &["receipt_state"]),
+        receipt_state: string_path(route, &["receipt_state"])
+            .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(route, &["static_limit_kind"]),
         static_limit_detail: string_path(route, &["static_limit_detail"]),
         agent_command: string_path(route, &["agent_command"]),
@@ -1167,7 +1179,8 @@ fn route_from_pr_guidance(value: &Value) -> Option<RepairRoute> {
         related_test: string_path(item, &["suggested_test", "near_test"]),
         verify_command: string_path(item, &["llm_guidance", "verify_command"]),
         receipt_command: string_path(item, &["llm_guidance", "receipt_command"]),
-        receipt_state: string_path(item, &["receipt_state"]),
+        receipt_state: string_path(item, &["receipt_state"])
+            .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(item, &["static_limit_kind"]),
         static_limit_detail: string_path(item, &["static_limit_detail"]),
         agent_command: seam_id.map(|id| {
@@ -1242,7 +1255,8 @@ fn route_from_baseline_delta(value: &Value) -> Option<RepairRoute> {
         related_test: string_path(item, &["suggested_test", "recommended_test"]),
         verify_command: string_path(item, &["repair", "verify_command"]),
         receipt_command: string_path(item, &["repair", "receipt_command"]),
-        receipt_state: string_path(item, &["receipt_state"]),
+        receipt_state: string_path(item, &["receipt_state"])
+            .map(|state| receipt_lifecycle_state(Some(&state))),
         static_limit_kind: string_path(item, &["static_limit_kind"]),
         static_limit_detail: string_path(item, &["static_limit_detail"]),
         agent_command: seam_id.map(|id| {
@@ -1340,6 +1354,7 @@ fn repair_receipt_json(record: &RepairReceipt) -> Value {
         "source": record.source,
         "canonical_gap_id": record.canonical_gap_id,
         "seam_id": record.seam_id,
+        "receipt_state": record.receipt_state,
         "static_movement": {
             "state": record.static_movement.state,
             "source": record.static_movement.source,
