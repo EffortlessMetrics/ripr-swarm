@@ -1,6 +1,6 @@
 # Lane 1: Finding Alignment Burn-Down
 
-Status: open planning rail
+Status: active planning rail
 
 Opened: 2026-05-17
 
@@ -34,8 +34,8 @@ Downstream PR/CI, editor, policy, and adoption lanes consume this evidence.
 They should render canonical items and policy overlays; they should not infer
 actionability from raw analyzer classes.
 
-This rail does not update `.ripr/goals/active.toml` unless the repo-wide
-operator sequence explicitly makes it active.
+This rail is selected by `.ripr/goals/active.toml` while
+`lane1-finding-alignment-burn-down` remains the active execution manifest.
 
 ## Current Baseline
 
@@ -79,7 +79,7 @@ repairs.
 
 | Order | Issue | Slice | Intent | Status |
 | ---: | --- | --- | --- | --- |
-| 1 | [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140) | `report/finding-alignment-coverage-audit` | Show aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. | open |
+| 1 | [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140) | `report/finding-alignment-coverage-audit` | Show aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. | ready |
 | 2 | [#1141](https://github.com/EffortlessMetrics/ripr/issues/1141) | `analysis/named-static-unknown-invariant` | Keep user-facing static unknown canonical items named and repair-routed. | open |
 | 3 | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) | `analysis/canonical-primary-anchor-raw-spans` | Make `primary_anchor` and raw span support complete enough that downstream surfaces have one placement hint plus supporting evidence. | merged in #1187 |
 | 4 | [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159) | `analysis/top-static-limitation-bucket-burndown` | Pick the top named static limitation bucket from #1140 and repair it with fixture-backed before/after evidence. | source-order-scoped same-test struct literal projection slice merged in #1261; current follow-up widens value-insensitive direct owner-call activation to opaque arguments after the live audit kept `activation_value_unresolved` as the top bucket; remaining bucket stays audit-driven |

@@ -3261,8 +3261,8 @@ Closeout:
 
 ## Focused Lane 1 Tracker: Finding Alignment Burn-Down
 
-Status: open planning rail. This focused tracker is not the active execution
-manifest unless `.ripr/goals/active.toml` explicitly selects it.
+Status: active planning rail. `.ripr/goals/active.toml` currently selects
+`lane1-finding-alignment-burn-down` as the active execution manifest.
 
 Sources of truth:
 
@@ -3299,7 +3299,7 @@ Work items:
 
 | Work item | Status | Notes |
 | --- | --- | --- |
-| `report/finding-alignment-coverage-audit` | open | [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140) audits aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. |
+| `report/finding-alignment-coverage-audit` | ready | [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140) audits aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. |
 | `analysis/named-static-unknown-invariant` | open | [#1141](https://github.com/EffortlessMetrics/ripr/issues/1141) preserves named static limitations for user-facing static unknowns. |
 | `analysis/canonical-primary-anchor-raw-spans` | open | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) completes placement and supporting raw-span evidence for canonical items. |
 | `analysis/top-static-limitation-bucket-burndown` | open | [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159) turns the top named static limitation bucket into fixture-backed analyzer repair. |
