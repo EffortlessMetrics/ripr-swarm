@@ -1,6 +1,6 @@
 # Start-Here Surface Convergence Implementation Plan
 
-Status: active
+Status: closed
 
 Owner: cross-lane; Lane 4 / PR-CI and CLI surfaces lead, Lane 2 owns policy
 meaning, Lane 3 consumes editor-ready state
@@ -18,8 +18,9 @@ First-PR Bridge are closed. `cargo xtask first-pr` and `ripr first-pr` can
 produce start-here packets. Generated CI, PR evidence, report indexes, support
 tiers, preview-language docs, and receipts exist.
 
-The next product gap is convergence: each surface should lead with the same
-canonical repair unit, state names, receipt lifecycle, and non-claims.
+The campaign is closed. Each surface now leads with the same canonical repair
+unit, state names, receipt lifecycle, and non-claims where that surface can
+project start-here evidence.
 
 ## Hard Boundaries
 
@@ -253,6 +254,8 @@ Close only after the issue burn-down proves converged start-here behavior.
 - PR/CI, CLI, receipts, no-output states, preview promotion criteria, and
   dogfood receipts are current.
 - Closeout maps requirements to artifacts and validation commands.
+- The active campaign manifest is archived and records `no_current_goal = true`
+  so the next campaign must be selected explicitly.
 
 ### Proof Commands
 
@@ -266,3 +269,8 @@ cargo xtask check-output-contracts
 cargo xtask check-pr
 git diff --check
 ```
+
+### Closeout
+
+Closed by
+[`docs/handoffs/2026-05-22-start-here-surface-convergence-closeout.md`](../../docs/handoffs/2026-05-22-start-here-surface-convergence-closeout.md).
