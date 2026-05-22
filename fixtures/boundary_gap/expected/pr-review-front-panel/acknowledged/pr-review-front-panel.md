@@ -13,7 +13,7 @@ Start here:
 - Suggested focused test: assert_eq!(ack(), 5)
 - Related test: tests/ack.rs::boundary
 - Verify command: not_available
-- Receipt: missing
+- Receipt: receipt_missing
 - Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.
 
 Movement:

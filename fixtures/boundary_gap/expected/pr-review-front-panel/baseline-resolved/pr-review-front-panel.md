@@ -13,7 +13,7 @@ Start here:
 - Suggested focused test: assert_eq!(gone(), 2)
 - Related test: tests/gone.rs::boundary
 - Verify command: not_available
-- Receipt: not_available
+- Receipt: receipt_not_applicable
 - Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.
 
 Movement:

@@ -7491,38 +7491,46 @@ const SWARM_PLAN_PACKET_REQUIRED_CASES: &[(&str, &str)] = &[
 const ACTIONABLE_GAP_OUTCOMES_CORPUS: &str = "fixtures/actionable-gap-outcomes-corpus/corpus.json";
 
 const ACTIONABLE_GAP_OUTCOMES_REQUIRED_CASES: &[(&str, &str, &str)] = &[
-    ("not_attempted_packet", "not_attempted", "not_attempted"),
+    (
+        "not_attempted_packet",
+        "not_attempted",
+        "receipt_not_applicable",
+    ),
     (
         "receipt_present_without_movement",
         "receipt_present",
-        "present",
+        "receipt_found",
     ),
     (
         "evidence_improved_from_receipt",
         "evidence_improved",
-        "present",
+        "receipt_movement_improved",
     ),
     (
         "evidence_unchanged_from_targeted_outcome",
         "evidence_unchanged",
-        "missing",
+        "receipt_missing",
     ),
     (
         "evidence_regressed_from_targeted_outcome",
         "evidence_regressed",
-        "missing",
+        "receipt_missing",
     ),
     (
         "resolved_from_removed_targeted_outcome",
         "resolved",
-        "missing",
+        "receipt_missing",
     ),
     (
         "attempted_no_receipt_from_new_targeted_outcome",
         "attempted_no_receipt",
-        "missing",
+        "receipt_missing",
     ),
-    ("orphaned_receipt_reported", "not_attempted", "missing"),
+    (
+        "orphaned_receipt_reported",
+        "not_attempted",
+        "receipt_missing",
+    ),
 ];
 
 const FIRST_SUCCESSFUL_PR_CORPUS: &str = "fixtures/first_successful_pr/corpus.json";
@@ -10453,7 +10461,7 @@ fn validate_editor_adoption_assurance_receipt(
         | "server_version_mismatch"
         | "no_workspace"
         | "multi_root"
-        | "preview_adapter_unavailable" => "not_projected",
+        | "preview_adapter_unavailable" => "receipt_not_applicable",
         "wrong_root_artifact" => "receipt_wrong_root",
         "stale_receipt" => "receipt_stale",
         "first_pr_packet_mismatch" => "receipt_gap_mismatch",
@@ -10801,9 +10809,12 @@ fn validate_editor_actionable_gap_queue_receipt(
         ));
     }
     let expected_state = match case {
-        "receipt_improved" | "receipt_unchanged" => "found",
-        "stale_actionable_packet" | "wrong_root_packet" | "malformed_packet" => "not_projected",
-        _ => "missing",
+        "receipt_improved" => "receipt_movement_improved",
+        "receipt_unchanged" => "receipt_movement_unchanged",
+        "stale_actionable_packet" | "wrong_root_packet" | "malformed_packet" => {
+            "receipt_not_applicable"
+        }
+        _ => "receipt_missing",
     };
     if json_string_field(receipt, "receipt_state").as_deref() != Some(expected_state) {
         violations.push(format!(
@@ -21472,14 +21483,8 @@ fn actionable_gap_outcome_from_packet(
         .and_then(|outcome| actionable_gap_targeted_movement(outcome, packet, &id_candidates));
     let receipt_movement = receipt.and_then(actionable_gap_receipt_movement);
     let movement = targeted_movement.or(receipt_movement);
-    let receipt_state = if receipt.is_some() {
-        "present"
-    } else if receipt_input_present {
-        "missing"
-    } else {
-        "not_attempted"
-    }
-    .to_string();
+    let receipt_state =
+        actionable_gap_receipt_lifecycle_state(receipt, receipt_input_present, movement.as_ref());
     let outcome_state = match movement.as_ref() {
         Some(movement)
             if receipt.is_none()
@@ -21533,6 +21538,31 @@ fn actionable_gap_outcome_from_packet(
             .map(|movement| movement.evidence_delta.clone())
             .unwrap_or_default(),
         reason,
+    }
+}
+
+fn actionable_gap_receipt_lifecycle_state(
+    receipt: Option<&Value>,
+    receipt_input_present: bool,
+    movement: Option<&ActionableGapMovement>,
+) -> String {
+    if receipt.is_some()
+        && let Some(movement) = movement
+        && movement.source == "agent_receipt"
+    {
+        match movement.direction.as_deref() {
+            Some("improved" | "resolved") => return "receipt_movement_improved".to_string(),
+            Some("unchanged") => return "receipt_movement_unchanged".to_string(),
+            _ => {}
+        }
+    }
+
+    if receipt.is_some() {
+        "receipt_found".to_string()
+    } else if receipt_input_present {
+        "receipt_missing".to_string()
+    } else {
+        "receipt_not_applicable".to_string()
     }
 }
 
@@ -21744,8 +21774,8 @@ fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<
             "evidence_regressed": state_counts.get("evidence_regressed").copied().unwrap_or(0),
             "resolved": state_counts.get("resolved").copied().unwrap_or(0),
             "unknown": state_counts.get("unknown").copied().unwrap_or(0),
-            "receipts_present": report.outcomes.iter().filter(|outcome| outcome.receipt_state == "present").count(),
-            "receipts_missing_after_input": report.outcomes.iter().filter(|outcome| outcome.receipt_state == "missing").count(),
+            "receipts_present": report.outcomes.iter().filter(|outcome| actionable_gap_receipt_lifecycle_state_is_present(&outcome.receipt_state)).count(),
+            "receipts_missing_after_input": report.outcomes.iter().filter(|outcome| outcome.receipt_state == "receipt_missing").count(),
             "orphaned_receipts": report.orphaned_receipts.len(),
         },
         "outcomes": report.outcomes.iter().map(actionable_gap_outcome_json).collect::<Vec<_>>(),
@@ -21764,6 +21794,13 @@ fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<
             rendered
         })
         .map_err(|err| format!("failed to render actionable-gap outcomes JSON: {err}"))
+}
+
+fn actionable_gap_receipt_lifecycle_state_is_present(state: &str) -> bool {
+    matches!(
+        state,
+        "receipt_found" | "receipt_movement_improved" | "receipt_movement_unchanged"
+    )
 }
 
 fn actionable_gap_outcome_json(outcome: &ActionableGapOutcome) -> Value {
@@ -49084,7 +49121,7 @@ mod tests {
             "wrong_root_artifact" => "receipt_wrong_root",
             "stale_receipt" => "receipt_stale",
             "first_pr_packet_mismatch" => "receipt_gap_mismatch",
-            _ => "not_projected",
+            _ => "receipt_not_applicable",
         }
     }
 
@@ -68802,7 +68839,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     {
                         "canonical_gap_id": "gap:incomplete-receipt-command",
                         "outcome_state": "not_attempted",
-                        "receipt_state": "not_attempted",
+                        "receipt_state": "receipt_not_applicable",
                         "movement_source": null
                     }
                 ]
@@ -68977,7 +69014,7 @@ covered_by = ["cargo xtask check-file-policy"]
           {
             "canonical_gap_id": "gap:bad-outcome",
             "outcome_state": "resolved",
-            "receipt_state": "present",
+            "receipt_state": "receipt_found",
             "movement_source": "agent_receipt"
           }
         ]
@@ -68998,7 +69035,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 "spec must be RIPR-SPEC-0031",
                 "related_spec must be RIPR-SPEC-0057",
                 "outcome_state must be resolved, got not_attempted",
-                "receipt_state must be present, got not_attempted",
+                "receipt_state must be receipt_found, got receipt_not_applicable",
                 "summary.packets_total must be 2, got 1",
                 "corpus is missing case not_attempted_packet",
             ] {
@@ -69084,7 +69121,7 @@ covered_by = ["cargo xtask check-file-policy"]
                         {
                             "canonical_gap_id": "gap:bad-targeted-shape",
                             "outcome_state": "evidence_improved",
-                            "receipt_state": "missing",
+                            "receipt_state": "receipt_missing",
                             "movement_source": "targeted_test_outcome",
                             "movement_direction": "improved",
                             "before": "weakly_gripped",
@@ -69229,7 +69266,7 @@ covered_by = ["cargo xtask check-file-policy"]
       "expected": {
         "summary": {"packets_total": 1},
         "outcomes": [
-          {"canonical_gap_id": "gap:duplicate-a", "outcome_state": "not_attempted", "receipt_state": "not_attempted"}
+          {"canonical_gap_id": "gap:duplicate-a", "outcome_state": "not_attempted", "receipt_state": "receipt_not_applicable"}
         ]
       }
     },
@@ -69252,7 +69289,7 @@ covered_by = ["cargo xtask check-file-policy"]
       "expected": {
         "summary": {"packets_total": 1},
         "outcomes": [
-          {"canonical_gap_id": "gap:duplicate-b", "outcome_state": "receipt_present", "receipt_state": "present"}
+          {"canonical_gap_id": "gap:duplicate-b", "outcome_state": "receipt_present", "receipt_state": "receipt_found"}
         ]
       }
     }
@@ -69266,7 +69303,7 @@ covered_by = ["cargo xtask check-file-policy"]
             )?;
             for expected in [
                 "case not_attempted_packet is duplicated",
-                "case not_attempted_packet must have state not_attempted/not_attempted",
+                "case not_attempted_packet must have state not_attempted/receipt_not_applicable",
             ] {
                 assert!(
                     violations
@@ -69604,11 +69641,15 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             states,
             vec![
-                ("gap:seam-a", "evidence_improved", "present"),
-                ("gap:seam-b", "evidence_unchanged", "missing"),
-                ("gap:seam-c", "resolved", "missing"),
-                ("gap:seam-d", "not_attempted", "missing"),
-                ("gap:seam-e", "attempted_no_receipt", "missing"),
+                (
+                    "gap:seam-a",
+                    "evidence_improved",
+                    "receipt_movement_improved",
+                ),
+                ("gap:seam-b", "evidence_unchanged", "receipt_missing"),
+                ("gap:seam-c", "resolved", "receipt_missing"),
+                ("gap:seam-d", "not_attempted", "receipt_missing"),
+                ("gap:seam-e", "attempted_no_receipt", "receipt_missing"),
             ]
         );
 
@@ -69813,14 +69854,14 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(value["summary"]["attempted_no_receipt"], 1);
         assert_eq!(value["summary"]["unknown"], 0);
         assert_eq!(value["outcomes"][0]["canonical_gap_id"], "gap:anchor-only");
-        assert_eq!(value["outcomes"][0]["receipt_state"], "present");
+        assert_eq!(value["outcomes"][0]["receipt_state"], "receipt_found");
         assert_eq!(value["outcomes"][0]["outcome_state"], "receipt_present");
         assert_eq!(value["outcomes"][0]["movement_direction"], "changed");
         assert_eq!(
             value["outcomes"][1]["canonical_gap_id"],
             "gap:changed-target"
         );
-        assert_eq!(value["outcomes"][1]["receipt_state"], "missing");
+        assert_eq!(value["outcomes"][1]["receipt_state"], "receipt_missing");
         assert_eq!(
             value["outcomes"][1]["outcome_state"],
             "attempted_no_receipt"

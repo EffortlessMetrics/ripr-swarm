@@ -51,7 +51,7 @@
     "agent_command": "ripr agent start --root . --seam-id ack --out target/ripr/workflow",
     "receipt": {
       "artifact": null,
-      "status": "missing"
+      "status": "receipt_missing"
     }
   },
   "movement": {

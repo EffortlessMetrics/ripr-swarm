@@ -96,7 +96,7 @@ commands = [
 
 [[work_item]]
 id = "receipt/lifecycle-state-convergence"
-status = "ready"
+status = "done"
 branch = "receipt-lifecycle-state-convergence"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
@@ -112,16 +112,19 @@ commands = [
 
 [[work_item]]
 id = "output/no-output-fail-closed-states"
-status = "blocked"
+status = "ready"
 branch = "output-no-output-fail-closed-states"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 plan = "plans/start-here-surface-convergence/implementation-plan.md"
-blocked_by = [
-  "receipt/lifecycle-state-convergence",
-]
 acceptance = "CLI and report outputs distinguish clean, no actionable gap, missing artifacts, stale evidence, wrong root, disabled language, unavailable adapter, preview disabled, preview limited, malformed artifact, timeout partial, unsupported schema, unsafe path, and unsafe command where data is available."
+commands = [
+  "cargo test -p ripr --lib output",
+  "cargo test -p ripr --test cli_smoke",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
 
 [[work_item]]
 id = "policy/preview-promotion-proof-criteria"

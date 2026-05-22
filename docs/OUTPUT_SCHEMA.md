@@ -2507,7 +2507,7 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
       "source_file": "src/pricing.rs",
       "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
       "receipt_command_or_path": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id abc --json --out target/ripr/reports/agent-receipt.json",
-      "receipt_state": "present",
+      "receipt_state": "receipt_movement_improved",
       "outcome_state": "evidence_improved",
       "seam_id": "abc",
       "before": "weakly_gripped",
@@ -7527,6 +7527,12 @@ Field contract:
   gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
   `ripr outcome` command under the configured receipts directory. A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
+  `selected.receipt_state` uses the canonical start-here lifecycle labels
+  `receipt_missing`, `receipt_found`, `receipt_stale`,
+  `receipt_gap_mismatch`, `receipt_movement_improved`,
+  `receipt_movement_unchanged`, or `receipt_not_applicable`. Presence-only
+  receipt artifacts use `receipt_found`; typed movement artifacts use the
+  `receipt_movement_*` labels.
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.

@@ -2,6 +2,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, outcome_command, shell_arg,
 };
 use crate::config::CONFIG_FILE_NAME;
+use crate::output::receipt_state::{RECEIPT_MISSING, canonical_receipt_state};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
@@ -1371,8 +1372,13 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
         receipt_command,
         receipt_path,
         receipt_command_source,
-        receipt_state: string_path(record, &["receipt", "state"])
-            .or_else(|| string_path(record, &["receipt", "movement"])),
+        receipt_state: Some(
+            canonical_receipt_state(
+                string_path(record, &["receipt", "state"]).as_deref(),
+                string_path(record, &["receipt", "movement"]).as_deref(),
+            )
+            .to_string(),
+        ),
         static_limit_kind: string_path(record, &["static_limit_kind"]),
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         agent_packet_command: format!(
@@ -1833,7 +1839,7 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     let receipt_state = selected
         .get("receipt_state")
         .and_then(Value::as_str)
-        .unwrap_or("receipt_missing");
+        .unwrap_or(RECEIPT_MISSING);
     out.push_str(&format!("- Receipt state: `{receipt_state}`\n\n"));
     if let Some(why) = selected.get("why").and_then(Value::as_str) {
         out.push_str("Why this matters:\n");

@@ -13,7 +13,7 @@ Start here:
 - Suggested focused test: add amount >= discount_threshold boundary assertion
 - Related test: tests/pricing.rs::below_threshold_has_no_discount
 - Verify command: `ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
-- Receipt: missing
+- Receipt: receipt_missing
 - Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.
 
 Movement:
@@ -31,7 +31,7 @@ Policy:
 Repair:
 - Agent handoff: `ripr agent start --root fixtures/boundary_gap/input --seam-id 67fc764ba37d77bd --out target/ripr/workflow`
 - Verify: `ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
-- Receipt: missing
+- Receipt: receipt_missing
 
 Artifacts:
 - Start here: fixtures/boundary_gap/expected/pr-review-front-panel/blocked/pr-review-front-panel.md

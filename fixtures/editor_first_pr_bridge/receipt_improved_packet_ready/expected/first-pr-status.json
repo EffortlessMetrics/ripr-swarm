@@ -5,7 +5,7 @@
   "packet_path": "target/ripr/first-pr/start-here.json",
   "canonical_gap_id": "gap:rust:pricing:discount:threshold-boundary",
   "gap_id": "gap:pr:pricing:threshold-boundary",
-  "receipt_state": "found",
+  "receipt_state": "receipt_movement_improved",
   "receipt_movement": "improved",
   "verify_command": "cargo xtask fixtures boundary_gap",
   "receipt_command": "ripr agent receipt --root . --json",

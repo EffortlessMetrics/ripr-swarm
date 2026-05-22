@@ -3487,6 +3487,8 @@ spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 tests = [
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
+  "crates/ripr/src/output/receipt_state.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/help.rs",
@@ -3500,6 +3502,8 @@ fixtures = [
 code = [
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
+  "crates/ripr/src/output/receipt_state.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "xtask/src/reports/pr_evidence_summary/render.rs",
   "crates/ripr/src/cli/commands.rs",
@@ -3508,6 +3512,8 @@ code = [
 ]
 outputs = [
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
+  "fixtures/first_successful_pr/boundary-gap/expected/start-here.json",
+  "fixtures/first_successful_pr/output-contract-gap/expected/start-here.json",
   "fixtures/boundary_gap/expected/pr-review-front-panel/acknowledged/pr-review-front-panel.md",
   "fixtures/boundary_gap/expected/pr-review-front-panel/actionable/pr-review-front-panel.md",
   "fixtures/boundary_gap/expected/pr-review-front-panel/advisory-only/pr-review-front-panel.md",

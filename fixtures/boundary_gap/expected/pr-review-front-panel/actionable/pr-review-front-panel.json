@@ -51,7 +51,7 @@
     "agent_command": "ripr agent start --root fixtures/boundary_gap/input --seam-id 67fc764ba37d77bd --out target/ripr/workflow",
     "receipt": {
       "artifact": null,
-      "status": "missing"
+      "status": "receipt_missing"
     }
   },
   "movement": {

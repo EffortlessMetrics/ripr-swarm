@@ -1,6 +1,10 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use super::receipt_state::{
+    RECEIPT_MISSING, RECEIPT_NOT_APPLICABLE, canonical_receipt_state_for_presence,
+};
+
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "pr_review_front_panel";
 
@@ -546,7 +550,8 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
     if let Some(issue) = &report.top_issue
         && (issue.agent_command.is_some()
             || issue.verify_command.is_some()
-            || issue.receipt.status != "not_available")
+            || (issue.receipt.status != RECEIPT_NOT_APPLICABLE
+                && issue.receipt.status != "not_available"))
         && report.summary.policy_state != "waived"
         && report.summary.policy_state != "suppressed"
         && report.summary.top_issue_state != "summary_only"
@@ -602,7 +607,9 @@ fn issue_repair_route(issue: &PanelTopIssue) -> String {
         "agent_handoff".to_string()
     } else if issue.verify_command.is_some() {
         "verify_existing_repair".to_string()
-    } else if issue.receipt.status != "not_available" {
+    } else if issue.receipt.status != RECEIPT_NOT_APPLICABLE
+        && issue.receipt.status != "not_available"
+    {
         "inspect_receipt_state".to_string()
     } else {
         "not_available".to_string()
@@ -1402,7 +1409,7 @@ fn top_issue_from_guidance(
         }),
         receipt: PanelReceipt {
             artifact: None,
-            status: "missing".to_string(),
+            status: RECEIPT_MISSING.to_string(),
         },
     })
 }
@@ -1450,9 +1457,9 @@ fn top_issue_from_gate_decision(
         receipt: PanelReceipt {
             artifact: None,
             status: if decision == "suppressed" {
-                "not_available".to_string()
+                RECEIPT_NOT_APPLICABLE.to_string()
             } else {
-                "missing".to_string()
+                RECEIPT_MISSING.to_string()
             },
         },
     })
@@ -1480,7 +1487,7 @@ fn top_issue_from_baseline_delta(
         agent_command: None,
         receipt: PanelReceipt {
             artifact: None,
-            status: "not_available".to_string(),
+            status: RECEIPT_NOT_APPLICABLE.to_string(),
         },
     })
 }
@@ -1498,6 +1505,10 @@ fn top_issue_from_assistant_health(
     let recommendation = proof.get("recommendation");
     let handoff = proof.get("handoff");
     let receipt = proof.get("receipt");
+    let receipt_movement = string_from_sources(&[
+        (Some(proof), &["movement_state"]),
+        (Some(proof), &["movement", "source_state"]),
+    ]);
     Some(PanelTopIssue {
         source: "assistant_health".to_string(),
         source_artifact: input.assistant_health_path.clone()?,
@@ -1513,9 +1524,15 @@ fn top_issue_from_assistant_health(
         agent_command: handoff.and_then(|value| string_path(value, &["agent_command"])),
         receipt: PanelReceipt {
             artifact: receipt.and_then(|value| string_path(value, &["artifact"])),
-            status: receipt
-                .and_then(|value| string_path(value, &["status"]))
-                .unwrap_or_else(|| "missing".to_string()),
+            status: canonical_receipt_state_for_presence(
+                receipt.is_some(),
+                receipt
+                    .and_then(|value| string_path(value, &["status"]))
+                    .as_deref(),
+                receipt_movement.as_deref(),
+                RECEIPT_MISSING,
+            )
+            .to_string(),
         },
     })
 }
@@ -1605,9 +1622,25 @@ fn receipt_from_input(
             })
         }),
         status: if receipt_path.is_some() || receipt_json.is_some() {
-            "present".to_string()
+            canonical_receipt_state_for_presence(
+                true,
+                receipt_json
+                    .and_then(|receipt| string_path(receipt, &["static_movement", "state"]))
+                    .as_deref(),
+                receipt_json
+                    .and_then(|receipt| {
+                        string_from_sources(&[
+                            (Some(receipt), &["provenance", "movement"]),
+                            (Some(receipt), &["seam", "change"]),
+                        ])
+                    })
+                    .as_deref(),
+                RECEIPT_MISSING,
+            )
+            .to_string()
         } else {
-            missing_status.to_string()
+            canonical_receipt_state_for_presence(false, Some(missing_status), None, RECEIPT_MISSING)
+                .to_string()
         },
     }
 }

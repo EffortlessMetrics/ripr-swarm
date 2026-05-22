@@ -31,6 +31,7 @@ pub(crate) mod policy_readiness;
 pub(crate) mod pr_evidence_ledger;
 pub(crate) mod pr_inline_comment_publish_plan;
 pub(crate) mod pr_review_front_panel;
+pub(crate) mod receipt_state;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;
 pub(crate) mod repo_seams;

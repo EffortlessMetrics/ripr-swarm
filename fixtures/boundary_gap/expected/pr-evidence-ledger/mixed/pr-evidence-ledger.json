@@ -94,7 +94,7 @@
     "missing_discriminator": "new == 4",
     "path": "src/new.rs",
     "receipt_command": null,
-    "receipt_state": null,
+    "receipt_state": "receipt_missing",
     "related_test": "tests/new.rs::boundary",
     "repair_route": null,
     "seam_id": "new",
