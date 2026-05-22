@@ -3,8 +3,10 @@
 Date: 2026-05-16
 Refresh: 2026-05-22
 Branch / PR: `lane1-finding-alignment-contract-v2` / #1042
-Latest refresh PRs: swarm #276 `dogfood: refresh finding alignment examples`
-and swarm #278 `goals: select canonical alignment handoff refresh`
+Original prerequisite PR: #1034 `dogfood: record finding alignment examples`
+(commit `613c640f`)
+Latest refresh prerequisite: swarm #276 `dogfood: refresh finding alignment
+examples` and swarm #278 `goals: select canonical alignment handoff refresh`
 
 ## Current work item
 
@@ -21,22 +23,23 @@ source edits, or mutation execution.
 
 ## Refresh since v2
 
-The v2 contract remains the baseline. The Lane 1 burn-down added material
-consumer evidence that downstream lanes can now rely on without changing their
-authority boundary:
+This 2026-05-22 refresh keeps the same v2 contract and records the material
+burn-down deltas that landed after the original handoff:
 
-- finding-alignment dogfood receipts now carry canonical gap IDs, raw finding
-  summaries, before/after audit or scorecard context, and must-not-claim
-  guards;
-- fixture-backed supported opaque config/report lookup can become an
-  actionable output-observer item;
-- generic opaque lookup, generated config/schema output, macro output, dynamic
-  dispatch, and unsupported cross-file flow remain named static limitations
-  until separately selected and fixture-backed;
-- scorecard and trend output lead internally with actionable canonical gaps
-  while raw findings stay visible as diagnostics;
-- runtime-confidence static-only classes stay calibration work, not user test
-  debt or mutation proof.
+- fixture-backed opaque config report lookups can now leave the
+  `opaque_config_lookup` limitation bucket and become actionable output-observer
+  repairs, while unsupported opaque, generated, macro, dynamic-dispatch, and
+  cross-file flows remain named limitations;
+- actionable canonical items must carry structured repair routes and concrete
+  verify commands where supported;
+- scorecard and trend surfaces lead internally with actionable canonical gaps
+  instead of raw finding volume;
+- runtime-confidence trend output names static-only evidence classes as
+  calibration work, not user test debt;
+- finding-alignment dogfood receipts now include `canonical_gap_id`,
+  `raw_finding_summary`, `before_after_context`, and must-not-claim guards so
+  examples show both the raw evidence fragment and the before/after audit or
+  scorecard reason without expanding public claims.
 
 ## Consumer invariant
 
@@ -78,10 +81,10 @@ Consumers that need one rendered item should prefer these fields:
 | --- | --- |
 | `canonical_gap_id` | Stable grouping and dedupe identity. |
 | `source_pr` | Dogfood or receipt source for the example or material delta. |
-| `evidence_class` | Class such as `presentation_text` or `config_or_policy_constant`. |
+| `evidence_class` | Class such as `presentation_text`, `config_or_policy_constant`, `predicate_boundary`, or `call_presence`. |
 | `raw_findings_total` | Raw signal volume before grouping. |
 | `canonical_items_total` | Countable grouped evidence units after alignment. |
-| `raw_finding_summary` | Short reviewer-readable summary of the supporting raw evidence. |
+| `raw_finding_summary` | Dogfood and report receipts may use this to summarize why raw findings are supporting evidence for one canonical item. |
 | `gap_state` | Lane 1 evidence state: `actionable`, `already_observed`, `internal_only`, `static_limitation`, or `unknown`. |
 | `actionability` | Class-scoped action label such as `add_output_observer`, `add_behavior_discriminator`, `no_action`, or `inspect_flow`. |
 | `user_outcome` | Dogfood-facing outcome label such as actionable gap, no action, or static limitation. |
@@ -92,7 +95,7 @@ Consumers that need one rendered item should prefer these fields:
 | `target_test_type` | Dogfood receipt target proof surface, such as report render, golden, or behavior discriminator. |
 | `related_test` or `related_observer` | Best known repair location or observer. |
 | `verify_command` | Verification route when known. |
-| `before_after_context` | Material movement context from an audit, scorecard, trend, or receipt. |
+| `before_after_context` | Dogfood receipts use this to record the audit, scorecard, trend, or receipt movement that made the example material. |
 | `must_not_claim[]` | Explicit public and downstream non-claims for the example. |
 | `reason` | Short reason the example belongs in the dogfood corpus. |
 | `primary_anchor` | Preferred annotation placement when a surface needs one line. |
@@ -154,13 +157,26 @@ For `config_or_policy_constant`, consumers should render:
 - internal policy metadata as no action.
 - rendered config/report labels without observers as output-observer repairs.
 - behavior selectors without discriminators as behavior-discriminator repairs.
-- fixture-backed supported opaque report lookup as an output-observer repair
-  when it reaches a supported report/output surface.
+- fixture-backed opaque config report lookups with a supported rendered-output
+  sink as output-observer repairs.
 - generic opaque lookup, cross-file formatting, generated config/schema output,
   macro output, dynamic dispatch, or unsupported flows as named static
   limitations, such as `opaque_config_lookup`,
   `macro_generated_config_output`, `dynamic_config_dispatch`,
   `config_policy_flow_unknown`, or `config_policy_observer_unknown`.
+
+Unsupported opaque config flows remain limitations. A consumer must not promote
+all opaque lookups merely because one fixture-backed report lookup shape is now
+supported.
+
+For `predicate_boundary`, consumers should render actionable canonical items as
+boundary-discriminator repairs only when Lane 1 supplies the concrete repair
+route and verify command. Raw predicate findings alone remain diagnostic.
+
+For runtime confidence and static-only trend rows, consumers should render the
+class trend as calibration work. A static-only runtime confidence class such as
+`call_presence` does not create user test debt, mutation proof, gate authority,
+or public badge semantics.
 
 ## Primary anchor and raw spans
 
@@ -181,6 +197,10 @@ developer-detail surfaces unless a later Lane 1 contract gives it a
 - Do not treat `static_limitation` as user test debt.
 - Do not treat internal policy constants as user-visible behavior.
 - Do not infer user visibility from string text alone.
+- Do not promote every opaque config lookup after one supported report lookup
+  shape lands.
+- Do not treat runtime-confidence static-only class trends as user repair work
+  or mutation proof.
 - Do not recommend mutation testing as the first repair for output or
   config/policy text.
 - Do not infer baseline, waiver, suppression, acknowledgement, or blocking
@@ -204,10 +224,26 @@ cargo xtask check-pr
 git diff --check
 ```
 
-The refreshed dogfood PR (swarm #276) added canonical gap identity, raw finding
-summary, before/after context, supported opaque report lookup, actionable
-scorecard lead, and runtime static-only trend examples. This handoff refresh
-should remain docs-only and rerun:
+The latest refresh PR (swarm #276) was validated with:
+
+```bash
+cargo fmt --check
+cargo test -p xtask dogfood_finding_alignment_scenarios_have_checked_receipts
+cargo test -p xtask dogfood_finding_alignment_validation_reports_actionable_drift
+cargo xtask dogfood
+cargo xtask check-fixture-contracts
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-pr
+git diff --check
+```
+
+That refresh changed dogfood receipt examples and report projection only. It did
+not change analyzer truth, PR/CI rendering, editor behavior, gates, generated
+tests, provider calls, source edits, or mutation execution.
+
+This handoff refresh should remain docs-only and rerun:
 
 ```bash
 cargo xtask check-doc-index
