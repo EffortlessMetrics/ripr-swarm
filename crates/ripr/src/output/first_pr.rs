@@ -173,17 +173,39 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
 
 fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let root = resolve_path(repo, &options.root);
-    let output_root = if root_preflight_recovery(&root, options).is_some() {
-        repo
-    } else {
-        &root
-    };
+    let root_recovery = root_preflight_recovery(&root, options);
+    let preflight_recovery = root_recovery
+        .clone()
+        .or_else(|| git_preflight_recovery(&root, options));
+    let output_root = if root_recovery.is_some() { repo } else { &root };
     let out_dir = resolve_path(output_root, &options.out_dir);
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
-    validate_start_here_packet(&json_path, &markdown_path)?;
+    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
     println!("First PR start-here packet ok: {}", json_path.display());
     Ok(())
+}
+
+fn validate_current_preflight_recovery(
+    packet: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+    preflight_recovery: Option<Selection>,
+) -> Result<(), String> {
+    let Some(selection) = preflight_recovery else {
+        return Ok(());
+    };
+    let expected = render_start_here_recovery_packet(root, options, selection);
+    if packet.get("status") == expected.get("status")
+        && packet.get("selected") == expected.get("selected")
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "first-pr start-here packet is stale for current root/git preflight; rerun `ripr first-pr --root {} --base {} --head {}` before relying on it",
+        options.root, options.base, options.head
+    ))
 }
 
 fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
@@ -1722,7 +1744,7 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
     }
 }
 
-fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<(), String> {
+fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(json_path)
         .map_err(|err| format!("missing or unreadable {}: {err}", json_path.display()))?;
     let packet: Value = serde_json::from_str(&text)
@@ -1762,7 +1784,7 @@ fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<
         violations.push(format!("{} is missing", markdown_path.display()));
     }
     if violations.is_empty() {
-        Ok(())
+        Ok(packet)
     } else {
         Err(format!(
             "first-pr start-here contract violations:\n{}",
@@ -2058,6 +2080,24 @@ mod tests {
         assert_eq!(
             packet["selected"]["next_command"],
             "git -C . fetch origin missing-base"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn check_first_pr_rejects_stale_git_preflight_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-check-stale-git-preflight")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        run_git_setup(&repo, &["update-ref", "-d", "refs/remotes/origin/main"])?;
+        let err = match check_first_pr(&repo, &options) {
+            Ok(()) => return Err("check mode accepted stale git preflight state".to_string()),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("stale for current root/git preflight"),
+            "unexpected check error: {err}"
         );
         cleanup(&repo)
     }
