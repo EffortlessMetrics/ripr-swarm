@@ -23536,6 +23536,7 @@ fn evidence_quality_scorecard_audit_regeneration_failure_report(
         EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED.to_string(),
         1,
     );
+    report.summary.static_limitations_total += 1;
     report.static_limitation_repair_route_counts.insert(
         "report/evidence-quality-scorecard-bounded-diagnostics".to_string(),
         1,
@@ -69323,6 +69324,10 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             audit["static_limitations"]["by_category"]
                 [EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            audit["summary"]["static_limitations_total"],
             serde_json::Value::from(1)
         );
 
