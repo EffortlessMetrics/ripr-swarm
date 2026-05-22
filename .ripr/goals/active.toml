@@ -78,8 +78,10 @@ stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
 specs = [
   "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
+  "docs/specs/RIPR-SPEC-0043-presentation-text-evidence.md",
+  "docs/specs/RIPR-SPEC-0048-config-policy-constant-evidence.md",
 ]
-acceptance = "Keep static_unknown_without_named_limitation at zero, keep unknowns visible and non-actionable without fixture-backed evidence, and preserve named limitation categories with repair routes."
+acceptance = "Preserve the invariant that user-facing static_unknown canonical items have a named static limitation and repair route: static_unknown_without_named_limitation remains zero, unknowns stay visible, unknowns do not become actionable without fixture-backed evidence, and limitation categories point to repair routes."
 commands = [
   "cargo xtask lane1-evidence-audit",
   "cargo xtask evidence-quality-scorecard",
