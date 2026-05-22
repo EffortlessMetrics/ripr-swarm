@@ -61087,6 +61087,11 @@ commands = ["cargo xtask check-pr"]
         with_temp_cwd("active-source-truth-missing", |root| {
             write_doc_artifact_fixture(
                 root,
+                "docs/proposals/RIPR-PROP-0001-other.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
                 "plans/example/implementation-plan.md",
                 "RIPR-PLAN-0001",
             );
@@ -61215,6 +61220,86 @@ commands = ["cargo xtask check-pr"]
                 )),
                 "{violations:?}"
             );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn goals_status_and_next_validate_active_manifest_source_truth() -> Result<(), String> {
+        with_temp_cwd("goals-entrypoints-source-truth", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "active-campaign\n\n| `docs/valid` | ready |\n",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-valid.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/example/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-valid.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"
+schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+path = "plans/example/implementation-plan.md"
+"#,
+            );
+            write(
+                &root.join(".ripr/goals/active.toml"),
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["done"]
+
+[[work_item]]
+id = "docs/valid"
+status = "ready"
+branch = "docs-valid"
+stackable = false
+proposal = "RIPR-PROP-0001"
+plan = "RIPR-PLAN-0001"
+spec = "RIPR-SPEC-0001"
+acceptance = "done"
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+
+            let init = std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(root)
+                .output()
+                .map_err(|err| format!("run git init: {err}"))?;
+            assert!(
+                init.status.success(),
+                "git init failed: {}",
+                String::from_utf8_lossy(&init.stderr)
+            );
+            let add = std::process::Command::new("git")
+                .args(["add", "."])
+                .current_dir(root)
+                .output()
+                .map_err(|err| format!("run git add: {err}"))?;
+            assert!(
+                add.status.success(),
+                "git add failed: {}",
+                String::from_utf8_lossy(&add.stderr)
+            );
+
+            super::goals_status()?;
+            super::goals_next()?;
             Ok(())
         })
     }
