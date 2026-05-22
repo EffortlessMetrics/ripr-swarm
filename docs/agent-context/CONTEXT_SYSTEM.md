@@ -261,7 +261,9 @@ with a successor or explicit idle marker?" wants the active manifest.
 ## PR alignment cadence
 
 Every PR should leave enough repo state for the next agent or maintainer to
-continue without chat history. A PR should answer:
+continue without chat history. This is the self-aligning repo invariant: one
+bounded capability moves, its proof and claim boundary are visible, and the next
+slice can be chosen from repo artifacts rather than memory. A PR should answer:
 
 ```text
 1. What product or repo capability moves?
