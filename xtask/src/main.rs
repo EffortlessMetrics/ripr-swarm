@@ -8203,12 +8203,11 @@ fn validate_evidence_quality_benchmark_case(
                 .and_then(|record| audit_string(record, &["gap_state"]))
                 .as_deref()
                 == Some("actionable")
+                && record.is_none_or(audit_verify_command_is_missing)
             {
-                if record.is_none_or(audit_verify_command_is_missing) {
-                    violations.push(format!(
-                        "Lane 1 evidence-quality benchmark actionable case {case_id} must include a concrete expected_repo_exposure.evidence_record.verify_command"
-                    ));
-                }
+                violations.push(format!(
+                    "Lane 1 evidence-quality benchmark actionable case {case_id} must include a concrete expected_repo_exposure.evidence_record.verify_command"
+                ));
             }
         }
         _ => violations.push(format!(
