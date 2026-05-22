@@ -50876,6 +50876,92 @@ mod tests {
     }
 
     #[test]
+    fn first_successful_pr_corpus_rejects_unsafe_demo_story_path() -> Result<(), String> {
+        let root = temp_dir("first-successful-pr-unsafe-demo");
+        let corpus = root.join("corpus.json");
+        write(
+            &corpus,
+            r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "boundary-gap",
+      "description": "unsafe demo path",
+      "input": "boundary-gap/inputs/reports/gap-decision-ledger.json",
+      "expected": "boundary-gap/expected/start-here.json",
+      "demo_story": "../README.md",
+      "expected_status": "actionable",
+      "expected_state": "top_gap"
+    }
+  ]
+}"#,
+        );
+        let mut violations = Vec::new();
+        super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+        let report = violations.join("\n");
+
+        assert!(report.contains("demo_story must be workspace-local"));
+        Ok(())
+    }
+
+    #[test]
+    fn first_successful_pr_corpus_requires_demo_story_tokens() -> Result<(), String> {
+        let root = temp_dir("first-successful-pr-demo-tokens");
+        let corpus = root.join("corpus.json");
+        write(
+            &corpus,
+            r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "boundary-gap",
+      "description": "demo token coverage",
+      "input": "boundary-gap/inputs/reports/gap-decision-ledger.json",
+      "expected": "boundary-gap/expected/start-here.json",
+      "demo_story": "boundary-gap/README.md",
+      "expected_status": "actionable",
+      "expected_state": "top_gap"
+    }
+  ]
+}"#,
+        );
+        write(
+            &root.join("boundary-gap/inputs/reports/gap-decision-ledger.json"),
+            r#"{"kind":"gap_decision_ledger"}"#,
+        );
+        write(
+            &root.join("boundary-gap/expected/start-here.json"),
+            r#"{
+  "schema_version": "0.1",
+  "kind": "first_pr_start_here",
+  "status": "actionable",
+  "posture": "advisory",
+  "selected": {
+    "state": "top_gap",
+    "verify_command": "cargo xtask fixtures boundary_gap"
+  }
+}"#,
+        );
+        write(
+            &root.join("boundary-gap/expected/start-here.md"),
+            "# RIPR First PR Start Here\n\nStatus: advisory\n\n## Recommendation\n\n## Artifacts\n\n## Authority\n\n## Limits\n",
+        );
+        write(&root.join("boundary-gap/README.md"), "ripr first-pr\n");
+        let mut violations = Vec::new();
+        super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+        let report = violations.join("\n");
+
+        assert!(report.contains("is missing `ripr outcome`"));
+        assert!(report.contains("is missing `focused external proof`"));
+        assert!(report.contains("is missing `No runtime mutation proof`"));
+        Ok(())
+    }
+
+    #[test]
     fn gap_decision_ledger_reports_contract_drift() {
         let corpus = serde_json::json!({
             "kind": "wrong",
