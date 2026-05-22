@@ -253,7 +253,7 @@ commands = [
 
 [[work_item]]
 id = "docs/canonical-alignment-contract-refresh"
-status = "ready"
+status = "done"
 branch = "docs-canonical-alignment-contract-refresh"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
