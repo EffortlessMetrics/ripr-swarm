@@ -393,7 +393,7 @@ Issue: [#1145](https://github.com/EffortlessMetrics/ripr/issues/1145)
 
 Swarm issue: [#254](https://github.com/EffortlessMetrics/ripr-swarm/issues/254)
 
-Status: ready.
+Status: done in swarm #254 / #257 proof on 2026-05-22.
 
 ### Goal
 
@@ -419,7 +419,10 @@ git diff --check
 
 ## Work Item 9: analysis: attach verify commands to actionable canonical items
 
-Issue: [#1146](https://github.com/EffortlessMetrics/ripr/issues/1146)
+Issue: [swarm #258](https://github.com/EffortlessMetrics/ripr-swarm/issues/258)
+/ [source #1146](https://github.com/EffortlessMetrics/ripr/issues/1146)
+
+Status: ready.
 
 ### Goal
 

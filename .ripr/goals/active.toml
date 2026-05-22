@@ -166,7 +166,7 @@ commands = [
 
 [[work_item]]
 id = "analysis/actionable-repair-route-completeness"
-status = "ready"
+status = "done"
 branch = "analysis-actionable-repair-route-completeness"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
@@ -174,6 +174,23 @@ specs = [
   "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
 ]
 acceptance = "Preserve the invariant that actionable canonical items include recommended_repair, repair_kind, and target test type, assertion shape, or output observer shape when applicable; non-action states must not fake repair routes; advisory/static boundaries remain explicit."
+commands = [
+  "cargo xtask lane1-evidence-audit",
+  "cargo xtask evidence-quality-scorecard",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "analysis/actionable-verify-command-coverage"
+status = "ready"
+branch = "analysis-actionable-verify-command-coverage"
+stackable = false
+plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
+specs = [
+  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
+]
+acceptance = "Give humans and agents a proof step for each actionable canonical item when one is safely known; keep missing commands explicit and counted; commands preserve advisory/static boundaries and do not imply mutation execution."
 commands = [
   "cargo xtask lane1-evidence-audit",
   "cargo xtask evidence-quality-scorecard",
