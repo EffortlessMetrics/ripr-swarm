@@ -27,6 +27,10 @@ system, a second rust-analyzer, or a generic test generator.
 `ripr`'s end goal is to be a repo-native, proof-carrying static exposure
 assistant.
 
+That makes the repository itself a self-aligning product system: each PR moves
+one bounded capability, proves what changed, states what users may believe, and
+leaves the next slice easier to choose from repo artifacts.
+
 For users, `ripr` should make changed behavior test gaps obvious and
 repairable:
 
