@@ -61277,26 +61277,8 @@ commands = ["cargo xtask check-pr"]
 "#,
             );
 
-            let init = std::process::Command::new("git")
-                .args(["init"])
-                .current_dir(root)
-                .output()
-                .map_err(|err| format!("run git init: {err}"))?;
-            assert!(
-                init.status.success(),
-                "git init failed: {}",
-                String::from_utf8_lossy(&init.stderr)
-            );
-            let add = std::process::Command::new("git")
-                .args(["add", "."])
-                .current_dir(root)
-                .output()
-                .map_err(|err| format!("run git add: {err}"))?;
-            assert!(
-                add.status.success(),
-                "git add failed: {}",
-                String::from_utf8_lossy(&add.stderr)
-            );
+            super::run_output("git", &["init"])?;
+            super::run_output("git", &["add", "."])?;
 
             super::goals_status()?;
             super::goals_next()?;
