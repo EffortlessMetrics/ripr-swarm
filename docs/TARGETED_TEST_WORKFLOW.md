@@ -16,8 +16,12 @@ before static seam evidence
 -> optional SARIF, badge, and runtime calibration checks
 ```
 
-RIPR is still a static test-grip tool. The receipt shows whether the rendered
-static evidence improved. It does not claim runtime mutation confirmation.
+RIPR is still a static test-grip tool. The receipt starts with a reviewer-native
+section that says what changed, what RIPR flagged before, what focused proof
+signal was added outside RIPR, how verification moved, what remains weak or
+unknown, and what reviewers should and should not believe. It does not claim
+runtime mutation confirmation, coverage adequacy, merge approval, automatic
+source edits, generated tests, or provider/model execution.
 
 ## Inputs and Outputs
 

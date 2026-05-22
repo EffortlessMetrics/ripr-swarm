@@ -223,7 +223,11 @@ is clean, so release prep can rerun them on the version-bump branch.
 `target/ripr/reports/targeted-test-outcome.json`. It matches seams by
 `seam_id`, summarizes before/after grip-class counts, and reports moved,
 unchanged, new, removed, and regressed seams as an advisory targeted-test
-receipt. It does not run mutation testing and does not block CI.
+receipt. The receipt starts with a reviewer-native summary of what changed,
+what RIPR flagged before, what focused proof signal was added outside RIPR, how
+verification moved, what remains weak or unknown, and what reviewers should and
+should not believe. It does not run mutation testing, edit source, generate
+tests, claim coverage adequacy or merge approval, or block CI.
 
 The installed CLI exposes the same receipt loop as `ripr outcome --before
 <path> --after <path>` so users do not need this repository checked out. The

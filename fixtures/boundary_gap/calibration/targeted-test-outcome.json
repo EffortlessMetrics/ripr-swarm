@@ -35,6 +35,37 @@
   "new": [],
   "regressed": [],
   "removed": [],
+  "reviewer_receipt": {
+    "focused_proof": [
+      "new observed value: 100",
+      "related test count increased by 1"
+    ],
+    "remains_weak_or_unknown": [
+      "Selected seam remains `weakly_gripped` in the after snapshot.",
+      "Selected seam did not change static class."
+    ],
+    "reviewer_should_believe": [
+      "This receipt compares the supplied before and after static repo-exposure snapshots by seam_id.",
+      "The listed movement is advisory static evidence movement for review context.",
+      "RIPR did not add the focused test or output proof; the external change is represented only by the after snapshot."
+    ],
+    "reviewer_should_not_believe": [
+      "This is not runtime mutation confirmation.",
+      "This is not coverage adequacy or a code-correctness guarantee.",
+      "This is not merge approval, source-edit automation, generated tests, or provider/model execution."
+    ],
+    "ripr_flagged_before": [
+      "Before snapshot: `predicate_boundary` at src/lib.rs:2 was classified `weakly_gripped`."
+    ],
+    "verification_movement": [
+      "After snapshot: selected seam moved from `weakly_gripped` to `weakly_gripped` with direction `unchanged`."
+    ],
+    "what_changed": [
+      "Static evidence for `67fc764ba37d77bd` at src/lib.rs:2 is the selected receipt thread.",
+      "The selected seam is `predicate_boundary` and moved `unchanged`.",
+      "Receipt buckets: moved 0, unchanged 1, regressed 0, new 0, removed 0."
+    ]
+  },
   "schema_version": "0.1",
   "status": "advisory",
   "summary": {
@@ -50,8 +81,8 @@
       "activate_delta": null,
       "after": "weakly_gripped",
       "before": "weakly_gripped",
-      "discriminate_delta": null,
       "direction": "unchanged",
+      "discriminate_delta": null,
       "evidence_delta": [
         "new observed value: 100",
         "related test count increased by 1"

@@ -61,8 +61,12 @@ Options:
   --out PATH       Write the rendered receipt to a file instead of stdout.
 
 The outcome receipt is advisory. It compares static repo-exposure snapshots by
-seam_id and reports moved, unchanged, regressed, new, and removed seams; it
-does not run analysis, mutation testing, or CI policy.
+seam_id and reports moved, unchanged, regressed, new, and removed seams. Its
+reviewer receipt answers what changed, what RIPR flagged before, what focused
+proof signal was added outside RIPR, how static verification moved, what
+remains weak or unknown, and what reviewers should and should not believe. It
+does not run analysis, edit source, generate tests, run mutation testing, claim
+runtime correctness or coverage adequacy, approve merges, or decide CI policy.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 

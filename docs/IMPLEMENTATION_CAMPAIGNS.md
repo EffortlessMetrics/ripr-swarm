@@ -3084,8 +3084,8 @@ Work items:
 | `goals/active-freshness-validation` | done | Goal validation now rejects a closed active campaign unless it declares a successor or explicit no-current-goal marker, so agents cannot silently continue from stale execution state. |
 | `first-pr/front-door-polish` | done | `ripr first-pr` now writes a read-only preflight section for root, Git/base/head/diff, Cargo workspace, config defaults, output path, mode, and next-command guidance while preserving advisory artifact selection. |
 | `first-pr/one-screen-recommendation` | done | Start-here now has a golden-backed one-screen recommendation with top gap/no-action, changed behavior, current evidence strength, missing discriminator, focused proof intent, verify command, receipt command, receipt path, and static-advisory boundary. |
-| `outcome/reviewer-native-receipts` | ready | Make `ripr outcome` receipts explain before/after movement and reviewer claims without mutation, runtime, or coverage proof overclaiming. |
-| `fixtures/first-pr-boundary-gap-demo` | blocked | Add a tiny canonical demo or fixture story for before -> `ripr first-pr` -> focused external proof -> `ripr outcome` -> receipt. |
+| `outcome/reviewer-native-receipts` | done | `ripr outcome` receipts now start with a reviewer-native summary of what changed, what RIPR flagged before, what focused proof signal was added outside RIPR, how static verification moved, what remains weak or unknown, and what reviewers should and should not believe. |
+| `fixtures/first-pr-boundary-gap-demo` | ready | Add a tiny canonical demo or fixture story for before -> `ripr first-pr` -> focused external proof -> `ripr outcome` -> receipt. |
 | `surfaces/one-screen-loop-convergence` | blocked | Make generated CI, VS Code/editor handoff, and agent packet surfaces mirror the same first-useful-pr wording and repair unit. |
 | `campaign/first-useful-pr-loop-closeout` | blocked | Close only after the one-command, one-gap, one-repair, one-verification, one-receipt loop is proven across CLI, CI, editor, agent packet, and demo surfaces. |
 

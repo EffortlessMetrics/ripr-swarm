@@ -3211,6 +3211,29 @@ JSON shape:
     "new": 0,
     "removed": 1
   },
+  "reviewer_receipt": {
+    "what_changed": [
+      "2 seam(s) moved after the focused proof artifact changed."
+    ],
+    "ripr_flagged_before": [
+      "`67fc764ba37d77bd` was weakly_gripped before verification."
+    ],
+    "focused_proof": [
+      "`67fc764ba37d77bd` resolved missing discriminator: discount_threshold (equality boundary)."
+    ],
+    "verification_movement": [
+      "`67fc764ba37d77bd` moved from weakly_gripped to strongly_gripped (improved)."
+    ],
+    "remains_weak_or_unknown": [
+      "12 seam(s) were unchanged in the after snapshot."
+    ],
+    "reviewer_should_believe": [
+      "The receipt compared the supplied static before/after repo-exposure artifacts by seam_id."
+    ],
+    "reviewer_should_not_believe": [
+      "This is not runtime mutation confirmation, coverage adequacy, merge approval, or a code-correctness guarantee."
+    ]
+  },
   "moved": [
     {
       "seam_id": "67fc764ba37d77bd",
@@ -3270,6 +3293,14 @@ Field contract:
   `seam_id` changed grip class without ranking lower; `regressed` means the
   after class ranked lower than the before class; `unchanged` means the class
   stayed the same; `new` and `removed` cover seam IDs present in only one input.
+- `reviewer_receipt` - reviewer-native receipt summary derived from the same
+  static comparison. `what_changed` summarizes bucket movement;
+  `ripr_flagged_before` names the before-state static weakness;
+  `focused_proof` describes static proof signals added outside RIPR;
+  `verification_movement` names before/after class movement;
+  `remains_weak_or_unknown` lists unchanged, regressed, or removed seams; and
+  `reviewer_should_believe` / `reviewer_should_not_believe` state the claim
+  boundary. These fields are explanatory only and do not add analyzer truth.
 - `moved[]` / `unchanged[]` / `regressed[]` — matched seams with before/after
   grip classes, a direction string, and evidence-delta hints. When
   `seams[].evidence_record` is present, the comparison prefers that shared
@@ -3296,10 +3327,16 @@ Field contract:
 - `new[]` / `removed[]` — seam identity and grip class for seam IDs present in
   only one input.
 
-The Markdown surface prints the same summary and highlights moved, unchanged,
-regressed, new, and removed seams for human review. Unchanged seams can still
-carry evidence-delta hints, such as a new observed value, so reviewers can see
-when a targeted test improved rendered evidence without changing the grip class.
+The Markdown surface starts with a reviewer receipt that answers what changed,
+what RIPR flagged before, what focused proof signal was added outside RIPR, how
+verification moved, what remains weak or unknown, and what reviewers should and
+should not believe. It then prints the same summary and highlights moved,
+unchanged, regressed, new, and removed seams for human review. Unchanged seams
+can still carry evidence-delta hints, such as a new observed value, so reviewers
+can see when a targeted test improved rendered evidence without changing the
+grip class. The receipt is advisory static evidence only; it does not edit
+source, generate tests, run mutation testing, claim runtime correctness, claim
+coverage adequacy, or approve a merge.
 
 ## Agent Verify
 
