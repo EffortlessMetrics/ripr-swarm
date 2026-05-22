@@ -100,6 +100,9 @@ the source evidence class first and keep projection changes narrow.
 - [Lane 1 Finding Alignment Burn-Down](LANE_1_FINDING_ALIGNMENT_BURNDOWN.md)
   records the issue-backed queue for generalizing raw-finding to canonical-item
   alignment across remaining evidence classes.
+- [Lane 1 Value Resolution Static Limits](LANE_1_VALUE_RESOLUTION_STATIC_LIMITS.md)
+  records the active scorecard-selected queue for `predicate_boundary` /
+  `activation_value_unresolved` fixture-first burn-down work.
 
 ## Lane 4 Source Of Truth
 

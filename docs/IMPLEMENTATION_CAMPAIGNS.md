@@ -3343,6 +3343,75 @@ cargo xtask check-pr
 git diff --check
 ```
 
+## Focused Lane 1 Tracker: Value Resolution Static Limits
+
+Tracker ID: `lane1-value-resolution-static-limits`
+
+Status: active. `.ripr/goals/active.toml` now selects
+`fixtures/value-resolution-audit-plan` as the first ready work item.
+
+Sources of truth:
+
+- [Lane 1 Value Resolution Static Limits tracker](lanes/LANE_1_VALUE_RESOLUTION_STATIC_LIMITS.md)
+- [Lane 1 Value Resolution Static Limits implementation plan](../plans/lane1-value-resolution-static-limits/implementation-plan.md)
+- [Lane 1 Finding Alignment Burn-Down closeout](handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md)
+- [RIPR-SPEC-0034](specs/RIPR-SPEC-0034-evidence-quality-scorecard.md)
+  evidence-quality scorecard
+- [RIPR-SPEC-0045](specs/RIPR-SPEC-0045-finding-to-gap-alignment.md)
+  finding-to-gap alignment
+
+Objective:
+
+```text
+Burn down the scorecard-selected `predicate_boundary` /
+`activation_value_unresolved` queue without inventing activation values or
+turning named static limitations into user test debt.
+```
+
+End state:
+
+- the selected value-resolution sub-shape is fixture-backed before analyzer
+  behavior changes;
+- unsupported value-resolution shapes remain named static limitations;
+- raw findings remain supporting evidence and canonical items remain the
+  countable unit;
+- before/after scorecard or audit proof records any movement;
+- public badge, gate, PR/CI, editor, generated-test, provider, source-edit, and
+  mutation behavior remain unchanged.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `fixtures/value-resolution-audit-plan` | ready | [swarm #285](https://github.com/EffortlessMetrics/ripr-swarm/issues/285) selects the first supported `predicate_boundary` / `activation_value_unresolved` sub-shape from scorecard and closeout evidence before analyzer behavior changes. |
+| `fixtures/value-resolution-benchmark-cases` | blocked | Adds positive and must-not-claim benchmark cases after the audit plan selects the sub-shape. |
+| `analysis/value-resolution-audit-fixes` | blocked | Moves only fixture-backed supported cases out of `activation_value_unresolved` and reports before/after audit or scorecard movement. |
+| `campaign/value-resolution-static-limits-closeout` | blocked | Records movement, unsupported value-resolution limits, downstream boundaries, and the next audit-driven selection rule. |
+
+Blocking conditions:
+
+- analyzer behavior changes before fixture planning;
+- unsupported value-resolution shapes losing named limitation state;
+- invented observed activation values;
+- PR/CI rendering changes;
+- LSP/editor polish;
+- gate-policy or default-blocking changes;
+- public badge or score redefinition;
+- generated tests, source edits, provider/model calls, or mutation execution.
+
+Commands:
+
+```bash
+cargo xtask goals status
+cargo xtask goals next
+cargo xtask check-goals
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-pr
+git diff --check
+```
+
 ## Focused Lane 2 Tracker: Policy Readiness and Preview Evidence Governance
 
 Tracker ID: `policy-readiness-preview-evidence-governance`
