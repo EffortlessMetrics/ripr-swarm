@@ -140,7 +140,7 @@ git diff --check
 Issue: [swarm #233](https://github.com/EffortlessMetrics/ripr-swarm/issues/233)
 / [source #1141](https://github.com/EffortlessMetrics/ripr/issues/1141)
 
-Status: ready.
+Status: done in swarm #233 / #237 proof on 2026-05-22.
 
 ### Goal
 
