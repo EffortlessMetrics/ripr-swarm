@@ -269,7 +269,7 @@ git diff --check
 Issue: [swarm #241](https://github.com/EffortlessMetrics/ripr-swarm/issues/241)
 / [source #1142](https://github.com/EffortlessMetrics/ripr/issues/1142)
 
-Status: ready.
+Status: done in swarm #241 / #244 proof on 2026-05-22.
 
 ### Goal
 
@@ -301,7 +301,10 @@ git diff --check
 
 ## Work Item 6: fixtures: add config-policy unsupported-flow burn-down cases
 
-Issue: [#1143](https://github.com/EffortlessMetrics/ripr/issues/1143)
+Issue: [swarm #246](https://github.com/EffortlessMetrics/ripr-swarm/issues/246)
+/ [source #1143](https://github.com/EffortlessMetrics/ripr/issues/1143)
+
+Status: ready.
 
 ### Goal
 
