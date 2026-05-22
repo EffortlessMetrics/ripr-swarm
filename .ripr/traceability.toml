@@ -3485,25 +3485,34 @@ id = "RIPR-SPEC-0053"
 name = "Start-here surface convergence"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 tests = [
+  "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_names_cockpit_repair_commands",
+  "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
+  "crates/ripr/src/output/first_pr.rs::tests::first_pr_help_pins_start_here_language",
+  "crates/ripr/src/output/first_pr.rs::tests::first_successful_pr_fixture_corpus_matches_expected_outputs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
   "crates/ripr/src/output/receipt_state.rs",
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/help.rs",
-  "crates/ripr/tests/cli_smoke.rs",
+  "crates/ripr/tests/cli_smoke.rs::first_pr_cli_writes_start_here_packet",
   "xtask/src/main.rs",
 ]
 fixtures = [
+  "fixtures/first_successful_pr",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
   "fixtures/boundary_gap/expected/pr-review-front-panel",
 ]
 code = [
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/help.rs",
+  "crates/ripr/src/cli/help/reports.rs",
+  "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
   "crates/ripr/src/output/receipt_state.rs",
-  "crates/ripr/src/output/first_pr.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "xtask/src/reports/pr_evidence_summary/render.rs",
   "crates/ripr/src/cli/commands.rs",
@@ -3511,6 +3520,10 @@ code = [
   "crates/ripr/src/cli/help/overview.rs",
 ]
 outputs = [
+  "fixtures/first_successful_pr/boundary-gap/expected/start-here.md",
+  "fixtures/first_successful_pr/blocked-ledger/expected/start-here.md",
+  "fixtures/first_successful_pr/empty-diff/expected/start-here.md",
+  "fixtures/first_successful_pr/output-contract-gap/expected/start-here.md",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
   "fixtures/first_successful_pr/boundary-gap/expected/start-here.json",
   "fixtures/first_successful_pr/output-contract-gap/expected/start-here.json",

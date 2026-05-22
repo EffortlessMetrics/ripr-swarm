@@ -1102,7 +1102,7 @@ jobs:
             ripr "${first_action_args[@]}"
           else
             echo 'No RIPR first-useful-action inputs were available.'
-            echo 'Regenerate command: `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` (add other available inputs as needed).'
+            echo 'Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.'
           fi
 
       - name: Render RIPR PR review front panel
@@ -1169,7 +1169,7 @@ jobs:
             ripr "${front_panel_args[@]}"
           else
             echo 'No RIPR PR review front-panel inputs were available.'
-            echo 'Regenerate command: `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` (add other available inputs as needed).'
+            echo 'Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.'
           fi
 
       - name: Render RIPR first-pr start-here
@@ -1440,9 +1440,8 @@ jobs:
             else
               echo "- Status: \`missing_start_here\`"
               echo "- State: \`missing_artifact\`"
-              echo "- Safe next action: regenerate the missing start-here packet before assigning repair work."
-              echo "- Next command: \`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports\`."
-              echo "- Fallback first-action command: \`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\` (add other available inputs as needed)."
+              echo "- Safe next action: run \`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports\`."
+              echo "- Fallback safe next action: run \`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\` after attaching at least one explicit input."
               echo "- Boundary: missing start-here packet does not fail generated CI or create gate authority."
             fi
             echo
@@ -1594,7 +1593,7 @@ jobs:
               fi
             else
               echo 'PR review summary was not generated. It runs when existing PR guidance, first-useful-action, assistant proof, health, ledger, baseline, gate, calibration, coverage/grip, or receipt artifacts are available.'
-              echo 'Regenerate command: `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` (add other available inputs as needed).'
+              echo 'Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.'
             fi
             echo
             echo '### Recommended next test'
@@ -1641,7 +1640,7 @@ jobs:
               fi
             else
               echo 'Recommended next test was not generated. It runs when existing PR guidance, assistant proof, ledger, baseline, receipt, gate, coverage/grip, or editor context artifacts are available.'
-              echo 'Regenerate command: `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` (add other available inputs as needed).'
+              echo 'Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.'
             fi
             echo
             echo '### Top recommendation'
@@ -10830,12 +10829,12 @@ language = "rust"
 
         let first_action = workflow_step(&workflow, "Render RIPR first useful action");
         assert!(first_action.contains(
-            "Regenerate command: `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md`"
+            "Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md`"
         ));
 
         let front_panel = workflow_step(&workflow, "Render RIPR PR review front panel");
         assert!(front_panel.contains(
-            "Regenerate command: `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`"
+            "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`"
         ));
 
         let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
@@ -10911,7 +10910,7 @@ language = "rust"
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains("State: \\`missing_artifact\\`"));
         assert!(summary.contains(
-            "Safe next action: regenerate the missing start-here packet before assigning repair work."
+            "Safe next action: run \\`ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
             "start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority"
@@ -10920,10 +10919,10 @@ language = "rust"
             "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
         ));
         assert!(summary.contains(
-            "Fallback first-action command: \\`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\\`"
+            "Fallback safe next action: run \\`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\\`"
         ));
         assert!(summary.contains(
-            "Regenerate command: `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`"
+            "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`"
         ));
         assert!(summary.contains(
             "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`."
