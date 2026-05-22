@@ -194,12 +194,13 @@ git diff --check
 
 ## Work Item 4: analysis: burn down top named static limitation bucket
 
-Issue: [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159)
+Issue: [swarm #238](https://github.com/EffortlessMetrics/ripr-swarm/issues/238)
+/ [source #1159](https://github.com/EffortlessMetrics/ripr/issues/1159)
 
 ### Goal
 
-Use #1140 to pick the largest repairable named static limitation bucket and
-turn it into a fixture-backed analyzer repair.
+Use the refreshed audit to pick the largest repairable named static limitation
+bucket and turn one safe sub-shape into a fixture-backed analyzer repair.
 
 ### Acceptance
 
@@ -211,33 +212,20 @@ turn it into a fixture-backed analyzer repair.
 
 ### Current Selected Slice
 
-The 2026-05-18 live audit selected `activation_value_unresolved` as the top
-named static limitation bucket. The first merged slice burned down the
-value-insensitive no-argument owner-call sub-shape:
+The 2026-05-22 live sampled audit selected `call_presence` /
+`activation_owner_call_unresolved` as the top named static limitation bucket:
 
-- before: 27,677 static limitations, including 27,288
-  `activation_value_unresolved`;
-- after: 26,339 static limitations, including 25,967
-  `activation_value_unresolved`;
-- delta: -1,338 static limitations and -1,321
-  `activation_value_unresolved` limitations.
+- evidence class: `call_presence`;
+- dominant signal: `static_limitations`;
+- dominant static limitation category: `activation_owner_call_unresolved`;
+- dominant repair route: `analysis/related-test-ranking-audit-fixes`;
+- work score: 5000.
 
-The supported case is a direct no-argument owner call for a value-insensitive
-seam. It moves activation out of a limitation without inventing observed values.
-Predicate-boundary value checks, non-direct owner affinity, helper-only flows,
-generated tests, provider calls, PR/CI rendering, gate policy, public score
-semantics, and mutation execution remain out of scope.
-
-The current follow-up keeps the same audit-selected bucket and widens the
-supported value-insensitive owner-call path to direct calls whose argument
-values remain opaque. It still does not invent observed activation values and
-still requires concrete activation values for predicate-boundary checks. The
-2026-05-19 live audit before this slice reported 26,277 static limitations,
-including 25,908 `activation_value_unresolved` limitations. The after-audit
-reported 19,106 static limitations, including 18,859
-`activation_value_unresolved` limitations, while actionable canonical gaps
-stayed at 162. Delta: -7,171 total static limitations and -7,049
-`activation_value_unresolved` limitations.
+The next PR should choose one safe owner-call sub-shape, add positive and
+must-not-claim fixtures, move only fixture-backed supported cases out of the
+limitation, and keep unsafe cases named as limitations. Prior
+`activation_value_unresolved` burn-down slices remain historical proof, not the
+current selected bucket.
 
 ### Proof Commands
 

@@ -92,7 +92,7 @@ commands = [
 [[work_item]]
 id = "analysis/top-static-limitation-bucket-burndown"
 status = "ready"
-branch = "analysis-top-static-limitation-bucket-burndown"
+branch = "analysis-call-presence-owner-call-limitation"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
 specs = [
@@ -100,7 +100,7 @@ specs = [
   "docs/specs/RIPR-SPEC-0043-presentation-text-evidence.md",
   "docs/specs/RIPR-SPEC-0048-config-policy-constant-evidence.md",
 ]
-acceptance = "Identify the top named static limitation bucket from audit data, add fixture-backed positive and must-not-claim coverage for the selected supported sub-shape, move only supported cases out of limitation, keep unsupported cases named, and report the before/after audit or scorecard delta."
+acceptance = "Use the refreshed audit selection for call_presence / activation_owner_call_unresolved, add fixture-backed positive and must-not-claim coverage for one safe owner-call sub-shape, move only supported cases out of limitation, keep unsupported cases named, and report the before/after audit or scorecard delta."
 commands = [
   "cargo xtask lane1-evidence-audit",
   "cargo xtask evidence-quality-scorecard",
