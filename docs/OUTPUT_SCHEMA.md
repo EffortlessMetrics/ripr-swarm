@@ -3056,7 +3056,7 @@ values, but movement and badge-readiness deltas remain unknown.
     "improved_metrics": 0,
     "regressed_metrics": 0,
     "unchanged_metrics": 0,
-    "unknown_metrics": 26,
+    "unknown_metrics": 27,
     "no_history": true
   },
   "metric_trends": [
