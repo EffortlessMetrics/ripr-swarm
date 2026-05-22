@@ -1438,6 +1438,24 @@ mod tests {
     }
 
     #[test]
+    fn non_git_root_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_cargo_root("first-pr-not-git")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not a git worktree"))
+        );
+        assert_eq!(packet["selected"]["next_command"], "ripr doctor --root .");
+        cleanup(&repo)
+    }
+
+    #[test]
     fn missing_git_base_writes_recovery_packet() -> Result<(), String> {
         let repo = temp_repo("first-pr-missing-base")?;
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
@@ -1462,6 +1480,30 @@ mod tests {
     }
 
     #[test]
+    fn missing_plain_git_base_writes_fetch_all_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-plain-base")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions {
+            base: "missing-base".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing-base"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . fetch --all --prune"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
     fn missing_git_head_writes_recovery_packet() -> Result<(), String> {
         let repo = temp_repo("first-pr-missing-head")?;
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
@@ -1481,6 +1523,32 @@ mod tests {
         assert_eq!(
             packet["selected"]["next_command"],
             "git -C . rev-parse --verify \"missing-head^{commit}\""
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn unrelated_git_range_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-unrelated-range")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        run_git(&repo, &["checkout", "--orphan", "unrelated"])?;
+        run_git(&repo, &["commit", "--allow-empty", "-m", "unrelated"])?;
+        let options = FirstPrOptions {
+            head: "unrelated".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("origin/main...unrelated"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . diff --name-only --no-ext-diff origin/main...unrelated"
         );
         cleanup(&repo)
     }
@@ -1749,6 +1817,12 @@ mod tests {
     }
 
     fn temp_repo(name: &str) -> Result<PathBuf, String> {
+        let path = temp_cargo_root(name)?;
+        init_git_repo(&path)?;
+        Ok(path)
+    }
+
+    fn temp_cargo_root(name: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|err| format!("system clock error: {err}"))?
@@ -1760,7 +1834,6 @@ mod tests {
             "[package]\nname = \"first-pr-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
         )
         .map_err(|err| format!("write temp Cargo.toml: {err}"))?;
-        init_git_repo(&path)?;
         Ok(path)
     }
 
