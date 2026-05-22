@@ -181,6 +181,7 @@ mod tests {
         assert!(HELP.contains("ripr assistant-loop proof"));
         assert!(HELP.contains("ripr assistant-loop health"));
         assert!(HELP.contains("ripr first-pr"));
+        assert!(HELP.contains("ripr start-here"));
         assert!(HELP.contains("ripr first-action"));
         assert!(HELP.contains("ripr reports index"));
         assert!(HELP.contains("ripr reports gap-ledger"));
@@ -341,6 +342,7 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("Start-here next step:"));
+        assert!(DOCTOR_HELP.contains("ripr start-here --root . --base origin/main --head HEAD"));
         assert!(DOCTOR_HELP.contains("missing artifact, stale evidence, wrong root"));
         assert!(LSP_HELP.starts_with("Start the experimental ripr LSP server"));
         assert!(LSP_HELP.contains("--stdio"));

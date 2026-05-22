@@ -3487,6 +3487,9 @@ spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 tests = [
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
+  "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/cli/help.rs",
+  "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "xtask/src/main.rs",
 ]
@@ -3497,6 +3500,9 @@ fixtures = [
 code = [
   "crates/ripr/src/output/pr_evidence_ledger.rs",
   "crates/ripr/src/output/pr_review_front_panel.rs",
+  "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/cli/help/overview.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "xtask/src/reports/pr_evidence_summary/render.rs",
 ]

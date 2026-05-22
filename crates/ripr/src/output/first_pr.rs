@@ -142,7 +142,7 @@ fn print_help() {
 }
 
 fn first_pr_help_text() -> &'static str {
-    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr [--root <path>] [--base <rev>] [--head <rev>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - verify command / receipt command / receipt path: static movement proof rail"
+    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - verify command / receipt command / receipt path: static movement proof rail"
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -168,6 +168,10 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     fs::write(&markdown_path, render_start_here_markdown(&packet))
         .map_err(|err| format!("failed to write {}: {err}", markdown_path.display()))?;
     validate_start_here_packet(&json_path, &markdown_path)?;
+    print!(
+        "{}",
+        start_here_cli_summary(&packet, &json_path, &markdown_path)
+    );
     println!("Wrote {}", json_path.display());
     println!("Wrote {}", markdown_path.display());
     Ok(())
@@ -185,6 +189,10 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let markdown_path = out_dir.join(START_HERE_MD);
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
     validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
+    print!(
+        "{}",
+        start_here_cli_summary(&packet, &json_path, &markdown_path)
+    );
     println!("First PR start-here packet ok: {}", json_path.display());
     Ok(())
 }
@@ -1740,6 +1748,126 @@ fn render_start_here_markdown(packet: &Value) -> String {
     out
 }
 
+fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path) -> String {
+    let selected = packet.get("selected").unwrap_or(&Value::Null);
+    let state = string_path(selected, &["state"]).unwrap_or_else(|| "unknown".to_string());
+    let mut out = String::new();
+    out.push_str(&format!("Start here: {}\n", markdown_path.display()));
+    out.push_str(&format!("State: {}\n", cli_state_label(&state)));
+    if let Some(limit) = cli_evidence_limit(selected) {
+        out.push_str(&format!("Evidence boundary: {limit}\n"));
+    }
+    out.push_str(&format!(
+        "Safe next action: {}\n",
+        cli_safe_next_action(&state, selected)
+    ));
+    match state.as_str() {
+        "top_gap" => {
+            if let Some(command) = string_path(selected, &["verify_command"]) {
+                out.push_str(&format!("Verify command: `{command}`\n"));
+            }
+            if let Some(command) = string_path(selected, &["receipt_command"]) {
+                out.push_str(&format!("Receipt command: `{command}`\n"));
+            }
+            out.push_str(&format!(
+                "Receipt path: `{}`\n",
+                string_path(selected, &["receipt_path"])
+                    .unwrap_or_else(|| "not_available".to_string())
+            ));
+        }
+        "missing_artifact" => {
+            if let Some(command) = string_path(selected, &["regeneration_command"]) {
+                out.push_str(&format!("Regeneration command: `{command}`\n"));
+            }
+            out.push_str("Receipt path: `not_applicable`\n");
+        }
+        "empty_diff" | "no_action" => {
+            out.push_str("Verify command: `not_applicable`\n");
+            out.push_str("Receipt command: `not_applicable`\n");
+            out.push_str("Receipt path: `not_applicable`\n");
+        }
+        _ => {
+            if let Some(command) = string_path(selected, &["next_command"]) {
+                out.push_str(&format!("Regeneration command: `{command}`\n"));
+            }
+            out.push_str("Receipt path: `not_applicable`\n");
+        }
+    }
+    out.push_str(&format!(
+        "Artifacts: `{}`, `{}`\n",
+        json_path.display(),
+        markdown_path.display()
+    ));
+    out.push_str(
+        "Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\n",
+    );
+    out
+}
+
+fn cli_state_label(state: &str) -> &'static str {
+    match state {
+        "top_gap" => "top_gap",
+        "missing_artifact" => "missing artifact",
+        "malformed_artifact" => "malformed artifact",
+        "stale_artifact" => "stale evidence",
+        "wrong_root" => "wrong root",
+        "timeout" => "timeout partial",
+        "empty_diff" => "empty diff",
+        "no_action" => "no actionable gap",
+        "blocked_artifact" => "blocked artifact",
+        _ => "blocked artifact",
+    }
+}
+
+fn cli_safe_next_action(state: &str, selected: &Value) -> String {
+    match state {
+        "top_gap" => {
+            let identity = string_path(selected, &["canonical_gap_id"])
+                .or_else(|| string_path(selected, &["gap_id"]))
+                .unwrap_or_else(|| "the selected gap".to_string());
+            let intent = string_path(selected, &["focused_proof_intent"])
+                .unwrap_or_else(|| "add one focused proof for the selected gap".to_string());
+            format!("repair one named gap `{identity}`: {intent}")
+        }
+        "missing_artifact" => "regenerate the missing artifact before repair work".to_string(),
+        "malformed_artifact" => "regenerate the malformed artifact before repair work".to_string(),
+        "stale_artifact" => "refresh stale evidence before repair work".to_string(),
+        "wrong_root" => "rerun from the matching workspace root before repair work".to_string(),
+        "timeout" => "rerun with a bounded refresh command before repair work".to_string(),
+        "empty_diff" => {
+            "no repair action selected; choose a head with changes or rerun after PR work"
+                .to_string()
+        }
+        "no_action" => {
+            "no repair action selected; inspect supporting evidence or rerun after relevant changes"
+                .to_string()
+        }
+        _ => string_path(selected, &["message"]).unwrap_or_else(|| {
+            "resolve the blocked start-here state before repair work".to_string()
+        }),
+    }
+}
+
+fn cli_evidence_limit(selected: &Value) -> Option<String> {
+    let language = string_path(selected, &["language"]);
+    let status = string_path(selected, &["language_status"]);
+    let static_limit = string_path(selected, &["static_limit_kind"]);
+    let static_detail = string_path(selected, &["static_limit_detail"]);
+    if status.as_deref() == Some("preview") {
+        let language = language.unwrap_or_else(|| "preview language".to_string());
+        let limit = static_limit.unwrap_or_else(|| "preview_limited".to_string());
+        return Some(format!(
+            "preview-limited evidence for `{language}`; static limit `{limit}` appears before repair language"
+        ));
+    }
+    static_limit.map(|limit| {
+        let detail = static_detail
+            .map(|detail| format!(" ({detail})"))
+            .unwrap_or_default();
+        format!("static limit `{limit}`{detail}")
+    })
+}
+
 fn render_preflight_markdown(packet: &Value, out: &mut String) {
     let Some(preflight) = packet.get("preflight").and_then(Value::as_object) else {
         return;
@@ -2093,6 +2221,7 @@ mod tests {
     #[test]
     fn first_pr_help_pins_start_here_language() {
         let help = first_pr_help_text();
+        assert!(help.contains("ripr first-pr|start-here"));
         assert!(help.contains("Start-here language:"));
         assert!(help.contains("safe next action"));
         assert!(
