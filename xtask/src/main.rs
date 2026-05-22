@@ -796,15 +796,20 @@ struct DogfoodEditorFirstPrBridgeRun {
 struct DogfoodFindingAlignmentScenario {
     name: String,
     source_pr: String,
+    canonical_gap_id: String,
     evidence_class: String,
     raw_findings_total: usize,
     canonical_items_total: usize,
     gap_state: String,
     actionability: String,
     user_outcome: String,
+    raw_finding_summary: String,
     repair_kind: String,
     target_test_type: String,
+    repair_or_no_action_route: String,
     verify_command: String,
+    verify_route: String,
+    before_after_context: String,
     static_limitation_category: Option<String>,
     static_limitation_repair_route: Option<String>,
     raw_findings_supporting_only: bool,
@@ -817,15 +822,20 @@ struct DogfoodFindingAlignmentScenario {
 struct DogfoodFindingAlignmentRun {
     name: String,
     source_pr: String,
+    canonical_gap_id: String,
     evidence_class: String,
     raw_findings_total: usize,
     canonical_items_total: usize,
     gap_state: String,
     actionability: String,
     user_outcome: String,
+    raw_finding_summary: String,
     repair_kind: String,
     target_test_type: String,
+    repair_or_no_action_route: String,
     verify_command: String,
+    verify_route: String,
+    before_after_context: String,
     static_limitation_category: Option<String>,
     static_limitation_repair_route: Option<String>,
     raw_findings_supporting_only: bool,
@@ -7472,6 +7482,11 @@ const FINDING_ALIGNMENT_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
         "already_observed",
     ),
     ("config_policy_flow_unknown_limitation", "static_limitation"),
+    (
+        "config_policy_opaque_lookup_report_unobserved",
+        "actionable",
+    ),
+    ("predicate_boundary_actionable_verify_route", "actionable"),
 ];
 
 const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
@@ -34209,15 +34224,20 @@ fn dogfood_finding_alignment_scenarios() -> Vec<DogfoodFindingAlignmentScenario>
         vec![DogfoodFindingAlignmentScenario {
             name: "corpus".to_string(),
             source_pr: "unknown".to_string(),
+            canonical_gap_id: "unknown".to_string(),
             evidence_class: "unknown".to_string(),
             raw_findings_total: 0,
             canonical_items_total: 0,
             gap_state: "missing".to_string(),
             actionability: "missing".to_string(),
             user_outcome: "missing".to_string(),
+            raw_finding_summary: reason.clone(),
             repair_kind: "unknown".to_string(),
             target_test_type: "unknown".to_string(),
+            repair_or_no_action_route: reason.clone(),
             verify_command: "unknown".to_string(),
+            verify_route: "unknown".to_string(),
+            before_after_context: reason.clone(),
             static_limitation_category: None,
             static_limitation_repair_route: None,
             raw_findings_supporting_only: false,
@@ -34250,6 +34270,8 @@ fn dogfood_finding_alignment_scenarios() -> Vec<DogfoodFindingAlignmentScenario>
             name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
             source_pr: json_string_field(case, "source_pr")
                 .unwrap_or_else(|| "unknown".to_string()),
+            canonical_gap_id: json_string_field(case, "canonical_gap_id")
+                .unwrap_or_else(|| "unknown".to_string()),
             evidence_class: json_string_field(case, "evidence_class")
                 .unwrap_or_else(|| "unknown".to_string()),
             raw_findings_total: json_usize_field(case, "raw_findings_total").unwrap_or(0),
@@ -34260,12 +34282,20 @@ fn dogfood_finding_alignment_scenarios() -> Vec<DogfoodFindingAlignmentScenario>
                 .unwrap_or_else(|| "unknown".to_string()),
             user_outcome: json_string_field(case, "user_outcome")
                 .unwrap_or_else(|| "unknown".to_string()),
+            raw_finding_summary: json_string_field(case, "raw_finding_summary")
+                .unwrap_or_else(|| "missing raw finding summary".to_string()),
             repair_kind: json_string_field(case, "repair_kind")
                 .unwrap_or_else(|| "unknown".to_string()),
             target_test_type: json_string_field(case, "target_test_type")
                 .unwrap_or_else(|| "unknown".to_string()),
+            repair_or_no_action_route: json_string_field(case, "repair_or_no_action_route")
+                .unwrap_or_else(|| "missing repair or no-action route".to_string()),
             verify_command: json_string_field(case, "verify_command")
                 .unwrap_or_else(|| "unknown".to_string()),
+            verify_route: json_string_field(case, "verify_route")
+                .unwrap_or_else(|| "missing verify route".to_string()),
+            before_after_context: json_string_field(case, "before_after_context")
+                .unwrap_or_else(|| "missing before/after context".to_string()),
             static_limitation_category: json_string_field(case, "static_limitation_category"),
             static_limitation_repair_route: json_string_field(
                 case,
@@ -34296,9 +34326,12 @@ fn dogfood_finding_alignment_run(
             scenario.source_pr
         ));
     }
+    if scenario.canonical_gap_id.trim().is_empty() || scenario.canonical_gap_id == "unknown" {
+        errors.push("canonical_gap_id must be present".to_string());
+    }
     if !matches!(
         scenario.evidence_class.as_str(),
-        "presentation_text" | "config_or_policy_constant"
+        "presentation_text" | "config_or_policy_constant" | "predicate_boundary" | "call_presence"
     ) {
         errors.push(format!(
             "unsupported evidence class for dogfood receipt: {}",
@@ -34316,6 +34349,29 @@ fn dogfood_finding_alignment_run(
     }
     if !scenario.raw_findings_supporting_only {
         errors.push("raw findings must be marked supporting-only".to_string());
+    }
+    if scenario.raw_finding_summary.trim().is_empty()
+        || scenario.raw_finding_summary == "missing raw finding summary"
+    {
+        errors.push("raw_finding_summary must be present".to_string());
+    }
+    if scenario.repair_or_no_action_route.trim().is_empty()
+        || scenario.repair_or_no_action_route == "missing repair or no-action route"
+    {
+        errors.push("repair_or_no_action_route must be present".to_string());
+    }
+    if scenario.verify_route.trim().is_empty() || scenario.verify_route == "missing verify route" {
+        errors.push("verify_route must be present".to_string());
+    }
+    if scenario.before_after_context.trim().is_empty()
+        || scenario.before_after_context == "missing before/after context"
+    {
+        errors.push("before_after_context must be present".to_string());
+    } else {
+        let context = scenario.before_after_context.to_ascii_lowercase();
+        if !context.contains("before") || !context.contains("after") {
+            errors.push("before_after_context must name before and after evidence".to_string());
+        }
     }
     if scenario.recommended_repair.trim().is_empty()
         || scenario.recommended_repair == "missing recommended repair"
@@ -34359,6 +34415,9 @@ fn dogfood_finding_alignment_run(
             }
             if finding_alignment_verify_command_is_missing(&scenario.verify_command) {
                 errors.push("actionable case must carry a verify command".to_string());
+            }
+            if finding_alignment_verify_command_is_missing(&scenario.verify_route) {
+                errors.push("actionable case must carry a verify route".to_string());
             }
             if scenario.static_limitation_category.is_some() {
                 errors.push(
@@ -34417,15 +34476,20 @@ fn dogfood_finding_alignment_run(
     DogfoodFindingAlignmentRun {
         name: scenario.name.clone(),
         source_pr: scenario.source_pr.clone(),
+        canonical_gap_id: scenario.canonical_gap_id.clone(),
         evidence_class: scenario.evidence_class.clone(),
         raw_findings_total: scenario.raw_findings_total,
         canonical_items_total: scenario.canonical_items_total,
         gap_state: scenario.gap_state.clone(),
         actionability: scenario.actionability.clone(),
         user_outcome: scenario.user_outcome.clone(),
+        raw_finding_summary: scenario.raw_finding_summary.clone(),
         repair_kind: scenario.repair_kind.clone(),
         target_test_type: scenario.target_test_type.clone(),
+        repair_or_no_action_route: scenario.repair_or_no_action_route.clone(),
         verify_command: scenario.verify_command.clone(),
+        verify_route: scenario.verify_route.clone(),
+        before_after_context: scenario.before_after_context.clone(),
         static_limitation_category: scenario.static_limitation_category.clone(),
         static_limitation_repair_route: scenario.static_limitation_repair_route.clone(),
         raw_findings_supporting_only: scenario.raw_findings_supporting_only,
@@ -35629,13 +35693,14 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     body.push_str("These receipts validate real RIPR PR examples of the raw-finding -> canonical-item -> user-outcome model. They keep raw findings as supporting evidence, require canonical item counts and user outcomes, and check that actionable items have repair and verification routes while static limitations name analyzer repair routes. They do not change PR/CI rendering, LSP/editor behavior, gates, public scores, generated tests, provider calls, source edits, or mutation execution.\n\n");
     body.push_str("- Default CI blocking: no\n");
     body.push_str("- Receipt input: `fixtures/finding-alignment-dogfood/corpus.json`\n\n");
-    body.push_str("| Case | PR | Class | Raw -> canonical | State | Actionability | Outcome | Repair | Verify | Static limitation |\n");
-    body.push_str("| --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- |\n");
+    body.push_str("| Case | PR | Canonical gap | Class | Raw -> canonical | State | Actionability | Outcome | Repair | Verify | Static limitation |\n");
+    body.push_str("| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- |\n");
     for run in finding_alignment_runs {
         body.push_str(&format!(
-            "| `{}` | `{}` | `{}` | {} -> {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            "| `{}` | `{}` | `{}` | `{}` | {} -> {} | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
             markdown_cell(&run.name),
             markdown_cell(&run.source_pr),
+            markdown_cell(&run.canonical_gap_id),
             markdown_cell(&run.evidence_class),
             run.raw_findings_total,
             run.canonical_items_total,
@@ -35653,6 +35718,10 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "- Source PR: `{}`\n",
             markdown_cell(&run.source_pr)
+        ));
+        body.push_str(&format!(
+            "- Canonical gap ID: `{}`\n",
+            markdown_cell(&run.canonical_gap_id)
         ));
         body.push_str(&format!(
             "- Evidence class: `{}`\n",
@@ -35675,8 +35744,16 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
             markdown_cell(&run.user_outcome)
         ));
         body.push_str(&format!(
+            "- Raw finding summary: {}\n",
+            markdown_cell(&run.raw_finding_summary)
+        ));
+        body.push_str(&format!(
             "- Recommended repair: {}\n",
             markdown_cell(&run.recommended_repair)
+        ));
+        body.push_str(&format!(
+            "- Repair or no-action route: `{}`\n",
+            markdown_cell(&run.repair_or_no_action_route)
         ));
         body.push_str(&format!(
             "- Repair kind: `{}` / target `{}`\n",
@@ -35686,6 +35763,14 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "- Verify command: `{}`\n",
             markdown_cell(&run.verify_command)
+        ));
+        body.push_str(&format!(
+            "- Verify route: `{}`\n",
+            markdown_cell(&run.verify_route)
+        ));
+        body.push_str(&format!(
+            "- Before/after context: {}\n",
+            markdown_cell(&run.before_after_context)
         ));
         body.push_str(&format!(
             "- Static limitation: `{}` via `{}`\n",
@@ -36693,6 +36778,10 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
             json_escape(&run.source_pr)
         ));
         body.push_str(&format!(
+            "        \"canonical_gap_id\": \"{}\",\n",
+            json_escape(&run.canonical_gap_id)
+        ));
+        body.push_str(&format!(
             "        \"evidence_class\": \"{}\",\n",
             json_escape(&run.evidence_class)
         ));
@@ -36717,6 +36806,10 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
             json_escape(&run.user_outcome)
         ));
         body.push_str(&format!(
+            "        \"raw_finding_summary\": \"{}\",\n",
+            json_escape(&run.raw_finding_summary)
+        ));
+        body.push_str(&format!(
             "        \"repair_kind\": \"{}\",\n",
             json_escape(&run.repair_kind)
         ));
@@ -36725,8 +36818,20 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
             json_escape(&run.target_test_type)
         ));
         body.push_str(&format!(
+            "        \"repair_or_no_action_route\": \"{}\",\n",
+            json_escape(&run.repair_or_no_action_route)
+        ));
+        body.push_str(&format!(
             "        \"verify_command\": \"{}\",\n",
             json_escape(&run.verify_command)
+        ));
+        body.push_str(&format!(
+            "        \"verify_route\": \"{}\",\n",
+            json_escape(&run.verify_route)
+        ));
+        body.push_str(&format!(
+            "        \"before_after_context\": \"{}\",\n",
+            json_escape(&run.before_after_context)
         ));
         body.push_str(&format!(
             "        \"static_limitation_category\": {},\n",
@@ -56222,15 +56327,23 @@ fn exact_owner_call_has_external_expected_value() {
         let finding_alignment_run = DogfoodFindingAlignmentRun {
             name: "config_policy_rendered_label_unobserved".to_string(),
             source_pr: "EffortlessMetrics/ripr#1016".to_string(),
+            canonical_gap_id: "config_or_policy_constant::CONFIG_LABEL".to_string(),
             evidence_class: "config_or_policy_constant".to_string(),
             raw_findings_total: 2,
             canonical_items_total: 1,
             gap_state: "actionable".to_string(),
             actionability: "add_output_observer".to_string(),
             user_outcome: "actionable_gap".to_string(),
+            raw_finding_summary: "Two config-policy raw findings group into one canonical item."
+                .to_string(),
             repair_kind: "output_observer".to_string(),
             target_test_type: "report_render_or_golden".to_string(),
+            repair_or_no_action_route: "output_observer".to_string(),
             verify_command: "cargo xtask evidence-quality-scorecard".to_string(),
+            verify_route: "canonical_item.verify_command".to_string(),
+            before_after_context:
+                "Before dogfood refresh: receipt had raw/canonical counts only; after: canonical route fields are explicit."
+                    .to_string(),
             static_limitation_category: None,
             static_limitation_repair_route: None,
             raw_findings_supporting_only: true,
@@ -56503,6 +56616,11 @@ fn exact_owner_call_has_external_expected_value() {
                     "config_policy_opaque_lookup_limitation",
                     "static_limitation",
                 ),
+                (
+                    "config_policy_opaque_lookup_report_unobserved",
+                    "actionable",
+                ),
+                ("predicate_boundary_actionable_verify_route", "actionable"),
             ] {
                 assert!(
                     scenarios.iter().any(|scenario| {
@@ -56535,15 +56653,23 @@ fn exact_owner_call_has_external_expected_value() {
         DogfoodFindingAlignmentScenario {
             name: name.to_string(),
             source_pr: "EffortlessMetrics/ripr#1016".to_string(),
+            canonical_gap_id: "config_or_policy_constant::EXAMPLE".to_string(),
             evidence_class: "presentation_text".to_string(),
             raw_findings_total: 2,
             canonical_items_total: 1,
             gap_state: gap_state.to_string(),
             actionability: "add_output_observer".to_string(),
             user_outcome: "actionable_gap".to_string(),
+            raw_finding_summary: "Two raw presentation-text findings group into one canonical item."
+                .to_string(),
             repair_kind: "output_observer".to_string(),
             target_test_type: "help_output_snapshot".to_string(),
+            repair_or_no_action_route: "output_observer".to_string(),
             verify_command: "cargo xtask evidence-quality-scorecard".to_string(),
+            verify_route: "canonical_item.verify_command".to_string(),
+            before_after_context:
+                "Before dogfood refresh: receipt had raw/canonical counts only; after: route fields are explicit."
+                    .to_string(),
             static_limitation_category: None,
             static_limitation_repair_route: None,
             raw_findings_supporting_only: true,
@@ -56560,13 +56686,18 @@ fn exact_owner_call_has_external_expected_value() {
     fn dogfood_finding_alignment_validation_reports_actionable_drift() {
         let mut scenario = valid_finding_alignment_scenario("", "actionable");
         scenario.source_pr = "ripr#1016".to_string();
+        scenario.canonical_gap_id = "unknown".to_string();
         scenario.evidence_class = "unknown".to_string();
         scenario.raw_findings_total = 0;
         scenario.canonical_items_total = 1;
         scenario.user_outcome = "no_action".to_string();
+        scenario.raw_finding_summary = String::new();
         scenario.repair_kind = "unknown".to_string();
         scenario.target_test_type = "none".to_string();
+        scenario.repair_or_no_action_route = String::new();
         scenario.verify_command = "unknown".to_string();
+        scenario.verify_route = "unknown".to_string();
+        scenario.before_after_context = "after only".to_string();
         scenario.static_limitation_category =
             Some("presentation_text_visibility_unknown".to_string());
         scenario.raw_findings_supporting_only = false;
@@ -56577,9 +56708,14 @@ fn exact_owner_call_has_external_expected_value() {
 
         assert!(report.contains("case id must be present"));
         assert!(report.contains("source_pr should name a real RIPR PR"));
+        assert!(report.contains("canonical_gap_id must be present"));
         assert!(report.contains("unsupported evidence class"));
         assert!(report.contains("raw findings 0 must be >= canonical items 1"));
         assert!(report.contains("raw findings must be marked supporting-only"));
+        assert!(report.contains("raw_finding_summary must be present"));
+        assert!(report.contains("repair_or_no_action_route must be present"));
+        assert!(report.contains("actionable case must carry a verify route"));
+        assert!(report.contains("before_after_context must name before and after evidence"));
         assert!(report.contains("must not route first to mutation testing"));
         assert!(report.contains("must_not_claim guards should preserve"));
         assert!(report.contains("actionable case should have actionable_gap outcome"));

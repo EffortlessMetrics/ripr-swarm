@@ -6,7 +6,8 @@ Spec: RIPR-SPEC-0045
 
 RIPR has checked finding-alignment examples from real RIPR PR work. Each
 example records raw finding counts, canonical item counts, evidence class,
-gap state, actionability, repair or limitation route, verify command, and
+gap state, actionability, raw finding summary, canonical gap ID, repair or
+no-action route, verify route, before/after audit or scorecard context, and
 must-not-claim guards.
 
 ## When
