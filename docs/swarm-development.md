@@ -22,18 +22,18 @@ before promoting batches back to the source repository.
 Use current repo state as the source of truth before starting or reviewing work:
 
 ```bash
-git fetch origin --prune
-git status --short --branch
-gh pr list --repo EffortlessMetrics/ripr-swarm --state open
-gh pr list --repo EffortlessMetrics/ripr --state open
-cargo xtask goals next
+rtk git fetch origin --prune
+rtk git status --short --branch
+rtk gh pr list --repo EffortlessMetrics/ripr-swarm --state open
+rtk gh pr list --repo EffortlessMetrics/ripr --state open
+rtk cargo xtask goals next
 ```
 
 Treat ordinary development PRs in `EffortlessMetrics/ripr` as source/swarm
 drift. Port, redirect, or close them unless they are release, security, or
 explicit promotion work.
 
-When `cargo xtask goals next` reports `no_current_goal = true`, do not continue
+When `rtk cargo xtask goals next` reports `no_current_goal = true`, do not continue
 the closed campaign and do not infer a successor from chat history. Select work
 from repo-owned state in this order:
 
