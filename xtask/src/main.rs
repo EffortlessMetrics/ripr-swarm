@@ -40453,8 +40453,6 @@ fn manifest_artifact_id_has_matching_file(root: &Path, artifact_id: &str) -> Res
 fn artifact_id_fallback_directory(artifact_id: &str) -> Option<&'static str> {
     if artifact_id.starts_with("RIPR-PROP-") {
         Some("docs/proposals")
-    } else if artifact_id.starts_with("RIPR-ADR-") || artifact_id.starts_with("ADR-") {
-        Some("docs/adr")
     } else {
         None
     }
@@ -61034,10 +61032,6 @@ commands = ["cargo xtask check-spec-format"]
 schema_version = "1.0"
 
 [[artifact]]
-id = "RIPR-PROP-0001"
-path = "docs/proposals/RIPR-PROP-0001-valid.md"
-
-[[artifact]]
 id = "RIPR-PLAN-0001"
 path = "plans/example/implementation-plan.md"
 "#,
@@ -61149,6 +61143,75 @@ commands = ["cargo xtask check-pr"]
             assert!(
                 violations.iter().any(|violation| violation.contains(
                     ".ripr/goals/active.toml:docs/missing `spec` references missing source-of-truth artifact or path `docs/specs/missing.md`"
+                )),
+                "{violations:?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn active_manifest_source_truth_reports_empty_and_registered_missing_references()
+    -> Result<(), String> {
+        with_temp_cwd("active-source-truth-empty-registered-missing", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-valid.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"
+schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+path = "plans/example/missing-plan.md"
+"#,
+            );
+            let manifest_path = root.join(".ripr/goals/active.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["done"]
+
+[[work_item]]
+id = "docs/empty"
+status = "ready"
+branch = "docs-empty"
+stackable = false
+proposal = ""
+plan = "RIPR-PLAN-0001"
+spec = "RIPR-SPEC-0001"
+acceptance = "done"
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let (manifest, parse_violations) = super::parse_campaign_manifest(&manifest_path)?;
+            if !parse_violations.is_empty() {
+                return Err(format!("unexpected parse violations: {parse_violations:?}"));
+            }
+
+            let mut violations = Vec::new();
+            super::validate_active_manifest_source_truth(
+                root,
+                ".ripr/goals/active.toml",
+                &manifest,
+                &mut violations,
+            )?;
+
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    ".ripr/goals/active.toml:docs/empty has empty `proposal` source-of-truth reference"
+                )),
+                "{violations:?}"
+            );
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    ".ripr/goals/active.toml:docs/empty `plan` references registered artifact `RIPR-PLAN-0001`, but `plans/example/missing-plan.md` is missing"
                 )),
                 "{violations:?}"
             );
