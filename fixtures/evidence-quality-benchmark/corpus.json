@@ -588,10 +588,10 @@
           "canonical_gap_id": "gap:bench-call-presence-generic-assertion-token",
           "canonical_gap_group_size": 1,
           "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
-          "owner": "paths::zq_call_presence_owner",
+          "owner": "agent_paths::zq_call_presence_owner",
           "location": {
-            "file": "src/paths.rs",
-            "line": 3
+            "file": "src/agent_paths.rs",
+            "line": 1
           },
           "seam_kind": "call_presence",
           "grip_class": "ungripped",

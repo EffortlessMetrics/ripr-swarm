@@ -586,18 +586,15 @@ impl OwnerContext {
 fn assertion_target_tokens(seam: &RepoSeam) -> BTreeSet<String> {
     let discriminator_tokens = required_discriminator_tokens(seam);
     let sink_tokens = extract_identifier_tokens(seam.expected_sink().as_str());
-    let tokens = discriminator_tokens
+    let filters_generic_call_tokens = seam.kind() == SeamKind::CallPresence;
+    discriminator_tokens
         .into_iter()
         .chain(sink_tokens)
-        .collect::<BTreeSet<_>>();
-    if seam.kind() == SeamKind::CallPresence {
-        tokens
-            .into_iter()
-            .filter(|token| call_presence_assertion_affinity_token_is_specific_enough(token))
-            .collect()
-    } else {
-        tokens
-    }
+        .filter(|token| {
+            !filters_generic_call_tokens
+                || call_presence_assertion_affinity_token_is_specific_enough(token)
+        })
+        .collect()
 }
 
 fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> bool {
