@@ -1,13 +1,14 @@
 # Handoff: Finding Alignment Consumer Contract v2
 
 Date: 2026-05-16
+Refresh: 2026-05-22
 Branch / PR: `lane1-finding-alignment-contract-v2` / #1042
-Latest prerequisite PR: #1034 `dogfood: record finding alignment examples`
-(commit `613c640f`)
+Latest refresh PRs: swarm #276 `dogfood: refresh finding alignment examples`
+and swarm #278 `goals: select canonical alignment handoff refresh`
 
 ## Current work item
 
-`docs/canonical-gap-action-consumer-handoff`
+`docs/canonical-alignment-contract-refresh`
 
 Lane 1 now has fixture-backed finding alignment beyond presentation text:
 presentation-text evidence, config/policy constant evidence, repair routes,
@@ -17,6 +18,25 @@ consumer contract for PR/CI, editor, report, and agent lanes.
 
 It does not change rendering, gates, scores, generated tests, provider calls,
 source edits, or mutation execution.
+
+## Refresh since v2
+
+The v2 contract remains the baseline. The Lane 1 burn-down added material
+consumer evidence that downstream lanes can now rely on without changing their
+authority boundary:
+
+- finding-alignment dogfood receipts now carry canonical gap IDs, raw finding
+  summaries, before/after audit or scorecard context, and must-not-claim
+  guards;
+- fixture-backed supported opaque config/report lookup can become an
+  actionable output-observer item;
+- generic opaque lookup, generated config/schema output, macro output, dynamic
+  dispatch, and unsupported cross-file flow remain named static limitations
+  until separately selected and fixture-backed;
+- scorecard and trend output lead internally with actionable canonical gaps
+  while raw findings stay visible as diagnostics;
+- runtime-confidence static-only classes stay calibration work, not user test
+  debt or mutation proof.
 
 ## Consumer invariant
 
@@ -57,14 +77,24 @@ Consumers that need one rendered item should prefer these fields:
 | Field | Use |
 | --- | --- |
 | `canonical_gap_id` | Stable grouping and dedupe identity. |
+| `source_pr` | Dogfood or receipt source for the example or material delta. |
 | `evidence_class` | Class such as `presentation_text` or `config_or_policy_constant`. |
+| `raw_findings_total` | Raw signal volume before grouping. |
+| `canonical_items_total` | Countable grouped evidence units after alignment. |
+| `raw_finding_summary` | Short reviewer-readable summary of the supporting raw evidence. |
 | `gap_state` | Lane 1 evidence state: `actionable`, `already_observed`, `internal_only`, `static_limitation`, or `unknown`. |
 | `actionability` | Class-scoped action label such as `add_output_observer`, `add_behavior_discriminator`, `no_action`, or `inspect_flow`. |
+| `user_outcome` | Dogfood-facing outcome label such as actionable gap, no action, or static limitation. |
 | `why` | Short explanation for the evidence state. |
 | `recommended_repair` | User repair, no-action explanation, or limitation repair route. |
 | `repair_route` | Normalized repair contract with `repair_kind`, `target_test_type`, and `suggested_assertion` when actionable. |
+| `repair_kind` | Dogfood receipt repair kind used to summarize the structured route. |
+| `target_test_type` | Dogfood receipt target proof surface, such as report render, golden, or behavior discriminator. |
 | `related_test` or `related_observer` | Best known repair location or observer. |
 | `verify_command` | Verification route when known. |
+| `before_after_context` | Material movement context from an audit, scorecard, trend, or receipt. |
+| `must_not_claim[]` | Explicit public and downstream non-claims for the example. |
+| `reason` | Short reason the example belongs in the dogfood corpus. |
 | `primary_anchor` | Preferred annotation placement when a surface needs one line. |
 | `raw_findings[]` or `raw_spans[]` | Supporting line-local evidence only. |
 | `static_limitations[]` | Named analyzer limitation categories and repair routes. |
@@ -124,9 +154,13 @@ For `config_or_policy_constant`, consumers should render:
 - internal policy metadata as no action.
 - rendered config/report labels without observers as output-observer repairs.
 - behavior selectors without discriminators as behavior-discriminator repairs.
-- cross-file, opaque, dynamic, or unsupported flows as named static
-  limitations, such as `config_policy_flow_unknown` or
-  `config_policy_observer_unknown`.
+- fixture-backed supported opaque report lookup as an output-observer repair
+  when it reaches a supported report/output surface.
+- generic opaque lookup, cross-file formatting, generated config/schema output,
+  macro output, dynamic dispatch, or unsupported flows as named static
+  limitations, such as `opaque_config_lookup`,
+  `macro_generated_config_output`, `dynamic_config_dispatch`,
+  `config_policy_flow_unknown`, or `config_policy_observer_unknown`.
 
 ## Primary anchor and raw spans
 
@@ -156,7 +190,7 @@ developer-detail surfaces unless a later Lane 1 contract gives it a
 
 ## Verification run
 
-The prerequisite dogfood PR (#1034) was validated with:
+The original prerequisite dogfood PR (#1034) was validated with:
 
 ```bash
 cargo test -p xtask finding_alignment --bin xtask
@@ -170,8 +204,18 @@ cargo xtask check-pr
 git diff --check
 ```
 
-This handoff PR should remain docs-only and rerun the documentation,
-traceability, static-language, and PR checks before merge.
+The refreshed dogfood PR (swarm #276) added canonical gap identity, raw finding
+summary, before/after context, supported opaque report lookup, actionable
+scorecard lead, and runtime static-only trend examples. This handoff refresh
+should remain docs-only and rerun:
+
+```bash
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-pr
+git diff --check
+```
 
 ## Artifacts
 
@@ -180,6 +224,8 @@ traceability, static-language, and PR checks before merge.
 - `docs/specs/RIPR-SPEC-0048-config-policy-constant-evidence.md`
 - `docs/OUTPUT_SCHEMA.md`
 - `docs/DOGFOODING.md`
+- `docs/lanes/LANE_1_FINDING_ALIGNMENT_BURNDOWN.md`
+- `plans/lane1-finding-alignment-burndown/implementation-plan.md`
 - `fixtures/finding-alignment-dogfood/SPEC.md`
 - `fixtures/finding-alignment-dogfood/corpus.json`
 - `docs/handoffs/2026-05-14-presentation-text-consumer-handoff.md`
@@ -190,6 +236,10 @@ Downstream lanes can opt into canonical item rendering using this contract.
 Lane 1 should continue class-by-class alignment only when the scorecard,
 coverage audit, or dogfood receipts identify a concrete unaligned evidence
 class.
+
+The next repo-control action is to close the Lane 1 finding-alignment burn-down
+only after recording what improved, what remains unknown, which counts moved,
+and which evidence class should be repaired next.
 
 ## What not to do
 
