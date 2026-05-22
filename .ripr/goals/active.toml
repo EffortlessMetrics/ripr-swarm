@@ -128,7 +128,7 @@ acceptance = "CLI and report outputs distinguish clean, no actionable gap, missi
 
 [[work_item]]
 id = "policy/preview-promotion-proof-criteria"
-status = "ready"
+status = "done"
 branch = "policy-preview-promotion-proof-criteria"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
@@ -145,14 +145,16 @@ acceptance = "Preview promotion criteria include fixtures, dogfood, related-test
 
 [[work_item]]
 id = "dogfood/external-style-start-here-receipts"
-status = "blocked"
+status = "ready"
 branch = "dogfood-external-style-start-here-receipts"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 plan = "plans/start-here-surface-convergence/implementation-plan.md"
-blocked_by = [
-  "policy/preview-promotion-proof-criteria",
+commands = [
+  "cargo xtask first-pr",
+  "cargo xtask dogfood",
+  "cargo xtask check-pr",
 ]
 acceptance = "Receipts cover small Rust crate, Rust workspace, no actionable gap, stale artifacts, disabled preview languages, preview-limited evidence, and malformed or missing artifacts with commands, artifact paths, state labels, known limits, and receipt outcomes."
 

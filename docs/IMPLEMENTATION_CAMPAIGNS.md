@@ -3837,8 +3837,8 @@ Work items:
 | `cli/start-here-command-language` | done | #203 aligned CLI/front-door wording on `Start Here`, generated workflow summary copy, `doctor` setup guidance, safe next action, fail-closed state names, verify command, receipt command, receipt path, recovery states, and advisory boundaries without changing packet schema. |
 | `receipt/lifecycle-state-convergence` | done | #204 standardizes receipt found/missing/stale/mismatch/improved/unchanged/not-applicable states across agent receipt, first-pr, PR evidence, front-panel, actionable-gap outcome, and editor projection fixtures. |
 | `output/no-output-fail-closed-states` | done | #205 standardizes clean, no-action, missing, stale, wrong-root, disabled, unavailable, malformed, partial, and unsafe output states outside the editor. |
-| `policy/preview-promotion-proof-criteria` | ready | #206 defines proof criteria before preview evidence can claim a stronger tier. |
-| `dogfood/external-style-start-here-receipts` | blocked | #207 records normal-repo and failure-state receipts for the converged path. |
+| `policy/preview-promotion-proof-criteria` | done | #206 defines proof criteria before preview evidence can claim a stronger tier and keeps TypeScript, JavaScript, and Python preview evidence advisory until a policy-owned packet closes the criteria. |
+| `dogfood/external-style-start-here-receipts` | ready | #207 records normal-repo and failure-state receipts for the converged path. |
 | `campaign/start-here-surface-convergence-closeout` | blocked | #208 closes only after the issue burn-down is closed or explicitly superseded. |
 
 Commands:

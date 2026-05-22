@@ -204,6 +204,8 @@ default `allowed_now = false`, explicit required/supplied/missing evidence
 accounting, advisory generated-CI posture, rollback guidance, and no actual
 promotion, gate eligibility, RIPR Zero inclusion, calibrated confidence, CI
 blocking, or preview eligibility mutation.
+The maintainer-facing proof checklist is
+[Preview promotion criteria](PREVIEW_PROMOTION_CRITERIA.md).
 
 The maintainer workflow is documented in
 [Policy operations workflow](../POLICY_OPERATIONS_WORKFLOW.md). It explains how
