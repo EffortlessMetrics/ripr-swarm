@@ -1,9 +1,9 @@
 schema_version = "1.0"
 
 # Document artifact ledger for source-of-truth links.
-# The ledger registers the control-plane seed artifacts and the active product
-# plan artifacts that generated source-of-truth reports and PR bodies should
-# be able to resolve.
+# The ledger registers the control-plane seed artifacts and product plan
+# artifacts that generated source-of-truth reports and PR bodies should be able
+# to resolve.
 
 [[artifact]]
 id = "RIPR-PROP-0009"
@@ -24,7 +24,7 @@ linked_proposal = "RIPR-PROP-0009"
 id = "RIPR-PLAN-0028"
 kind = "plan"
 path = "plans/first-useful-pr-loop/implementation-plan.md"
-status = "active"
+status = "done"
 owner = "repo-infra"
 linked_proposal = "RIPR-PROP-0009"
 linked_spec = "RIPR-SPEC-0051"
