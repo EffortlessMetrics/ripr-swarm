@@ -453,6 +453,8 @@ Issue: [#1147](https://github.com/EffortlessMetrics/ripr/issues/1147)
 
 Swarm issue: [#262](https://github.com/EffortlessMetrics/ripr-swarm/issues/262)
 
+Status: done in swarm #266 proof on 2026-05-22.
+
 ### Goal
 
 Keep internal scorecards led by user work while new evidence classes land.
@@ -479,6 +481,8 @@ git diff --check
 
 Issue: [#1160](https://github.com/EffortlessMetrics/ripr/issues/1160)
 
+Status: done before activation; source #1160 closed on 2026-05-19 with current audit and scorecard runtime-confidence coverage rows.
+
 ### Goal
 
 Show calibrated-supported versus static-only canonical items by evidence class.
@@ -504,6 +508,10 @@ git diff --check
 ## Work Item 12: dogfood: refresh finding alignment examples from burn-down deltas
 
 Issue: [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149)
+
+Swarm issue: [#267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267)
+
+Status: ready.
 
 ### Goal
 
