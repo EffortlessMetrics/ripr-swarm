@@ -83,6 +83,8 @@ movement.
 After the focused proof is added outside RIPR, emit the reviewer receipt:
 
 ```bash
+cargo xtask fixtures boundary_gap
+
 ripr outcome \
   --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json \
   --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json \
