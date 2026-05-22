@@ -3,19 +3,21 @@
 Status: advisory
 State: actionable
 
-## Top Gap
+## Recommendation
 
-ripr gap: missing boundary assertion
+- Top actionable gap: missing boundary assertion
+- Changed behavior: `amount >= threshold`
+- Current evidence strength: Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.
+- Missing discriminator: Equality-boundary assertion for the changed behavior.
+- Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`.
+- Verify: `cargo xtask fixtures boundary_gap`
+- Receipt: `ripr outcome --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --format json --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
+- Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
 Evidence boundary:
 - Canonical gap: `gap:rust:pricing:discount:threshold-boundary`
 - Language: `rust` (stable)
-- Current evidence: `weakly_exposed`
-- Missing discriminator: `amount == threshold`
 - Receipt state: `receipt_missing`
-
-Changed behavior:
-`amount >= threshold`
 
 Why this matters:
 A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior.
@@ -24,13 +26,12 @@ Repair:
 - Route: `AddBoundaryAssertion`
 - Target: `tests/pricing.rs`
 - Assertion: `assert_eq!(discount(100, 100), 90)`
-- Focused proof intent: Add a focused equality-boundary assertion in `tests/pricing.rs` for the threshold edge.
 
 Verify:
 `cargo xtask fixtures boundary_gap`
 
 Receipt:
-Not available: No receipt command was supplied by the gap ledger; run the verify command first, then regenerate first-pr after an agent receipt command is available.
+`ripr outcome --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --format json --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json`
 
 Agent packet:
 `ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json > target/ripr/workflow/agent-packet.json`
