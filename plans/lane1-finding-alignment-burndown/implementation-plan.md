@@ -481,7 +481,7 @@ git diff --check
 
 Issue: [#1160](https://github.com/EffortlessMetrics/ripr/issues/1160)
 
-Status: ready.
+Status: done before activation; source #1160 closed on 2026-05-19 with current audit and scorecard runtime-confidence coverage rows.
 
 ### Goal
 
@@ -508,6 +508,10 @@ git diff --check
 ## Work Item 12: dogfood: refresh finding alignment examples from burn-down deltas
 
 Issue: [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149)
+
+Swarm issue: [#267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267)
+
+Status: ready.
 
 ### Goal
 
