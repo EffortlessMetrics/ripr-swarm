@@ -474,7 +474,14 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(markdown.contains("# RIPR First PR Start Here"));
     assert!(markdown.contains("Status: advisory"));
     assert!(markdown.contains("## Preflight"));
-    assert!(markdown.contains("ripr gap: missing boundary assertion"));
+    assert!(markdown.contains("- Top actionable gap: missing boundary assertion"));
+    assert!(
+        markdown.contains(
+            "- Current evidence strength: Static evidence found related Rust test context"
+        )
+    );
+    assert!(markdown.contains("- Missing discriminator: Equality-boundary assertion"));
+    assert!(markdown.contains("- Receipt: `ripr outcome --before"));
     assert!(markdown.contains("Pass/fail authority remains with explicit gate-decision artifacts"));
     let check_output = run_ripr_in_workspace(&[
         "first-pr",

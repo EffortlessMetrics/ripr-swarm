@@ -1,4 +1,6 @@
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::{
+    WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, outcome_command, shell_arg,
+};
 use crate::config::CONFIG_FILE_NAME;
 use serde_json::{Map, Value, json};
 use std::env;
@@ -1047,12 +1049,10 @@ impl Selection {
                     "verify".to_string(),
                     Value::String(top_gap.verify_command.clone()),
                 );
-                if let Some(receipt_command) = &top_gap.receipt_command {
-                    commands.insert(
-                        "receipt".to_string(),
-                        Value::String(receipt_command.clone()),
-                    );
-                }
+                commands.insert(
+                    "receipt".to_string(),
+                    Value::String(top_gap.receipt_command.clone()),
+                );
             }
             Self::MissingArtifact {
                 regeneration_command,
@@ -1121,22 +1121,23 @@ struct TopGapSelection {
     language_status: Option<String>,
     kind: String,
     source_artifact: String,
+    changed_behavior: Option<String>,
     current_evidence_strength: String,
     missing_discriminator: String,
-    changed_behavior: Option<String>,
+    focused_proof_intent: String,
     why: String,
     repair_route: String,
     target_file: Option<String>,
     related_test: Option<String>,
     suggested_assertion: Option<String>,
-    focused_proof_intent: String,
     anchor_file: Option<String>,
     anchor_line: Option<u64>,
     anchor_owner: Option<String>,
     dedupe_fingerprint: Option<String>,
     verify_command: String,
-    receipt_command: Option<String>,
-    receipt_unavailable_reason: Option<String>,
+    receipt_command: String,
+    receipt_path: String,
+    receipt_command_source: String,
     receipt_state: Option<String>,
     static_limit_kind: Option<String>,
     static_limit_detail: Option<String>,
@@ -1153,16 +1154,16 @@ impl TopGapSelection {
             "language_status": self.language_status,
             "kind": self.kind,
             "source_artifact": self.source_artifact,
+            "changed_behavior": self.changed_behavior,
             "current_evidence_strength": self.current_evidence_strength,
             "missing_discriminator": self.missing_discriminator,
-            "changed_behavior": self.changed_behavior,
+            "focused_proof_intent": self.focused_proof_intent,
             "why": self.why,
             "repair": {
                 "route": self.repair_route,
                 "target_file": self.target_file,
                 "related_test": self.related_test,
-                "suggested_assertion": self.suggested_assertion,
-                "focused_proof_intent": self.focused_proof_intent
+                "suggested_assertion": self.suggested_assertion
             },
             "anchor": {
                 "file": self.anchor_file,
@@ -1172,7 +1173,8 @@ impl TopGapSelection {
             },
             "verify_command": self.verify_command,
             "receipt_command": self.receipt_command,
-            "receipt_unavailable_reason": self.receipt_unavailable_reason,
+            "receipt_path": self.receipt_path,
+            "receipt_command_source": self.receipt_command_source,
             "receipt_state": self.receipt_state,
             "static_limit_kind": self.static_limit_kind,
             "static_limit_detail": self.static_limit_detail,
@@ -1310,42 +1312,36 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
     let anchor = record.get("anchor");
     let gap_id = string_path(record, &["gap_id"]).unwrap_or_else(|| "unknown-gap".to_string());
     let kind = string_path(record, &["kind"]).unwrap_or_else(|| "Unknown".to_string());
+    let changed_behavior = string_from_sources(&[
+        (repair_route, &["changed_behavior"]),
+        (Some(record), &["changed_behavior"]),
+    ]);
+    let verify_command = first_string_array_item(record, &["verification_commands"])
+        .unwrap_or_else(|| regenerate_gap_ledger_command(&options.gap_ledger));
+    let receipt_path = string_path(record, &["receipt_path"])
+        .or_else(|| string_path(record, &["receipt", "path"]))
+        .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
+    let ledger_receipt_command = string_path(record, &["receipt_command"]);
+    let ledger_receipt_or_path_command = command_like_path(record, &["receipt_command_or_path"]);
+    let (receipt_command, receipt_command_source) = if let Some(command) = ledger_receipt_command {
+        (command, "gap_ledger.receipt_command".to_string())
+    } else if let Some(command) = ledger_receipt_or_path_command {
+        (command, "gap_ledger.receipt_command_or_path".to_string())
+    } else {
+        (
+            outcome_command(
+                WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+                WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+                Some(&receipt_path),
+            ),
+            "first_pr.default_outcome_command".to_string(),
+        )
+    };
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
     let target_file = string_from_sources(&[(repair_route, &["target_file"])]);
     let related_test = string_from_sources(&[(repair_route, &["related_test"])]);
     let suggested_assertion = string_from_sources(&[(repair_route, &["assertion_shape"])]);
-    let changed_behavior = string_from_sources(&[
-        (repair_route, &["changed_behavior"]),
-        (Some(record), &["changed_behavior"]),
-    ]);
-    let missing_discriminator = string_from_sources(&[
-        (repair_route, &["missing_discriminator"]),
-        (Some(record), &["missing_discriminator"]),
-        (Some(record), &["evidence", "missing_discriminator"]),
-    ])
-    .or_else(|| changed_behavior.clone())
-    .or_else(|| suggested_assertion.clone())
-    .unwrap_or_else(|| "missing discriminator not available in gap ledger".to_string());
-    let focused_proof_intent = string_from_sources(&[
-        (repair_route, &["proof_intent"]),
-        (Some(record), &["focused_proof_intent"]),
-        (Some(record), &["proof_intent"]),
-    ])
-    .unwrap_or_else(|| {
-        focused_proof_intent_for_route(
-            &repair_route_kind,
-            target_file.as_deref(),
-            related_test.as_deref(),
-            suggested_assertion.as_deref(),
-        )
-    });
-    let verify_command = first_string_array_item(record, &["verification_commands"])
-        .unwrap_or_else(|| regenerate_gap_ledger_command(&options.gap_ledger));
-    let receipt_command = string_path(record, &["receipt_command"]);
-    let receipt_unavailable_reason = receipt_command.is_none().then(|| {
-        "No receipt command was supplied by the gap ledger; run the verify command first, then regenerate first-pr after an agent receipt command is available.".to_string()
-    });
     TopGapSelection {
         gap_id: gap_id.clone(),
         canonical_gap_id: string_path(record, &["canonical_gap_id"]),
@@ -1353,25 +1349,28 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
         language_status: string_path(record, &["language_status"]),
         kind: kind.clone(),
         source_artifact: options.gap_ledger.clone(),
-        current_evidence_strength: string_path(record, &["current_evidence_strength"])
-            .or_else(|| string_path(record, &["evidence_strength"]))
-            .or_else(|| string_path(record, &["classification"]))
-            .unwrap_or_else(|| current_evidence_strength_for_gap(&kind)),
-        missing_discriminator,
         changed_behavior,
+        current_evidence_strength: current_evidence_strength_for_gap(&kind),
+        missing_discriminator: missing_discriminator_for_gap(&kind, suggested_assertion.as_deref()),
+        focused_proof_intent: focused_proof_intent(
+            &repair_route_kind,
+            target_file.as_deref(),
+            suggested_assertion.as_deref(),
+            related_test.as_deref(),
+        ),
         why: why_for_gap(&kind),
         repair_route: repair_route_kind,
         target_file,
         related_test,
         suggested_assertion,
-        focused_proof_intent,
         anchor_file: string_from_sources(&[(anchor, &["file"])]),
         anchor_line: u64_from_sources(&[(anchor, &["line"])]),
         anchor_owner: string_from_sources(&[(anchor, &["owner"])]),
         dedupe_fingerprint: string_from_sources(&[(anchor, &["dedupe_fingerprint"])]),
         verify_command,
         receipt_command,
-        receipt_unavailable_reason,
+        receipt_path,
+        receipt_command_source,
         receipt_state: string_path(record, &["receipt", "state"])
             .or_else(|| string_path(record, &["receipt", "movement"])),
         static_limit_kind: string_path(record, &["static_limit_kind"]),
@@ -1380,6 +1379,69 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
             options.root, options.gap_ledger, gap_id, options.agent_packet
         ),
+    }
+}
+
+fn current_evidence_strength_for_gap(kind: &str) -> String {
+    match kind {
+        "MissingBoundaryAssertion" | "MissingValueAssertion" | "MissingErrorDiscriminator" => {
+            "Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.".to_string()
+        }
+        "MissingOutputContract" => {
+            "Static evidence found changed user-facing output, but no checked output or golden proof is attached.".to_string()
+        }
+        _ => {
+            "The gap ledger marked this PR-local stable Rust gap as actionable and repairable; no runtime proof is claimed.".to_string()
+        }
+    }
+}
+
+fn missing_discriminator_for_gap(kind: &str, suggested_assertion: Option<&str>) -> String {
+    match kind {
+        "MissingBoundaryAssertion" => {
+            "Equality-boundary assertion for the changed behavior.".to_string()
+        }
+        "MissingOutputContract" => {
+            "Checked output or golden proof for the changed text.".to_string()
+        }
+        "MissingValueAssertion" => "Exact value assertion for the changed behavior.".to_string(),
+        "MissingErrorDiscriminator" => {
+            "Error discriminator assertion for the changed behavior.".to_string()
+        }
+        _ => suggested_assertion
+            .map(|assertion| format!("Assertion or output proof shaped as `{assertion}`."))
+            .unwrap_or_else(|| {
+                "Specific assertion or output proof that observes the changed behavior.".to_string()
+            }),
+    }
+}
+
+fn focused_proof_intent(
+    repair_route: &str,
+    target_file: Option<&str>,
+    suggested_assertion: Option<&str>,
+    related_test: Option<&str>,
+) -> String {
+    let target = target_file
+        .or(related_test)
+        .map(|target| format!(" in `{target}`"))
+        .unwrap_or_default();
+    match repair_route {
+        "AddOutputGolden" => suggested_assertion
+            .map(|assertion| format!("Add or update the output proof{target} so `{assertion}`."))
+            .unwrap_or_else(|| format!("Add or update the output proof{target}.")),
+        "AddBoundaryAssertion" => suggested_assertion
+            .map(|assertion| format!("Add a focused boundary assertion{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add a focused boundary assertion{target}.")),
+        "AddValueAssertion" => suggested_assertion
+            .map(|assertion| format!("Add a focused value assertion{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add a focused value assertion{target}.")),
+        "AddErrorDiscriminator" => suggested_assertion
+            .map(|assertion| format!("Add a focused error-path assertion{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add a focused error-path assertion{target}.")),
+        _ => suggested_assertion
+            .map(|assertion| format!("Add the focused proof{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add the focused proof{target}.")),
     }
 }
 
@@ -1401,44 +1463,38 @@ fn why_for_gap(kind: &str) -> String {
     }
 }
 
-fn current_evidence_strength_for_gap(kind: &str) -> String {
-    match kind {
-        "MissingBoundaryAssertion" | "MissingErrorDiscriminator" | "MissingValueAssertion" => {
-            "weakly_exposed".to_string()
-        }
-        "MissingOutputContract" | "MissingSideEffectObserver" => "reachable_unrevealed".to_string(),
-        "StaticLimitation" => "static_unknown".to_string(),
-        _ => "static_unknown".to_string(),
+fn first_pr_receipt_path(receipts_dir: &str, gap_id: &str) -> String {
+    let directory = receipts_dir.trim_end_matches(['/', '\\']);
+    let file_name = format!("{}.targeted-test-outcome.json", slugify_gap_id(gap_id));
+    if directory.is_empty() {
+        file_name
+    } else {
+        format!("{directory}/{file_name}")
     }
 }
 
-fn focused_proof_intent_for_route(
-    route: &str,
-    target_file: Option<&str>,
-    related_test: Option<&str>,
-    assertion: Option<&str>,
-) -> String {
-    let target = target_file.or(related_test);
-    match (route, target, assertion) {
-        ("AddOutputGolden", Some(target), Some(assertion)) => {
-            format!("Add or update output proof in `{target}` so `{assertion}` is checked.")
+fn slugify_gap_id(gap_id: &str) -> String {
+    let mut slug = String::new();
+    let mut previous_dash = false;
+    for ch in gap_id.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            previous_dash = false;
+        } else if !previous_dash {
+            slug.push('-');
+            previous_dash = true;
         }
-        ("AddOutputGolden", Some(target), None) => {
-            format!("Add or update output proof in `{target}` for the changed visible text.")
-        }
-        (_, Some(target), Some(assertion)) => {
-            format!("Add one focused test or output proof in `{target}` with `{assertion}`.")
-        }
-        (_, Some(target), None) => {
-            format!(
-                "Add one focused test or output proof in `{target}` for the missing discriminator."
-            )
-        }
-        (_, None, Some(assertion)) => {
-            format!("Add one focused test or output proof with `{assertion}`.")
-        }
-        _ => "Add one focused test or output proof for the missing discriminator.".to_string(),
     }
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "gap".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn command_like_path(value: &Value, path: &[&str]) -> Option<String> {
+    string_path(value, path).filter(|text| text.trim_start().starts_with("ripr "))
 }
 
 fn artifact_status(
@@ -1720,12 +1776,39 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
 }
 
 fn render_top_gap_markdown(selected: &Value, out: &mut String) {
-    out.push_str("## Top Gap\n\n");
+    out.push_str("## Recommendation\n\n");
     let kind = selected
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("gap");
-    out.push_str(&format!("ripr gap: {}\n\n", sentence_case(kind)));
+    out.push_str(&format!("- Top actionable gap: {}\n", sentence_case(kind)));
+    if let Some(changed) = selected.get("changed_behavior").and_then(Value::as_str) {
+        out.push_str(&format!("- Changed behavior: `{}`\n", changed.trim()));
+    }
+    if let Some(strength) = selected
+        .get("current_evidence_strength")
+        .and_then(Value::as_str)
+    {
+        out.push_str(&format!("- Current evidence strength: {strength}\n"));
+    }
+    if let Some(discriminator) = selected
+        .get("missing_discriminator")
+        .and_then(Value::as_str)
+    {
+        out.push_str(&format!("- Missing discriminator: {discriminator}\n"));
+    }
+    if let Some(intent) = selected.get("focused_proof_intent").and_then(Value::as_str) {
+        out.push_str(&format!("- Focused proof intent: {intent}\n"));
+    }
+    if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
+        out.push_str(&format!("- Verify: `{command}`\n"));
+    }
+    if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
+        out.push_str(&format!("- Receipt: `{command}`\n"));
+    }
+    out.push_str(
+        "- Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\n\n",
+    );
     out.push_str("Evidence boundary:\n");
     if let Some(gap_id) = selected.get("canonical_gap_id").and_then(Value::as_str) {
         out.push_str(&format!("- Canonical gap: `{gap_id}`\n"));
@@ -1741,18 +1824,6 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     out.push_str(&format!("- Language: `{language}` ({language_status})\n"));
-    if let Some(strength) = selected
-        .get("current_evidence_strength")
-        .and_then(Value::as_str)
-    {
-        out.push_str(&format!("- Current evidence: `{strength}`\n"));
-    }
-    if let Some(discriminator) = selected
-        .get("missing_discriminator")
-        .and_then(Value::as_str)
-    {
-        out.push_str(&format!("- Missing discriminator: `{discriminator}`\n"));
-    }
     if let Some(limit) = selected.get("static_limit_kind").and_then(Value::as_str) {
         out.push_str(&format!("- Static limit: `{limit}`\n"));
         if let Some(detail) = selected.get("static_limit_detail").and_then(Value::as_str) {
@@ -1764,10 +1835,6 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         .and_then(Value::as_str)
         .unwrap_or("receipt_missing");
     out.push_str(&format!("- Receipt state: `{receipt_state}`\n\n"));
-    if let Some(changed) = selected.get("changed_behavior").and_then(Value::as_str) {
-        out.push_str("Changed behavior:\n");
-        out.push_str(&format!("`{}`\n\n", changed.trim()));
-    }
     if let Some(why) = selected.get("why").and_then(Value::as_str) {
         out.push_str("Why this matters:\n");
         out.push_str(why);
@@ -1784,9 +1851,6 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         if let Some(assertion) = repair.get("suggested_assertion").and_then(Value::as_str) {
             out.push_str(&format!("- Assertion: `{assertion}`\n"));
         }
-        if let Some(intent) = repair.get("focused_proof_intent").and_then(Value::as_str) {
-            out.push_str(&format!("- Focused proof intent: {intent}\n"));
-        }
         out.push('\n');
     }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
@@ -1796,12 +1860,6 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
         out.push_str("Receipt:\n");
         out.push_str(&format!("`{command}`\n\n"));
-    } else if let Some(reason) = selected
-        .get("receipt_unavailable_reason")
-        .and_then(Value::as_str)
-    {
-        out.push_str("Receipt:\n");
-        out.push_str(&format!("Not available: {reason}\n\n"));
     }
     if let Some(command) = selected.get("agent_packet_command").and_then(Value::as_str) {
         out.push_str("Agent packet:\n");
@@ -1955,51 +2013,6 @@ fn validate_selected_state(status: &str, selected: &Value, violations: &mut Vec<
             "selected.state {state:?} requires status {expected_status:?}, found {status:?}"
         ));
     }
-    if state == "top_gap" {
-        if selected
-            .get("verify_command")
-            .and_then(Value::as_str)
-            .is_none()
-        {
-            violations.push("selected top_gap is missing verify_command".to_string());
-        }
-        if selected
-            .get("current_evidence_strength")
-            .and_then(Value::as_str)
-            .is_none()
-        {
-            violations.push("selected top_gap is missing current_evidence_strength".to_string());
-        }
-        if selected
-            .get("missing_discriminator")
-            .and_then(Value::as_str)
-            .is_none()
-        {
-            violations.push("selected top_gap is missing missing_discriminator".to_string());
-        }
-        if selected
-            .get("repair")
-            .and_then(|repair| repair.get("focused_proof_intent"))
-            .and_then(Value::as_str)
-            .is_none()
-        {
-            violations.push("selected top_gap repair is missing focused_proof_intent".to_string());
-        }
-        let has_receipt_command = selected
-            .get("receipt_command")
-            .and_then(Value::as_str)
-            .is_some();
-        let has_receipt_unavailable_reason = selected
-            .get("receipt_unavailable_reason")
-            .and_then(Value::as_str)
-            .is_some();
-        if !has_receipt_command && !has_receipt_unavailable_reason {
-            violations.push(
-                "selected top_gap must carry receipt_command or receipt_unavailable_reason"
-                    .to_string(),
-            );
-        }
-    }
 }
 
 fn expect_string(packet: &Value, key: &str, expected: &str, violations: &mut Vec<String>) {
@@ -2109,21 +2122,20 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["current_evidence_strength"],
-            "weakly_exposed"
+            "Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing."
         );
         assert_eq!(
             packet["selected"]["missing_discriminator"],
-            "amount == threshold"
+            "Equality-boundary assertion for the changed behavior."
+        );
+        assert_eq!(
+            packet["selected"]["focused_proof_intent"],
+            "Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`."
         );
         assert!(
-            packet["selected"]["repair"]["focused_proof_intent"]
+            packet["commands"]["receipt"]
                 .as_str()
-                .is_some_and(|intent| intent.contains("equality-boundary assertion"))
-        );
-        assert!(
-            packet["selected"]["receipt_unavailable_reason"]
-                .as_str()
-                .is_some_and(|reason| reason.contains("No receipt command was supplied"))
+                .is_some_and(|command| command.contains("ripr outcome --before"))
         );
         assert!(
             packet["commands"]["agent_packet"].as_str().is_some_and(
@@ -2599,8 +2611,6 @@ mod tests {
                     "gap_state": "actionable",
                     "policy_state": "new",
                     "repairability": "repairable",
-                    "current_evidence_strength": "weakly_exposed",
-                    "missing_discriminator": "amount == threshold",
                     "anchor": {
                         "file": "src/pricing.rs",
                         "line": 42,
@@ -2610,8 +2620,7 @@ mod tests {
                     "repair_route": {
                         "route_kind": "AddBoundaryAssertion",
                         "target_file": "tests/pricing.rs",
-                        "assertion_shape": "assert_eq!(discount(100, 100), 90)",
-                        "proof_intent": "Add a focused equality-boundary assertion in `tests/pricing.rs` for the threshold edge."
+                        "assertion_shape": "assert_eq!(discount(100, 100), 90)"
                     },
                     "verification_commands": [
                         "cargo xtask fixtures boundary_gap",

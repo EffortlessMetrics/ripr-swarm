@@ -9273,9 +9273,9 @@ fn validate_first_successful_pr_case(
             }
         }
         match json_string_field(case, "expected_status").as_deref() {
-            Some("actionable") if !markdown.contains("## Top Gap") => violations.push(format!(
-                "first successful PR case {case_id} Markdown must show Top Gap"
-            )),
+            Some("actionable") if !markdown.contains("## Recommendation") => violations.push(
+                format!("first successful PR case {case_id} Markdown must show Recommendation"),
+            ),
             Some("no_action") if !markdown.contains("## No Action") => violations.push(format!(
                 "first successful PR case {case_id} Markdown must show No Action"
             )),
@@ -31876,8 +31876,8 @@ fn dogfood_first_pr_run(scenario: &DogfoodFirstPrScenario) -> DogfoodFirstPrRun 
                 errors.push("Markdown must name authority boundary".to_string());
             }
             match scenario.expected_status.as_str() {
-                "actionable" if !markdown.contains("## Top Gap") => {
-                    errors.push("actionable Markdown must show Top Gap".to_string());
+                "actionable" if !markdown.contains("## Recommendation") => {
+                    errors.push("actionable Markdown must show Recommendation".to_string());
                 }
                 "no_action" if !markdown.contains("## No Action") => {
                     errors.push("no-action Markdown must show No Action".to_string());
