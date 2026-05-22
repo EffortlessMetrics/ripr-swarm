@@ -1,6 +1,6 @@
 # RIPR-SPEC-0053: Start-Here Surface Convergence
 
-Status: proposed
+Status: planned
 
 ## Problem
 

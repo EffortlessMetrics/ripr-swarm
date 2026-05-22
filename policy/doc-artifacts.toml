@@ -43,3 +43,39 @@ path = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
 status = "proposed"
 owner = "repo-infra"
 linked_proposal = "RIPR-PROP-0015"
+
+[[artifact]]
+id = "RIPR-PROP-0011"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+status = "accepted"
+owner = "ripr-maintainers"
+
+[[artifact]]
+id = "RIPR-SPEC-0053"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+status = "planned"
+owner = "ripr-maintainers"
+linked_proposal = "RIPR-PROP-0011"
+linked_adr = "ADR-0015"
+linked_plan = "RIPR-PLAN-0029"
+
+[[artifact]]
+id = "ADR-0015"
+kind = "adr"
+path = "docs/adr/0015-start-here-surfaces-use-canonical-gap-records.md"
+status = "accepted"
+owner = "ripr-maintainers"
+linked_proposal = "RIPR-PROP-0011"
+linked_spec = "RIPR-SPEC-0053"
+
+[[artifact]]
+id = "RIPR-PLAN-0029"
+kind = "plan"
+path = "plans/start-here-surface-convergence/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0011"
+linked_spec = "RIPR-SPEC-0053"
+linked_adr = "ADR-0015"

@@ -3800,7 +3800,7 @@ Blocking conditions:
 
 Campaign ID: `start-here-surface-convergence`
 
-Status: proposed.
+Status: active.
 
 The editor, CLI, generated CI, PR evidence, report packet index, receipts,
 preview-language reports, and install/release docs are useful independently.
@@ -3832,14 +3832,14 @@ Work items:
 
 | Work item | Status | Notes |
 | --- | --- | --- |
-| `docs/start-here-surface-convergence-stack` | planned | Add proposal, spec, ADR, plan, indexes, traceability, and GitHub issues. |
-| `report/pr-ci-start-here-canonical-unit` | planned | Align generated CI and PR evidence first screens on the canonical repair unit. |
-| `cli/start-here-command-language` | planned | Align CLI front-door command language and recovery states. |
-| `receipt/lifecycle-state-convergence` | planned | Standardize receipt found/missing/stale/mismatch/improved/unchanged states. |
-| `output/no-output-fail-closed-states` | planned | Standardize clean, no-action, missing, stale, wrong-root, disabled, unavailable, malformed, partial, unsafe states outside the editor. |
-| `policy/preview-promotion-proof-criteria` | planned | Define proof criteria before preview evidence can claim a stronger tier. |
-| `dogfood/external-style-start-here-receipts` | planned | Record normal-repo and failure-state receipts for the converged path. |
-| `campaign/start-here-surface-convergence-closeout` | planned | Close only after the issue burn-down is closed or explicitly superseded. |
+| `docs/start-here-surface-convergence-stack` | done | Accepted the proposal and ADR, kept the behavior spec planned, activated the plan and manifest, registered the stack, and mapped live issues #201-#208. |
+| `report/pr-ci-start-here-canonical-unit` | ready | Align generated CI and PR evidence first screens on the canonical repair unit. |
+| `cli/start-here-command-language` | blocked | Align CLI front-door command language and recovery states after the PR/CI first-screen slice. |
+| `receipt/lifecycle-state-convergence` | blocked | Standardize receipt found/missing/stale/mismatch/improved/unchanged states after CLI vocabulary converges. |
+| `output/no-output-fail-closed-states` | blocked | Standardize clean, no-action, missing, stale, wrong-root, disabled, unavailable, malformed, partial, unsafe states outside the editor after receipt states converge. |
+| `policy/preview-promotion-proof-criteria` | blocked | Define proof criteria before preview evidence can claim a stronger tier after output states are explicit. |
+| `dogfood/external-style-start-here-receipts` | blocked | Record normal-repo and failure-state receipts for the converged path after policy criteria are visible. |
+| `campaign/start-here-surface-convergence-closeout` | blocked | Close only after the issue burn-down is closed or explicitly superseded. |
 
 Commands:
 
