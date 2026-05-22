@@ -87,7 +87,7 @@ The packet must answer these reviewer questions in stable, user-facing terms:
 | --- | --- |
 | What happened? | First-run status and selected state. |
 | What matters most? | One top repairable Rust gap, or a no-action/error state. |
-| What should happen next? | One repair, refresh, retry, inspect, or no-action step. |
+| What should happen next? | One repair, refresh, retry, inspect, or no-action step, with changed behavior, current evidence strength, missing discriminator, and focused proof intent when a repairable gap is selected. |
 | Which artifact backs it? | Paths to the source gap ledger, repair card, agent packet, receipt, and gate decision when present. |
 | Which command regenerates the missing piece? | A copyable command when the packet knows one. |
 | What proves movement? | Verify and receipt commands, or a reason they are unavailable. |
@@ -118,15 +118,15 @@ A repairable top gap should include:
 
 - gap ID and source artifact path;
 - gap kind;
-- current static evidence strength;
-- missing discriminator text;
 - changed behavior text when safe to display;
+- current evidence strength in conservative static terms;
+- missing discriminator;
+- focused test or output-proof intent;
 - why the gap matters;
 - repair route;
-- focused test or output-proof intent;
 - likely related test or output proof location when known;
 - verification command;
-- receipt command or explicit reason the command is not available yet;
+- receipt command, receipt path, command source, or receipt state when known;
 - advisory and authority boundary;
 - stable dedupe or anchor identity when available.
 
@@ -256,10 +256,10 @@ command.
 When the start-here packet selects a repairable gap, generated CI and report
 navigation should use its typed fields as the first-screen unit:
 `canonical_gap_id` or `gap_id`, `language`, `language_status`, repair route,
-repair target, related test, static limit when present, verify command, receipt
-command or unavailable reason, receipt state, current evidence strength,
-missing discriminator, focused proof intent, and advisory non-claims. Raw
-finding counts remain supporting evidence.
+repair target, related test, changed behavior, current evidence strength,
+missing discriminator, focused proof intent, static limit when present, verify
+command, receipt command, receipt path, receipt state, and advisory non-claims.
+Raw finding counts remain supporting evidence.
 
 ## Outputs
 
@@ -301,7 +301,8 @@ Repairable Rust boundary gap:
 - Given a PR-local Rust `MissingBoundaryAssertion` gap with repair route,
   anchor, related test, verification command, and no waiver or suppression, the
   start-here packet selects it as the top gap.
-- The Markdown first screen shows status, why it matters, repair route, verify
+- The Markdown first screen shows status, changed behavior, current evidence
+  strength, missing discriminator, focused proof intent, verify command, receipt
   command, artifact links, and advisory status.
 - The JSON packet links to the source gap ledger record.
 

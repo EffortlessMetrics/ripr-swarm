@@ -3,19 +3,21 @@
 Status: advisory
 State: actionable
 
-## Top Gap
+## Recommendation
 
-ripr gap: missing output contract
+- Top actionable gap: missing output contract
+- Changed behavior: `APPLE_M3_AIR_DEVICE_LABELS_TEXT`
+- Current evidence strength: Static evidence found changed user-facing output, but no checked output or golden proof is attached.
+- Missing discriminator: Checked output or golden proof for the changed text.
+- Focused proof intent: Add or update the output proof in `fixtures/device-labels/expected/human.txt` so `golden output contains APPLE_M3_AIR_DEVICE_LABELS_TEXT`.
+- Verify: `cargo xtask goldens check`
+- Receipt: `ripr outcome --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --format json --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
+- Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
 
 Evidence boundary:
 - Canonical gap: `gap:rust:output:device-label`
 - Language: `rust` (stable)
-- Current evidence: `reachable_unrevealed`
-- Missing discriminator: `APPLE_M3_AIR_DEVICE_LABELS_TEXT appears in golden output`
 - Receipt state: `receipt_missing`
-
-Changed behavior:
-`APPLE_M3_AIR_DEVICE_LABELS_TEXT`
 
 Why this matters:
 User-facing output changed, but the gap ledger did not find checked output or golden evidence for the changed text.
@@ -24,13 +26,12 @@ Repair:
 - Route: `AddOutputGolden`
 - Target: `fixtures/device-labels/expected/human.txt`
 - Assertion: `golden output contains APPLE_M3_AIR_DEVICE_LABELS_TEXT`
-- Focused proof intent: Add or update the device-label golden output so the visible label is checked.
 
 Verify:
 `cargo xtask goldens check`
 
 Receipt:
-Not available: No receipt command was supplied by the gap ledger; run the verify command first, then regenerate first-pr after an agent receipt command is available.
+`ripr outcome --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --format json --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
 
 Agent packet:
 `ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json > target/ripr/workflow/agent-packet.json`
