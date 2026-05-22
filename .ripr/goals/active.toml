@@ -172,9 +172,8 @@ stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
 specs = [
   "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-  "docs/specs/RIPR-SPEC-0043-presentation-text-evidence.md",
 ]
-acceptance = "Actionable canonical items include recommended_repair, repair_kind, and a target test type, assertion shape, or output observer shape when applicable; non-action states do not fake repair routes."
+acceptance = "Preserve the invariant that actionable canonical items include recommended_repair, repair_kind, and target test type, assertion shape, or output observer shape when applicable; non-action states must not fake repair routes; advisory/static boundaries remain explicit."
 commands = [
   "cargo xtask lane1-evidence-audit",
   "cargo xtask evidence-quality-scorecard",

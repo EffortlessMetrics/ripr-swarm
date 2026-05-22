@@ -391,6 +391,8 @@ git diff --check
 
 Issue: [#1145](https://github.com/EffortlessMetrics/ripr/issues/1145)
 
+Swarm issue: [#254](https://github.com/EffortlessMetrics/ripr-swarm/issues/254)
+
 Status: ready.
 
 ### Goal
