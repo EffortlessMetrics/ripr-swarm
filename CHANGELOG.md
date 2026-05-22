@@ -32,6 +32,11 @@ are scoped or reviewed.
 - Evidence-quality trend now treats current scorecards with limited input
   unknowns as `current_scorecard_limited`, preserving rows for diagnostics while
   refusing improvement or regression claims from bounded diagnostic counts.
+- `cargo xtask evidence-quality-trend --previous <path>` now writes bounded
+  trend JSON/Markdown when the explicit previous artifact is missing or
+  malformed, carrying
+  `evidence_quality_trend_previous_artifact_unavailable` instead of exiting
+  before producing trend evidence.
 - Evidence-health fallback artifacts now use the current evidence-health schema
   version and carry explicit generation phase/status plus bounded stdout/stderr
   excerpts for timeout and nonzero-exit warning reports. The output contract,
@@ -43,6 +48,10 @@ are scoped or reviewed.
   autonomous merge, production-code edits by default, raw-finding work queues,
   unbounded retries, generated tests, mutation execution, PR/CI rendering,
   LSP/editor behavior, gate policy, and public badge changes.
+- Evidence-quality scorecards now reserve the `lane1_evidence_audit_limited`
+  unknown for completeness-affecting audit limitations. A completed audit that
+  only skipped full classified seam cache storage keeps that limitation visible
+  in the audit without marking scorecard counts as partial.
 
 ## 0.7.0 - 2026-05-20
 

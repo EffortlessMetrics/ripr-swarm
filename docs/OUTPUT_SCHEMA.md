@@ -2932,7 +2932,9 @@ Field contract:
   A scorecard generated after failed missing-audit regeneration includes
   `evidence_quality_scorecard_audit_regeneration_failed` and the generic
   `lane1_evidence_audit_limited` unknown so downstream consumers can explain
-  the bounded diagnostic state.
+  the bounded diagnostic state. Non-completeness audit limitations, such as
+  skipped full-cache storage after a complete repo-exposure run, remain visible
+  on the audit artifact but do not mark scorecard counts as partial.
 
 The Markdown sibling prints bounded sections for summary, finding-alignment and
 presentation-text quality, actionable canonical gap top lists, actionable-gap
@@ -2961,6 +2963,13 @@ history is reported explicitly as `unknown`; the command does not change
 analyzer behavior, gate policy, PR/CI projection, editor output, source files,
 generated tests, provider calls, score definitions, or runtime execution.
 
+If an explicit `--previous <path>` artifact is missing or malformed, the command
+still writes bounded trend JSON/Markdown with `summary.status = "unknown"`,
+`inputs.previous_artifact.status = "missing"` or `"malformed"`, and the named
+`evidence_quality_trend_previous_artifact_unavailable` unknown instead of
+exiting before producing trend evidence. Metric rows may still carry current
+values, but movement and badge-readiness deltas remain unknown.
+
 ```json
 {
   "schema_version": "0.1",
@@ -2984,7 +2993,7 @@ generated tests, provider calls, score definitions, or runtime execution.
       "status": "missing",
       "schema_version": null,
       "sha256": null,
-      "note": "optional previous scorecard or audit snapshot for trend comparison"
+      "note": "optional previous scorecard or audit snapshot unavailable; movement is diagnostic only"
     }
   },
   "summary": {
@@ -3013,6 +3022,11 @@ generated tests, provider calls, score definitions, or runtime execution.
       "kind": "trend_history_unavailable",
       "summary": "No previous scorecard or audit snapshot was available, so the report cannot claim improvement or regression.",
       "next_repair": "report/evidence-quality-trend"
+    },
+    {
+      "kind": "evidence_quality_trend_previous_artifact_unavailable",
+      "summary": "Evidence-quality trend could not load the requested previous artifact. No movement or badge-readiness delta claim is made from this limited trend.",
+      "next_repair": "report/evidence-quality-trend"
     }
   ]
 }
@@ -3026,7 +3040,8 @@ Field contract:
 - `inputs.current_scorecard` - current scorecard artifact identity. The
   command creates the default scorecard first if it is missing.
 - `inputs.previous_artifact` - optional previous scorecard or audit snapshot.
-  Missing history is an explicit unknown, not a failure.
+  Missing history is an explicit unknown, not a failure. Missing or malformed
+  explicit previous paths are bounded unavailable-input states.
 - `summary.status` - `improvement`, `regression`, `mixed`, `unchanged`, or
   `unknown`.
 - `metric_trends[]` - comparable Lane 1 evidence-quality metrics with
@@ -3048,7 +3063,8 @@ Field contract:
   stay visible until later audit or scorecard inputs exist. A
   `current_scorecard_limited` unknown means the current scorecard is itself a
   bounded diagnostic artifact, so the trend must not claim improvement or
-  regression from its counts.
+  regression from its counts. Missing or malformed explicit previous artifacts
+  are reported as `evidence_quality_trend_previous_artifact_unavailable`.
 
 The Markdown sibling prints bounded sections for summary, metric trends,
 static limitation category trends, and unknowns.
