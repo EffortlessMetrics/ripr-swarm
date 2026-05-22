@@ -279,9 +279,11 @@ unsupported-flow expansion.
 ### Acceptance
 
 - The existing RIPR-SPEC-0048 remains the source of truth.
-- The update identifies which unsupported flow is next: opaque lookup,
-  generated config/schema output, macro output, dynamic dispatch, or
-  unsupported cross-file flow.
+- The update identifies `opaque_config_lookup` as the next unsupported-flow
+  expansion target.
+- Generated config/schema output, macro output, dynamic dispatch, and
+  unsupported cross-file flow remain named limitations until selected by a
+  later fixture-backed slice.
 - The update states required benchmark and audit deltas before analyzer
   changes.
 - Internal policy/config metadata alone remains no-action.
