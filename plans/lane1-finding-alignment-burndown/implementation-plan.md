@@ -194,7 +194,8 @@ git diff --check
 
 ## Work Item 4: analysis: burn down top named static limitation bucket
 
-Issue: [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159)
+Issue: [swarm #238](https://github.com/EffortlessMetrics/ripr-swarm/issues/238)
+/ [source #1159](https://github.com/EffortlessMetrics/ripr/issues/1159)
 
 Status: done in swarm #238 / #240 proof on 2026-05-22.
 
@@ -265,7 +266,8 @@ git diff --check
 
 ## Work Item 5: docs(spec): refine config/policy unsupported-flow expansion
 
-Issue: [#1142](https://github.com/EffortlessMetrics/ripr/issues/1142)
+Issue: [swarm #241](https://github.com/EffortlessMetrics/ripr-swarm/issues/241)
+/ [source #1142](https://github.com/EffortlessMetrics/ripr/issues/1142)
 
 Status: ready.
 

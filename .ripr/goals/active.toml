@@ -115,9 +115,10 @@ branch = "docs-spec-config-policy-unsupported-flow-expansion"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
 specs = [
+  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
   "docs/specs/RIPR-SPEC-0048-config-policy-constant-evidence.md",
 ]
-acceptance = "Refine the config/policy evidence contract for the next unsupported-flow expansion, identify the next unsupported flow, require benchmark and audit deltas before analyzer changes, and keep internal policy/config metadata alone as no-action."
+acceptance = "Update the existing spec or add a focused note that defines the next fixture-backed unsupported-flow expansion criteria for config_or_policy_constant evidence; cover opaque lookup, generated config/schema output, macro output, dynamic dispatch, and unsupported cross-file flows; preserve that internal policy/config metadata alone is not user test debt; identify required benchmark and audit deltas before analyzer changes."
 commands = [
   "cargo xtask check-spec-format",
   "cargo xtask check-doc-index",
