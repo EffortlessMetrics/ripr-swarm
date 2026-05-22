@@ -7452,6 +7452,9 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- `blocked_artifact` may also represent setup preflight failures such as a
+  missing git worktree, missing base ref, missing head ref, or invalid diff
+  range.
 - `empty_diff` and `no_action` require `status = "no_action"` and must not
   produce a repair interruption.
 - `commands.regenerate_gap_ledger` is always present so missing, stale,

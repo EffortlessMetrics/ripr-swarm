@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const SCHEMA_VERSION: &str = "0.1";
 const DEFAULT_ROOT: &str = ".";
@@ -139,8 +140,11 @@ fn first_pr_help_text() -> &'static str {
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let root = resolve_path(repo, &options.root);
     let root_recovery = root_preflight_recovery(&root, options);
+    let preflight_recovery = root_recovery
+        .clone()
+        .or_else(|| git_preflight_recovery(&root, options));
     let output_root = if root_recovery.is_some() { repo } else { &root };
-    let packet = match root_recovery {
+    let packet = match preflight_recovery {
         Some(selection) => render_start_here_recovery_packet(&root, options, selection),
         None => render_start_here_packet(&root, options),
     };
@@ -336,6 +340,93 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
             Some(doctor_command(&options.root)),
         ));
     }
+    None
+}
+
+fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selection> {
+    match git_worktree_available(root) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr root `{}` is not a git worktree. Run setup checks before assigning repair work.",
+                    options.root
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+        Err(message) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr git preflight could not run for root `{}`: {message}. Run setup checks before assigning repair work.",
+                    options.root
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+    }
+
+    match git_rev_exists(root, &options.base) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr base `{}` does not resolve to a commit. Fetch the base ref or pass a valid `--base` before assigning repair work.",
+                    options.base
+                ),
+                Some(fetch_base_command(options)),
+            ));
+        }
+        Err(message) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr base `{}` could not be checked: {message}. Run setup checks before assigning repair work.",
+                    options.base
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+    }
+
+    match git_rev_exists(root, &options.head) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr head `{}` does not resolve to a commit. Pass a valid `--head` before assigning repair work.",
+                    options.head
+                ),
+                Some(verify_ref_command(options, &options.head)),
+            ));
+        }
+        Err(message) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr head `{}` could not be checked: {message}. Run setup checks before assigning repair work.",
+                    options.head
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+    }
+
+    if let Err(message) = git_diff_range_valid(root, &options.base, &options.head) {
+        return Some(Selection::blocked(
+            "blocked_artifact",
+            format!(
+                "The first-pr diff range `{}...{}` could not be checked: {message}. Refresh the base/head inputs before assigning repair work.",
+                options.base, options.head
+            ),
+            Some(diff_range_command(options)),
+        ));
+    }
+
     None
 }
 
@@ -851,6 +942,73 @@ fn regenerate_gap_ledger_command(out: &str) -> String {
     )
 }
 
+fn git_worktree_available(root: &Path) -> Result<bool, String> {
+    git_success(root, &["rev-parse", "--is-inside-work-tree"])
+}
+
+fn git_rev_exists(root: &Path, rev: &str) -> Result<bool, String> {
+    let commit = format!("{rev}^{{commit}}");
+    git_success(root, &["rev-parse", "--verify", "--quiet", &commit])
+}
+
+fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), String> {
+    let range = format!("{base}...{head}");
+    let output = Command::new("git")
+        .arg("diff")
+        .arg("--name-only")
+        .arg("--no-ext-diff")
+        .arg(&range)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run git diff: {err}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err("git diff failed without stderr".to_string())
+    } else {
+        Err(stderr)
+    }
+}
+
+fn git_success(root: &Path, args: &[&str]) -> Result<bool, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run git: {err}"))?;
+    Ok(output.status.success())
+}
+
+fn fetch_base_command(options: &FirstPrOptions) -> String {
+    if let Some(branch) = options.base.strip_prefix("origin/") {
+        format!(
+            "git -C {} fetch origin {}",
+            shell_arg(&options.root),
+            shell_arg(branch)
+        )
+    } else {
+        format!("git -C {} fetch --all --prune", shell_arg(&options.root))
+    }
+}
+
+fn verify_ref_command(options: &FirstPrOptions, rev: &str) -> String {
+    format!(
+        "git -C {} rev-parse --verify {}",
+        shell_arg(&options.root),
+        shell_arg(&format!("{rev}^{{commit}}"))
+    )
+}
+
+fn diff_range_command(options: &FirstPrOptions) -> String {
+    format!(
+        "git -C {} diff --name-only --no-ext-diff {}",
+        shell_arg(&options.root),
+        shell_arg(&format!("{}...{}", options.base, options.head))
+    )
+}
+
 fn doctor_command(root: &str) -> String {
     format!("ripr doctor --root {}", shell_arg(root))
 }
@@ -1280,6 +1438,54 @@ mod tests {
     }
 
     #[test]
+    fn missing_git_base_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-base")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions {
+            base: "origin/missing-base".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("origin/missing-base"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . fetch origin missing-base"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_git_head_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-head")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions {
+            head: "missing-head".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing-head"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . rev-parse --verify \"missing-head^{commit}\""
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
     fn malformed_gap_ledger_writes_blocked_packet() -> Result<(), String> {
         let repo = temp_repo("first-pr-malformed")?;
         let ledger = repo.join(DEFAULT_GAP_LEDGER);
@@ -1554,7 +1760,32 @@ mod tests {
             "[package]\nname = \"first-pr-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
         )
         .map_err(|err| format!("write temp Cargo.toml: {err}"))?;
+        init_git_repo(&path)?;
         Ok(path)
+    }
+
+    fn init_git_repo(path: &Path) -> Result<(), String> {
+        run_git(path, &["init"])?;
+        run_git(path, &["config", "user.email", "ripr@example.invalid"])?;
+        run_git(path, &["config", "user.name", "RIPR Test"])?;
+        run_git(path, &["add", "Cargo.toml"])?;
+        run_git(path, &["commit", "-m", "init"])?;
+        run_git(path, &["update-ref", "refs/remotes/origin/main", "HEAD"])
+    }
+
+    fn run_git(path: &Path, args: &[&str]) -> Result<(), String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 
     fn cleanup(path: &Path) -> Result<(), String> {
