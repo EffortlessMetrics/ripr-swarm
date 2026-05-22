@@ -2248,6 +2248,166 @@
       "repair_route": "fixtures/config-policy-constant-alignment-benchmark"
     },
     {
+      "id": "config_policy_macro_generated_schema_output_unknown",
+      "case_kind": "static_limitation",
+      "evidence_class": "config_or_policy_constant",
+      "maturity_scope": "unsupported",
+      "description": "A config or schema label emitted through macro-generated output remains a named limitation until the generated path is fixture-backed.",
+      "fixture_reference": "RIPR-SPEC-0048 macro-generated config or schema output",
+      "sample": {
+        "file": "src/generated_schema.rs",
+        "declaration_line": 72,
+        "literal_line": 73,
+        "constant": "GENERATED_SCHEMA_LABEL",
+        "sink": "macro_generated_schema_output",
+        "observer": "unknown"
+      },
+      "expected_repo_exposure": {
+        "static_gap_created": false,
+        "evidence_record": {
+          "schema_version": "0.1",
+          "seam_id": "bench-config-policy-macro-generated-schema",
+          "canonical_gap_id": "config_or_policy_constant::GENERATED_SCHEMA_LABEL",
+          "canonical_gap_group_size": 2,
+          "canonical_gap_reason": "declaration_and_literal_same_text_constant",
+          "owner": "GENERATED_SCHEMA_LABEL",
+          "location": {
+            "file": "src/generated_schema.rs",
+            "line": 72
+          },
+          "seam_kind": "config_policy_constant",
+          "grip_class": "static_unknown",
+          "headline_eligible": false,
+          "evidence_class": "config_or_policy_constant",
+          "gap_state": "static_limitation",
+          "actionability": "inspect_config_flow",
+          "why": "Changed schema label may be emitted through macro-generated output, but RIPR cannot trace the generated output path in supported scope.",
+          "recommended_repair": "Add fixture-backed support for the generated schema output path before claiming visibility or observer debt.",
+          "verify_command": "cargo xtask evidence-quality-scorecard",
+          "raw_findings": [
+            {
+              "file": "src/generated_schema.rs",
+              "line": 72,
+              "kind": "exposed"
+            },
+            {
+              "file": "src/generated_schema.rs",
+              "line": 73,
+              "kind": "static_unknown"
+            }
+          ],
+          "config_policy": {
+            "constant": "GENERATED_SCHEMA_LABEL",
+            "role": "schema_field_label",
+            "source_kind": "const_decl",
+            "visibility": "unknown",
+            "observer": "unknown",
+            "actionability": "inspect_config_flow",
+            "repair_kind": "inspect_config_flow",
+            "target_test_type": "unknown",
+            "suggested_assertion": "Add generated-output fixture support before recommending schema or golden observer work."
+          },
+          "static_limitation": {
+            "repair_route": "add_fixture_backed_support_for_generated_config_schema_output",
+            "user_actionability": "unknown_until_generated_output_supported"
+          }
+        }
+      },
+      "expected_audit_signal": {
+        "section": "static_limitation_categories",
+        "metric": "macro_generated_config_output",
+        "value": 1
+      },
+      "static_limitation_category": "macro_generated_config_output",
+      "expected_claim": "Macro-generated config or schema output stays a named limitation until generated output tracing is fixture-backed.",
+      "must_not_claim": [
+        "Do not infer schema visibility from generated macro output alone.",
+        "Do not treat generated prose or macro names as observer authority.",
+        "Do not create user test debt until the generated output sink is supported."
+      ],
+      "repair_route": "fixtures/config-policy-constant-alignment-benchmark"
+    },
+    {
+      "id": "config_policy_dynamic_dispatch_unknown",
+      "case_kind": "static_limitation",
+      "evidence_class": "config_or_policy_constant",
+      "maturity_scope": "unsupported",
+      "description": "A config selector routed through dynamic dispatch remains a named limitation until the dispatch target and sink are fixture-backed.",
+      "fixture_reference": "RIPR-SPEC-0048 dynamic config dispatch",
+      "sample": {
+        "file": "src/config_dispatch.rs",
+        "declaration_line": 86,
+        "literal_line": 87,
+        "constant": "DYNAMIC_CONFIG_SELECTOR",
+        "sink": "dynamic_dispatch_registry",
+        "observer": "unknown"
+      },
+      "expected_repo_exposure": {
+        "static_gap_created": false,
+        "evidence_record": {
+          "schema_version": "0.1",
+          "seam_id": "bench-config-policy-dynamic-dispatch",
+          "canonical_gap_id": "config_or_policy_constant::DYNAMIC_CONFIG_SELECTOR",
+          "canonical_gap_group_size": 2,
+          "canonical_gap_reason": "declaration_and_literal_same_text_constant",
+          "owner": "DYNAMIC_CONFIG_SELECTOR",
+          "location": {
+            "file": "src/config_dispatch.rs",
+            "line": 86
+          },
+          "seam_kind": "config_policy_constant",
+          "grip_class": "static_unknown",
+          "headline_eligible": false,
+          "evidence_class": "config_or_policy_constant",
+          "gap_state": "static_limitation",
+          "actionability": "inspect_config_flow",
+          "why": "Changed config selector is routed through dynamic dispatch, but RIPR cannot resolve the target or output sink in supported scope.",
+          "recommended_repair": "Add fixture-backed support for the dispatch shape before claiming visibility or behavior-observer debt.",
+          "verify_command": "cargo xtask evidence-quality-scorecard",
+          "raw_findings": [
+            {
+              "file": "src/config_dispatch.rs",
+              "line": 86,
+              "kind": "exposed"
+            },
+            {
+              "file": "src/config_dispatch.rs",
+              "line": 87,
+              "kind": "static_unknown"
+            }
+          ],
+          "config_policy": {
+            "constant": "DYNAMIC_CONFIG_SELECTOR",
+            "role": "behavior_selector",
+            "source_kind": "const_decl",
+            "visibility": "unknown",
+            "observer": "unknown",
+            "actionability": "inspect_config_flow",
+            "repair_kind": "inspect_config_flow",
+            "target_test_type": "unknown",
+            "suggested_assertion": "Resolve the dispatch target and supported sink before recommending behavior-discriminator tests."
+          },
+          "static_limitation": {
+            "repair_route": "add_fixture_backed_support_for_dynamic_config_dispatch",
+            "user_actionability": "unknown_until_dispatch_supported"
+          }
+        }
+      },
+      "expected_audit_signal": {
+        "section": "static_limitation_categories",
+        "metric": "dynamic_config_dispatch",
+        "value": 1
+      },
+      "static_limitation_category": "dynamic_config_dispatch",
+      "expected_claim": "Dynamic config dispatch stays a named limitation until the dispatch target and supported sink are fixture-backed.",
+      "must_not_claim": [
+        "Do not infer behavior visibility from registry or dispatch naming alone.",
+        "Do not recommend behavior-discriminator tests until the selected target is statically supported.",
+        "Do not treat dynamic dispatch as runtime mutation proof."
+      ],
+      "repair_route": "fixtures/config-policy-constant-alignment-benchmark"
+    },
+    {
       "id": "side_effect_observer_positive",
       "case_kind": "positive",
       "evidence_class": "side_effect_observer",
