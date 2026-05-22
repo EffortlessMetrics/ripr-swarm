@@ -465,6 +465,166 @@
       "repair_route": "analysis/value-resolution-audit-fixes"
     },
     {
+      "id": "builder_method_token_activation_values",
+      "case_kind": "positive",
+      "evidence_class": "activation_value_resolution",
+      "maturity_scope": "fixture_backed",
+      "description": "Builder methods whose names match predicate-boundary parameter tokens provide concrete activation values when the owner call passes those built fields directly.",
+      "fixture_reference": "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_builder_methods_matching_parameter_tokens_then_observed_values_are_recorded",
+      "sample": {
+        "file": "tests/pricing_tests.rs",
+        "source": "let q = Quote::new().amount(100).discount_threshold(100).build();\nassert_eq!(discounted_total(q.amount, q.discount_threshold), 90);"
+      },
+      "expected_repo_exposure": {
+        "static_gap_created": true,
+        "evidence_record": {
+          "schema_version": "0.1",
+          "seam_id": "bench-activation-builder-method-token",
+          "canonical_gap_id": "gap:bench-activation-builder-method-token",
+          "canonical_gap_group_size": 1,
+          "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+          "owner": "pricing::discounted_total",
+          "location": {
+            "file": "src/pricing.rs",
+            "line": 44
+          },
+          "seam_kind": "predicate_boundary",
+          "grip_class": "weakly_gripped",
+          "headline_eligible": true,
+          "evidence_path": {
+            "activate": {
+              "state": "yes",
+              "confidence": "medium"
+            }
+          },
+          "counts": {
+            "observed_values": 1,
+            "static_limitations": 0
+          }
+        }
+      },
+      "expected_audit_signal": {
+        "section": "static_limitation_categories",
+        "metric": "activation_value_unresolved",
+        "direction": "decrease"
+      },
+      "expected_claim": "Builder method literals can resolve activation values when the method token aligns with the changed predicate-boundary parameter and the built field is passed directly to the owner.",
+      "must_not_claim": [
+        "Do not count unrelated builder-method literals as activation values.",
+        "Do not infer values from builder methods whose names do not align with seam tokens.",
+        "Do not claim the resolved activation value proves the boundary discriminator is asserted.",
+        "Do not add cross-file, generated, macro, or semantic builder analysis."
+      ],
+      "repair_route": "analysis/value-resolution-audit-fixes"
+    },
+    {
+      "id": "fixture_override_method_activation_values",
+      "case_kind": "positive",
+      "evidence_class": "activation_value_resolution",
+      "maturity_scope": "fixture_backed",
+      "description": "Fixture factory override methods such as `with_amount` and `with_threshold` provide concrete activation values when their wrapped tokens match the predicate-boundary parameters.",
+      "fixture_reference": "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_fixture_factory_override_methods_matching_seam_tokens_then_values_are_recorded",
+      "sample": {
+        "file": "tests/pricing_tests.rs",
+        "source": "let q = QuoteFixture::default().with_amount(100).with_threshold(100).build();\nassert_eq!(discounted_total(q.amount, q.threshold), 90);"
+      },
+      "expected_repo_exposure": {
+        "static_gap_created": true,
+        "evidence_record": {
+          "schema_version": "0.1",
+          "seam_id": "bench-activation-fixture-override-method",
+          "canonical_gap_id": "gap:bench-activation-fixture-override-method",
+          "canonical_gap_group_size": 1,
+          "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+          "owner": "pricing::discounted_total",
+          "location": {
+            "file": "src/pricing.rs",
+            "line": 44
+          },
+          "seam_kind": "predicate_boundary",
+          "grip_class": "weakly_gripped",
+          "headline_eligible": true,
+          "evidence_path": {
+            "activate": {
+              "state": "yes",
+              "confidence": "medium"
+            }
+          },
+          "counts": {
+            "observed_values": 1,
+            "static_limitations": 0
+          }
+        }
+      },
+      "expected_audit_signal": {
+        "section": "static_limitation_categories",
+        "metric": "activation_value_unresolved",
+        "direction": "decrease"
+      },
+      "expected_claim": "Fixture override method literals can resolve activation values when the override token matches the changed predicate-boundary parameter and the built field is passed directly to the owner.",
+      "must_not_claim": [
+        "Do not infer values from fixture override methods with unrelated names.",
+        "Do not treat fixture factory support as general helper-return analysis.",
+        "Do not claim strong grip from activation-value resolution alone.",
+        "Do not resolve cross-file or generated fixture factories."
+      ],
+      "repair_route": "analysis/value-resolution-audit-fixes"
+    },
+    {
+      "id": "unrelated_builder_method_projection_stays_activation_limitation",
+      "case_kind": "negative_guard",
+      "evidence_class": "activation_value_resolution",
+      "maturity_scope": "fixture_backed",
+      "description": "A builder literal on an unrelated method name remains unresolved when the owner call uses built field projections.",
+      "fixture_reference": "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_builder_method_with_unrelated_name_then_value_is_not_counted_for_seam_activation",
+      "sample": {
+        "file": "tests/pricing_tests.rs",
+        "source": "let q = Quote::new().with_seed(42).build();\nassert_eq!(discounted_total(q.amount, q.threshold), 90);"
+      },
+      "expected_repo_exposure": {
+        "static_gap_created": true,
+        "evidence_record": {
+          "schema_version": "0.1",
+          "seam_id": "bench-activation-unrelated-builder-method",
+          "canonical_gap_id": "gap:bench-activation-unrelated-builder-method",
+          "canonical_gap_group_size": 1,
+          "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+          "owner": "pricing::discounted_total",
+          "location": {
+            "file": "src/pricing.rs",
+            "line": 44
+          },
+          "seam_kind": "predicate_boundary",
+          "grip_class": "activation_unknown",
+          "headline_eligible": true,
+          "evidence_path": {
+            "activate": {
+              "state": "unknown",
+              "confidence": "low"
+            }
+          },
+          "counts": {
+            "observed_values": 0,
+            "static_limitations": 1
+          }
+        }
+      },
+      "expected_audit_signal": {
+        "section": "static_limitation_categories",
+        "metric": "activation_value_unresolved",
+        "value": 1
+      },
+      "static_limitation_category": "activation_value_unresolved",
+      "expected_claim": "Builder methods that do not align with predicate-boundary tokens remain named static limitations when the owner call passes built field projections.",
+      "must_not_claim": [
+        "Do not count unrelated builder literals such as `with_seed(42)` as boundary activation values.",
+        "Do not infer field values from builder chains by position alone.",
+        "Do not treat a builder object as semantic value-flow proof.",
+        "Do not convert unrelated builder methods into user test debt."
+      ],
+      "repair_route": "analysis/value-resolution-audit-fixes"
+    },
+    {
       "id": "no_arg_owner_call_activation_values_not_required",
       "case_kind": "positive",
       "evidence_class": "activation_value_resolution",
