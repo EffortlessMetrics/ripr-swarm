@@ -350,6 +350,22 @@ oracle-strength, and related-test deltas. Older snapshots without the record
 remain supported through legacy repo-exposure fields.
 ```
 
+Outcome receipts must also include a reviewer-native packet derived from the
+same before/after comparison. The packet answers:
+
+- what static evidence changed between the supplied snapshots;
+- what RIPR flagged before the focused repair attempt;
+- which focused proof signals became visible outside RIPR;
+- what moved after verification and what remained weak or unknown;
+- what reviewers should believe from the compared static artifacts; and
+- what reviewers should not believe, including runtime mutation results,
+  coverage adequacy, general correctness, merge approval, source edits, or
+  generated tests.
+
+This packet is a projection of the compared static artifacts. It must not
+create new analyzer facts, run analysis, run mutation testing, edit source,
+generate tests, call providers, change policy, or become a CI gate.
+
 ### Public install exposes the loop
 
 ```text
