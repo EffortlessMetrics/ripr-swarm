@@ -147,13 +147,16 @@ fails before a complete audit artifact exists, the command must write a bounded
 diagnostic scorecard with
 `unknowns[].kind = "evidence_quality_scorecard_audit_regeneration_failed"` and
 a matching audit `run_limitations[]` category. That limited scorecard must not
-claim complete repo truth, public badge readiness, or user test debt. If the
-audit or evidence-health artifact exists but carries `run_limitations[]`, the
-scorecard must surface that as an unknown and must not let the limited
-artifact's zero or partial counts masquerade as complete repo truth. Named
-audit run limitations that appear in `static_limitations.by_category` must
-contribute to the scorecard static-limitation headline even when an older or
-partial audit summary left `summary.static_limitations_total` at zero.
+claim complete repo truth, public badge readiness, or user test debt.
+Completeness-affecting audit limitations such as
+`lane1_repo_exposure_timeout`, `lane1_repo_exposure_incomplete`, and audit
+regeneration failure must surface as unknowns and must not let zero or partial
+counts masquerade as complete repo truth. Completed-audit run limitations such
+as `lane1_repo_exposure_cache_store_skipped_large_entry` remain visible as named
+static limitations without marking the audit input limited. Named audit run
+limitations that appear in `static_limitations.by_category` must contribute to
+the scorecard static-limitation headline even when an older or partial audit
+summary left `summary.static_limitations_total` at zero.
 If the current scorecard carries limited-input unknowns such as
 `lane1_evidence_audit_limited`, `evidence_health_limited`, or
 `evidence_quality_scorecard_audit_regeneration_failed`,
