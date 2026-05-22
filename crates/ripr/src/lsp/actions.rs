@@ -553,6 +553,10 @@ fn first_repair_packet_text(
     if let Some(state) = string_at(data, &["gap_state"]) {
         lines.push(format!("Gap state: {state}"));
     }
+    lines.push(format!(
+        "Current evidence strength: {}",
+        first_repair_current_evidence_strength(data)
+    ));
     if let Some(note) = static_limit_note(data) {
         lines.push(String::new());
         lines.push(note);
@@ -565,6 +569,12 @@ fn first_repair_packet_text(
         .and_then(non_empty_string)
     {
         lines.push(format!("- Changed behavior: {changed_behavior}"));
+    }
+    if let Some(discriminator) = first_repair_missing_discriminator(data, repair_route) {
+        lines.push(format!("- Missing discriminator: {discriminator}"));
+    }
+    if let Some(intent) = first_repair_focused_proof_intent(repair_route) {
+        lines.push(format!("- Focused proof intent: {intent}"));
     }
     if let Some(assertion_shape) = repair_route
         .get("assertion_shape")
@@ -599,14 +609,70 @@ fn first_repair_packet_text(
     lines.push(receipt_command.to_string());
     lines.push(String::new());
     lines.push("Limits and non-claims:".to_string());
-    lines.push("- Static editor evidence only.".to_string());
-    lines.push("- Advisory by default; no gate eligibility or runtime adequacy claim.".to_string());
+    lines.push("- Boundary: static editor evidence only.".to_string());
+    lines.push(
+        "- Advisory by default; no runtime proof, coverage adequacy, mutation confirmation, gate approval, merge approval, or policy eligibility claim."
+            .to_string(),
+    );
     lines.push("- Do not edit production code unless the packet explicitly scopes it.".to_string());
     lines.push(
         "- Do not generate tests, call providers, or run mutation execution from the editor."
             .to_string(),
     );
     Some(lines.join("\n"))
+}
+
+fn first_repair_current_evidence_strength(data: &Value) -> &'static str {
+    match string_at(data, &["gap_kind"]).or_else(|| string_at(data, &["kind"])) {
+        Some("MissingBoundaryAssertion") => {
+            "related static evidence exists, but the boundary discriminator is not checked"
+        }
+        Some("MissingOutputGolden") => {
+            "changed output is statically visible, but no checked output or golden proof is linked"
+        }
+        Some("StaticUnknown" | "StaticLimit") => {
+            "static evidence is limited; inspect the named limitation before repair"
+        }
+        Some("NoActionAlreadyObserved") => {
+            "existing static evidence already observes the changed behavior"
+        }
+        _ => "static evidence is advisory and bounded by this diagnostic",
+    }
+}
+
+fn first_repair_missing_discriminator(data: &Value, repair_route: &Value) -> Option<String> {
+    if let Some(discriminator) = string_at(data, &["missing_discriminator"]) {
+        return Some(discriminator.to_string());
+    }
+    if let Some(assertion) = repair_route
+        .get("assertion_shape")
+        .and_then(non_empty_string)
+    {
+        return Some(format!("add or strengthen `{assertion}`"));
+    }
+    repair_route
+        .get("changed_behavior")
+        .and_then(non_empty_string)
+        .map(|behavior| format!("add a focused check for `{behavior}`"))
+}
+
+fn first_repair_focused_proof_intent(repair_route: &Value) -> Option<String> {
+    if let Some(assertion) = repair_route
+        .get("assertion_shape")
+        .and_then(non_empty_string)
+    {
+        if let Some(related) = repair_route.get("related_test").and_then(non_empty_string) {
+            return Some(format!("Add `{assertion}` in `{related}`."));
+        }
+        if let Some(target) = repair_route.get("target_file").and_then(non_empty_string) {
+            return Some(format!("Add `{assertion}` in `{target}`."));
+        }
+        return Some(format!("Add one focused proof for `{assertion}`."));
+    }
+    repair_route
+        .get("changed_behavior")
+        .and_then(non_empty_string)
+        .map(|behavior| format!("Add one focused proof for `{behavior}`."))
 }
 
 fn copy_optional_string(object: &mut serde_json::Map<String, Value>, data: &Value, key: &str) {

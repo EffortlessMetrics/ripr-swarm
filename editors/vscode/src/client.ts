@@ -1140,6 +1140,8 @@ export interface RiprActionableGapQueueStatus {
   sourceFile?: string;
   evidenceClass?: string;
   actionability?: string;
+  why?: string;
+  recommendedRepair?: string;
   canonicalGapId?: string;
   seamId?: string;
   findingId?: string;
@@ -1179,6 +1181,9 @@ export interface RiprFirstPrPacketStatus {
   selectedState?: string;
   selectedKind?: string;
   changedBehavior?: string;
+  currentEvidenceStrength?: string;
+  missingDiscriminator?: string;
+  focusedProofIntent?: string;
   why?: string;
   gapId?: string;
   canonicalGapId?: string;
@@ -1186,8 +1191,10 @@ export interface RiprFirstPrPacketStatus {
   suggestedAssertion?: string;
   verifyCommand?: string;
   receiptCommand?: string;
+  receiptPath?: string;
   relatedTest?: string;
   repairTarget?: string;
+  sourceArtifact?: string;
   repoRoot?: string;
   warningCount?: number;
 }
@@ -1875,19 +1882,24 @@ function currentRepairPacket(queue: RiprActionableGapQueueStatus): string {
   pushOptionalLine(lines, 'Language', queue.languageStatus ? `${queue.language ?? 'unknown'} (${queue.languageStatus})` : queue.language);
   pushOptionalLine(lines, 'Evidence class', queue.evidenceClass);
   pushOptionalLine(lines, 'Actionability', queue.actionability);
+  pushOptionalLine(lines, 'Current evidence strength', queue.why);
+  pushOptionalLine(lines, 'Why this matters', queue.why);
   pushOptionalLine(lines, 'Confidence basis', queue.confidenceBasis);
   lines.push(`Related test: ${queue.relatedTest ?? 'not provided by typed queue artifact'}`);
   lines.push('');
   lines.push('Repair');
   pushOptionalLine(lines, 'Repair kind', queue.topRepair);
+  pushOptionalLine(lines, 'Recommended repair', queue.recommendedRepair);
   pushOptionalLine(lines, 'Target test type', queue.targetTestType);
   pushOptionalLine(lines, 'Target assertion or output proof', queue.assertionShape);
+  pushOptionalLine(lines, 'Missing discriminator', currentRepairMissingDiscriminator(queue));
+  pushOptionalLine(lines, 'Focused proof intent', currentRepairFocusedProofIntent(queue));
   lines.push('');
   lines.push('Verification');
-  lines.push(`Run: ${queue.verifyCommand}`);
+  lines.push(`Verify: ${queue.verifyCommand}`);
   lines.push('');
   lines.push('Receipt');
-  lines.push(`Record: ${queue.receiptCommandOrPath}`);
+  lines.push(`Receipt command or path: ${queue.receiptCommandOrPath}`);
   lines.push('');
   lines.push('Stop conditions');
   lines.push('- Stop if the queue artifact is stale, wrong-root, malformed, or missing this canonical gap id.');
@@ -1899,7 +1911,28 @@ function currentRepairPacket(queue: RiprActionableGapQueueStatus): string {
   lines.push('- Do not edit production code unless the focused test exposes a real issue.');
   lines.push('- Do not generate tests automatically, call providers, run mutation execution, or claim runtime adequacy.');
   lines.push('- Do not treat this advisory static packet as a gate decision, merge approval, or policy eligibility claim.');
+  lines.push('- Do not treat this packet as coverage adequacy, mutation confirmation, or correctness proof.');
   return lines.join('\n');
+}
+
+function currentRepairMissingDiscriminator(queue: RiprActionableGapQueueStatus): string | undefined {
+  if (queue.assertionShape) {
+    return `add or strengthen ${queue.assertionShape}`;
+  }
+  if (queue.recommendedRepair) {
+    return queue.recommendedRepair;
+  }
+  return undefined;
+}
+
+function currentRepairFocusedProofIntent(queue: RiprActionableGapQueueStatus): string | undefined {
+  if (queue.assertionShape && queue.relatedTest) {
+    return `Add ${queue.assertionShape} in ${queue.relatedTest}.`;
+  }
+  if (queue.assertionShape && queue.sourceFile) {
+    return `Add one focused proof for ${queue.assertionShape} near ${queue.sourceFile}.`;
+  }
+  return queue.recommendedRepair;
 }
 
 function actionableGapQueueAllowsRepoGapMap(queue: RiprActionableGapQueueStatus): boolean {
@@ -2153,6 +2186,15 @@ function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
   if (packet.changedBehavior) {
     lines.push(`Changed behavior: ${packet.changedBehavior}`);
   }
+  if (packet.currentEvidenceStrength) {
+    lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
+  }
+  if (packet.missingDiscriminator) {
+    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+  }
+  if (packet.focusedProofIntent) {
+    lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
+  }
   if (packet.why) {
     lines.push(`Why this matters: ${packet.why}`);
   }
@@ -2171,8 +2213,8 @@ function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
   lines.push(`Warnings: ${packet.warningCount ?? 0}`);
   lines.push('');
   lines.push('Limits and non-claims:');
-  lines.push('- Advisory static evidence only.');
-  lines.push('- Does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
+  lines.push('- Boundary: advisory static evidence only.');
+  lines.push('- Does not prove runtime adequacy, coverage adequacy, mutation confirmation, policy eligibility, gate approval, or merge approval.');
   lines.push('- Does not edit source, generate tests, publish PR comments, or run providers.');
   return lines.join('\n');
 }
@@ -2189,6 +2231,15 @@ function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
   }
   if (packet.changedBehavior) {
     lines.push(`Changed behavior: ${packet.changedBehavior}`);
+  }
+  if (packet.currentEvidenceStrength) {
+    lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
+  }
+  if (packet.missingDiscriminator) {
+    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+  }
+  if (packet.focusedProofIntent) {
+    lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
   }
   if (packet.why) {
     lines.push(`Why this matters: ${packet.why}`);
@@ -2211,6 +2262,12 @@ function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
   lines.push('');
   lines.push('Receipt command:');
   lines.push(packet.receiptCommand ?? 'not available');
+  if (packet.receiptPath) {
+    lines.push(`Receipt path: ${packet.receiptPath}`);
+  }
+  if (packet.sourceArtifact) {
+    lines.push(`Source artifact: ${packet.sourceArtifact}`);
+  }
   lines.push('');
   lines.push('Instructions:');
   lines.push('- Add one focused test for this gap.');
@@ -2219,8 +2276,8 @@ function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
   lines.push('- Return the receipt path and result.');
   lines.push('');
   lines.push('Limits and non-claims:');
-  lines.push('- Static editor evidence only.');
-  lines.push('- Does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
+  lines.push('- Boundary: static editor evidence only.');
+  lines.push('- Does not prove runtime adequacy, coverage adequacy, mutation confirmation, policy eligibility, gate approval, or merge approval.');
   lines.push('- Does not edit source, generate tests, publish PR comments, or run providers.');
   return lines.join('\n');
 }
@@ -3009,6 +3066,8 @@ function validateActionableGapQueue(
     sourceFile: stringField(topActionable, 'source_file'),
     evidenceClass: stringField(topActionable, 'evidence_class'),
     actionability: stringField(topActionable, 'actionability'),
+    why: stringField(topActionable, 'why'),
+    recommendedRepair: stringField(topActionable, 'recommended_repair'),
     canonicalGapId,
     seamId: stringField(topActionable, 'seam_id'),
     findingId: stringField(topActionable, 'finding_id'),
@@ -3197,6 +3256,9 @@ function validateFirstPrPacket(
     selectedState,
     selectedKind: stringField(selected, 'kind'),
     changedBehavior: stringField(selected, 'changed_behavior'),
+    currentEvidenceStrength: stringField(selected, 'current_evidence_strength'),
+    missingDiscriminator: stringField(selected, 'missing_discriminator'),
+    focusedProofIntent: stringField(selected, 'focused_proof_intent'),
     why: stringField(selected, 'why'),
     gapId: stringField(selected, 'gap_id'),
     canonicalGapId: stringField(selected, 'canonical_gap_id'),
@@ -3204,8 +3266,10 @@ function validateFirstPrPacket(
     suggestedAssertion: repair ? stringField(repair, 'suggested_assertion') : undefined,
     verifyCommand: stringField(selected, 'verify_command'),
     receiptCommand: stringField(selected, 'receipt_command'),
+    receiptPath: stringField(selected, 'receipt_path'),
     relatedTest,
     repairTarget,
+    sourceArtifact: stringField(selected, 'source_artifact'),
     repoRoot,
     warningCount: arrayLength(packet, 'warnings')
   };

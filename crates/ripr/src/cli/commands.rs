@@ -1342,13 +1342,20 @@ jobs:
               start_gap="$(jq -r '.selected.canonical_gap_id // .selected.gap_id // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_language="$(jq -r 'if .selected.language then (.selected.language + " (" + (.selected.language_status // "unknown") + ")") else "not_available" end' "$start_json" 2>/dev/null || echo unknown)"
               start_kind="$(jq -r '.selected.kind // "none"' "$start_json" 2>/dev/null || echo unknown)"
+              start_changed="$(jq -r '.selected.changed_behavior // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
+              start_strength="$(jq -r '.selected.current_evidence_strength // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
+              start_missing="$(jq -r '.selected.missing_discriminator // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
+              start_intent="$(jq -r '.selected.focused_proof_intent // .selected.repair.suggested_assertion // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
+              start_why="$(jq -r '.selected.why // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_repair="$(jq -r '.selected.repair.route // .selected.repair.suggested_assertion // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_target="$(jq -r '.selected.repair.target_file // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_related="$(jq -r '.selected.repair.related_test // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_limit="$(jq -r 'if .selected.static_limit_kind then (.selected.static_limit_kind + (if .selected.static_limit_detail then ": " + .selected.static_limit_detail else "" end)) else "none" end' "$start_json" 2>/dev/null || echo unknown)"
               start_verify="$(jq -r '.selected.verify_command // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_receipt="$(jq -r '.selected.receipt_command // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
+              start_receipt_path="$(jq -r '.selected.receipt_path // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_receipt_state="$(jq -r '.selected.receipt_state // "receipt_missing"' "$start_json" 2>/dev/null || echo unknown)"
+              start_source="$(jq -r '.selected.source_artifact // "not_available"' "$start_json" 2>/dev/null || echo unknown)"
               start_next="$(jq -r '.selected.next_command // .selected.regeneration_command // "none"' "$start_json" 2>/dev/null || echo unknown)"
               start_warnings="$(jq -r '(.warnings // [] | length)' "$start_json" 2>/dev/null || echo 0)"
               start_status="$(markdown_inline "$start_status")"
@@ -1356,13 +1363,20 @@ jobs:
               start_gap="$(markdown_inline "$start_gap")"
               start_language="$(markdown_inline "$start_language")"
               start_kind="$(markdown_inline "$start_kind")"
+              start_changed="$(markdown_inline "$start_changed")"
+              start_strength="$(markdown_inline "$start_strength")"
+              start_missing="$(markdown_inline "$start_missing")"
+              start_intent="$(markdown_inline "$start_intent")"
+              start_why="$(markdown_inline "$start_why")"
               start_repair="$(markdown_inline "$start_repair")"
               start_target="$(markdown_inline "$start_target")"
               start_related="$(markdown_inline "$start_related")"
               start_limit="$(markdown_inline "$start_limit")"
               start_verify="$(markdown_inline "$start_verify")"
               start_receipt="$(markdown_inline "$start_receipt")"
+              start_receipt_path="$(markdown_inline "$start_receipt_path")"
               start_receipt_state="$(markdown_inline "$start_receipt_state")"
+              start_source="$(markdown_inline "$start_source")"
               start_next="$(markdown_inline "$start_next")"
               start_warnings="$(markdown_inline "$start_warnings")"
               echo "- Status: \`$start_status\`"
@@ -1370,17 +1384,24 @@ jobs:
               echo "- Canonical gap: \`$start_gap\`"
               echo "- Language: \`$start_language\`"
               echo "- Top gap/no-action: \`$start_kind\`"
+              echo "- Changed behavior: \`$start_changed\`"
+              echo "- Current evidence strength: \`$start_strength\`"
+              echo "- Missing discriminator: \`$start_missing\`"
+              echo "- Focused proof intent: \`$start_intent\`"
+              echo "- Why this matters: \`$start_why\`"
               echo "- Repair: \`$start_repair\`"
               echo "- Repair target: \`$start_target\`"
               echo "- Related test: \`$start_related\`"
               echo "- Static limit: \`$start_limit\`"
               echo "- Verify: \`$start_verify\`"
-              echo "- Receipt: \`$start_receipt\`"
+              echo "- Receipt command: \`$start_receipt\`"
+              echo "- Receipt path: \`$start_receipt_path\`"
               echo "- Receipt state: \`$start_receipt_state\`"
               echo "- Next command: \`$start_next\`"
               echo "- Warnings: \`$start_warnings\`"
+              echo "- Source artifact: \`$start_source\`"
               echo "- Artifacts: \`target/ripr/reports/start-here.json\`, \`target/ripr/reports/start-here.md\`"
-              echo "- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured."
+              echo "- Boundary: start-here is advisory static evidence only; it is not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."
               if [ -f target/ripr/reports/start-here.md ]; then
                 echo
                 cat target/ripr/reports/start-here.md
@@ -1517,9 +1538,12 @@ jobs:
                 panel_blocking="$(jq -r '.summary.blocking_candidates // 0' "$panel_json" 2>/dev/null || echo 0)"
                 panel_issue="$(jq -r 'if .top_issue == null then "not_available" else ((.top_issue.path // "unknown") + (if .top_issue.line then ":" + (.top_issue.line|tostring) else "" end)) end' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_class="$(jq -r '.top_issue.classification // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
+                panel_changed="$(jq -r '.top_issue.changed_behavior // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
+                panel_strength="$(jq -r '.top_issue.current_evidence_strength // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_missing="$(jq -r '.top_issue.missing_discriminator // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_related="$(jq -r '.top_issue.related_test // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_suggested="$(jq -r '.top_issue.suggested_test // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
+                panel_intent="$(jq -r '.top_issue.focused_proof_intent // .top_issue.suggested_test // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_verify="$(jq -r '.top_issue.verify_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_agent="$(jq -r '.top_issue.agent_command // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
                 panel_receipt="$(jq -r '.top_issue.receipt.artifact // "not_available"' "$panel_json" 2>/dev/null || echo unknown)"
@@ -1541,9 +1565,12 @@ jobs:
                 panel_blocking="$(markdown_inline "$panel_blocking")"
                 panel_issue="$(markdown_inline "$panel_issue")"
                 panel_class="$(markdown_inline "$panel_class")"
+                panel_changed="$(markdown_inline "$panel_changed")"
+                panel_strength="$(markdown_inline "$panel_strength")"
                 panel_missing="$(markdown_inline "$panel_missing")"
                 panel_related="$(markdown_inline "$panel_related")"
                 panel_suggested="$(markdown_inline "$panel_suggested")"
+                panel_intent="$(markdown_inline "$panel_intent")"
                 panel_verify="$(markdown_inline "$panel_verify")"
                 panel_agent="$(markdown_inline "$panel_agent")"
                 panel_receipt="$(markdown_inline "$panel_receipt")"
@@ -1560,7 +1587,10 @@ jobs:
                 echo "- Coverage/grip: \`$panel_coverage_grip\`"
                 echo "- Counts: new_policy_eligible=\`$panel_new_policy_eligible\`, baseline_still_present=\`$panel_baseline_present\`, baseline_resolved=\`$panel_baseline_resolved\`, acknowledged=\`$panel_acknowledged\`, suppressed=\`$panel_suppressed\`, blocking_candidates=\`$panel_blocking\`"
                 echo "- Top issue: \`$panel_issue\` class=\`$panel_class\`"
+                echo "- Changed behavior: \`$panel_changed\`"
+                echo "- Current evidence strength: \`$panel_strength\`"
                 echo "- Missing discriminator: \`$panel_missing\`"
+                echo "- Focused proof intent: \`$panel_intent\`"
                 echo "- Suggested focused test: \`$panel_suggested\`"
                 echo "- Related test: \`$panel_related\`"
                 echo "- Verify command: \`$panel_verify\`"
@@ -10836,15 +10866,30 @@ language = "rust"
         assert!(summary.contains(".selected.state // \"unknown\""));
         assert!(summary.contains(".selected.canonical_gap_id // .selected.gap_id"));
         assert!(summary.contains(".selected.language + \" (\""));
+        assert!(summary.contains(".selected.changed_behavior // \"not_available\""));
+        assert!(summary.contains(".selected.current_evidence_strength // \"not_available\""));
+        assert!(summary.contains(".selected.missing_discriminator // \"not_available\""));
+        assert!(
+            summary
+                .contains(".selected.focused_proof_intent // .selected.repair.suggested_assertion")
+        );
+        assert!(summary.contains(".selected.why // \"not_available\""));
         assert!(summary.contains(".selected.repair.target_file // \"not_available\""));
         assert!(summary.contains(".selected.repair.related_test // \"not_available\""));
         assert!(summary.contains(".selected.static_limit_kind"));
+        assert!(summary.contains(".selected.receipt_path // \"not_available\""));
         assert!(summary.contains(".selected.receipt_state // \"receipt_missing\""));
+        assert!(summary.contains(".selected.source_artifact // \"not_available\""));
         assert!(summary.contains("Canonical gap: \\`$start_gap\\`"));
         assert!(summary.contains("Language: \\`$start_language\\`"));
+        assert!(summary.contains("Changed behavior: \\`$start_changed\\`"));
+        assert!(summary.contains("Current evidence strength: \\`$start_strength\\`"));
+        assert!(summary.contains("Missing discriminator: \\`$start_missing\\`"));
+        assert!(summary.contains("Focused proof intent: \\`$start_intent\\`"));
         assert!(summary.contains("Repair target: \\`$start_target\\`"));
         assert!(summary.contains("Related test: \\`$start_related\\`"));
         assert!(summary.contains("Static limit: \\`$start_limit\\`"));
+        assert!(summary.contains("Receipt path: \\`$start_receipt_path\\`"));
         assert!(summary.contains("Receipt state: \\`$start_receipt_state\\`"));
         assert!(
             summary
@@ -10854,7 +10899,7 @@ language = "rust"
         assert!(summary.contains(".commands.context_packet // \"not_available\""));
         assert!(summary.contains("missing_start_here"));
         assert!(summary.contains(
-            "start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority"
+            "start-here is advisory static evidence only; it is not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval"
         ));
         assert!(summary.contains(
             "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json"
@@ -11506,8 +11551,11 @@ language = "rust"
         assert!(summary.contains(".summary.baseline_still_present // 0"));
         assert!(summary.contains(".summary.baseline_resolved // 0"));
         assert!(summary.contains(".summary.blocking_candidates // 0"));
+        assert!(summary.contains(".top_issue.changed_behavior // \"not_available\""));
+        assert!(summary.contains(".top_issue.current_evidence_strength // \"not_available\""));
         assert!(summary.contains(".top_issue.missing_discriminator // \"not_available\""));
         assert!(summary.contains(".top_issue.suggested_test // \"not_available\""));
+        assert!(summary.contains(".top_issue.focused_proof_intent // .top_issue.suggested_test"));
         assert!(summary.contains(".top_issue.verify_command // \"not_available\""));
         assert!(summary.contains(".top_issue.agent_command // \"not_available\""));
         assert!(summary.contains(".top_issue.receipt.artifact // \"not_available\""));
@@ -11523,9 +11571,16 @@ language = "rust"
         assert!(summary.contains("start_json=target/ripr/reports/start-here.json"));
         assert!(summary.contains(".selected.state // \"unknown\""));
         assert!(summary.contains(".selected.kind // \"none\""));
+        assert!(summary.contains(".selected.changed_behavior // \"not_available\""));
+        assert!(summary.contains(".selected.current_evidence_strength // \"not_available\""));
+        assert!(
+            summary
+                .contains(".selected.focused_proof_intent // .selected.repair.suggested_assertion")
+        );
         assert!(summary.contains(
             ".selected.repair.route // .selected.repair.suggested_assertion // \"not_available\""
         ));
+        assert!(summary.contains(".selected.receipt_path // \"not_available\""));
         assert!(summary.contains(".selected.verify_command // \"not_available\""));
         assert!(summary.contains(".selected.receipt_command // \"not_available\""));
         assert!(

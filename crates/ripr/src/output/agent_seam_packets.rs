@@ -468,6 +468,16 @@ fn gap_record_packet_context(
     if let Some(changed_behavior) = route.changed_behavior.as_deref() {
         context.push(format!("Changed behavior: `{changed_behavior}`."));
     }
+    context.push(format!(
+        "Current evidence strength: {}.",
+        gap_record_current_evidence_strength(record)
+    ));
+    if let Some(discriminator) = gap_record_missing_discriminator(record, route) {
+        context.push(format!("Missing discriminator: {discriminator}."));
+    }
+    if let Some(intent) = gap_record_focused_proof_intent(route) {
+        context.push(format!("Focused proof intent: {intent}"));
+    }
     if let Some(target_file) = route.target_file.as_deref() {
         context.push(format!(
             "Repair target: {}.",
@@ -480,8 +490,75 @@ fn gap_record_packet_context(
     if !record.evidence_ids.is_empty() {
         context.push(format!("Evidence IDs: {}.", record.evidence_ids.join(", ")));
     }
+    if let Some(path) = record
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.path.as_deref())
+    {
+        context.push(format!("Receipt path: {}.", display_path_text(path)));
+    } else if let Some(command) = record.receipt_command.as_deref() {
+        context.push(format!("Receipt command: `{command}`."));
+    }
     context.push(format!("Source artifact: {}.", gap_ledger_path));
     context
+}
+
+fn gap_record_current_evidence_strength(record: &GapRecord) -> &'static str {
+    match record.kind.as_str() {
+        "MissingBoundaryAssertion" => {
+            "related static evidence exists, but the boundary discriminator is not checked"
+        }
+        "MissingOutputGolden" => {
+            "changed output is statically visible, but no checked output or golden proof is linked"
+        }
+        "StaticUnknown" | "StaticLimit" => {
+            "static evidence is limited; inspect the named limitation before repair"
+        }
+        "NoActionAlreadyObserved" => {
+            "existing static evidence already observes the changed behavior"
+        }
+        _ if record.gap_state == "actionable" => {
+            "static evidence is actionable, but still advisory and not runtime proof"
+        }
+        _ => "static evidence is advisory and bounded by this GapRecord",
+    }
+}
+
+fn gap_record_missing_discriminator(record: &GapRecord, route: &GapRepairRoute) -> Option<String> {
+    if let Some(assertion) = route.assertion_shape.as_deref() {
+        return Some(match record.kind.as_str() {
+            "MissingBoundaryAssertion" => {
+                format!("add or strengthen the boundary check `{assertion}`")
+            }
+            "MissingOutputGolden" => {
+                format!("add or update the checked output proof `{assertion}`")
+            }
+            _ => format!("add or strengthen `{assertion}`"),
+        });
+    }
+    route
+        .changed_behavior
+        .as_deref()
+        .map(|behavior| format!("add a focused check for `{behavior}`"))
+}
+
+fn gap_record_focused_proof_intent(route: &GapRepairRoute) -> Option<String> {
+    if let Some(assertion) = route.assertion_shape.as_deref() {
+        if let Some(related) = route.related_test.as_deref() {
+            return Some(format!("Add `{assertion}` in `{related}`."));
+        }
+        if let Some(target) = route.target_file.as_deref() {
+            return Some(format!(
+                "Add `{assertion}` in {}.",
+                display_path_text(target)
+            ));
+        }
+        return Some(format!("Add one focused proof for `{assertion}`."));
+    }
+    route
+        .changed_behavior
+        .as_deref()
+        .map(|behavior| format!("Add one focused proof for `{behavior}`."))
 }
 
 fn gap_record_packet_repair(route: &GapRepairRoute) -> Vec<String> {
@@ -532,8 +609,7 @@ fn gap_record_packet_do_not_do(record: &GapRecord) -> Vec<String> {
         "Do not edit production code unless the focused proof exposes a real product defect."
             .to_string(),
         "Do not broaden the change beyond this GapRecord and its repair route.".to_string(),
-        "Do not treat static evidence as runtime mutation, coverage, or correctness proof."
-            .to_string(),
+        "Do not treat static evidence as runtime proof, coverage adequacy, mutation confirmation, gate approval, merge approval, or correctness proof.".to_string(),
         "Do not generate tests or call external providers from this packet.".to_string(),
     ];
     if record.language_status != "stable" {
@@ -1850,6 +1926,28 @@ mod tests {
             "copyable packet should name the related target: {copyable_markdown}"
         );
         assert!(
+            copyable_markdown.contains("- Changed behavior: `amount == threshold`."),
+            "copyable packet should name the changed behavior: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains(
+                "- Current evidence strength: related static evidence exists, but the boundary discriminator is not checked."
+            ),
+            "copyable packet should explain current evidence strength: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains(
+                "- Missing discriminator: add or strengthen the boundary check `assert_eq!(discount(100, 100), 90)`."
+            ),
+            "copyable packet should name the missing discriminator: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains(
+                "- Focused proof intent: Add `assert_eq!(discount(100, 100), 90)` in `discount_threshold_boundary`."
+            ),
+            "copyable packet should name the focused proof intent: {copyable_markdown}"
+        );
+        assert!(
             copyable_markdown
                 .contains("- Add or strengthen this check: `assert_eq!(discount(100, 100), 90)`."),
             "copyable packet should name the repair: {copyable_markdown}"
@@ -1867,6 +1965,10 @@ mod tests {
                 "- Do not edit production code unless the focused proof exposes a real product defect."
             ),
             "copyable packet should include do-not-do guidance: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains("mutation confirmation, gate approval, merge approval"),
+            "copyable packet should keep the first-useful-pr claim boundary: {copyable_markdown}"
         );
         Ok(())
     }

@@ -1504,10 +1504,14 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert!(
         packet.contains("RIPR first repair packet")
             && packet.contains("Language status: preview")
+            && packet.contains("Current evidence strength:")
             && packet.contains("Static limit: missing_import_graph")
             && packet.contains("Suggested action:")
+            && packet.contains("Missing discriminator:")
+            && packet.contains("Focused proof intent:")
             && packet.contains("Verify command:")
             && packet.contains("Receipt command:")
+            && packet.contains("Boundary: static editor evidence only.")
             && packet
                 .contains("Do not edit production code unless the packet explicitly scopes it."),
         "unexpected first repair packet:\n{packet}"
@@ -1739,9 +1743,13 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
         .as_str()
         .ok_or_else(|| "missing first repair packet text".to_string())?;
     assert!(packet.contains("Language status: preview"));
+    assert!(packet.contains("Current evidence strength:"));
     assert!(packet.contains("Static limit: missing_import_graph"));
+    assert!(packet.contains("Missing discriminator:"));
+    assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Verify command:\nripr agent verify --root . --json"));
     assert!(packet.contains("Receipt command:\nripr agent receipt --root . --json"));
+    assert!(packet.contains("Boundary: static editor evidence only."));
     let static_limit_position = packet
         .find("Static limit: missing_import_graph")
         .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;

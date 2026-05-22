@@ -6,7 +6,7 @@ Top issue:
 - File: src/ack.rs:5
 - Class: weakly_exposed
 - Missing discriminator: ack == 5
-- Suggested focused test: assert_eq!(ack(), 5)
+- Focused proof intent: assert_eq!(ack(), 5)
 - Related test: tests/ack.rs::boundary
 
 Movement:

@@ -6,7 +6,7 @@ Top issue:
 - File: src/gone.rs:2
 - Class: weakly_exposed
 - Missing discriminator: gone == 2
-- Suggested focused test: assert_eq!(gone(), 2)
+- Focused proof intent: assert_eq!(gone(), 2)
 - Related test: tests/gone.rs::boundary
 
 Movement:

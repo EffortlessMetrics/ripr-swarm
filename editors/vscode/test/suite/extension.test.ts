@@ -82,6 +82,10 @@ suite('Extension Smoke', () => {
           text.includes('Repair route: AddBoundaryAssertion')
         );
         assert.ok(repairPacket.includes('Do not broaden scope.'), repairPacket);
+        assert.ok(repairPacket.includes('Current evidence strength:'), repairPacket);
+        assert.ok(repairPacket.includes('Missing discriminator:'), repairPacket);
+        assert.ok(repairPacket.includes('Focused proof intent:'), repairPacket);
+        assert.ok(repairPacket.includes('Receipt path:'), repairPacket);
 
         await vscode.commands.executeCommand('ripr.copyFirstPrVerifyCommand');
         assert.strictEqual(
@@ -158,8 +162,10 @@ suite('Extension Smoke', () => {
       );
       assert.notStrictEqual(repairPacket, 'actionable-gap-queue-repair-sentinel');
       assert.ok(repairPacket.includes('Repair kind: add_boundary_assertion'), repairPacket);
-      assert.ok(repairPacket.includes('Run: ripr agent verify --root . --json'), repairPacket);
-      assert.ok(repairPacket.includes('Record: ripr agent receipt --root . --json'), repairPacket);
+      assert.ok(repairPacket.includes('Missing discriminator: add or strengthen assert_eq!(discount(100, 100), 90)'), repairPacket);
+      assert.ok(repairPacket.includes('Focused proof intent: Add assert_eq!(discount(100, 100), 90) in tests/pricing.rs::premium_customer_gets_discount.'), repairPacket);
+      assert.ok(repairPacket.includes('Verify: ripr agent verify --root . --json'), repairPacket);
+      assert.ok(repairPacket.includes('Receipt command or path: ripr agent receipt --root . --json'), repairPacket);
       assert.ok(repairPacket.includes('Do not broaden scope beyond this one gap.'), repairPacket);
       assert.ok(repairPacket.includes('Do not treat this advisory static packet as a gate decision'), repairPacket);
 
@@ -1740,8 +1746,10 @@ suite('Extension Smoke', () => {
       assert.ok(packet.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), packet);
       assert.ok(packet.includes('Repair kind: add_boundary_assertion'), packet);
       assert.ok(packet.includes('Target assertion or output proof: assert_eq!(discount(100, 100), 90)'), packet);
-      assert.ok(packet.includes('Run: ripr agent verify --root . --json'), packet);
-      assert.ok(packet.includes('Record: ripr agent receipt --root . --json'), packet);
+      assert.ok(packet.includes('Missing discriminator: add or strengthen assert_eq!(discount(100, 100), 90)'), packet);
+      assert.ok(packet.includes('Focused proof intent: Add assert_eq!(discount(100, 100), 90) in tests/pricing.rs::premium_customer_gets_discount.'), packet);
+      assert.ok(packet.includes('Verify: ripr agent verify --root . --json'), packet);
+      assert.ok(packet.includes('Receipt command or path: ripr agent receipt --root . --json'), packet);
       assert.ok(packet.includes('Do not broaden scope beyond this one gap.'), packet);
       assert.ok(packet.includes('Do not treat this advisory static packet as a gate decision'), packet);
       assert.strictEqual(context.runRiprCalls.length, 0);
@@ -1972,6 +1980,9 @@ suite('Extension Smoke', () => {
         assert.ok(repairPacket.includes('RIPR first-pr repair packet'), repairPacket);
         assert.ok(repairPacket.includes('Repair route: AddBoundaryAssertion'), repairPacket);
         assert.ok(repairPacket.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), repairPacket);
+        assert.ok(repairPacket.includes('Current evidence strength:'), repairPacket);
+        assert.ok(repairPacket.includes('Missing discriminator:'), repairPacket);
+        assert.ok(repairPacket.includes('Focused proof intent:'), repairPacket);
         assert.ok(repairPacket.includes('Do not broaden scope.'), repairPacket);
 
         await context.controller.copyFirstPrVerifyCommand();
@@ -3140,9 +3151,14 @@ function firstPrPacket(overrides: Record<string, unknown>): string {
       canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
       kind: 'MissingBoundaryAssertion',
       changed_behavior: 'amount >= threshold',
+      current_evidence_strength: 'Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.',
+      missing_discriminator: 'Equality-boundary assertion for the changed behavior.',
+      focused_proof_intent: 'Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`.',
       why: 'A related Rust test reaches this change, but no equality-boundary assertion was found.',
       verify_command: 'cargo xtask fixtures boundary_gap',
       receipt_command: 'ripr agent receipt --root . --json',
+      receipt_path: 'target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json',
+      source_artifact: 'target/ripr/reports/gap-decision-ledger.json',
       repair: {
         related_test: 'tests/pricing.rs::premium_customer_gets_discount',
         route: 'AddBoundaryAssertion',
@@ -3200,6 +3216,8 @@ function actionableGapsReport(overrides: Record<string, unknown>): string {
         target_test_type: 'boundary_discriminator',
         target_test: 'tests/pricing.rs::premium_customer_gets_discount',
         assertion_shape: 'assert_eq!(discount(100, 100), 90)',
+        recommended_repair: 'Add the equality-boundary assertion.',
+        why: 'Related tests reach the seam but miss equality at the threshold.',
         related_test_or_observer: {
           file: 'tests/pricing.rs',
           name: 'premium_customer_gets_discount',
