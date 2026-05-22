@@ -3263,8 +3263,9 @@ Closeout:
 
 Tracker ID: `lane1-finding-alignment-burndown`
 
-Status: closed. `.ripr/goals/active.toml` records `no_current_goal = true`
-after the downstream handoff refresh landed in swarm #281.
+Status: active execution rail. `.ripr/goals/active.toml` now selects this
+focused tracker after Start-Here Surface Convergence closed with
+`no_current_goal = true`.
 
 Sources of truth:
 
@@ -3313,7 +3314,8 @@ Work items:
 | `report/actionable-canonical-gaps-scorecard-lead` | done | [swarm #262](https://github.com/EffortlessMetrics/ripr-swarm/issues/262) / [source #1147](https://github.com/EffortlessMetrics/ripr/issues/1147) landed in swarm #266; scorecard and trend output now lead with actionable canonical gaps while raw finding, canonical-item, repair-route, verify-command, and capability metric rows remain visible. |
 | `calibration/runtime-confidence-coverage-audit` | done | [source #1160](https://github.com/EffortlessMetrics/ripr/issues/1160) is closed; current audit and scorecard outputs report runtime confidence coverage by canonical evidence class without adding mutation execution. |
 | `dogfood/finding-alignment-examples-refresh` | done | [swarm #267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267) / [source #1149](https://github.com/EffortlessMetrics/ripr/issues/1149) landed in swarm #276; finding-alignment dogfood receipts now include canonical gap identity, raw finding summary, before/after context, and material burn-down examples for supported opaque config lookups, actionable predicate-boundary scorecard lead, and runtime static-only class trends. |
-| `docs/canonical-alignment-contract-refresh` | done | [swarm #274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274) / [source #1153](https://github.com/EffortlessMetrics/ripr/issues/1153) landed in swarm #281; the v2 handoff now reflects refreshed dogfood receipt fields, the fixture-backed opaque config report lookup delta, scorecard-leading actionable canonical gaps, and runtime-confidence static-only class trend boundaries. |
+| `docs/canonical-alignment-contract-refresh` | done | [swarm #274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274) / [source #1153](https://github.com/EffortlessMetrics/ripr/issues/1153) landed in swarm #281; the v2 downstream handoff now reflects the refreshed dogfood receipt fields, supported opaque config report lookup delta, actionable predicate-boundary lead, and runtime static-only class trend boundary. |
+| `campaign/finding-alignment-burndown-closeout` | ready | [swarm #280](https://github.com/EffortlessMetrics/ripr-swarm/issues/280) closes the burn-down rail only after the refreshed handoff records what improved, what remains unknown, downstream consumers, and the next evidence class to repair. |
 
 Blocking conditions:
 

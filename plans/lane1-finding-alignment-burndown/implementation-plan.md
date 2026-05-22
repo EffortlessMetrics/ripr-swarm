@@ -567,6 +567,42 @@ cargo xtask check-pr
 git diff --check
 ```
 
+## Work Item 14: campaign: close Lane 1 finding alignment burn-down
+
+Issue: [swarm #280](https://github.com/EffortlessMetrics/ripr-swarm/issues/280)
+
+Status: ready.
+
+### Goal
+
+Close the Lane 1 finding-alignment burn-down after the downstream handoff
+refresh lands.
+
+### Acceptance
+
+- Raw findings remain supporting evidence and canonical items remain the
+  countable unit.
+- Improved evidence classes and remaining static-only or unknown classes are
+  summarized.
+- Dogfood, audit, scorecard, runtime-confidence, and downstream-handoff proof
+  commands are recorded.
+- Remaining open follow-up issues are named.
+- The next campaign choice is explicit.
+- No analyzer, PR/CI, editor, gate, provider, source-edit, generated-test, or
+  mutation behavior changes land in this closeout PR.
+
+### Proof Commands
+
+```bash
+cargo xtask goals status
+cargo xtask goals next
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-pr
+git diff --check
+```
+
 ## Closeout
 
 Close the burn-down rail only after the tracker closeout conditions are met and
