@@ -432,7 +432,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         "--root",
         ".",
         "--base",
-        "origin/main",
+        "HEAD",
         "--head",
         "HEAD",
         "--gap-ledger",
@@ -457,8 +457,14 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         json_pointer_str(&report, "/selected/repair/route")?,
         "AddBoundaryAssertion"
     );
-    assert_eq!(json_pointer_str(&report, "/inputs/base")?, "origin/main");
+    assert_eq!(json_pointer_str(&report, "/inputs/base")?, "HEAD");
     assert_eq!(json_pointer_str(&report, "/inputs/head")?, "HEAD");
+    assert_eq!(json_pointer_str(&report, "/preflight/mode")?, "write");
+    assert!(
+        report
+            .pointer("/preflight/checks")
+            .is_some_and(|value| value.is_array())
+    );
     assert_eq!(
         json_pointer_str(&report, "/commands/verify")?,
         "cargo xtask fixtures boundary_gap"
@@ -467,12 +473,17 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     let markdown = std::fs::read_to_string(&md_path)?;
     assert!(markdown.contains("# RIPR First PR Start Here"));
     assert!(markdown.contains("Status: advisory"));
+    assert!(markdown.contains("## Preflight"));
     assert!(markdown.contains("ripr gap: missing boundary assertion"));
     assert!(markdown.contains("Pass/fail authority remains with explicit gate-decision artifacts"));
     let check_output = run_ripr_in_workspace(&[
         "first-pr",
         "--root",
         ".",
+        "--base",
+        "HEAD",
+        "--head",
+        "HEAD",
         "--gap-ledger",
         "fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json",
         "--out-dir",

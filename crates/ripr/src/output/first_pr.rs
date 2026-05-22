@@ -1,8 +1,10 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::config::CONFIG_FILE_NAME;
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const SCHEMA_VERSION: &str = "0.1";
 const DEFAULT_ROOT: &str = ".";
@@ -31,6 +33,7 @@ struct FirstPrOptions {
     receipts_dir: String,
     out_dir: String,
     check: bool,
+    preflight: bool,
 }
 
 impl Default for FirstPrOptions {
@@ -47,6 +50,7 @@ impl Default for FirstPrOptions {
             receipts_dir: DEFAULT_RECEIPTS_DIR.to_string(),
             out_dir: DEFAULT_OUT_DIR.to_string(),
             check: false,
+            preflight: false,
         }
     }
 }
@@ -66,7 +70,10 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
 }
 
 fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
-    let mut options = FirstPrOptions::default();
+    let mut options = FirstPrOptions {
+        preflight: true,
+        ..FirstPrOptions::default()
+    };
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -139,8 +146,11 @@ fn first_pr_help_text() -> &'static str {
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let root = resolve_path(repo, &options.root);
     let root_recovery = root_preflight_recovery(&root, options);
+    let preflight_recovery = root_recovery
+        .clone()
+        .or_else(|| git_preflight_recovery(&root, options));
     let output_root = if root_recovery.is_some() { repo } else { &root };
-    let packet = match root_recovery {
+    let packet = match preflight_recovery {
         Some(selection) => render_start_here_recovery_packet(&root, options, selection),
         None => render_start_here_packet(&root, options),
     };
@@ -163,17 +173,39 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
 
 fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let root = resolve_path(repo, &options.root);
-    let output_root = if root_preflight_recovery(&root, options).is_some() {
-        repo
-    } else {
-        &root
-    };
+    let root_recovery = root_preflight_recovery(&root, options);
+    let preflight_recovery = root_recovery
+        .clone()
+        .or_else(|| git_preflight_recovery(&root, options));
+    let output_root = if root_recovery.is_some() { repo } else { &root };
     let out_dir = resolve_path(output_root, &options.out_dir);
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
-    validate_start_here_packet(&json_path, &markdown_path)?;
+    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
     println!("First PR start-here packet ok: {}", json_path.display());
     Ok(())
+}
+
+fn validate_current_preflight_recovery(
+    packet: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+    preflight_recovery: Option<Selection>,
+) -> Result<(), String> {
+    let Some(selection) = preflight_recovery else {
+        return Ok(());
+    };
+    let expected = render_start_here_recovery_packet(root, options, selection);
+    if packet.get("status") == expected.get("status")
+        && packet.get("selected") == expected.get("selected")
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "first-pr start-here packet is stale for current root/git preflight; rerun `ripr first-pr --root {} --base {} --head {}` before relying on it",
+        options.root, options.base, options.head
+    ))
 }
 
 fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
@@ -199,8 +231,12 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
     if let Some(warning) = selection.warning() {
         warnings.push(warning);
     }
+    let preflight = options.preflight.then(|| first_pr_preflight(root, options));
+    if let Some(preflight) = &preflight {
+        warnings.extend(preflight.warnings());
+    }
 
-    render_start_here_packet_with_selection(root, options, selection, warnings)
+    render_start_here_packet_with_selection(root, options, selection, warnings, preflight)
 }
 
 fn render_start_here_recovery_packet(
@@ -208,8 +244,12 @@ fn render_start_here_recovery_packet(
     options: &FirstPrOptions,
     selection: Selection,
 ) -> Value {
-    let warnings = selection.warning().into_iter().collect();
-    render_start_here_packet_with_selection(root, options, selection, warnings)
+    let mut warnings = selection.warning().into_iter().collect::<Vec<_>>();
+    let preflight = options.preflight.then(|| first_pr_preflight(root, options));
+    if let Some(preflight) = &preflight {
+        warnings.extend(preflight.warnings());
+    }
+    render_start_here_packet_with_selection(root, options, selection, warnings, preflight)
 }
 
 fn render_start_here_packet_with_selection(
@@ -217,6 +257,7 @@ fn render_start_here_packet_with_selection(
     options: &FirstPrOptions,
     selection: Selection,
     warnings: Vec<String>,
+    preflight: Option<FirstPrPreflight>,
 ) -> Value {
     let artifacts = vec![
         artifact_status(
@@ -279,7 +320,7 @@ fn render_start_here_packet_with_selection(
         ),
     ];
 
-    json!({
+    let mut packet = json!({
         "schema_version": SCHEMA_VERSION,
         "tool": "ripr",
         "kind": "first_pr_start_here",
@@ -312,7 +353,499 @@ fn render_start_here_packet_with_selection(
             "Does not run mutation testing.",
             "Does not change CI blocking or gate policy."
         ]
+    });
+    if let Some(preflight) = preflight {
+        packet["preflight"] = preflight.to_json();
+    }
+    packet
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FirstPrPreflight {
+    status: &'static str,
+    mode: &'static str,
+    root: String,
+    resolved_root: String,
+    base: String,
+    head: String,
+    next_command: Option<String>,
+    checks: Vec<PreflightCheck>,
+}
+
+impl FirstPrPreflight {
+    fn warnings(&self) -> impl Iterator<Item = String> + '_ {
+        self.checks
+            .iter()
+            .filter(|check| {
+                check.status != "ok" && check.status != "defaulted" && check.status != "will_create"
+            })
+            .map(|check| check.message.clone())
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "status": self.status,
+            "mode": self.mode,
+            "root": self.root,
+            "resolved_root": self.resolved_root,
+            "base": self.base,
+            "head": self.head,
+            "next_command": self.next_command,
+            "checks": self.checks.iter().map(PreflightCheck::to_json).collect::<Vec<_>>()
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreflightCheck {
+    id: &'static str,
+    label: &'static str,
+    status: &'static str,
+    message: String,
+    path: Option<String>,
+    next_command: Option<String>,
+}
+
+impl PreflightCheck {
+    fn ok(id: &'static str, label: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            id,
+            label,
+            status: "ok",
+            message: message.into(),
+            path: None,
+            next_command: None,
+        }
+    }
+
+    fn defaulted(id: &'static str, label: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            id,
+            label,
+            status: "defaulted",
+            message: message.into(),
+            path: None,
+            next_command: None,
+        }
+    }
+
+    fn needs_attention(
+        id: &'static str,
+        label: &'static str,
+        message: impl Into<String>,
+        next_command: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            status: "needs_attention",
+            message: message.into(),
+            path: None,
+            next_command,
+        }
+    }
+
+    fn no_action(
+        id: &'static str,
+        label: &'static str,
+        message: impl Into<String>,
+        next_command: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            status: "no_action",
+            message: message.into(),
+            path: None,
+            next_command,
+        }
+    }
+
+    fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "id": self.id,
+            "label": self.label,
+            "status": self.status,
+            "message": self.message,
+            "path": self.path,
+            "next_command": self.next_command
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CommandOutput {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl CommandOutput {
+    fn success(&self) -> bool {
+        matches!(self.code, Some(0))
+    }
+}
+
+fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight {
+    let mut checks = Vec::new();
+    let resolved_root = root.display().to_string();
+    checks.push(preflight_root_check(root, options));
+    let git_available = matches!(checks.last().map(|check| check.status), Some("ok"))
+        && preflight_git_repo_check(root, &mut checks);
+    let mut base_ok = false;
+    let mut head_ok = false;
+    if git_available {
+        base_ok = preflight_git_ref_check(
+            root,
+            &mut checks,
+            "git_base",
+            "Git base",
+            &options.base,
+            Some(missing_base_command(options)),
+        );
+        head_ok = preflight_git_ref_check(
+            root,
+            &mut checks,
+            "git_head",
+            "Git head",
+            &options.head,
+            Some(format!(
+                "Check --head `{}` or fetch the branch, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                options.head, options.root, options.base, options.head
+            )),
+        );
+    }
+    if git_available && base_ok && head_ok {
+        preflight_diff_check(root, options, &mut checks);
+    }
+    checks.push(preflight_cargo_check(root));
+    checks.push(preflight_config_check(root));
+    checks.push(preflight_output_check(root, options));
+    checks.push(PreflightCheck::ok(
+        "mode",
+        "Mode",
+        if options.check {
+            "Check mode validates the existing start-here packet without rewriting it."
+        } else {
+            "Write mode composes start-here.json and start-here.md from explicit artifacts."
+        },
+    ));
+    let next_command = checks.iter().find_map(|check| check.next_command.clone());
+    let status = if checks
+        .iter()
+        .any(|check| check.status == "needs_attention" || check.status == "no_action")
+    {
+        "needs_attention"
+    } else {
+        "ready"
+    };
+    FirstPrPreflight {
+        status,
+        mode: if options.check { "check" } else { "write" },
+        root: options.root.clone(),
+        resolved_root,
+        base: options.base.clone(),
+        head: options.head.clone(),
+        next_command,
+        checks,
+    }
+}
+
+fn preflight_root_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck {
+    if root.is_dir() {
+        PreflightCheck::ok(
+            "root",
+            "Workspace root",
+            format!("Workspace root `{}` exists.", options.root),
+        )
+        .with_path(root.display().to_string())
+    } else {
+        PreflightCheck::needs_attention(
+            "root",
+            "Workspace root",
+            format!(
+                "Workspace root `{}` does not exist or is not a directory.",
+                options.root
+            ),
+            Some("Run from a repository root or pass --root <path>.".to_string()),
+        )
+        .with_path(root.display().to_string())
+    }
+}
+
+fn preflight_git_repo_check(root: &Path, checks: &mut Vec<PreflightCheck>) -> bool {
+    match run_git(root, &git_args(&["rev-parse", "--is-inside-work-tree"])) {
+        Ok(output) if output.success() && output.stdout.trim() == "true" => {
+            checks.push(PreflightCheck::ok(
+                "git_repo",
+                "Git repository",
+                "The root is inside a Git worktree.",
+            ));
+            true
+        }
+        Ok(output) => {
+            checks.push(PreflightCheck::needs_attention(
+                "git_repo",
+                "Git repository",
+                command_problem(
+                    "The root is not a Git worktree.",
+                    &output,
+                    "Run from a Git worktree or pass --root <repo>.",
+                ),
+                Some("Run from a Git worktree or pass --root <repo>.".to_string()),
+            ));
+            false
+        }
+        Err(message) => {
+            checks.push(PreflightCheck::needs_attention(
+                "git_repo",
+                "Git repository",
+                format!("Could not run git preflight: {message}."),
+                Some(
+                    "Install git or run first-pr from an environment where git is available."
+                        .to_string(),
+                ),
+            ));
+            false
+        }
+    }
+}
+
+fn preflight_git_ref_check(
+    root: &Path,
+    checks: &mut Vec<PreflightCheck>,
+    id: &'static str,
+    label: &'static str,
+    rev: &str,
+    next_command: Option<String>,
+) -> bool {
+    let commit = format!("{rev}^{{commit}}");
+    match run_git(
+        root,
+        &[
+            "rev-parse".to_string(),
+            "--verify".to_string(),
+            "--quiet".to_string(),
+            commit,
+        ],
+    ) {
+        Ok(output) if output.success() => {
+            checks.push(PreflightCheck::ok(
+                id,
+                label,
+                format!("Resolved `{rev}` to a commit."),
+            ));
+            true
+        }
+        Ok(output) => {
+            checks.push(PreflightCheck::needs_attention(
+                id,
+                label,
+                command_problem(
+                    &format!("Could not resolve `{rev}` to a commit."),
+                    &output,
+                    "Fetch the missing ref or pass a resolvable --base/--head.",
+                ),
+                next_command,
+            ));
+            false
+        }
+        Err(message) => {
+            checks.push(PreflightCheck::needs_attention(
+                id,
+                label,
+                format!("Could not run git ref preflight for `{rev}`: {message}."),
+                next_command,
+            ));
+            false
+        }
+    }
+}
+
+fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<PreflightCheck>) {
+    let range = format!("{}..{}", options.base, options.head);
+    match run_git(
+        root,
+        &[
+            "diff".to_string(),
+            "--quiet".to_string(),
+            range.clone(),
+            "--".to_string(),
+        ],
+    ) {
+        Ok(output) if matches!(output.code, Some(0)) => {
+            checks.push(PreflightCheck::no_action(
+                "git_diff",
+                "Git diff",
+                format!("No file diff was found for `{range}`."),
+                Some(format!(
+                    "Choose a head with changes or rerun after committing PR work: `ripr first-pr --root {} --base {} --head {}`.",
+                    options.root, options.base, options.head
+                )),
+            ));
+        }
+        Ok(output) if matches!(output.code, Some(1)) => {
+            checks.push(PreflightCheck::ok(
+                "git_diff",
+                "Git diff",
+                format!("Found a file diff for `{range}`."),
+            ));
+        }
+        Ok(output) => {
+            checks.push(PreflightCheck::needs_attention(
+                "git_diff",
+                "Git diff",
+                command_problem(
+                    &format!("Could not inspect diff range `{range}`."),
+                    &output,
+                    "Check --base and --head, then rerun first-pr.",
+                ),
+                Some(format!(
+                    "Check --base and --head, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                    options.root, options.base, options.head
+                )),
+            ));
+        }
+        Err(message) => {
+            checks.push(PreflightCheck::needs_attention(
+                "git_diff",
+                "Git diff",
+                format!("Could not run git diff preflight: {message}."),
+                Some(
+                    "Install git or rerun from an environment where git is available.".to_string(),
+                ),
+            ));
+        }
+    }
+}
+
+fn preflight_cargo_check(root: &Path) -> PreflightCheck {
+    let manifest = root.join("Cargo.toml");
+    if manifest.is_file() {
+        PreflightCheck::ok(
+            "cargo_workspace",
+            "Cargo workspace",
+            "Cargo.toml was found at the workspace root.",
+        )
+        .with_path(manifest.display().to_string())
+    } else {
+        PreflightCheck::needs_attention(
+            "cargo_workspace",
+            "Cargo workspace",
+            "No Cargo.toml was found at the workspace root.",
+            Some("Run from a Rust/Cargo workspace or pass --root <cargo-workspace>.".to_string()),
+        )
+        .with_path(manifest.display().to_string())
+    }
+}
+
+fn preflight_config_check(root: &Path) -> PreflightCheck {
+    let config = root.join(CONFIG_FILE_NAME);
+    if config.is_file() {
+        PreflightCheck::ok(
+            "ripr_config",
+            "RIPR config",
+            format!("{CONFIG_FILE_NAME} was found."),
+        )
+        .with_path(config.display().to_string())
+    } else {
+        PreflightCheck::defaulted(
+            "ripr_config",
+            "RIPR config",
+            format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
+        )
+        .with_path(config.display().to_string())
+    }
+}
+
+fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck {
+    let out_dir = resolve_path(root, &options.out_dir);
+    if out_dir.exists() && !out_dir.is_dir() {
+        return PreflightCheck::needs_attention(
+            "output_dir",
+            "Output directory",
+            format!(
+                "Output path `{}` exists but is not a directory.",
+                options.out_dir
+            ),
+            Some("Choose a directory for --out-dir, then rerun first-pr.".to_string()),
+        )
+        .with_path(out_dir.display().to_string());
+    }
+    if out_dir.is_dir() {
+        PreflightCheck::ok(
+            "output_dir",
+            "Output directory",
+            format!("Output directory `{}` exists.", options.out_dir),
+        )
+        .with_path(out_dir.display().to_string())
+    } else {
+        PreflightCheck {
+            id: "output_dir",
+            label: "Output directory",
+            status: "will_create",
+            message: format!(
+                "Output directory `{}` will be created if needed.",
+                options.out_dir
+            ),
+            path: Some(out_dir.display().to_string()),
+            next_command: None,
+        }
+    }
+}
+
+fn missing_base_command(options: &FirstPrOptions) -> String {
+    options.base.strip_prefix("origin/")
+        .filter(|branch| !branch.trim().is_empty())
+        .map(|branch| {
+            format!(
+                "git fetch origin {branch}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                options.root, options.base, options.head
+            )
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "Fetch or choose a local base ref, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                options.root, options.base, options.head
+            )
+        })
+}
+
+fn git_args(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_string()).collect()
+}
+
+fn run_git(root: &Path, args: &[String]) -> Result<CommandOutput, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|err| err.to_string())?;
+    Ok(CommandOutput {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
     })
+}
+
+fn command_problem(summary: &str, output: &CommandOutput, fallback: &str) -> String {
+    let detail = output
+        .stderr
+        .trim()
+        .lines()
+        .next()
+        .or_else(|| output.stdout.trim().lines().next())
+        .filter(|line| !line.trim().is_empty());
+    match detail {
+        Some(detail) => format!("{summary} {detail}"),
+        None => fallback.to_string(),
+    }
 }
 
 fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selection> {
@@ -336,6 +869,93 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
             Some(doctor_command(&options.root)),
         ));
     }
+    None
+}
+
+fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selection> {
+    match git_worktree_available(root) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr root `{}` is not a git worktree. Run setup checks before assigning repair work.",
+                    options.root
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+        Err(message) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr git preflight could not run for root `{}`: {message}. Run setup checks before assigning repair work.",
+                    options.root
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+    }
+
+    match git_rev_exists(root, &options.base) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr base `{}` does not resolve to a commit. Fetch the base ref or pass a valid `--base` before assigning repair work.",
+                    options.base
+                ),
+                Some(fetch_base_command(options)),
+            ));
+        }
+        Err(message) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr base `{}` could not be checked: {message}. Run setup checks before assigning repair work.",
+                    options.base
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+    }
+
+    match git_rev_exists(root, &options.head) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr head `{}` does not resolve to a commit. Pass a valid `--head` before assigning repair work.",
+                    options.head
+                ),
+                Some(verify_ref_command(options, &options.head)),
+            ));
+        }
+        Err(message) => {
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr head `{}` could not be checked: {message}. Run setup checks before assigning repair work.",
+                    options.head
+                ),
+                Some(doctor_command(&options.root)),
+            ));
+        }
+    }
+
+    if let Err(message) = git_diff_range_valid(root, &options.base, &options.head) {
+        return Some(Selection::blocked(
+            "blocked_artifact",
+            format!(
+                "The first-pr diff range `{}...{}` could not be checked: {message}. Refresh the base/head inputs before assigning repair work.",
+                options.base, options.head
+            ),
+            Some(diff_range_command(options)),
+        ));
+    }
+
     None
 }
 
@@ -851,6 +1471,73 @@ fn regenerate_gap_ledger_command(out: &str) -> String {
     )
 }
 
+fn git_worktree_available(root: &Path) -> Result<bool, String> {
+    git_success(root, &["rev-parse", "--is-inside-work-tree"])
+}
+
+fn git_rev_exists(root: &Path, rev: &str) -> Result<bool, String> {
+    let commit = format!("{rev}^{{commit}}");
+    git_success(root, &["rev-parse", "--verify", "--quiet", &commit])
+}
+
+fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), String> {
+    let range = format!("{base}...{head}");
+    let output = Command::new("git")
+        .arg("diff")
+        .arg("--name-only")
+        .arg("--no-ext-diff")
+        .arg(&range)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run git diff: {err}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err("git diff failed without stderr".to_string())
+    } else {
+        Err(stderr)
+    }
+}
+
+fn git_success(root: &Path, args: &[&str]) -> Result<bool, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run git: {err}"))?;
+    Ok(output.status.success())
+}
+
+fn fetch_base_command(options: &FirstPrOptions) -> String {
+    if let Some(branch) = options.base.strip_prefix("origin/") {
+        format!(
+            "git -C {} fetch origin {}",
+            shell_arg(&options.root),
+            shell_arg(branch)
+        )
+    } else {
+        format!("git -C {} fetch --all --prune", shell_arg(&options.root))
+    }
+}
+
+fn verify_ref_command(options: &FirstPrOptions, rev: &str) -> String {
+    format!(
+        "git -C {} rev-parse --verify {}",
+        shell_arg(&options.root),
+        shell_arg(&format!("{rev}^{{commit}}"))
+    )
+}
+
+fn diff_range_command(options: &FirstPrOptions) -> String {
+    format!(
+        "git -C {} diff --name-only --no-ext-diff {}",
+        shell_arg(&options.root),
+        shell_arg(&format!("{}...{}", options.base, options.head))
+    )
+}
+
 fn doctor_command(root: &str) -> String {
     format!("ripr doctor --root {}", shell_arg(root))
 }
@@ -882,6 +1569,8 @@ fn render_start_here_markdown(packet: &Value) -> String {
         _ => render_blocked_markdown(selected, &mut out),
     }
 
+    render_preflight_markdown(packet, &mut out);
+
     out.push_str("\n## Artifacts\n\n");
     if let Some(artifacts) = packet.get("artifacts").and_then(Value::as_array) {
         for artifact in artifacts {
@@ -910,6 +1599,41 @@ fn render_start_here_markdown(packet: &Value) -> String {
         }
     }
     out
+}
+
+fn render_preflight_markdown(packet: &Value, out: &mut String) {
+    let Some(preflight) = packet.get("preflight").and_then(Value::as_object) else {
+        return;
+    };
+    out.push_str("\n## Preflight\n\n");
+    let status = preflight
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let mode = preflight
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    out.push_str(&format!("Status: `{status}`\n"));
+    out.push_str(&format!("Mode: `{mode}`\n"));
+    if let Some(command) = preflight.get("next_command").and_then(Value::as_str) {
+        out.push_str(&format!("Next command: `{command}`\n"));
+    }
+    out.push('\n');
+    if let Some(checks) = preflight.get("checks").and_then(Value::as_array) {
+        for check in checks {
+            let label = check
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("check");
+            let status = check
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = check.get("message").and_then(Value::as_str).unwrap_or("");
+            out.push_str(&format!("- {label}: `{status}` - {message}\n"));
+        }
+    }
 }
 
 fn render_top_gap_markdown(selected: &Value, out: &mut String) {
@@ -1020,7 +1744,7 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
     }
 }
 
-fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<(), String> {
+fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(json_path)
         .map_err(|err| format!("missing or unreadable {}: {err}", json_path.display()))?;
     let packet: Value = serde_json::from_str(&text)
@@ -1053,11 +1777,14 @@ fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<
     if !packet.get("artifacts").is_some_and(Value::is_array) {
         violations.push("artifacts is missing or not an array".to_string());
     }
+    if let Some(preflight) = packet.get("preflight") {
+        validate_preflight(preflight, &mut violations);
+    }
     if !markdown_path.exists() {
         violations.push(format!("{} is missing", markdown_path.display()));
     }
     if violations.is_empty() {
-        Ok(())
+        Ok(packet)
     } else {
         Err(format!(
             "first-pr start-here contract violations:\n{}",
@@ -1067,6 +1794,40 @@ fn validate_start_here_packet(json_path: &Path, markdown_path: &Path) -> Result<
                 .collect::<Vec<_>>()
                 .join("\n")
         ))
+    }
+}
+
+fn validate_preflight(preflight: &Value, violations: &mut Vec<String>) {
+    match preflight.get("status").and_then(Value::as_str) {
+        Some("ready" | "needs_attention") => {}
+        Some(status) => violations.push(format!("preflight.status {status:?} is not valid")),
+        None => violations.push("preflight.status is missing or not a string".to_string()),
+    }
+    match preflight.get("mode").and_then(Value::as_str) {
+        Some("write" | "check") => {}
+        Some(mode) => violations.push(format!("preflight.mode {mode:?} is not valid")),
+        None => violations.push("preflight.mode is missing or not a string".to_string()),
+    }
+    let Some(checks) = preflight.get("checks").and_then(Value::as_array) else {
+        violations.push("preflight.checks is missing or not an array".to_string());
+        return;
+    };
+    for check in checks {
+        if check.get("id").and_then(Value::as_str).is_none() {
+            violations.push("preflight check id is missing or not a string".to_string());
+        }
+        match check.get("status").and_then(Value::as_str) {
+            Some("ok" | "needs_attention" | "no_action" | "defaulted" | "will_create") => {}
+            Some(status) => {
+                violations.push(format!("preflight check status {status:?} is not valid"));
+            }
+            None => {
+                violations.push("preflight check status is missing or not a string".to_string())
+            }
+        }
+        if check.get("message").and_then(Value::as_str).is_none() {
+            violations.push("preflight check message is missing or not a string".to_string());
+        }
     }
 }
 
@@ -1158,6 +1919,8 @@ mod tests {
         assert_eq!(parsed.gap_ledger, "gap.json");
         assert_eq!(parsed.out_dir, "out");
         assert!(parsed.check);
+        assert!(parsed.preflight);
+        assert!(!FirstPrOptions::default().preflight);
         assert_eq!(
             parse_options(&["--gap-ledger".to_string(), "".to_string()]),
             Err("first-pr --gap-ledger requires a non-empty value".to_string())
@@ -1276,6 +2039,140 @@ mod tests {
             "first-pr must not write recovery artifacts under a non-Cargo root"
         );
         check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn non_git_root_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_cargo_root_outside_repo("first-pr-not-git")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not a git worktree"))
+        );
+        assert_eq!(packet["selected"]["next_command"], "ripr doctor --root .");
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_git_base_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-base")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions {
+            base: "origin/missing-base".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("origin/missing-base"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . fetch origin missing-base"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn check_first_pr_rejects_stale_git_preflight_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-check-stale-git-preflight")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        run_git_setup(&repo, &["update-ref", "-d", "refs/remotes/origin/main"])?;
+        let err = match check_first_pr(&repo, &options) {
+            Ok(()) => return Err("check mode accepted stale git preflight state".to_string()),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("stale for current root/git preflight"),
+            "unexpected check error: {err}"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_plain_git_base_writes_fetch_all_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-plain-base")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions {
+            base: "missing-base".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing-base"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . fetch --all --prune"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_git_head_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-head")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions {
+            head: "missing-head".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing-head"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . rev-parse --verify \"missing-head^{commit}\""
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn unrelated_git_range_writes_recovery_packet() -> Result<(), String> {
+        let repo = temp_repo("first-pr-unrelated-range")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        run_git_setup(&repo, &["checkout", "--orphan", "unrelated"])?;
+        run_git_setup(&repo, &["commit", "--allow-empty", "-m", "unrelated"])?;
+        let options = FirstPrOptions {
+            head: "unrelated".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("origin/main...unrelated"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            "git -C . diff --name-only --no-ext-diff origin/main...unrelated"
+        );
         cleanup(&repo)
     }
 
@@ -1437,6 +2334,60 @@ mod tests {
     }
 
     #[test]
+    fn preflight_reports_missing_git_base_and_config_defaults() -> Result<(), String> {
+        let repo = temp_repo("first-pr-preflight-missing-base")?;
+        fs::write(repo.join("Cargo.toml"), "[workspace]\n")
+            .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        run_git_ok(&repo, &["init"])?;
+        let options = FirstPrOptions {
+            base: "origin/missing-base".to_string(),
+            preflight: true,
+            ..FirstPrOptions::default()
+        };
+        let packet = render_start_here_packet(&repo, &options);
+        assert_eq!(packet["preflight"]["status"], "needs_attention");
+        assert_eq!(packet["preflight"]["mode"], "write");
+        let base = preflight_check(&packet, "git_base")?;
+        assert_eq!(base["status"], "needs_attention");
+        assert!(
+            base["next_command"]
+                .as_str()
+                .is_some_and(|command| command.contains("git fetch origin missing-base"))
+        );
+        let config = preflight_check(&packet, "ripr_config")?;
+        assert_eq!(config["status"], "defaulted");
+        assert!(
+            config["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("built-in advisory defaults"))
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn preflight_reports_output_path_that_is_not_a_directory() -> Result<(), String> {
+        let repo = temp_repo("first-pr-preflight-output-file")?;
+        fs::write(repo.join("Cargo.toml"), "[workspace]\n")
+            .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        fs::write(repo.join("start-here.out"), "not a directory")
+            .map_err(|err| format!("write output placeholder: {err}"))?;
+        let options = FirstPrOptions {
+            out_dir: "start-here.out".to_string(),
+            preflight: true,
+            ..FirstPrOptions::default()
+        };
+        let packet = render_start_here_packet(&repo, &options);
+        let output = preflight_check(&packet, "output_dir")?;
+        assert_eq!(output["status"], "needs_attention");
+        assert!(
+            output["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("is not a directory"))
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
     fn first_successful_pr_fixture_corpus_matches_expected_outputs() -> Result<(), String> {
         let corpus = fixture_repo_root()?.join("fixtures/first_successful_pr");
         let manifest = read_packet(&corpus.join("corpus.json"))?;
@@ -1543,11 +2494,29 @@ mod tests {
     }
 
     fn temp_repo(name: &str) -> Result<PathBuf, String> {
+        let path = temp_cargo_root(name)?;
+        init_git_repo(&path)?;
+        Ok(path)
+    }
+
+    fn temp_cargo_root_outside_repo(name: &str) -> Result<PathBuf, String> {
+        let repo_root = fixture_repo_root()?;
+        let parent = repo_root
+            .parent()
+            .ok_or_else(|| format!("{} has no parent", repo_root.display()))?;
+        write_temp_cargo_root(parent, name)
+    }
+
+    fn temp_cargo_root(name: &str) -> Result<PathBuf, String> {
+        write_temp_cargo_root(&env::temp_dir(), name)
+    }
+
+    fn write_temp_cargo_root(parent: &Path, name: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|err| format!("system clock error: {err}"))?
             .as_nanos();
-        let path = env::temp_dir().join(format!("ripr-{name}-{}-{stamp}", std::process::id()));
+        let path = parent.join(format!("ripr-{name}-{}-{stamp}", std::process::id()));
         fs::create_dir_all(&path).map_err(|err| format!("mkdir {}: {err}", path.display()))?;
         fs::write(
             path.join("Cargo.toml"),
@@ -1557,11 +2526,60 @@ mod tests {
         Ok(path)
     }
 
+    fn init_git_repo(path: &Path) -> Result<(), String> {
+        run_git_setup(path, &["init"])?;
+        run_git_setup(path, &["config", "user.email", "ripr@example.invalid"])?;
+        run_git_setup(path, &["config", "user.name", "RIPR Test"])?;
+        run_git_setup(path, &["add", "Cargo.toml"])?;
+        run_git_setup(path, &["commit", "-m", "init"])?;
+        run_git_setup(path, &["update-ref", "refs/remotes/origin/main", "HEAD"])
+    }
+
+    fn run_git_setup(path: &Path, args: &[&str]) -> Result<(), String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+
     fn cleanup(path: &Path) -> Result<(), String> {
         if path.exists() {
             fs::remove_dir_all(path).map_err(|err| format!("cleanup {}: {err}", path.display()))?;
         }
         Ok(())
+    }
+
+    fn run_git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
+        let output = run_git(root, &git_args(args))?;
+        if output.success() {
+            Ok(())
+        } else {
+            Err(command_problem(
+                "git test command failed.",
+                &output,
+                "git command failed",
+            ))
+        }
+    }
+
+    fn preflight_check<'a>(packet: &'a Value, id: &str) -> Result<&'a Value, String> {
+        let checks = packet
+            .get("preflight")
+            .and_then(|value| value.get("checks"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "packet is missing preflight checks".to_string())?;
+        checks
+            .iter()
+            .find(|check| string_path(check, &["id"]).is_some_and(|value| value == id))
+            .ok_or_else(|| format!("missing preflight check {id}"))
     }
 
     fn fixture_repo_root() -> Result<PathBuf, String> {
