@@ -71,25 +71,6 @@ commands = [
 ]
 
 [[work_item]]
-id = "docs/spec-config-policy-unsupported-flow-expansion"
-status = "ready"
-branch = "docs-spec-config-policy-unsupported-flow-expansion"
-stackable = false
-plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-  "docs/specs/RIPR-SPEC-0048-config-policy-constant-evidence.md",
-]
-acceptance = "Update the existing spec or add a focused note that defines the next fixture-backed unsupported-flow expansion criteria for config_or_policy_constant evidence; cover opaque lookup, generated config/schema output, macro output, dynamic dispatch, and unsupported cross-file flows; preserve that internal policy/config metadata alone is not user test debt; identify required benchmark and audit deltas before analyzer changes."
-commands = [
-  "cargo xtask check-spec-format",
-  "cargo xtask check-doc-index",
-  "cargo xtask markdown-links",
-  "cargo xtask check-static-language",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
 id = "analysis/named-static-unknown-invariant"
 status = "done"
 branch = "analysis-named-static-unknown-invariant"
@@ -124,5 +105,24 @@ commands = [
   "cargo xtask lane1-evidence-audit",
   "cargo xtask evidence-quality-scorecard",
   "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "docs/spec-config-policy-unsupported-flow-expansion"
+status = "ready"
+branch = "docs-spec-config-policy-unsupported-flow-expansion"
+stackable = false
+plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
+specs = [
+  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
+  "docs/specs/RIPR-SPEC-0048-config-policy-constant-evidence.md",
+]
+acceptance = "Update the existing spec or add a focused note that defines the next fixture-backed unsupported-flow expansion criteria for config_or_policy_constant evidence; cover opaque lookup, generated config/schema output, macro output, dynamic dispatch, and unsupported cross-file flows; preserve that internal policy/config metadata alone is not user test debt; identify required benchmark and audit deltas before analyzer changes."
+commands = [
+  "cargo xtask check-spec-format",
+  "cargo xtask check-doc-index",
+  "cargo xtask markdown-links",
+  "cargo xtask check-static-language",
   "cargo xtask check-pr",
 ]

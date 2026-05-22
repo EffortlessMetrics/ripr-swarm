@@ -194,7 +194,10 @@ git diff --check
 
 ## Work Item 4: analysis: burn down top named static limitation bucket
 
-Issue: [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159)
+Issue: [swarm #238](https://github.com/EffortlessMetrics/ripr-swarm/issues/238)
+/ [source #1159](https://github.com/EffortlessMetrics/ripr/issues/1159)
+
+Status: done in swarm #238 / #240 proof on 2026-05-22.
 
 ### Goal
 
@@ -239,6 +242,18 @@ reported 19,106 static limitations, including 18,859
 stayed at 162. Delta: -7,171 total static limitations and -7,049
 `activation_value_unresolved` limitations.
 
+The 2026-05-22 sampled audit follow-up selected `call_presence` /
+`activation_owner_call_unresolved` as the current top named static limitation
+bucket. Swarm #240 added fixture-backed positive and must-not-claim coverage for
+the supported direct owner-call plus mock-expectation sub-shape and kept
+specific call-target affinity as a named limitation when no owner call is
+observed. The refreshed bounded audit reported:
+
+- `call_presence` limitations: 770 -> 769;
+- `call_presence` `activation_owner_call_unresolved`: 719 -> 718;
+- `call_presence` work score: 5000 -> 4994;
+- total `activation_owner_call_unresolved`: 1217 -> 1216.
+
 ### Proof Commands
 
 ```bash
@@ -251,7 +266,10 @@ git diff --check
 
 ## Work Item 5: docs(spec): refine config/policy unsupported-flow expansion
 
-Issue: [#1142](https://github.com/EffortlessMetrics/ripr/issues/1142)
+Issue: [swarm #241](https://github.com/EffortlessMetrics/ripr-swarm/issues/241)
+/ [source #1142](https://github.com/EffortlessMetrics/ripr/issues/1142)
+
+Status: ready.
 
 ### Goal
 
