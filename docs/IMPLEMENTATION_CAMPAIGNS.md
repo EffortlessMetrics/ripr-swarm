@@ -3086,8 +3086,8 @@ Work items:
 | `first-pr/one-screen-recommendation` | done | Start-here now has a golden-backed one-screen recommendation with top gap/no-action, changed behavior, current evidence strength, missing discriminator, focused proof intent, verify command, receipt command, receipt path, and static-advisory boundary. |
 | `outcome/reviewer-native-receipts` | done | `ripr outcome` now writes reviewer-native JSON/Markdown receipt sections covering before flags, focused proof signals, movement after verification, remaining weak/unknown seams, and reviewer claim boundaries. |
 | `fixtures/first-pr-boundary-gap-demo` | done | Added a checked boundary-gap demo story for before -> `ripr first-pr` -> focused external proof -> `ripr outcome` -> reviewer receipt. |
-| `surfaces/one-screen-loop-convergence` | ready | Make generated CI, VS Code/editor handoff, and agent packet surfaces mirror the same first-useful-pr wording and repair unit. |
-| `campaign/first-useful-pr-loop-closeout` | blocked | Close only after the one-command, one-gap, one-repair, one-verification, one-receipt loop is proven across CLI, CI, editor, agent packet, and demo surfaces. |
+| `surfaces/one-screen-loop-convergence` | done | Generated CI, VS Code/editor handoff, and agent packet surfaces now mirror the same first-useful-pr wording and repair unit. |
+| `campaign/first-useful-pr-loop-closeout` | ready | Close only after the one-command, one-gap, one-repair, one-verification, one-receipt loop is proven across CLI, CI, editor, agent packet, and demo surfaces. |
 
 References:
 

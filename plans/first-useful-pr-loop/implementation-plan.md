@@ -478,7 +478,7 @@ cargo xtask check-pr
 
 ### Work item: surfaces/one-screen-loop-convergence
 
-Status: ready
+Status: done
 
 Linked proposal: `RIPR-PROP-0011`
 
@@ -497,7 +497,7 @@ Branch: `surfaces-one-screen-loop-convergence`
 
 Issue: n/a
 
-PR: n/a
+PR: `#187`
 
 #### Goal
 
@@ -506,7 +506,7 @@ same first-useful-pr wording and repair unit.
 
 #### Production delta
 
-Align generated surfaces on changed behavior, missing discriminator, focused
+Aligned generated surfaces on changed behavior, missing discriminator, focused
 proof intent, verify command, receipt command, artifacts, and
 static-advisory boundary.
 
@@ -547,7 +547,7 @@ cargo xtask check-pr
 
 ### Work item: campaign/first-useful-pr-loop-closeout
 
-Status: blocked
+Status: ready
 
 Linked proposal: `RIPR-PROP-0009`
 
@@ -560,7 +560,7 @@ Linked ADR: n/a
 
 Blocks: n/a
 
-Blocked by: `surfaces/one-screen-loop-convergence`
+Blocked by: n/a
 
 Branch: `campaign-first-useful-pr-loop-closeout`
 
