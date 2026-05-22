@@ -3263,9 +3263,8 @@ Closeout:
 
 Tracker ID: `lane1-finding-alignment-burndown`
 
-Status: active execution rail. `.ripr/goals/active.toml` now selects this
-focused tracker after Start-Here Surface Convergence closed with
-`no_current_goal = true`.
+Status: closed. `.ripr/goals/active.toml` records `no_current_goal = true`
+after the downstream handoff refresh landed in swarm #281.
 
 Sources of truth:
 
@@ -3304,7 +3303,7 @@ Work items:
 | --- | --- | --- |
 | `report/finding-alignment-coverage-audit` | done | [swarm #229](https://github.com/EffortlessMetrics/ripr-swarm/issues/229) / [source #1140](https://github.com/EffortlessMetrics/ripr/issues/1140) audits aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. |
 | `analysis/named-static-unknown-invariant` | done | [swarm #233](https://github.com/EffortlessMetrics/ripr-swarm/issues/233) / [source #1141](https://github.com/EffortlessMetrics/ripr/issues/1141) preserves named static limitations for user-facing static unknowns. |
-| `analysis/canonical-primary-anchor-raw-spans` | open | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) completes placement and supporting raw-span evidence for canonical items. |
+| `analysis/canonical-primary-anchor-raw-spans` | done | [source #1158](https://github.com/EffortlessMetrics/ripr/issues/1158) closed via source PR #1187; primary-anchor and raw-span support are available for canonical items where placement is safe. |
 | `analysis/top-static-limitation-bucket-burndown` | done | [swarm #238](https://github.com/EffortlessMetrics/ripr-swarm/issues/238) / [source #1159](https://github.com/EffortlessMetrics/ripr/issues/1159) burned down the sampled `call_presence` / `activation_owner_call_unresolved` bucket with fixture-backed positive and must-not-claim coverage. |
 | `docs/spec-config-policy-unsupported-flow-expansion` | done | [swarm #241](https://github.com/EffortlessMetrics/ripr-swarm/issues/241) / [source #1142](https://github.com/EffortlessMetrics/ripr/issues/1142) selected `opaque_config_lookup` as the next fixture-backed expansion while keeping generated, macro, dynamic-dispatch, and unsupported cross-file flows as named limitations. |
 | `fixtures/config-policy-unsupported-flow-burndown` | done | [swarm #246](https://github.com/EffortlessMetrics/ripr-swarm/issues/246) / [source #1143](https://github.com/EffortlessMetrics/ripr/issues/1143) pinned macro-generated config/schema output and dynamic config dispatch as named limitation benchmark cases before analyzer work. |
@@ -3314,7 +3313,7 @@ Work items:
 | `report/actionable-canonical-gaps-scorecard-lead` | done | [swarm #262](https://github.com/EffortlessMetrics/ripr-swarm/issues/262) / [source #1147](https://github.com/EffortlessMetrics/ripr/issues/1147) landed in swarm #266; scorecard and trend output now lead with actionable canonical gaps while raw finding, canonical-item, repair-route, verify-command, and capability metric rows remain visible. |
 | `calibration/runtime-confidence-coverage-audit` | done | [source #1160](https://github.com/EffortlessMetrics/ripr/issues/1160) is closed; current audit and scorecard outputs report runtime confidence coverage by canonical evidence class without adding mutation execution. |
 | `dogfood/finding-alignment-examples-refresh` | done | [swarm #267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267) / [source #1149](https://github.com/EffortlessMetrics/ripr/issues/1149) landed in swarm #276; finding-alignment dogfood receipts now include canonical gap identity, raw finding summary, before/after context, and material burn-down examples for supported opaque config lookups, actionable predicate-boundary scorecard lead, and runtime static-only class trends. |
-| `docs/canonical-alignment-contract-refresh` | ready | [swarm #274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274) / [source #1153](https://github.com/EffortlessMetrics/ripr/issues/1153) refreshes downstream handoff docs only when fields or guidance change. |
+| `docs/canonical-alignment-contract-refresh` | done | [swarm #274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274) / [source #1153](https://github.com/EffortlessMetrics/ripr/issues/1153) landed in swarm #281; the v2 handoff now reflects refreshed dogfood receipt fields, the fixture-backed opaque config report lookup delta, scorecard-leading actionable canonical gaps, and runtime-confidence static-only class trend boundaries. |
 
 Blocking conditions:
 

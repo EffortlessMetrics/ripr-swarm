@@ -168,6 +168,8 @@ git diff --check
 
 Issue: [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158)
 
+Status: done in source PR #1187 proof on 2026-05-17.
+
 ### Goal
 
 Complete the placement/supporting-span projection enough that downstream
@@ -511,7 +513,7 @@ Issue: [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149)
 
 Swarm issue: [#267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267)
 
-Status: ready.
+Status: done in swarm #276 proof on 2026-05-22.
 
 ### Goal
 
@@ -538,6 +540,10 @@ git diff --check
 ## Work Item 13: docs: refresh canonical finding alignment handoff
 
 Issue: [#1153](https://github.com/EffortlessMetrics/ripr/issues/1153)
+
+Swarm issue: [#274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274)
+
+Status: done in swarm #281 proof on 2026-05-22.
 
 ### Goal
 

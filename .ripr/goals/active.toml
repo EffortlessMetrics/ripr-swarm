@@ -1,6 +1,7 @@
 id = "lane1-finding-alignment-burndown"
 title = "Lane 1 Finding Alignment Burn-Down"
-status = "active"
+status = "closed"
+no_current_goal = true
 lane = "1"
 issue = "228"
 
@@ -253,7 +254,7 @@ commands = [
 
 [[work_item]]
 id = "docs/canonical-alignment-contract-refresh"
-status = "ready"
+status = "done"
 branch = "docs-canonical-alignment-contract-refresh"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
