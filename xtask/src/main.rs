@@ -28000,7 +28000,8 @@ fn targeted_test_outcome_report_json(report: &TargetedTestOutcomeReport) -> Resu
         "unchanged": report.unchanged.iter().map(targeted_test_outcome_movement_json).collect::<Vec<_>>(),
         "regressed": report.regressed.iter().map(targeted_test_outcome_movement_json).collect::<Vec<_>>(),
         "new": report.new.iter().map(targeted_test_outcome_seam_json).collect::<Vec<_>>(),
-        "removed": report.removed.iter().map(targeted_test_outcome_seam_json).collect::<Vec<_>>()
+        "removed": report.removed.iter().map(targeted_test_outcome_seam_json).collect::<Vec<_>>(),
+        "review_receipt": targeted_test_outcome_review_receipt_json(report)
     });
     serde_json::to_string_pretty(&value)
         .map(|mut rendered| {
@@ -28065,10 +28066,23 @@ fn targeted_test_outcome_report_markdown(report: &TargetedTestOutcomeReport) -> 
     push_targeted_outcome_movements_md(&mut out, "Regressed", &report.regressed);
     push_targeted_outcome_seams_md(&mut out, "New", &report.new);
     push_targeted_outcome_seams_md(&mut out, "Removed", &report.removed);
+    push_targeted_outcome_review_receipt_md(&mut out, report);
     out.push_str(
         "\nThis report compares two static repo-exposure snapshots. It is advisory and does not run mutation testing.\n",
     );
     out
+}
+
+fn targeted_test_outcome_review_receipt_json(report: &TargetedTestOutcomeReport) -> Value {
+    serde_json::json!({
+        "what_changed": review_what_changed(report),
+        "ripr_flagged_before": review_ripr_flagged_before(report),
+        "focused_proof_added": review_focused_proof_added(report),
+        "movement_after_verification": review_movement_after_verification(report),
+        "remaining_weak_or_unknown": review_remaining_weak_or_unknown(report),
+        "reviewer_should_inspect": review_should_inspect(report),
+        "reviewer_should_not_believe": reviewer_should_not_believe()
+    })
 }
 
 fn push_targeted_outcome_movements_md(
@@ -28097,6 +28111,49 @@ fn push_targeted_outcome_movements_md(
     }
 }
 
+fn push_targeted_outcome_review_receipt_md(out: &mut String, report: &TargetedTestOutcomeReport) {
+    out.push_str("\n## Review Receipt\n\n");
+    push_review_receipt_list_md(out, "What changed?", &review_what_changed(report));
+    push_review_receipt_list_md(
+        out,
+        "What RIPR flagged before?",
+        &review_ripr_flagged_before(report),
+    );
+    push_review_receipt_list_md(
+        out,
+        "What focused proof changed?",
+        &review_focused_proof_added(report),
+    );
+    push_review_receipt_list_md(
+        out,
+        "What moved after verification?",
+        &review_movement_after_verification(report),
+    );
+    push_review_receipt_list_md(
+        out,
+        "What remains weak or unknown?",
+        &review_remaining_weak_or_unknown(report),
+    );
+    push_review_receipt_list_md(
+        out,
+        "Reviewer should inspect",
+        &review_should_inspect(report),
+    );
+    push_review_receipt_list_md(
+        out,
+        "Reviewer should not believe",
+        &reviewer_should_not_believe(),
+    );
+}
+
+fn push_review_receipt_list_md(out: &mut String, title: &str, items: &[String]) {
+    out.push_str(&format!("### {title}\n\n"));
+    for item in items {
+        out.push_str(&format!("- {}\n", md_escape(item)));
+    }
+    out.push('\n');
+}
+
 fn push_targeted_outcome_seams_md(
     out: &mut String,
     title: &str,
@@ -28117,6 +28174,201 @@ fn push_targeted_outcome_seams_md(
             seam.seam_kind
         ));
     }
+}
+
+fn review_what_changed(report: &TargetedTestOutcomeReport) -> Vec<String> {
+    vec![
+        format!(
+            "Compared before snapshot {} with after snapshot {}.",
+            report.before_path, report.after_path
+        ),
+        format!(
+            "Static seam movement: {} moved, {} unchanged, {} regressed, {} new, {} removed.",
+            report.moved.len(),
+            report.unchanged.len(),
+            report.regressed.len(),
+            report.new.len(),
+            report.removed.len()
+        ),
+    ]
+}
+
+fn review_ripr_flagged_before(report: &TargetedTestOutcomeReport) -> Vec<String> {
+    let mut items = Vec::new();
+    for movement in report
+        .moved
+        .iter()
+        .chain(report.unchanged.iter())
+        .chain(report.regressed.iter())
+    {
+        if review_attention_class(&movement.before) {
+            items.push(format!(
+                "{} before {} at {}:{}.",
+                movement.before, movement.seam_kind, movement.file, movement.line
+            ));
+        }
+    }
+    for seam in &report.removed {
+        if review_attention_class(&seam.grip_class) {
+            items.push(format!(
+                "{} before {} at {}:{} later disappeared from the after snapshot.",
+                seam.grip_class, seam.seam_kind, seam.file, seam.line
+            ));
+        }
+    }
+    review_limit_or_default(
+        items,
+        "No before-snapshot weak or unknown seams were present in the compared artifacts.",
+    )
+}
+
+fn review_focused_proof_added(report: &TargetedTestOutcomeReport) -> Vec<String> {
+    let mut items = Vec::new();
+    for movement in report
+        .moved
+        .iter()
+        .chain(report.unchanged.iter())
+        .chain(report.regressed.iter())
+    {
+        let proof_deltas = movement
+            .evidence_delta
+            .iter()
+            .filter(|delta| positive_proof_delta(delta))
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>();
+        if proof_deltas.is_empty() {
+            continue;
+        }
+        items.push(format!(
+            "{} at {}:{} shows static evidence movement for focused proof: {}.",
+            movement.seam_kind,
+            movement.file,
+            movement.line,
+            proof_deltas.join("; ")
+        ));
+    }
+    review_limit_or_default(
+        items,
+        "No focused proof signal was visible in the rendered static snapshots.",
+    )
+}
+
+fn review_movement_after_verification(report: &TargetedTestOutcomeReport) -> Vec<String> {
+    let mut items = Vec::new();
+    let improved = report
+        .moved
+        .iter()
+        .filter(|movement| movement.direction == "improved")
+        .count();
+    let changed = report
+        .moved
+        .iter()
+        .filter(|movement| movement.direction != "improved")
+        .count();
+    items.push(format!(
+        "{} improved, {} changed without ranking higher, {} regressed, {} unchanged.",
+        improved,
+        changed,
+        report.regressed.len(),
+        report.unchanged.len()
+    ));
+    for movement in report.moved.iter().chain(report.regressed.iter()).take(4) {
+        items.push(format!(
+            "{} at {}:{} moved {} -> {} ({}).",
+            movement.seam_kind,
+            movement.file,
+            movement.line,
+            movement.before,
+            movement.after,
+            movement.direction
+        ));
+    }
+    let unchanged_with_delta = report
+        .unchanged
+        .iter()
+        .filter(|movement| !movement.evidence_delta.is_empty())
+        .take(3)
+        .map(|movement| {
+            format!(
+                "{} at {}:{} kept {} but evidence changed: {}.",
+                movement.seam_kind,
+                movement.file,
+                movement.line,
+                movement.after,
+                movement.evidence_delta.join("; ")
+            )
+        });
+    items.extend(unchanged_with_delta);
+    items
+}
+
+fn review_remaining_weak_or_unknown(report: &TargetedTestOutcomeReport) -> Vec<String> {
+    let mut items = Vec::new();
+    for movement in report.unchanged.iter().chain(report.regressed.iter()) {
+        if review_attention_class(&movement.after) {
+            items.push(format!(
+                "{} remains {} at {}:{}.",
+                movement.seam_kind, movement.after, movement.file, movement.line
+            ));
+        }
+    }
+    for seam in &report.new {
+        if review_attention_class(&seam.grip_class) {
+            items.push(format!(
+                "New {} is {} at {}:{}.",
+                seam.seam_kind, seam.grip_class, seam.file, seam.line
+            ));
+        }
+    }
+    review_limit_or_default(
+        items,
+        "No weak or unknown after-snapshot seams were present in the compared artifacts.",
+    )
+}
+
+fn review_should_inspect(report: &TargetedTestOutcomeReport) -> Vec<String> {
+    vec![
+        format!(
+            "Open the compared artifacts: {} and {}.",
+            report.before_path, report.after_path
+        ),
+        "Inspect the focused test or output proof corresponding to each listed evidence delta."
+            .to_string(),
+        "Review remaining weak, unknown, new, or regressed seams before treating the repair loop as complete."
+            .to_string(),
+    ]
+}
+
+fn reviewer_should_not_believe() -> Vec<String> {
+    vec![
+        "Runtime mutation result.".to_string(),
+        "Coverage adequacy.".to_string(),
+        "General correctness.".to_string(),
+        "Merge approval.".to_string(),
+        "That RIPR edited source or generated tests.".to_string(),
+    ]
+}
+
+fn review_attention_class(class: &str) -> bool {
+    !matches!(class, "strongly_gripped" | "intentional" | "suppressed")
+}
+
+fn positive_proof_delta(delta: &str) -> bool {
+    delta.contains("missing discriminator no longer reported")
+        || delta.contains("new observed value")
+        || delta.contains("stronger related oracle visible")
+        || delta.contains("related test count increased")
+        || delta.contains("evidence moved from missing to yes")
+        || delta.contains("evidence moved from weak to yes")
+}
+
+fn review_limit_or_default(mut items: Vec<String>, fallback: &str) -> Vec<String> {
+    if items.is_empty() {
+        return vec![fallback.to_string()];
+    }
+    items.truncate(5);
+    items
 }
 
 pub(crate) fn mutation_calibration_impl(args: &[String]) -> Result<(), String> {
@@ -72182,6 +72434,20 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(value["schema_version"], "0.1");
         assert_eq!(value["status"], "advisory");
         assert_eq!(value["summary"]["moved"], 1);
+        assert_eq!(
+            value["review_receipt"]["movement_after_verification"][0],
+            "1 improved, 0 changed without ranking higher, 0 regressed, 1 unchanged."
+        );
+        assert!(
+            value["review_receipt"]["focused_proof_added"][0]
+                .as_str()
+                .is_some_and(|text| text.contains("new observed value: 100"))
+        );
+        assert!(
+            value["review_receipt"]["reviewer_should_not_believe"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item == "Merge approval."))
+        );
 
         let markdown = targeted_test_outcome_report_markdown(&report);
         assert!(markdown.contains("# ripr targeted-test outcome report"));
@@ -72189,6 +72455,9 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("## Unchanged"));
         assert!(markdown.contains("seam-same"));
         assert!(markdown.contains("new observed value: 100"));
+        assert!(markdown.contains("## Review Receipt"));
+        assert!(markdown.contains("### What focused proof changed?"));
+        assert!(markdown.contains("### Reviewer should not believe"));
         assert!(markdown.contains("weakly_gripped -> strongly_gripped"));
         Ok(())
     }
@@ -72247,8 +72516,10 @@ covered_by = ["cargo xtask check-file-policy"]
             let json = fs::read_to_string("target/ripr/reports/targeted-test-outcome.json")
                 .map_err(|err| format!("failed to read targeted-test outcome JSON: {err}"))?;
             assert!(markdown.contains("# ripr targeted-test outcome report"));
+            assert!(markdown.contains("## Review Receipt"));
             assert!(json.contains("\"schema_version\": \"0.1\""));
             assert!(json.contains("\"moved\": 1"));
+            assert!(json.contains("\"review_receipt\""));
             Ok(())
         })
     }

@@ -3253,7 +3253,38 @@ JSON shape:
   "unchanged": [],
   "regressed": [],
   "new": [],
-  "removed": []
+  "removed": [],
+  "review_receipt": {
+    "what_changed": [
+      "Compared before snapshot target/ripr/before.json with after snapshot target/ripr/after.json.",
+      "Static seam movement: 2 moved, 12 unchanged, 0 regressed, 0 new, 1 removed."
+    ],
+    "ripr_flagged_before": [
+      "weakly_gripped before predicate_boundary at src/pricing.rs:88."
+    ],
+    "focused_proof_added": [
+      "predicate_boundary at src/pricing.rs:88 shows static evidence movement for focused proof: missing discriminator no longer reported: discount_threshold (equality boundary); new observed value: discount_threshold."
+    ],
+    "movement_after_verification": [
+      "2 improved, 0 changed without ranking higher, 0 regressed, 12 unchanged.",
+      "predicate_boundary at src/pricing.rs:88 moved weakly_gripped -> strongly_gripped (improved)."
+    ],
+    "remaining_weak_or_unknown": [
+      "predicate_boundary remains weakly_gripped at src/checkout.rs:41."
+    ],
+    "reviewer_should_inspect": [
+      "Open the compared artifacts: target/ripr/before.json and target/ripr/after.json.",
+      "Inspect the focused test or output proof corresponding to each listed evidence delta.",
+      "Review remaining weak, unknown, new, or regressed seams before treating the repair loop as complete."
+    ],
+    "reviewer_should_not_believe": [
+      "Runtime mutation result.",
+      "Coverage adequacy.",
+      "General correctness.",
+      "Merge approval.",
+      "That RIPR edited source or generated tests."
+    ]
+  }
 }
 ```
 
@@ -3295,11 +3326,19 @@ Field contract:
   rendered evidence movement.
 - `new[]` / `removed[]` — seam identity and grip class for seam IDs present in
   only one input.
+- `review_receipt` — an additive reviewer packet derived from the same
+  before/after movement data. It answers what changed, what RIPR flagged before
+  the focused repair attempt, which static proof signals moved, what still
+  remains weak or unknown, and what reviewers should inspect or avoid
+  inferring. It does not add gate authority or runtime evidence beyond the
+  compared snapshots.
 
-The Markdown surface prints the same summary and highlights moved, unchanged,
-regressed, new, and removed seams for human review. Unchanged seams can still
-carry evidence-delta hints, such as a new observed value, so reviewers can see
-when a targeted test improved rendered evidence without changing the grip class.
+The Markdown surface prints the same summary, highlights moved, unchanged,
+regressed, new, and removed seams for human review, and includes a "Review
+Receipt" section with the same reviewer-native fields. Unchanged seams can
+still carry evidence-delta hints, such as a new observed value, so reviewers can
+see when a targeted test improved rendered evidence without changing the grip
+class.
 
 ## Agent Verify
 

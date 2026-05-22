@@ -35,6 +35,37 @@
   "new": [],
   "regressed": [],
   "removed": [],
+  "review_receipt": {
+    "focused_proof_added": [
+      "predicate_boundary at src/lib.rs:2 shows static evidence movement for focused proof: new observed value: 100; related test count increased by 1."
+    ],
+    "movement_after_verification": [
+      "0 improved, 0 changed without ranking higher, 0 regressed, 1 unchanged.",
+      "predicate_boundary at src/lib.rs:2 kept weakly_gripped but evidence changed: new observed value: 100; related test count increased by 1."
+    ],
+    "remaining_weak_or_unknown": [
+      "predicate_boundary remains weakly_gripped at src/lib.rs:2."
+    ],
+    "reviewer_should_inspect": [
+      "Open the compared artifacts: fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json and fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json.",
+      "Inspect the focused test or output proof corresponding to each listed evidence delta.",
+      "Review remaining weak, unknown, new, or regressed seams before treating the repair loop as complete."
+    ],
+    "reviewer_should_not_believe": [
+      "Runtime mutation result.",
+      "Coverage adequacy.",
+      "General correctness.",
+      "Merge approval.",
+      "That RIPR edited source or generated tests."
+    ],
+    "ripr_flagged_before": [
+      "weakly_gripped before predicate_boundary at src/lib.rs:2."
+    ],
+    "what_changed": [
+      "Compared before snapshot fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json with after snapshot fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json.",
+      "Static seam movement: 0 moved, 1 unchanged, 0 regressed, 0 new, 0 removed."
+    ]
+  },
   "schema_version": "0.1",
   "status": "advisory",
   "summary": {
@@ -50,8 +81,8 @@
       "activate_delta": null,
       "after": "weakly_gripped",
       "before": "weakly_gripped",
-      "discriminate_delta": null,
       "direction": "unchanged",
+      "discriminate_delta": null,
       "evidence_delta": [
         "new observed value: 100",
         "related test count increased by 1"

@@ -3364,12 +3364,17 @@ tests = [
   "xtask/src/reports/release.rs",
   "xtask/src/main.rs",
   "xtask/src/main.rs::tests::dogfood_first_pr_scenarios_have_checked_receipts",
+  "crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
+  "xtask/src/main.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
 ]
 fixtures = [
+  "fixtures/boundary_gap/calibration/targeted-test-outcome.json",
+  "fixtures/boundary_gap/calibration/targeted-test-outcome.md",
   "fixtures/first_successful_pr",
 ]
 code = [
   "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/outcome.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/commands.rs",
