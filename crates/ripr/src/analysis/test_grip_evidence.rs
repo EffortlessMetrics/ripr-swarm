@@ -631,6 +631,7 @@ fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> boo
             | "paths"
             | "result"
             | "results"
+            | "side_effect"
             | "sort"
             | "summary"
             | "target"
@@ -3450,6 +3451,9 @@ fn wrapper_mentions_owner_only_in_non_code() {
         assert!(!call_presence_assertion_affinity_token_is_specific_enough(
             "path"
         ));
+        assert!(!call_presence_assertion_affinity_token_is_specific_enough(
+            "side_effect"
+        ));
         assert!(call_presence_assertion_affinity_token_is_specific_enough(
             "zq_quote_target_token"
         ));
@@ -3465,6 +3469,10 @@ fn wrapper_mentions_owner_only_in_non_code() {
             "#[test] fn unrelated_path_assertion() { \
                 let path = \"target/ripr\"; \
                 assert_eq!(path, \"target/ripr\"); \
+            }\n\
+            #[test] fn unrelated_side_effect_assertion() { \
+                let side_effect = \"target/ripr\"; \
+                assert_eq!(side_effect, \"target/ripr\"); \
             }\n",
         );
         let files: Vec<(PathBuf, &str)> = vec![
