@@ -441,6 +441,14 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         &reports_arg,
     ])?;
     assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Start here:"));
+    assert!(stdout.contains("State: top_gap"));
+    assert!(stdout.contains("Safe next action: repair one named gap"));
+    assert!(stdout.contains("Verify command: `cargo xtask fixtures boundary_gap`"));
+    assert!(stdout.contains("Receipt command: `ripr outcome --before"));
+    assert!(stdout.contains("Receipt path: `target/ripr/receipts/"));
+    assert!(stdout.contains("Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."));
 
     let json_path = reports.join("start-here.json");
     let md_path = reports.join("start-here.md");
@@ -481,10 +489,11 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         )
     );
     assert!(markdown.contains("- Missing discriminator: Equality-boundary assertion"));
-    assert!(markdown.contains("- Receipt: `ripr outcome --before"));
+    assert!(markdown.contains("- Receipt command: `ripr outcome --before"));
+    assert!(markdown.contains("- Receipt path: `target/ripr/receipts/"));
     assert!(markdown.contains("Pass/fail authority remains with explicit gate-decision artifacts"));
     let check_output = run_ripr_in_workspace(&[
-        "first-pr",
+        "start-here",
         "--root",
         ".",
         "--base",
@@ -498,6 +507,10 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         "--check",
     ])?;
     assert_success(&check_output);
+    let check_stdout = String::from_utf8_lossy(&check_output.stdout);
+    assert!(check_stdout.contains("Start here:"));
+    assert!(check_stdout.contains("State: top_gap"));
+    assert!(check_stdout.contains("First PR start-here packet ok:"));
     std::fs::remove_dir_all(workspace)?;
     Ok(())
 }

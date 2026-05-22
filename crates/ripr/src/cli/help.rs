@@ -181,6 +181,7 @@ mod tests {
         assert!(HELP.contains("ripr assistant-loop proof"));
         assert!(HELP.contains("ripr assistant-loop health"));
         assert!(HELP.contains("ripr first-pr"));
+        assert!(HELP.contains("ripr start-here"));
         assert!(HELP.contains("ripr first-action"));
         assert!(HELP.contains("ripr reports index"));
         assert!(HELP.contains("ripr reports gap-ledger"));
@@ -300,6 +301,9 @@ mod tests {
         assert!(FIRST_ACTION_HELP.contains("--gap-ledger PATH"));
         assert!(FIRST_ACTION_HELP.contains("first-useful-action.json"));
         assert!(FIRST_ACTION_HELP.contains("read-only advisory router"));
+        assert!(FIRST_ACTION_HELP.contains("safe next action"));
+        assert!(FIRST_ACTION_HELP.contains("verify command, receipt command, and receipt path"));
+        assert!(FIRST_ACTION_HELP.contains("preview-limited evidence"));
         assert!(REPORTS_HELP.starts_with("Write reviewer-first report projections"));
         assert!(REPORTS_HELP.contains("Usage:"));
         assert!(REPORTS_HELP.contains("ripr reports index"));
@@ -342,6 +346,7 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("Start-here next step:"));
+        assert!(DOCTOR_HELP.contains("ripr start-here --root . --base origin/main --head HEAD"));
         assert!(DOCTOR_HELP.contains("safe next action means repair one named gap"));
         assert!(DOCTOR_HELP.contains("missing artifact, stale evidence, wrong root"));
         assert!(DOCTOR_HELP.contains("verify command, receipt command, and receipt path"));
