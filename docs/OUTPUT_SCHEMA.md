@@ -7454,6 +7454,7 @@ JSON shape:
   "root": ".",
   "selected": {
     "state": "stale_artifact",
+    "output_state": "stale_evidence",
     "message": "The gap decision ledger is stale; refresh the first-run evidence before assigning repair work.",
     "next_command": "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
   },
@@ -7518,6 +7519,13 @@ Field contract:
   (including selected-root preflight failures), `blocked_artifact`, or `timeout`
   for blocked recovery states, and
   `empty_diff` or `no_action` for no-action states.
+- `selected.output_state` is the canonical no-output/fail-closed state for
+  machine consumers. It distinguishes `actionable_gap`, `clean`,
+  `no_actionable_gap`, `missing_artifacts`, `stale_evidence`, `wrong_root`,
+  `language_disabled`, `adapter_unavailable`, `preview_disabled`,
+  `preview_limited`, `malformed_artifact`, `timeout_partial`,
+  `server_unavailable`, `unsupported_schema`, `unsafe_path`, and
+  `unsafe_command` where the packet has that data.
 - `top_gap` requires `status = "actionable"`.
 - `selected.canonical_gap_id` and `selected.gap_id` identify the repair unit
   when a top gap is selected. Generated CI and report indexes should prefer the

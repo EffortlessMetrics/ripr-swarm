@@ -14,6 +14,9 @@ use ripr::output::receipt_lifecycle::{
     RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_NOT_APPLICABLE, receipt_lifecycle_state_from_movement,
     receipt_lifecycle_state_is_present,
 };
+use ripr::output::start_here_state::{
+    START_HERE_ACTIONABLE_GAP, START_HERE_CLEAN, START_HERE_MISSING_ARTIFACTS,
+};
 
 mod command;
 mod dispatch;
@@ -7541,11 +7544,26 @@ const ACTIONABLE_GAP_OUTCOMES_REQUIRED_CASES: &[(&str, &str, &str)] = &[
 
 const FIRST_SUCCESSFUL_PR_CORPUS: &str = "fixtures/first_successful_pr/corpus.json";
 
-const FIRST_SUCCESSFUL_PR_REQUIRED_CASES: &[(&str, &str, &str)] = &[
-    ("boundary-gap", "actionable", "top_gap"),
-    ("output-contract-gap", "actionable", "top_gap"),
-    ("empty-diff", "no_action", "empty_diff"),
-    ("blocked-ledger", "blocked", "blocked_artifact"),
+const FIRST_SUCCESSFUL_PR_REQUIRED_CASES: &[(&str, &str, &str, &str)] = &[
+    (
+        "boundary-gap",
+        "actionable",
+        "top_gap",
+        START_HERE_ACTIONABLE_GAP,
+    ),
+    (
+        "output-contract-gap",
+        "actionable",
+        "top_gap",
+        START_HERE_ACTIONABLE_GAP,
+    ),
+    ("empty-diff", "no_action", "empty_diff", START_HERE_CLEAN),
+    (
+        "blocked-ledger",
+        "blocked",
+        "blocked_artifact",
+        START_HERE_MISSING_ARTIFACTS,
+    ),
 ];
 
 const GAP_DECISION_LEDGER_CORPUS: &str = "fixtures/gap-decision-ledger/corpus.json";
@@ -9179,6 +9197,7 @@ fn validate_first_successful_pr_fixture_corpus_at(
                 (
                     json_string_field(case, "expected_status").unwrap_or_default(),
                     json_string_field(case, "expected_state").unwrap_or_default(),
+                    json_string_field(case, "expected_output_state").unwrap_or_default(),
                 ),
             )
             .is_some()
@@ -9187,11 +9206,16 @@ fn validate_first_successful_pr_fixture_corpus_at(
         }
         validate_first_successful_pr_case(root, case, &case_id, violations)?;
     }
-    for (case_id, expected_status, expected_state) in FIRST_SUCCESSFUL_PR_REQUIRED_CASES {
+    for (case_id, expected_status, expected_state, expected_output_state) in
+        FIRST_SUCCESSFUL_PR_REQUIRED_CASES
+    {
         match seen.get(*case_id) {
-            Some((status, state)) if status == expected_status && state == expected_state => {}
-            Some((status, state)) => violations.push(format!(
-                "first successful PR case {case_id} must be {expected_status}/{expected_state}, got {status}/{state}"
+            Some((status, state, output_state))
+                if status == expected_status
+                    && state == expected_state
+                    && output_state == expected_output_state => {}
+            Some((status, state, output_state)) => violations.push(format!(
+                "first successful PR case {case_id} must be {expected_status}/{expected_state}/{expected_output_state}, got {status}/{state}/{output_state}"
             )),
             None => violations.push(format!(
                 "first successful PR corpus is missing case {case_id}"
@@ -9207,7 +9231,12 @@ fn validate_first_successful_pr_case(
     case_id: &str,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    for field in ["description", "expected_status", "expected_state"] {
+    for field in [
+        "description",
+        "expected_status",
+        "expected_state",
+        "expected_output_state",
+    ] {
         if json_string_field(case, field).is_none() {
             violations.push(format!(
                 "first successful PR case {case_id} is missing {field}"
@@ -9220,6 +9249,8 @@ fn validate_first_successful_pr_case(
     let expected_md = case_dir.join("expected/start-here.md");
     let expected_status = json_string_field(case, "expected_status").unwrap_or_default();
     let expected_state = json_string_field(case, "expected_state").unwrap_or_default();
+    let expected_output_state =
+        json_string_field(case, "expected_output_state").unwrap_or_default();
     for required in [&input_ledger, &expected_json, &expected_md] {
         if !required.exists() {
             violations.push(format!(
@@ -9265,6 +9296,13 @@ fn validate_first_successful_pr_case(
         {
             violations.push(format!(
                 "first successful PR case {case_id} selected.state must be {expected_state}"
+            ));
+        }
+        if audit_string(&packet, &["selected", "output_state"]).as_deref()
+            != Some(expected_output_state.as_str())
+        {
+            violations.push(format!(
+                "first successful PR case {case_id} selected.output_state must be {expected_output_state}"
             ));
         }
         if expected_status == "actionable"
@@ -9316,6 +9354,11 @@ fn validate_first_successful_pr_case(
                 ));
             }
             _ => {}
+        }
+        if !markdown.contains(&format!("- Output state: `{expected_output_state}`")) {
+            violations.push(format!(
+                "first successful PR case {case_id} Markdown must show output state `{expected_output_state}`"
+            ));
         }
     }
     Ok(())

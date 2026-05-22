@@ -12,7 +12,8 @@
       "expected": "boundary-gap/expected/start-here.json",
       "demo_story": "boundary-gap/README.md",
       "expected_status": "actionable",
-      "expected_state": "top_gap"
+      "expected_state": "top_gap",
+      "expected_output_state": "actionable_gap"
     },
     {
       "id": "output-contract-gap",
@@ -20,7 +21,8 @@
       "input": "output-contract-gap/inputs/reports/gap-decision-ledger.json",
       "expected": "output-contract-gap/expected/start-here.json",
       "expected_status": "actionable",
-      "expected_state": "top_gap"
+      "expected_state": "top_gap",
+      "expected_output_state": "actionable_gap"
     },
     {
       "id": "empty-diff",
@@ -28,7 +30,8 @@
       "input": "empty-diff/inputs/reports/gap-decision-ledger.json",
       "expected": "empty-diff/expected/start-here.json",
       "expected_status": "no_action",
-      "expected_state": "empty_diff"
+      "expected_state": "empty_diff",
+      "expected_output_state": "clean"
     },
     {
       "id": "blocked-ledger",
@@ -36,7 +39,8 @@
       "input": "blocked-ledger/inputs/reports/gap-decision-ledger.json",
       "expected": "blocked-ledger/expected/start-here.json",
       "expected_status": "blocked",
-      "expected_state": "blocked_artifact"
+      "expected_state": "blocked_artifact",
+      "expected_output_state": "missing_artifacts"
     }
   ],
   "must_not_claim": [

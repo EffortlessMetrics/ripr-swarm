@@ -39,6 +39,7 @@ pub(crate) mod report_packet_index;
 pub(crate) mod review_comments;
 pub(crate) mod ripr_zero_status;
 pub(crate) mod sarif;
+pub mod start_here_state;
 pub(crate) mod suppression_health;
 pub(crate) mod suppressions;
 pub(crate) mod test_oracle_assistant_proof;

@@ -3485,6 +3485,7 @@ id = "RIPR-SPEC-0053"
 name = "Start-here surface convergence"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 tests = [
+  "crates/ripr/src/output/start_here_state.rs",
   "crates/ripr/src/output/receipt_lifecycle.rs",
   "crates/ripr/src/output/agent_receipt.rs",
   "crates/ripr/src/output/first_pr.rs",
@@ -3513,6 +3514,7 @@ fixtures = [
   "fixtures/editor_first_pr_bridge",
 ]
 code = [
+  "crates/ripr/src/output/start_here_state.rs",
   "crates/ripr/src/output/receipt_lifecycle.rs",
   "crates/ripr/src/output/agent_receipt.rs",
   "crates/ripr/src/cli/commands.rs",

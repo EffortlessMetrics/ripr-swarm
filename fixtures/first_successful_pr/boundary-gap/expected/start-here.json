@@ -97,6 +97,7 @@
     },
     "source_artifact": "inputs/reports/gap-decision-ledger.json",
     "state": "top_gap",
+    "output_state": "actionable_gap",
     "static_limit_detail": null,
     "static_limit_kind": null,
     "verify_command": "cargo xtask fixtures boundary_gap",

@@ -3,6 +3,9 @@ use crate::agent::loop_commands::{
 };
 use crate::config::CONFIG_FILE_NAME;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
+use crate::output::start_here_state::{
+    START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
+};
 use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
@@ -1092,6 +1095,7 @@ impl Selection {
                 regeneration_command,
             } => json!({
                 "state": "missing_artifact",
+                "output_state": normalize_start_here_output_state("missing_artifact"),
                 "artifact": {
                     "id": id,
                     "label": label,
@@ -1106,6 +1110,7 @@ impl Selection {
                 next_command,
             } => json!({
                 "state": state,
+                "output_state": normalize_start_here_output_state(state),
                 "message": message,
                 "next_command": next_command
             }),
@@ -1115,6 +1120,7 @@ impl Selection {
                 records_total,
             } => json!({
                 "state": state,
+                "output_state": normalize_start_here_output_state(state),
                 "reason": reason,
                 "records_total": records_total
             }),
@@ -1157,6 +1163,7 @@ impl TopGapSelection {
     fn to_json(&self) -> Value {
         json!({
             "state": "top_gap",
+            "output_state": self.output_state(),
             "gap_id": self.gap_id,
             "canonical_gap_id": self.canonical_gap_id,
             "language": self.language,
@@ -1189,6 +1196,14 @@ impl TopGapSelection {
             "static_limit_detail": self.static_limit_detail,
             "agent_packet_command": self.agent_packet_command
         })
+    }
+
+    fn output_state(&self) -> &'static str {
+        if self.language_status.as_deref() == Some("preview") || self.static_limit_kind.is_some() {
+            START_HERE_PREVIEW_LIMITED
+        } else {
+            normalize_start_here_output_state("top_gap")
+        }
     }
 }
 
@@ -1756,6 +1771,10 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
     let mut out = String::new();
     out.push_str(&format!("Start here: {}\n", markdown_path.display()));
     out.push_str(&format!("State: {}\n", cli_state_label(&state)));
+    out.push_str(&format!(
+        "Output state: {}\n",
+        selected_output_state(selected, &state)
+    ));
     if let Some(limit) = cli_evidence_limit(selected) {
         out.push_str(&format!("Evidence boundary: {limit}\n"));
     }
@@ -1804,6 +1823,25 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
         "Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\n",
     );
     out
+}
+
+fn selected_output_state(selected: &Value, state: &str) -> String {
+    string_path(selected, &["output_state"])
+        .unwrap_or_else(|| expected_output_state_for_selected(state, selected).to_string())
+}
+
+fn expected_output_state_for_selected(state: &str, selected: &Value) -> &'static str {
+    if state == "top_gap"
+        && (string_path(selected, &["language_status"]).as_deref() == Some("preview")
+            || selected
+                .get("static_limit_kind")
+                .and_then(Value::as_str)
+                .is_some())
+    {
+        START_HERE_PREVIEW_LIMITED
+    } else {
+        normalize_start_here_output_state(state)
+    }
 }
 
 fn cli_state_label(state: &str) -> &'static str {
@@ -1908,6 +1946,10 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
 fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
     out.push_str("- State: `top_gap`\n");
+    out.push_str(&format!(
+        "- Output state: `{}`\n",
+        selected_output_state(selected, "top_gap")
+    ));
     out.push_str("- Safe next action: repair one named stable Rust gap.\n");
     let kind = selected
         .get("kind")
@@ -2005,6 +2047,10 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
 fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
     out.push_str("- State: `missing_artifact`\n");
+    out.push_str(&format!(
+        "- Output state: `{}`\n",
+        selected_output_state(selected, "missing_artifact")
+    ));
     out.push_str(
         "- Safe next action: regenerate the missing artifact before assigning repair work.\n",
     );
@@ -2023,12 +2069,14 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
 
 fn render_no_action_markdown(selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
+    let state = selected
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("no_action");
+    out.push_str(&format!("- State: `{state}`\n"));
     out.push_str(&format!(
-        "- State: `{}`\n",
-        selected
-            .get("state")
-            .and_then(Value::as_str)
-            .unwrap_or("no_action")
+        "- Output state: `{}`\n",
+        selected_output_state(selected, state)
     ));
     out.push_str(
         "- Safe next action: stop on no-action; refresh evidence only after relevant PR changes.\n",
@@ -2048,6 +2096,10 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
         .and_then(Value::as_str)
         .unwrap_or("blocked_artifact");
     out.push_str(&format!("- State: `{state}`\n"));
+    out.push_str(&format!(
+        "- Output state: `{}`\n",
+        selected_output_state(selected, state)
+    ));
     out.push_str(
         "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
     );
@@ -2153,6 +2205,17 @@ fn validate_selected_state(status: &str, selected: &Value, violations: &mut Vec<
         violations.push("selected.state is missing or not a string".to_string());
         return;
     };
+    let expected_output_state = expected_output_state_for_selected(state, selected);
+    match selected.get("output_state").and_then(Value::as_str) {
+        Some(output_state) if output_state == expected_output_state => {}
+        Some(output_state) if !start_here_output_state_is_known(output_state) => violations.push(
+            format!("selected.output_state {output_state:?} is not contract-valid"),
+        ),
+        Some(output_state) => violations.push(format!(
+            "selected.output_state must be {expected_output_state:?} for state {state:?}, found {output_state:?}"
+        )),
+        None => violations.push("selected.output_state is missing or not a string".to_string()),
+    }
     let expected_status = match state {
         "top_gap" => "actionable",
         "missing_artifact" | "malformed_artifact" | "stale_artifact" | "wrong_root"
@@ -2268,6 +2331,7 @@ mod tests {
         let packet = render_start_here_packet(&repo, &options);
         assert_eq!(packet["status"], "actionable");
         assert_eq!(packet["selected"]["state"], "top_gap");
+        assert_eq!(packet["selected"]["output_state"], "actionable_gap");
         assert_eq!(
             packet["selected"]["gap_id"],
             "gap:pr:pricing:threshold-boundary"
@@ -2309,6 +2373,7 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
@@ -2329,6 +2394,7 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "wrong_root");
+        assert_eq!(packet["selected"]["output_state"], "wrong_root");
         assert!(
             packet["selected"]["message"]
                 .as_str()
@@ -2360,6 +2426,7 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "wrong_root");
+        assert_eq!(packet["selected"]["output_state"], "wrong_root");
         assert!(
             packet["selected"]["message"]
                 .as_str()
@@ -2526,6 +2593,7 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "malformed_artifact");
+        assert_eq!(packet["selected"]["output_state"], "malformed_artifact");
         cleanup(&repo)
     }
 
@@ -2539,6 +2607,7 @@ mod tests {
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "stale_artifact");
+        assert_eq!(packet["selected"]["output_state"], "stale_evidence");
         assert!(
             packet["selected"]["next_command"]
                 .as_str()
@@ -2557,6 +2626,7 @@ mod tests {
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "wrong_root");
+        assert_eq!(packet["selected"]["output_state"], "wrong_root");
         assert!(
             packet["selected"]["message"]
                 .as_str()
@@ -2575,6 +2645,7 @@ mod tests {
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "timeout");
+        assert_eq!(packet["selected"]["output_state"], "timeout_partial");
         assert!(
             packet["selected"]["next_command"]
                 .as_str()
@@ -2601,6 +2672,7 @@ mod tests {
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert!(
             packet["selected"]["message"]
                 .as_str()
@@ -2635,6 +2707,7 @@ mod tests {
             .map_err(|err| format!("read start-here markdown: {err}"))?;
         assert_eq!(packet["status"], "no_action");
         assert_eq!(packet["selected"]["state"], "empty_diff");
+        assert_eq!(packet["selected"]["output_state"], "clean");
         assert_eq!(packet["selected"]["records_total"], 0);
         assert!(markdown.contains("## Start Here"));
         assert!(markdown.contains("- State: `empty_diff`"));
@@ -2667,6 +2740,7 @@ mod tests {
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         assert_eq!(packet["status"], "no_action");
         assert_eq!(packet["selected"]["state"], "no_action");
+        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
         cleanup(&repo)
     }
 
