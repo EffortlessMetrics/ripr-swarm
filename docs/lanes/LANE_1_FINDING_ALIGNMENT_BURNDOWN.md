@@ -1,6 +1,6 @@
 # Lane 1: Finding Alignment Burn-Down
 
-Status: open planning rail
+Status: active execution rail
 
 Opened: 2026-05-17
 
@@ -34,8 +34,9 @@ Downstream PR/CI, editor, policy, and adoption lanes consume this evidence.
 They should render canonical items and policy overlays; they should not infer
 actionability from raw analyzer classes.
 
-This rail does not update `.ripr/goals/active.toml` unless the repo-wide
-operator sequence explicitly makes it active.
+The repo-wide operator sequence has selected this rail in
+`.ripr/goals/active.toml`. Normal Lane 1 behavior work should start from the
+ready work item reported by `cargo xtask goals next`.
 
 ## Current Baseline
 
@@ -79,19 +80,19 @@ repairs.
 
 | Order | Issue | Slice | Intent | Status |
 | ---: | --- | --- | --- | --- |
-| 1 | [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140) | `report/finding-alignment-coverage-audit` | Show aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. | open |
-| 2 | [#1141](https://github.com/EffortlessMetrics/ripr/issues/1141) | `analysis/named-static-unknown-invariant` | Keep user-facing static unknown canonical items named and repair-routed. | open |
-| 3 | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) | `analysis/canonical-primary-anchor-raw-spans` | Make `primary_anchor` and raw span support complete enough that downstream surfaces have one placement hint plus supporting evidence. | merged in #1187 |
-| 4 | [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159) | `analysis/top-static-limitation-bucket-burndown` | Pick the top named static limitation bucket from #1140 and repair it with fixture-backed before/after evidence. | source-order-scoped same-test struct literal projection slice merged in #1261; current follow-up widens value-insensitive direct owner-call activation to opaque arguments after the live audit kept `activation_value_unresolved` as the top bucket; remaining bucket stays audit-driven |
-| 5 | [#1142](https://github.com/EffortlessMetrics/ripr/issues/1142) | `docs/spec-config-policy-unsupported-flow-expansion` | Refine the criteria for expanding config/policy unsupported-flow support beyond current heuristic supported sinks. | open |
-| 6 | [#1143](https://github.com/EffortlessMetrics/ripr/issues/1143) | `fixtures/config-policy-unsupported-flow-burndown` | Add fixture-backed cases for selected config/policy unsupported flows before analyzer expansion. | open |
-| 7 | [#1144](https://github.com/EffortlessMetrics/ripr/issues/1144) | `analysis/config-policy-unsupported-flow-support` | Move one selected config/policy unsupported-flow category out of limitation only when fixture-backed. | open |
-| 8 | [#1145](https://github.com/EffortlessMetrics/ripr/issues/1145) | `analysis/actionable-repair-route-completeness` | Preserve the invariant that actionable canonical items always name a concrete repair route. | open |
-| 9 | [#1146](https://github.com/EffortlessMetrics/ripr/issues/1146) | `analysis/actionable-verify-command-coverage` | Preserve and expand verification command coverage where feasible. | open |
-| 10 | [#1147](https://github.com/EffortlessMetrics/ripr/issues/1147) | `report/actionable-canonical-gaps-scorecard-lead` | Preserve scorecard-leading actionable canonical gaps as new classes land. | actionable top lists merged in #1266; timeout diagnostics merged in #1271; current follow-up emits bounded actionable-gap packet artifacts for agent-safe triage |
-| 11 | [#1160](https://github.com/EffortlessMetrics/ripr/issues/1160) | `calibration/runtime-confidence-coverage-audit` | Report calibrated-supported versus static-only canonical items by evidence class. | current follow-up reports runtime confidence coverage by canonical evidence class in the Lane 1 audit and scorecard |
-| 12 | [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149) | `dogfood/finding-alignment-examples-refresh` | Refresh real examples after new burn-down deltas instead of duplicating existing dogfood fixtures. | open |
-| 13 | [#1153](https://github.com/EffortlessMetrics/ripr/issues/1153) | `docs/canonical-alignment-contract-refresh` | Refresh the downstream handoff only after material burn-down changes. | open |
+| 1 | [swarm #229](https://github.com/EffortlessMetrics/ripr-swarm/issues/229) | `report/finding-alignment-coverage-audit` | Show aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. | ready |
+| 2 | legacy [#1141](https://github.com/EffortlessMetrics/ripr/issues/1141) | `analysis/named-static-unknown-invariant` | Keep user-facing static unknown canonical items named and repair-routed. | blocked by refreshed audit |
+| 3 | legacy [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) | `analysis/canonical-primary-anchor-raw-spans` | Make `primary_anchor` and raw span support complete enough that downstream surfaces have one placement hint plus supporting evidence. | blocked by refreshed audit |
+| 4 | legacy [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159) | `analysis/top-static-limitation-bucket-burndown` | Pick the top named static limitation bucket from the refreshed audit and repair it with fixture-backed before/after evidence. | blocked by refreshed audit |
+| 5 | legacy [#1142](https://github.com/EffortlessMetrics/ripr/issues/1142) | `docs/spec-config-policy-unsupported-flow-expansion` | Refine the criteria for expanding config/policy unsupported-flow support beyond current heuristic supported sinks. | blocked by refreshed audit |
+| 6 | legacy [#1143](https://github.com/EffortlessMetrics/ripr/issues/1143) | `fixtures/config-policy-unsupported-flow-burndown` | Add fixture-backed cases for selected config/policy unsupported flows before analyzer expansion. | blocked by spec refinement |
+| 7 | legacy [#1144](https://github.com/EffortlessMetrics/ripr/issues/1144) | `analysis/config-policy-unsupported-flow-support` | Move one selected config/policy unsupported-flow category out of limitation only when fixture-backed. | blocked by fixtures |
+| 8 | legacy [#1145](https://github.com/EffortlessMetrics/ripr/issues/1145) | `analysis/actionable-repair-route-completeness` | Preserve the invariant that actionable canonical items always name a concrete repair route. | blocked by refreshed audit |
+| 9 | legacy [#1146](https://github.com/EffortlessMetrics/ripr/issues/1146) | `analysis/actionable-verify-command-coverage` | Preserve and expand verification command coverage where feasible. | blocked by refreshed audit |
+| 10 | legacy [#1147](https://github.com/EffortlessMetrics/ripr/issues/1147) | `report/actionable-canonical-gaps-scorecard-lead` | Preserve scorecard-leading actionable canonical gaps as new classes land. | blocked by refreshed audit |
+| 11 | legacy [#1160](https://github.com/EffortlessMetrics/ripr/issues/1160) | `calibration/runtime-confidence-coverage-audit` | Report calibrated-supported versus static-only canonical items by evidence class. | blocked by refreshed audit |
+| 12 | legacy [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149) | `dogfood/finding-alignment-examples-refresh` | Refresh real examples after new burn-down deltas instead of duplicating existing dogfood fixtures. | blocked by material burn-down delta |
+| 13 | legacy [#1153](https://github.com/EffortlessMetrics/ripr/issues/1153) | `docs/canonical-alignment-contract-refresh` | Refresh the downstream handoff only after material burn-down changes. | blocked by material field or guidance change |
 
 Related legacy issues stay visible but should not be treated as the only Lane 1
 burn-down rail:

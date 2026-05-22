@@ -3261,8 +3261,11 @@ Closeout:
 
 ## Focused Lane 1 Tracker: Finding Alignment Burn-Down
 
-Status: open planning rail. This focused tracker is not the active execution
-manifest unless `.ripr/goals/active.toml` explicitly selects it.
+Campaign ID: `lane1-finding-alignment-burndown`
+
+Status: active. This focused tracker is the active execution manifest selected
+by `.ripr/goals/active.toml` after Start-Here Surface Convergence closed with
+`no_current_goal = true`.
 
 Sources of truth:
 
@@ -3299,19 +3302,19 @@ Work items:
 
 | Work item | Status | Notes |
 | --- | --- | --- |
-| `report/finding-alignment-coverage-audit` | open | [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140) audits aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. |
-| `analysis/named-static-unknown-invariant` | open | [#1141](https://github.com/EffortlessMetrics/ripr/issues/1141) preserves named static limitations for user-facing static unknowns. |
-| `analysis/canonical-primary-anchor-raw-spans` | open | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) completes placement and supporting raw-span evidence for canonical items. |
-| `analysis/top-static-limitation-bucket-burndown` | open | [#1159](https://github.com/EffortlessMetrics/ripr/issues/1159) turns the top named static limitation bucket into fixture-backed analyzer repair. |
-| `docs/spec-config-policy-unsupported-flow-expansion` | open | [#1142](https://github.com/EffortlessMetrics/ripr/issues/1142) refines unsupported-flow expansion criteria for existing config/policy evidence. |
-| `fixtures/config-policy-unsupported-flow-burndown` | open | [#1143](https://github.com/EffortlessMetrics/ripr/issues/1143) pins selected config/policy unsupported-flow cases before analyzer work. |
-| `analysis/config-policy-unsupported-flow-support` | open | [#1144](https://github.com/EffortlessMetrics/ripr/issues/1144) expands one selected unsupported-flow category only when fixture-backed. |
-| `analysis/actionable-repair-route-completeness` | open | [#1145](https://github.com/EffortlessMetrics/ripr/issues/1145) keeps actionable canonical items repair-routed. |
-| `analysis/actionable-verify-command-coverage` | open | [#1146](https://github.com/EffortlessMetrics/ripr/issues/1146) keeps actionable canonical items verifiable where feasible. |
-| `report/actionable-canonical-gaps-scorecard-lead` | open | [#1147](https://github.com/EffortlessMetrics/ripr/issues/1147) preserves scorecard-leading actionable canonical gaps. |
-| `calibration/runtime-confidence-coverage-audit` | open | [#1160](https://github.com/EffortlessMetrics/ripr/issues/1160) reports calibrated-supported versus static-only canonical items by class. |
-| `dogfood/finding-alignment-examples-refresh` | open | [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149) refreshes examples only after material burn-down deltas. |
-| `docs/canonical-alignment-contract-refresh` | open | [#1153](https://github.com/EffortlessMetrics/ripr/issues/1153) refreshes downstream handoff docs only when fields or guidance change. |
+| `report/finding-alignment-coverage-audit` | ready | [swarm #229](https://github.com/EffortlessMetrics/ripr-swarm/issues/229) audits aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. |
+| `analysis/named-static-unknown-invariant` | blocked | Preserves named static limitations for user-facing static unknowns after the refreshed audit confirms whether behavior work or proof-only refresh is needed. |
+| `analysis/canonical-primary-anchor-raw-spans` | blocked | Completes placement and supporting raw-span evidence after the refreshed audit identifies the highest-value placement gaps by evidence class. |
+| `analysis/top-static-limitation-bucket-burndown` | blocked | Turns the top named static limitation bucket into fixture-backed analyzer repair after the refreshed audit selects the current bucket. |
+| `docs/spec-config-policy-unsupported-flow-expansion` | blocked | Refines unsupported-flow expansion criteria after the refreshed audit confirms the next config/policy unsupported-flow category. |
+| `fixtures/config-policy-unsupported-flow-burndown` | blocked | Pins selected config/policy unsupported-flow cases after the spec refinement selects categories. |
+| `analysis/config-policy-unsupported-flow-support` | blocked | Expands one selected unsupported-flow category only after fixture-backed unsupported-flow cases land. |
+| `analysis/actionable-repair-route-completeness` | blocked | Keeps actionable canonical items repair-routed after the audit shows whether coverage regressed or needs class-specific expansion. |
+| `analysis/actionable-verify-command-coverage` | blocked | Keeps actionable canonical items verifiable after the audit shows whether coverage regressed or needs class-specific expansion. |
+| `report/actionable-canonical-gaps-scorecard-lead` | blocked | Preserves scorecard-leading actionable canonical gaps after the audit confirms current scorecard-leading gaps. |
+| `calibration/runtime-confidence-coverage-audit` | blocked | Reports calibrated-supported versus static-only canonical items after the refreshed audit provides the current class inventory. |
+| `dogfood/finding-alignment-examples-refresh` | blocked | Refreshes examples only after a material burn-down delta changes useful examples. |
+| `docs/canonical-alignment-contract-refresh` | blocked | Refreshes downstream handoff docs only after material field or guidance changes land. |
 
 Blocking conditions:
 

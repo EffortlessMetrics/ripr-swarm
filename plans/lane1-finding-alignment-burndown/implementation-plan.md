@@ -1,6 +1,6 @@
 # Lane 1 Finding Alignment Burn-Down Implementation Plan
 
-Status: open
+Status: active
 
 Owner: Lane 1 - Evidence Accuracy
 
@@ -27,7 +27,9 @@ items missing repair routes, verify commands, or named static limitations.
 The next work is maintenance-mode alignment usefulness: keep those invariants
 true while burning down measured gaps such as incomplete placement fields,
 large named limitation buckets, unsupported config/policy flows, and static-only
-runtime confidence coverage.
+runtime confidence coverage. `.ripr/goals/active.toml` currently selects this
+rail and leaves `report/finding-alignment-coverage-audit` ready as the first
+swarm-native work item.
 
 ## Current Run-Reliability Slice
 
@@ -83,7 +85,7 @@ calls, generated tests, source edits, or mutation execution.
 
 ## Work Item 1: report: audit finding alignment coverage by evidence class
 
-Issue: [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140)
+Issue: [swarm #229](https://github.com/EffortlessMetrics/ripr-swarm/issues/229)
 
 ### Goal
 
