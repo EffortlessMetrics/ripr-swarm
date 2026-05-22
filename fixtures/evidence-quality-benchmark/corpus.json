@@ -2173,12 +2173,14 @@
       "evidence_class": "config_or_policy_constant",
       "maturity_scope": "fixture_backed",
       "description": "A report label routed through the selected opaque lookup shape becomes an actionable output-observer gap when no observer is found.",
-      "fixture_reference": "crates/ripr/src/output/json/finding_alignment.rs::tests::fixture_backed_opaque_report_lookup_becomes_actionable",
+      "fixture_reference": "crates/ripr/src/output/json/finding_alignment.rs::tests::fixture_backed_opaque_report_lookup_with_supported_signal_becomes_actionable",
       "sample": {
         "file": "src/report_lookup.rs",
         "declaration_line": 62,
         "literal_line": 63,
+        "sink_line": 64,
         "constant": "OPAQUE_REPORT_LABEL",
+        "lookup_owner": "lookup_report_label",
         "sink": "fixture_backed_lookup_report_output",
         "observer": "none"
       },
@@ -2188,7 +2190,7 @@
           "schema_version": "0.1",
           "seam_id": "bench-config-policy-opaque-report-lookup",
           "canonical_gap_id": "config_or_policy_constant::OPAQUE_REPORT_LABEL",
-          "canonical_gap_group_size": 2,
+          "canonical_gap_group_size": 3,
           "canonical_gap_reason": "declaration_and_literal_same_text_constant",
           "owner": "OPAQUE_REPORT_LABEL",
           "location": {
@@ -2214,6 +2216,11 @@
               "file": "src/report_lookup.rs",
               "line": 63,
               "kind": "static_unknown"
+            },
+            {
+              "file": "src/report_lookup.rs",
+              "line": 64,
+              "kind": "exposed"
             }
           ],
           "config_policy": {
