@@ -348,7 +348,7 @@ cargo xtask check-pr
 
 ### Work item: outcome/reviewer-native-receipts
 
-Status: ready
+Status: done
 
 Linked proposal: `RIPR-PROP-0009`
 
@@ -367,7 +367,7 @@ Branch: `outcome-reviewer-native-receipts`
 
 Issue: n/a
 
-PR: n/a
+PR: #181
 
 #### Goal
 
@@ -377,8 +377,9 @@ remains weak or unknown, and what reviewers should and should not believe.
 
 #### Production delta
 
-Update outcome receipt rendering and related tests after the one-screen
-recommendation is stable.
+Updated outcome receipt rendering, the xtask targeted-test outcome mirror,
+schema docs, specs, traceability, tests, and the boundary-gap fixture after the
+one-screen recommendation stabilized.
 
 #### Acceptance
 
@@ -414,7 +415,7 @@ cargo xtask check-pr
 
 ### Work item: fixtures/first-pr-boundary-gap-demo
 
-Status: blocked
+Status: ready
 
 Linked proposal: `RIPR-PROP-0009`
 
@@ -424,7 +425,7 @@ Linked ADR: n/a
 
 Blocks: `surfaces/one-screen-loop-convergence`
 
-Blocked by: `outcome/reviewer-native-receipts`
+Blocked by: n/a
 
 Branch: `fixtures-first-pr-boundary-gap-demo`
 

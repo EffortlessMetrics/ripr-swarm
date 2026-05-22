@@ -144,9 +144,6 @@ stackable = false
 proposal = "RIPR-PROP-0009"
 spec = "RIPR-SPEC-0051"
 plan = "RIPR-PLAN-0028"
-blocked_by = [
-  "outcome/reviewer-native-receipts",
-]
 acceptance = "Add a tiny canonical ten-minute demo or fixture story that proves before -> `ripr first-pr` -> top gap -> focused external test/output proof -> `ripr outcome` -> receipt. The story doubles as documentation, smoke coverage, release demo, and agent training path."
 commands = [
   "cargo xtask fixtures",
