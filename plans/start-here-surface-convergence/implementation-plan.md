@@ -1,6 +1,6 @@
 # Start-Here Surface Convergence Implementation Plan
 
-Status: proposed
+Status: active
 
 Owner: cross-lane; Lane 4 / PR-CI and CLI surfaces lead, Lane 2 owns policy
 meaning, Lane 3 consumes editor-ready state
@@ -36,18 +36,16 @@ canonical repair unit, state names, receipt lifecycle, and non-claims.
 
 ## GitHub Issue Burn-Down
 
-Issue numbers are assigned after the docs stack PR creates the GitHub issues.
-
 | Issue | Work item | Status |
 | --- | --- | --- |
-| #1148 | `docs(product): open start-here surface convergence stack` | planned |
-| #1150 | `report: align PR/CI first screen on canonical repair unit` | planned |
-| #1151 | `cli: converge start-here command language` | planned |
-| #1152 | `receipt: standardize receipt lifecycle state` | planned |
-| #1154 | `output: standardize no-output and fail-closed states` | planned |
-| #1155 | `policy(language): define preview promotion proof criteria` | planned |
-| #1156 | `dogfood: record external-style start-here receipts` | planned |
-| #1157 | `campaign: close start-here surface convergence` | planned |
+| #201 | `docs(product): open start-here surface convergence stack` | done |
+| #202 | `report: align PR/CI first screen on canonical repair unit` | ready |
+| #203 | `cli: converge start-here command language` | blocked |
+| #204 | `receipt: standardize receipt lifecycle state` | blocked |
+| #205 | `output: standardize no-output and fail-closed states` | blocked |
+| #206 | `policy(language): define preview promotion proof criteria` | blocked |
+| #207 | `dogfood: record external-style start-here receipts` | blocked |
+| #208 | `campaign: close start-here surface convergence` | blocked |
 
 ## Work Item 1: docs(product): open start-here surface convergence stack
 

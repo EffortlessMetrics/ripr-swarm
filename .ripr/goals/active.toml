@@ -1,199 +1,154 @@
-id = "first-useful-pr-loop"
-title = "First Useful PR Loop"
-status = "closed"
-no_current_goal = true
+id = "start-here-surface-convergence"
+title = "Start-Here Surface Convergence"
+status = "active"
+issue = "201"
 
-# This is Campaign 28 in `docs/IMPLEMENTATION_CAMPAIGNS.md`.
-# Campaign 27 closed Language Adapter Preview and remains archived under
-# `.ripr/goals/archive/2026-05-13-language-adapter-preview.toml`.
-# This campaign makes the front-door RIPR product loop boringly useful:
-# one changed Rust behavior, one clear weak-oracle gap, one focused repair
-# intent, one verification command, and one receipt that users, reviewers, CI,
-# and agents can all understand.
+# This is the next active campaign after Campaign 28 closed the First Useful
+# PR Loop and intentionally left `no_current_goal = true`. This campaign makes
+# the existing start-here, PR/CI, CLI, receipt, policy, dogfood, and docs
+# surfaces converge on the same canonical repair unit without changing
+# analyzer truth or advisory defaults.
 
 objective = """
-Make a new user, reviewer, or coding agent get from one changed Rust behavior
-to one trustworthy repair receipt with almost no interpretation burden. The
-front door is `ripr first-pr --root . --base origin/main --head HEAD`; it must
-name the top repairable gap or a clear no-action state, explain the missing
-discriminator in reviewer-readable language, give one focused test or output
-proof intent, provide exact verify and receipt commands, and preserve the
-static-advisory boundary. RIPR still does not edit source, generate tests, call
-providers, run mutation, prove runtime or coverage adequacy, or enable default
-blocking gates.
+Make every start-here surface answer the same user question: what is the one
+repairable gap or no-action state, why does it matter, where should the
+focused proof go, what verifies movement, what receipt records it, and what
+remains limited or advisory?
 """
 
 end_state = [
-  "`ripr first-pr --root . --base origin/main --head HEAD` is the obvious front door for one changed Rust PR",
-  "the first screen names one top repairable gap or a clear no-action state without making users open secondary reports",
-  "the recommendation explains changed behavior, current proof weakness, missing discriminator, repair intent, verify command, receipt command, and static-evidence boundary",
-  "`ripr outcome` receipts are reviewer-native and explain before/after movement without claiming mutation, runtime, or coverage proof",
-  "a tiny fixture or demo story proves the before -> recommendation -> focused repair -> outcome -> receipt loop",
-  "generated CI, editor, and agent packet surfaces mirror the same one-screen repair story instead of inventing parallel wording",
-  "support/status claims remain mapped to proof and preserve advisory/static boundaries",
+  "PR/CI summaries and report packets lead with a canonical gap or no-action state instead of raw finding counts",
+  "CLI front-door commands use the same safe-next-action and recovery-state vocabulary",
+  "receipt lifecycle state is consistent across CLI, PR/CI, editor projection, first-pr packets, and docs",
+  "no-output and fail-closed states are explicit outside the editor",
+  "preview-language promotion criteria are visible and policy-owned",
+  "external-style dogfood proves the converged path on normal repo shapes and failure states",
+]
+
+hard_rules = [
+  "typed fields over prose",
+  "canonical gap and repair route before raw finding count",
+  "advisory by default",
+  "gate authority stays with explicit gate artifacts",
+]
+
+non_goals = [
+  "no analyzer behavior changes in the docs/issue setup PR",
+  "no output schema changes without a scoped spec-test-code PR",
+  "no generated CI blocking or default gate behavior changes",
+  "no PR comment publishing changes",
+  "no preview-language promotion without a policy-owned promotion packet",
+  "no source edits, generated tests, provider/model calls, mutation execution, or editor UI-sprawl work",
 ]
 
 [[work_item]]
-id = "context/proof-stack-reconciliation"
+id = "docs/start-here-surface-convergence-stack"
 status = "done"
-branch = "context-proof-stack-reconciliation"
-stackable = false
-proposal = "RIPR-PROP-0015"
-spec = "RIPR-SPEC-0060"
-plan = "RIPR-PLAN-0028"
-acceptance = "Reconcile proof-stack language into RIPR's existing context system and accepted source-of-truth stack without adding a runner-local goals namespace or another operating namespace. `docs/source-of-truth/README.md` and `docs/agent-context/CONTEXT_SYSTEM.md` map proposal, spec, ADR, implementation plan, active manifest, support tiers, policy ledgers, and closeouts to the repo-native files users and agents already consume, and `docs/ROADMAP.md` states the product/control-plane end goal."
-commands = [
-  "cargo xtask check-doc-index",
-  "cargo xtask markdown-links",
-  "cargo xtask check-static-language",
-  "cargo xtask check-campaign",
-  "cargo xtask goals next",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "goals/active-freshness-validation"
-status = "done"
-branch = "goals-active-freshness-validation"
-stackable = false
-proposal = "RIPR-PROP-0015"
-spec = "RIPR-SPEC-0060"
-plan = "RIPR-PLAN-0028"
-blocked_by = [
-  "context/proof-stack-reconciliation",
-]
-acceptance = "Add or extend the goal validation path so a closed active campaign without a successor or explicit no-current-goal marker is reported as stale execution state. The check also catches missing work-item commands, missing paths, done items without proof commands, blocked items without blocked_by or blocked_reason, invented policy fields, and stale branch references where those signals are available."
-commands = [
-  "cargo test -p xtask goals",
-  "cargo xtask goals next",
-  "cargo xtask check-campaign",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "first-pr/front-door-polish"
-status = "done"
-branch = "first-pr-front-door-polish"
-stackable = false
-proposal = "RIPR-PROP-0009"
-spec = "RIPR-SPEC-0051"
-plan = "RIPR-PLAN-0028"
-blocked_by = [
-  "goals/active-freshness-validation",
-]
-acceptance = "Make `ripr first-pr --root . --base origin/main --head HEAD` the product front door: preflight git, diff, base/head, Cargo workspace, config/defaults, writable artifacts, mode, and next command; expected missing inputs return clear recovery packets instead of raw internal errors."
-commands = [
-  "cargo test -p ripr --lib first_pr",
-  "cargo xtask fixtures",
-  "cargo xtask goldens check",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "first-pr/one-screen-recommendation"
-status = "done"
-branch = "first-pr-one-screen-recommendation"
-stackable = false
-proposal = "RIPR-PROP-0009"
-specs = [
-  "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md",
-  "docs/specs/RIPR-SPEC-0020-first-useful-action-report.md",
-]
-plan = "RIPR-PLAN-0028"
-blocked_by = [
-  "first-pr/front-door-polish",
-]
-acceptance = "Stabilize a golden-backed first screen that always includes top actionable gap or no-action state, changed behavior, current evidence strength, missing discriminator, focused test or output-proof intent, exact verify command, receipt command, and the static-advisory boundary without banned mutation-proof vocabulary."
-commands = [
-  "cargo test -p ripr --lib first_pr",
-  "cargo xtask fixtures",
-  "cargo xtask goldens check",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-static-language",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "outcome/reviewer-native-receipts"
-status = "done"
-branch = "outcome-reviewer-native-receipts"
-stackable = false
-proposal = "RIPR-PROP-0009"
-specs = [
-  "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md",
-  "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md",
-]
-plan = "RIPR-PLAN-0028"
-blocked_by = [
-  "first-pr/one-screen-recommendation",
-]
-acceptance = "`ripr outcome` receipts answer what changed, what RIPR flagged before, what focused proof was added outside RIPR, what moved after verification, what remains weak or unknown, and what reviewers should and should not believe. Receipts stay usable from CLI, PR summary, editor handoff, and agent packet surfaces."
-commands = [
-  "cargo test -p ripr --lib outcome",
-  "cargo xtask fixtures",
-  "cargo xtask goldens check",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "fixtures/first-pr-boundary-gap-demo"
-status = "done"
-branch = "fixtures-first-pr-boundary-gap-demo"
-stackable = false
-proposal = "RIPR-PROP-0009"
-spec = "RIPR-SPEC-0051"
-plan = "RIPR-PLAN-0028"
-acceptance = "Add a tiny canonical ten-minute demo or fixture story that proves before -> `ripr first-pr` -> top gap -> focused external test/output proof -> `ripr outcome` -> receipt. The story doubles as documentation, smoke coverage, release demo, and agent training path."
-commands = [
-  "cargo xtask fixtures",
-  "cargo xtask goldens check",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-fixture-contracts",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "surfaces/one-screen-loop-convergence"
-status = "done"
-branch = "surfaces-one-screen-loop-convergence"
+branch = "campaign-start-here-surface-convergence"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md",
-  "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md",
-]
-plan = "RIPR-PLAN-0028"
-acceptance = "Make generated CI, VS Code/editor handoff, and agent packet surfaces mirror the same first-useful-pr wording and repair unit: changed behavior, missing discriminator, focused proof intent, verify command, receipt command, artifacts, and static-advisory boundary. Do not add default blocking, source edits, generated tests, providers, mutation execution, or a second mental model."
-commands = [
-  "cargo test -p ripr lsp --lib",
-  "cargo xtask lsp-cockpit-report",
-  "npm --prefix editors/vscode run compile",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-static-language",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "campaign/first-useful-pr-loop-closeout"
-status = "done"
-branch = "campaign-first-useful-pr-loop-closeout"
-stackable = false
-proposal = "RIPR-PROP-0009"
-specs = [
-  "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md",
-  "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md",
-]
-plan = "RIPR-PLAN-0028"
-acceptance = "Close Campaign 28 only after one command, one top gap or no-action state, one focused repair intent, one verification command, one receipt, one demo, one generated-CI summary, one editor handoff, and one agent packet tell the same static-advisory repair story with proof and remaining limits recorded."
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+acceptance = "Accept and activate the Start-Here Surface Convergence stack in ripr-swarm, replace source-repo issue numbers with swarm issues #201-#208, and leave the next PR/CI first-screen slice ready without behavior changes."
 commands = [
   "cargo xtask check-doc-index",
   "cargo xtask markdown-links",
   "cargo xtask check-static-language",
-  "cargo xtask check-capabilities",
+  "cargo xtask check-doc-roles",
   "cargo xtask check-traceability",
-  "cargo xtask check-campaign",
-  "cargo xtask goals next",
   "cargo xtask check-pr",
 ]
+
+[[work_item]]
+id = "report/pr-ci-start-here-canonical-unit"
+status = "ready"
+branch = "report-pr-ci-start-here-canonical-unit"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+acceptance = "Generated CI and PR evidence first screens name the same gap identity, repair route, verify command, receipt command, receipt state, limits, and non-claims as the first-pr packet when a canonical repair unit exists; raw finding counts remain supporting evidence."
+commands = [
+  "cargo test -p ripr --lib output",
+  "cargo test -p xtask first_pr",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "cli/start-here-command-language"
+status = "blocked"
+branch = "cli-start-here-command-language"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+blocked_by = [
+  "report/pr-ci-start-here-canonical-unit",
+]
+acceptance = "CLI surfaces distinguish safe next action, missing artifacts, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence, verify command, receipt command, and receipt path using the converged start-here vocabulary."
+
+[[work_item]]
+id = "receipt/lifecycle-state-convergence"
+status = "blocked"
+branch = "receipt-lifecycle-state-convergence"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+blocked_by = [
+  "cli/start-here-command-language",
+]
+acceptance = "Surfaces distinguish found, missing, stale, gap mismatch, improved, unchanged, and not-applicable receipt states while keeping receipts static movement proof only."
+
+[[work_item]]
+id = "output/no-output-fail-closed-states"
+status = "blocked"
+branch = "output-no-output-fail-closed-states"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+blocked_by = [
+  "receipt/lifecycle-state-convergence",
+]
+acceptance = "CLI and report outputs distinguish clean, no actionable gap, missing artifacts, stale evidence, wrong root, disabled language, unavailable adapter, preview disabled, preview limited, malformed artifact, timeout partial, unsupported schema, unsafe path, and unsafe command where data is available."
+
+[[work_item]]
+id = "policy/preview-promotion-proof-criteria"
+status = "blocked"
+branch = "policy-preview-promotion-proof-criteria"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+blocked_by = [
+  "output/no-output-fail-closed-states",
+]
+acceptance = "Preview promotion criteria include fixtures, dogfood, related-test accuracy, static-limit taxonomy, false-positive review, false repair packet review, surface consistency, and policy signoff; TypeScript, JavaScript, and Python remain preview until a policy-owned promotion packet closes the criteria."
+
+[[work_item]]
+id = "dogfood/external-style-start-here-receipts"
+status = "blocked"
+branch = "dogfood-external-style-start-here-receipts"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+blocked_by = [
+  "policy/preview-promotion-proof-criteria",
+]
+acceptance = "Receipts cover small Rust crate, Rust workspace, no actionable gap, stale artifacts, disabled preview languages, preview-limited evidence, and malformed or missing artifacts with commands, artifact paths, state labels, known limits, and receipt outcomes."
+
+[[work_item]]
+id = "campaign/start-here-surface-convergence-closeout"
+status = "blocked"
+branch = "campaign-start-here-surface-convergence-closeout"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
+spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
+plan = "plans/start-here-surface-convergence/implementation-plan.md"
+blocked_by = [
+  "dogfood/external-style-start-here-receipts",
+]
+acceptance = "Close the campaign only after all swarm issues #201-#208 are closed or explicitly superseded and the closeout maps requirements to artifacts, validation commands, remaining limits, and claim boundaries."
