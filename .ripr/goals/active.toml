@@ -53,7 +53,7 @@ non_goals = [
 
 [[work_item]]
 id = "report/finding-alignment-coverage-audit"
-status = "ready"
+status = "done"
 branch = "report-finding-alignment-coverage-audit"
 stackable = false
 plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
@@ -67,5 +67,22 @@ commands = [
   "cargo xtask lane1-evidence-audit",
   "cargo xtask evidence-quality-scorecard",
   "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "analysis/named-static-unknown-invariant"
+status = "ready"
+branch = "analysis-named-static-unknown-invariant"
+stackable = false
+plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
+specs = [
+  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
+]
+acceptance = "Keep static_unknown_without_named_limitation at zero, keep unknowns visible and non-actionable without fixture-backed evidence, and preserve named limitation categories with repair routes."
+commands = [
+  "cargo xtask lane1-evidence-audit",
+  "cargo xtask evidence-quality-scorecard",
+  "cargo xtask check-static-language",
   "cargo xtask check-pr",
 ]

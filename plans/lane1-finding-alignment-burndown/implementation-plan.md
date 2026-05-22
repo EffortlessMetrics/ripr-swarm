@@ -83,7 +83,10 @@ calls, generated tests, source edits, or mutation execution.
 
 ## Work Item 1: report: audit finding alignment coverage by evidence class
 
-Issue: [#1140](https://github.com/EffortlessMetrics/ripr/issues/1140)
+Issue: [swarm #229](https://github.com/EffortlessMetrics/ripr-swarm/issues/229)
+/ [source #1140](https://github.com/EffortlessMetrics/ripr/issues/1140)
+
+Status: done.
 
 ### Goal
 
@@ -120,7 +123,10 @@ git diff --check
 
 ## Work Item 2: analysis: keep static_unknown canonical items named
 
-Issue: [#1141](https://github.com/EffortlessMetrics/ripr/issues/1141)
+Issue: [swarm #233](https://github.com/EffortlessMetrics/ripr-swarm/issues/233)
+/ [source #1141](https://github.com/EffortlessMetrics/ripr/issues/1141)
+
+Status: ready.
 
 ### Goal
 
