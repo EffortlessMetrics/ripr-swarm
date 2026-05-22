@@ -47,9 +47,12 @@ Changed behavior:
 Missing discriminator:
   Equality-boundary assertion for the changed behavior.
 
-Focused proof intent:
+  Focused proof intent:
   Add a focused boundary assertion in tests/pricing.rs:
   assert_eq!(discount(100, 100), 90)
+
+  Verify command:
+  cargo xtask fixtures boundary_gap
 ```
 
 ## Step 2: Add The Focused Proof Outside RIPR
@@ -85,6 +88,7 @@ keeps the claim boundary explicit.
 
 - RIPR selected one bounded boundary assertion gap.
 - The suggested proof target and verification command are explicit.
+- The verification command is `cargo xtask fixtures boundary_gap`.
 - The outcome receipt records static before/after movement.
 
 ## What Reviewers Must Not Infer
