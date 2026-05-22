@@ -6,6 +6,7 @@ State: actionable
 ## Start Here
 
 - State: `top_gap`
+- Output state: `actionable_gap`
 - Safe next action: repair one named stable Rust gap.
 - Top actionable gap: missing boundary assertion
 - Changed behavior: `amount >= threshold`

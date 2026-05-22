@@ -6,6 +6,7 @@ State: no_action
 ## Start Here
 
 - State: `empty_diff`
+- Output state: `clean`
 - Safe next action: stop on no-action; refresh evidence only after relevant PR changes.
 - Reason: The PR diff is empty, so no repairable Rust gap was selected.
 - Boundary: no actionable gap is not runtime, coverage, or mutation adequacy.

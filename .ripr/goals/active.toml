@@ -112,7 +112,7 @@ commands = [
 
 [[work_item]]
 id = "output/no-output-fail-closed-states"
-status = "ready"
+status = "done"
 branch = "output-no-output-fail-closed-states"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
@@ -128,14 +128,18 @@ acceptance = "CLI and report outputs distinguish clean, no actionable gap, missi
 
 [[work_item]]
 id = "policy/preview-promotion-proof-criteria"
-status = "blocked"
+status = "ready"
 branch = "policy-preview-promotion-proof-criteria"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0011-start-here-surface-convergence.md"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
 plan = "plans/start-here-surface-convergence/implementation-plan.md"
-blocked_by = [
-  "output/no-output-fail-closed-states",
+commands = [
+  "cargo xtask check-doc-index",
+  "cargo xtask markdown-links",
+  "cargo xtask check-static-language",
+  "cargo xtask check-traceability",
+  "cargo xtask check-pr",
 ]
 acceptance = "Preview promotion criteria include fixtures, dogfood, related-test accuracy, static-limit taxonomy, false-positive review, false repair packet review, surface consistency, and policy signoff; TypeScript, JavaScript, and Python remain preview until a policy-owned promotion packet closes the criteria."
 
