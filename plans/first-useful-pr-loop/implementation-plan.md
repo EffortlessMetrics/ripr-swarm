@@ -501,7 +501,7 @@ PR: #187
 
 #### Goal
 
-Aligned generated CI, VS Code/editor handoff, and agent packet surfaces around
+Align generated CI, VS Code/editor handoff, and agent packet surfaces to mirror
 the same first-useful-pr wording and repair unit.
 
 #### Production delta
