@@ -3263,14 +3263,15 @@ Closeout:
 
 Tracker ID: `lane1-finding-alignment-burndown`
 
-Status: active execution rail. `.ripr/goals/active.toml` now selects this
-focused tracker after Start-Here Surface Convergence closed with
-`no_current_goal = true`.
+Status: closed. `.ripr/goals/active.toml` now records
+`status = "closed"` and `no_current_goal = true`; the archived manifest lives
+at `.ripr/goals/archive/2026-05-22-lane1-finding-alignment-burndown.toml`.
 
 Sources of truth:
 
 - [Lane 1 Finding Alignment Burn-Down tracker](lanes/LANE_1_FINDING_ALIGNMENT_BURNDOWN.md)
 - [Lane 1 Finding Alignment Burn-Down implementation plan](../plans/lane1-finding-alignment-burndown/implementation-plan.md)
+- [Lane 1 Finding Alignment Burn-Down closeout](handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md)
 - [Lane 1 Shippable Finding Alignment closeout](handoffs/2026-05-17-lane1-shippable-finding-alignment-closeout.md)
 - [Finding Alignment Consumer Contract v2](handoffs/2026-05-16-finding-alignment-consumer-contract-v2.md)
 - [RIPR-SPEC-0045](specs/RIPR-SPEC-0045-finding-to-gap-alignment.md)
@@ -3304,7 +3305,7 @@ Work items:
 | --- | --- | --- |
 | `report/finding-alignment-coverage-audit` | done | [swarm #229](https://github.com/EffortlessMetrics/ripr-swarm/issues/229) / [source #1140](https://github.com/EffortlessMetrics/ripr/issues/1140) audits aligned, unaligned, duplicate, unnamed-limitation, missing-repair, and missing-verify queues by evidence class. |
 | `analysis/named-static-unknown-invariant` | done | [swarm #233](https://github.com/EffortlessMetrics/ripr-swarm/issues/233) / [source #1141](https://github.com/EffortlessMetrics/ripr/issues/1141) preserves named static limitations for user-facing static unknowns. |
-| `analysis/canonical-primary-anchor-raw-spans` | open | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) completes placement and supporting raw-span evidence for canonical items. |
+| `analysis/canonical-primary-anchor-raw-spans` | done | [#1158](https://github.com/EffortlessMetrics/ripr/issues/1158) is closed; placement and supporting raw-span evidence are no longer an open blocker for this rail. |
 | `analysis/top-static-limitation-bucket-burndown` | done | [swarm #238](https://github.com/EffortlessMetrics/ripr-swarm/issues/238) / [source #1159](https://github.com/EffortlessMetrics/ripr/issues/1159) burned down the sampled `call_presence` / `activation_owner_call_unresolved` bucket with fixture-backed positive and must-not-claim coverage. |
 | `docs/spec-config-policy-unsupported-flow-expansion` | done | [swarm #241](https://github.com/EffortlessMetrics/ripr-swarm/issues/241) / [source #1142](https://github.com/EffortlessMetrics/ripr/issues/1142) selected `opaque_config_lookup` as the next fixture-backed expansion while keeping generated, macro, dynamic-dispatch, and unsupported cross-file flows as named limitations. |
 | `fixtures/config-policy-unsupported-flow-burndown` | done | [swarm #246](https://github.com/EffortlessMetrics/ripr-swarm/issues/246) / [source #1143](https://github.com/EffortlessMetrics/ripr/issues/1143) pinned macro-generated config/schema output and dynamic config dispatch as named limitation benchmark cases before analyzer work. |
@@ -3315,7 +3316,7 @@ Work items:
 | `calibration/runtime-confidence-coverage-audit` | done | [source #1160](https://github.com/EffortlessMetrics/ripr/issues/1160) is closed; current audit and scorecard outputs report runtime confidence coverage by canonical evidence class without adding mutation execution. |
 | `dogfood/finding-alignment-examples-refresh` | done | [swarm #267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267) / [source #1149](https://github.com/EffortlessMetrics/ripr/issues/1149) landed in swarm #276; finding-alignment dogfood receipts now include canonical gap identity, raw finding summary, before/after context, and material burn-down examples for supported opaque config lookups, actionable predicate-boundary scorecard lead, and runtime static-only class trends. |
 | `docs/canonical-alignment-contract-refresh` | done | [swarm #274](https://github.com/EffortlessMetrics/ripr-swarm/issues/274) / [source #1153](https://github.com/EffortlessMetrics/ripr/issues/1153) landed in swarm #281; the v2 downstream handoff now reflects the refreshed dogfood receipt fields, supported opaque config report lookup delta, actionable predicate-boundary lead, and runtime static-only class trend boundary. |
-| `campaign/finding-alignment-burndown-closeout` | ready | [swarm #280](https://github.com/EffortlessMetrics/ripr-swarm/issues/280) closes the burn-down rail only after the refreshed handoff records what improved, what remains unknown, downstream consumers, and the next evidence class to repair. |
+| `campaign/finding-alignment-burndown-closeout` | done | [swarm #280](https://github.com/EffortlessMetrics/ripr-swarm/issues/280) closed the burn-down rail in the [closeout handoff](handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md), recording improved classes, moved counts, remaining limitations, downstream consumers, and the next audit-driven evidence class selection rule. |
 
 Blocking conditions:
 

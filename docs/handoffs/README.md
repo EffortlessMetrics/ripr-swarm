@@ -55,6 +55,7 @@ the handoff covers (e.g. `2026-05-04-campaign-4a-closeout.md`).
 
 ## Current Handoffs
 
+- [Lane 1 Finding Alignment Burn-Down closeout](2026-05-22-lane1-finding-alignment-burndown-closeout.md)
 - [Start-Here Surface Convergence closeout](2026-05-22-start-here-surface-convergence-closeout.md)
 - [Start-Here Surface Convergence dogfood receipts](2026-05-22-start-here-surface-convergence-receipts.md)
 - [First Useful PR Loop closeout](2026-05-22-first-useful-pr-loop-closeout.md)

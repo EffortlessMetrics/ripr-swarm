@@ -1,6 +1,6 @@
 # Lane 1 Finding Alignment Burn-Down Implementation Plan
 
-Status: open
+Status: closed
 
 Owner: Lane 1 - Evidence Accuracy
 
@@ -511,7 +511,7 @@ Issue: [#1149](https://github.com/EffortlessMetrics/ripr/issues/1149)
 
 Swarm issue: [#267](https://github.com/EffortlessMetrics/ripr-swarm/issues/267)
 
-Status: ready.
+Status: done in swarm #276.
 
 ### Goal
 
@@ -539,6 +539,8 @@ git diff --check
 
 Issue: [#1153](https://github.com/EffortlessMetrics/ripr/issues/1153)
 
+Status: done in swarm #281.
+
 ### Goal
 
 Refresh the existing v2 downstream handoff only after material burn-down
@@ -563,8 +565,9 @@ git diff --check
 
 ## Closeout
 
-Close the burn-down rail only after the tracker closeout conditions are met and
-the final handoff records:
+The burn-down rail closed on 2026-05-22 in the
+[Lane 1 Finding Alignment Burn-Down closeout](../../docs/handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md).
+The final handoff records:
 
 - what evidence classes improved;
 - what remains unknown;
