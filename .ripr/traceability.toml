@@ -3484,9 +3484,14 @@ metrics = [
 id = "RIPR-SPEC-0053"
 name = "Start-here surface convergence"
 spec = "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md"
-tests = []
+tests = [
+  "xtask/src/reports/pr_evidence_summary.rs",
+]
 fixtures = []
-code = []
+code = [
+  "xtask/src/reports/pr_evidence_summary.rs",
+  "xtask/src/reports/pr_evidence_summary/render.rs",
+]
 outputs = [
   "docs/specs/RIPR-SPEC-0053-start-here-surface-convergence.md",
   "docs/specs/README.md",
