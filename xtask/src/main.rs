@@ -9327,6 +9327,7 @@ fn validate_first_successful_pr_boundary_demo(
         "ripr first-pr",
         "ripr outcome",
         "focused external proof",
+        "cargo xtask fixtures boundary_gap",
         "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json",
         "fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json",
         "fixtures/boundary_gap/calibration/targeted-test-outcome.md",
