@@ -121,6 +121,7 @@ Checks:
 
 Start-here next step:
   - after setup is valid, run `ripr first-pr --root . --base origin/main --head HEAD`
+    or `ripr start-here --root . --base origin/main --head HEAD`
     or this repo's `cargo xtask first-pr` wrapper
   - open `target/ripr/reports/start-here.md` first when it exists
   - safe next action means repair one named gap, regenerate missing or malformed

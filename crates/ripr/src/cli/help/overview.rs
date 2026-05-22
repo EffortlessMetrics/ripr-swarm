@@ -25,6 +25,7 @@ Usage:
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json [--out target/ripr/reports/test-oracle-assistant-proof.json]
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
   ripr first-pr [--root .] [--base origin/main] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
+  ripr start-here [same options as first-pr]
   ripr first-action [--root .] [--pr-guidance target/ripr/review/comments.json] [--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--ledger target/ripr/reports/pr-evidence-ledger.json] [--out target/ripr/reports/first-useful-action.json]
   ripr reports index [--reports-dir target/ripr/reports] [--review-dir target/ripr/review] [--out target/ripr/reports/index.json]
   ripr reports gap-ledger --records fixtures/gap-decision-ledger/corpus.json [--out target/ripr/reports/gap-decision-ledger.json]
@@ -72,6 +73,7 @@ Quick start:
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json
   ripr first-pr --root . --base origin/main --head HEAD
+  ripr start-here --root . --base origin/main --head HEAD
   ripr first-action --pr-guidance target/ripr/review/comments.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --ledger target/ripr/reports/pr-evidence-ledger.json
   ripr reports index
   ripr reports gap-ledger --records fixtures/gap-decision-ledger/corpus.json
@@ -89,7 +91,7 @@ Quick start:
 
 Start-here path:
   - `ripr doctor` checks whether the local workspace and config can produce evidence.
-  - `ripr first-pr` writes `target/ripr/reports/start-here.{json,md}` from existing artifacts.
+  - `ripr first-pr` and `ripr start-here` write `target/ripr/reports/start-here.{json,md}` from existing artifacts.
   - Safe next action means repair one named gap, regenerate a missing or malformed artifact, or stop on no-action.
   - Missing artifact, stale evidence, wrong root, malformed artifact, and no actionable gap are explicit recovery states.
   - Verify command, receipt command, and receipt path are the static proof rail; receipts are advisory, not runtime adequacy or gate approval.

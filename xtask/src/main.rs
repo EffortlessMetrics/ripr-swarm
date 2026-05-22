@@ -9218,6 +9218,8 @@ fn validate_first_successful_pr_case(
     let input_ledger = case_dir.join("inputs/reports/gap-decision-ledger.json");
     let expected_json = case_dir.join("expected/start-here.json");
     let expected_md = case_dir.join("expected/start-here.md");
+    let expected_status = json_string_field(case, "expected_status").unwrap_or_default();
+    let expected_state = json_string_field(case, "expected_state").unwrap_or_default();
     for required in [&input_ledger, &expected_json, &expected_md] {
         if !required.exists() {
             violations.push(format!(
@@ -9239,8 +9241,6 @@ fn validate_first_successful_pr_case(
     }
     if expected_json.exists() {
         let packet = read_json_value(&expected_json)?;
-        let expected_status = json_string_field(case, "expected_status").unwrap_or_default();
-        let expected_state = json_string_field(case, "expected_state").unwrap_or_default();
         if json_string_field(&packet, "schema_version").as_deref() != Some("0.1") {
             violations.push(format!(
                 "first successful PR case {case_id} start-here schema_version must be 0.1"
@@ -9280,6 +9280,7 @@ fn validate_first_successful_pr_case(
         for required in [
             "# RIPR First PR Start Here",
             "Status: advisory",
+            "## Start Here",
             "## Artifacts",
             "## Authority",
             "## Limits",
@@ -9290,16 +9291,30 @@ fn validate_first_successful_pr_case(
                 ));
             }
         }
-        match json_string_field(case, "expected_status").as_deref() {
-            Some("actionable") if !markdown.contains("## Recommendation") => violations.push(
-                format!("first successful PR case {case_id} Markdown must show Recommendation"),
-            ),
-            Some("no_action") if !markdown.contains("## No Action") => violations.push(format!(
-                "first successful PR case {case_id} Markdown must show No Action"
-            )),
-            Some("blocked") if !markdown.contains("## Blocked") => violations.push(format!(
-                "first successful PR case {case_id} Markdown must show Blocked"
-            )),
+        match expected_status.as_str() {
+            "actionable" if !markdown.contains("## Start Here") => {
+                violations.push(format!(
+                    "first successful PR case {case_id} Markdown must show Start Here"
+                ));
+                violations.push(format!(
+                    "first successful PR case {case_id} Markdown must show state `{expected_state}`"
+                ));
+            }
+            "actionable" if !markdown.contains(&format!("- State: `{expected_state}`")) => {
+                violations.push(format!(
+                    "first successful PR case {case_id} Markdown must show state `{expected_state}`"
+                ));
+            }
+            "no_action" if !markdown.contains(&format!("- State: `{expected_state}`")) => {
+                violations.push(format!(
+                    "first successful PR case {case_id} Markdown must show no-action state `{expected_state}`"
+                ));
+            }
+            "blocked" if !markdown.contains(&format!("- State: `{expected_state}`")) => {
+                violations.push(format!(
+                    "first successful PR case {case_id} Markdown must show blocked state `{expected_state}`"
+                ));
+            }
             _ => {}
         }
     }
@@ -32386,17 +32401,15 @@ fn dogfood_first_pr_run(scenario: &DogfoodFirstPrScenario) -> DogfoodFirstPrRun 
             if !markdown.contains("## Authority") {
                 errors.push("Markdown must name authority boundary".to_string());
             }
-            match scenario.expected_status.as_str() {
-                "actionable" if !markdown.contains("## Recommendation") => {
-                    errors.push("actionable Markdown must show Recommendation".to_string());
-                }
-                "no_action" if !markdown.contains("## No Action") => {
-                    errors.push("no-action Markdown must show No Action".to_string());
-                }
-                "blocked" if !markdown.contains("## Blocked") => {
-                    errors.push("blocked Markdown must show Blocked".to_string());
-                }
-                _ => {}
+            if !markdown.contains("## Start Here") {
+                errors.push("Markdown must show the Start Here state block".to_string());
+            }
+            let expected_state_marker = format!("- State: `{}`", scenario.expected_state);
+            if !markdown.contains(&expected_state_marker) {
+                errors.push(format!(
+                    "Markdown must show expected state `{}`",
+                    scenario.expected_state
+                ));
             }
         }
         Err(err) => errors.push(format!(
@@ -51170,7 +51183,7 @@ mod tests {
         );
         write(
             &root.join("boundary-gap/expected/start-here.md"),
-            "# RIPR First PR Start Here\n\nStatus: advisory\n\n## Recommendation\n\n## Artifacts\n\n## Authority\n\n## Limits\n",
+            "# RIPR First PR Start Here\n\nStatus: advisory\n\n## Start Here\n\n- State: `top_gap`\n\n## Artifacts\n\n## Authority\n\n## Limits\n",
         );
         write(&root.join("boundary-gap/README.md"), "ripr first-pr\n");
         let mut violations = Vec::new();
