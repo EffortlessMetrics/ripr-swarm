@@ -73,7 +73,7 @@ commands = [
 
 [[work_item]]
 id = "fixtures/value-resolution-audit-corpus"
-status = "ready"
+status = "done"
 branch = "fixtures-value-resolution-audit-corpus"
 stackable = false
 plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
@@ -92,7 +92,7 @@ commands = [
 
 [[work_item]]
 id = "analysis/value-resolution-supported-subshape"
-status = "blocked"
+status = "ready"
 branch = "analysis-value-resolution-supported-subshape"
 stackable = false
 plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
@@ -105,6 +105,13 @@ blocked_by = [
   "fixtures/value-resolution-audit-corpus",
 ]
 acceptance = "Move only the fixture-backed supported sub-shape out of `activation_value_unresolved`; keep unsupported value flows named; preserve concrete activation-value requirements for predicate-boundary actionability; report audit and scorecard movement."
+commands = [
+  "cargo test -p ripr value_resolution --lib",
+  "cargo xtask lane1-evidence-audit",
+  "cargo xtask evidence-quality-scorecard",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
 
 [[work_item]]
 id = "report/value-resolution-audit-delta"

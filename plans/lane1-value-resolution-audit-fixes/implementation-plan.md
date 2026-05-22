@@ -105,7 +105,7 @@ value-resolution behavior is implemented.
 
 ## Work Item: `fixtures/value-resolution-audit-corpus`
 
-Status: ready
+Status: done
 Blocks:
 - `analysis/value-resolution-supported-subshape`
 Blocked by: n/a
@@ -166,7 +166,7 @@ leave unsupported shapes as future work.
 
 ## Work Item: `analysis/value-resolution-supported-subshape`
 
-Status: blocked
+Status: ready
 Blocks:
 - `report/value-resolution-audit-delta`
 Blocked by:
