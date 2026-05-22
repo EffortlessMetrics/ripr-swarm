@@ -3,8 +3,10 @@ use serde::Serialize;
 use serde_json::Value;
 
 mod parsing;
+mod selection;
 
 use parsing::{ParsedSources, parse_sources};
+use selection::select_report;
 
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "first_useful_action";
@@ -158,31 +160,7 @@ pub(crate) fn build_first_useful_action_report(
         input.generated_at.clone()
     };
 
-    let mut report = if let Some(report) = stale_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = read_error_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = receipt_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = suppressed_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = acknowledged_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = waived_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = gap_record_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) =
-        missing_assistant_proof_report(&input, &parsed, &inputs, &generated_at)
-    {
-        report
-    } else if let Some(report) = actionable_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else if let Some(report) = baseline_only_report(&input, &parsed, &inputs, &generated_at) {
-        report
-    } else {
-        no_actionable_report(&input, &parsed, &inputs, &generated_at)
-    };
+    let mut report = select_report(&input, &parsed, &inputs, &generated_at);
 
     report.warnings.extend(parsed.warnings);
     report
