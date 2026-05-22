@@ -1289,6 +1289,40 @@ mod tests {
     }
 
     #[test]
+    fn recommendation_calibration_args_report_help_and_unknown_options() -> Result<(), String> {
+        let Err(help) = parse_recommendation_calibration_args(&["--help".to_string()]) else {
+            return Err("help should return usage text".to_string());
+        };
+        assert!(help.starts_with("usage: cargo xtask recommendation-calibration"));
+
+        let Err(unknown) = parse_recommendation_calibration_args(&["--wat".to_string()]) else {
+            return Err("unknown option should fail".to_string());
+        };
+        assert!(unknown.contains("unknown recommendation-calibration option `--wat`"));
+        assert!(unknown.contains("usage: cargo xtask recommendation-calibration"));
+        Ok(())
+    }
+
+    #[test]
+    fn recommendation_calibration_args_reject_missing_and_blank_values() -> Result<(), String> {
+        let Err(missing) = parse_recommendation_calibration_args(&["--root".to_string()]) else {
+            return Err("missing value should fail".to_string());
+        };
+        assert_eq!(
+            missing,
+            "recommendation-calibration --root requires a value"
+        );
+
+        let Err(blank) =
+            parse_recommendation_calibration_args(&["--out".to_string(), "   ".to_string()])
+        else {
+            return Err("blank value should fail".to_string());
+        };
+        assert_eq!(blank, "recommendation-calibration --out requires a value");
+        Ok(())
+    }
+
+    #[test]
     fn recommendation_calibration_report_counts_fixture_expectations() -> Result<(), String> {
         let args = RecommendationCalibrationArgs {
             root: PathBuf::from("."),
