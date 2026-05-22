@@ -11580,9 +11580,15 @@ language = "rust"
         assert!(summary.contains(
             ".selected.repair.route // .selected.repair.suggested_assertion // \"not_available\""
         ));
-        assert!(summary.contains(".selected.receipt_path // \"not_available\""));
+        assert!(summary.contains(".selected.changed_behavior // \"not_available\""));
+        assert!(summary.contains(".selected.missing_discriminator // \"not_available\""));
+        assert!(
+            summary
+                .contains(".selected.focused_proof_intent // .selected.repair.suggested_assertion")
+        );
         assert!(summary.contains(".selected.verify_command // \"not_available\""));
         assert!(summary.contains(".selected.receipt_command // \"not_available\""));
+        assert!(summary.contains(".selected.receipt_path // \"not_available\""));
         assert!(
             summary
                 .contains(".selected.next_command // .selected.regeneration_command // \"none\"")

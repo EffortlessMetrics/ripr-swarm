@@ -490,14 +490,15 @@ fn gap_record_packet_context(
     if !record.evidence_ids.is_empty() {
         context.push(format!("Evidence IDs: {}.", record.evidence_ids.join(", ")));
     }
+    if let Some(command) = record.receipt_command.as_deref() {
+        context.push(format!("Receipt command: `{command}`."));
+    }
     if let Some(path) = record
         .receipt
         .as_ref()
         .and_then(|receipt| receipt.path.as_deref())
     {
         context.push(format!("Receipt path: {}.", display_path_text(path)));
-    } else if let Some(command) = record.receipt_command.as_deref() {
-        context.push(format!("Receipt command: `{command}`."));
     }
     context.push(format!("Source artifact: {}.", gap_ledger_path));
     context
@@ -543,27 +544,16 @@ fn gap_record_missing_discriminator(record: &GapRecord, route: &GapRepairRoute) 
 }
 
 fn gap_record_focused_proof_intent(route: &GapRepairRoute) -> Option<String> {
-    if let Some(assertion) = route.assertion_shape.as_deref() {
-        if let Some(related) = route.related_test.as_deref() {
-            return Some(format!("Add `{assertion}` in `{related}`."));
-        }
-        if let Some(target) = route.target_file.as_deref() {
-            return Some(format!(
-                "Add `{assertion}` in {}.",
-                display_path_text(target)
-            ));
-        }
-        return Some(format!("Add one focused proof for `{assertion}`."));
-    }
-    route
-        .changed_behavior
-        .as_deref()
-        .map(|behavior| format!("Add one focused proof for `{behavior}`."))
+    Some(gap_record_packet_focused_proof_intent(route))
 }
 
 fn gap_record_packet_repair(route: &GapRepairRoute) -> Vec<String> {
     let mut repair = Vec::new();
     repair.push(format!("Use repair route `{}`.", route.route_kind));
+    repair.push(format!(
+        "Focused proof intent: {}",
+        gap_record_packet_focused_proof_intent(route)
+    ));
     if let Some(assertion_shape) = route.assertion_shape.as_deref() {
         repair.push(format!(
             "Add or strengthen this check: `{assertion_shape}`."
@@ -593,6 +583,48 @@ fn gap_record_packet_repair(route: &GapRepairRoute) -> Vec<String> {
         }
     }
     repair
+}
+
+fn gap_record_packet_focused_proof_intent(route: &GapRepairRoute) -> String {
+    let target = route
+        .target_file
+        .as_deref()
+        .or(route.related_test.as_deref())
+        .map(|target| format!(" in `{target}`"))
+        .unwrap_or_default();
+    match route.route_kind.as_str() {
+        "AddOutputGolden" => route
+            .assertion_shape
+            .as_deref()
+            .map(|assertion| format!("Add or update the output proof{target} so `{assertion}`."))
+            .unwrap_or_else(|| format!("Add or update the output proof{target}.")),
+        "AddBoundaryAssertion" => route
+            .assertion_shape
+            .as_deref()
+            .map(|assertion| format!("Add a focused boundary assertion{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add a focused boundary assertion{target}.")),
+        "AddValueAssertion" => route
+            .assertion_shape
+            .as_deref()
+            .map(|assertion| format!("Add a focused value assertion{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add a focused value assertion{target}.")),
+        "AddErrorDiscriminator" => route
+            .assertion_shape
+            .as_deref()
+            .map(|assertion| format!("Add a focused error-path assertion{target}: `{assertion}`."))
+            .unwrap_or_else(|| format!("Add a focused error-path assertion{target}.")),
+        _ => route
+            .assertion_shape
+            .as_deref()
+            .map(|assertion| format!("Add the focused proof{target}: `{assertion}`."))
+            .or_else(|| {
+                route
+                    .changed_behavior
+                    .as_deref()
+                    .map(|changed| format!("Add a focused check{target} for `{changed}`."))
+            })
+            .unwrap_or_else(|| format!("Add the focused proof{target}.")),
+    }
 }
 
 fn gap_record_packet_verification(record: &GapRecord, verify_command: &str) -> Vec<String> {
@@ -1834,6 +1866,8 @@ mod tests {
                 "stop_conditions":["Stop if this is baseline debt."]
               },
               "verification_commands":["cargo xtask fixtures boundary_gap"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json",
+              "receipt":{"path":"target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json"},
               "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}},
               "authority_boundary":"Gate decision remains pass/fail authority."
             }]}"#,
@@ -1942,9 +1976,17 @@ mod tests {
             "copyable packet should name the missing discriminator: {copyable_markdown}"
         );
         assert!(
+            copyable_markdown.contains("- Receipt command: `ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json`."),
+            "copyable packet should name the receipt command: {copyable_markdown}"
+        );
+        assert!(
             copyable_markdown.contains(
-                "- Focused proof intent: Add `assert_eq!(discount(100, 100), 90)` in `discount_threshold_boundary`."
+                "- Receipt path: target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json."
             ),
+            "copyable packet should name the receipt path: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains("- Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`."),
             "copyable packet should name the focused proof intent: {copyable_markdown}"
         );
         assert!(

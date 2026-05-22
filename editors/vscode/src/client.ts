@@ -2210,6 +2210,9 @@ function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
   if (packet.receiptCommand) {
     lines.push(`Receipt command: ${packet.receiptCommand}`);
   }
+  if (packet.receiptPath) {
+    lines.push(`Receipt path: ${packet.receiptPath}`);
+  }
   lines.push(`Warnings: ${packet.warningCount ?? 0}`);
   lines.push('');
   lines.push('Limits and non-claims:');
@@ -2263,10 +2266,14 @@ function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
   lines.push('Receipt command:');
   lines.push(packet.receiptCommand ?? 'not available');
   if (packet.receiptPath) {
-    lines.push(`Receipt path: ${packet.receiptPath}`);
+    lines.push('');
+    lines.push('Receipt path:');
+    lines.push(packet.receiptPath);
   }
   if (packet.sourceArtifact) {
-    lines.push(`Source artifact: ${packet.sourceArtifact}`);
+    lines.push('');
+    lines.push('Source artifact:');
+    lines.push(packet.sourceArtifact);
   }
   lines.push('');
   lines.push('Instructions:');
@@ -2342,6 +2349,15 @@ function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): string[]
   if (packet.canonicalGapId ?? packet.gapId) {
     lines.push(`Gap identity: ${packet.canonicalGapId ?? packet.gapId}`);
   }
+  if (packet.changedBehavior) {
+    lines.push(`Changed behavior: ${packet.changedBehavior}`);
+  }
+  if (packet.missingDiscriminator) {
+    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+  }
+  if (packet.focusedProofIntent) {
+    lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
+  }
   if (packet.relatedTest) {
     lines.push(`Related test: ${packet.relatedTest}`);
   }
@@ -2353,6 +2369,9 @@ function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): string[]
   }
   if (packet.receiptCommand) {
     lines.push(`Receipt: ${packet.receiptCommand}`);
+  }
+  if (packet.receiptPath) {
+    lines.push(`Receipt path: ${packet.receiptPath}`);
   }
   lines.push(`Warnings: ${packet.warningCount ?? 0}`);
   lines.push('First PR packet does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
@@ -3241,7 +3260,8 @@ function validateFirstPrPacket(
     relatedTest,
     repairTarget,
     anchor ? stringField(anchor, 'file') : undefined,
-    selectedArtifact ? stringField(selectedArtifact, 'path') : undefined
+    selectedArtifact ? stringField(selectedArtifact, 'path') : undefined,
+    stringField(selected, 'receipt_path')
   ].filter((value): value is string => value !== undefined);
   if (packetPaths.some((packetPath) => !firstPrPathIsWorkspaceLocal(packetPath))) {
     return {
