@@ -24,6 +24,9 @@ The command:
 - streams repo-exposure latency trace lines while the generated repo exposure
   subprocess runs so long live audits show bounded progress instead of silent
   waiting;
+- streams the repo-exposure JSON stdout through the xtask runner into the
+  captured input file, so large live payloads are byte-counted by the runner and
+  stale capture files are overwritten before completeness checks run;
 - streams `seams[].evidence_record` from the generated repo exposure JSON so
   the audit does not need to retain the full repo-exposure artifact in memory;
 - records bounded repo-exposure generation diagnostics in the audit input block,
@@ -348,6 +351,9 @@ movement remains static evidence movement rather than mutation proof.
 - `xtask::run::tests::latency_progress_reader_preserves_captured_stderr` pins
   that streamed latency progress remains available to timeout and report
   diagnostics.
+- `xtask::run::tests::capture_stdout_to_file_with_timeout_streams_stdout_to_file`
+  pins runner-owned stdout streaming, byte counts, and stale capture overwrite
+  for generated repo-exposure inputs.
 - `xtask::tests::lane1_evidence_audit_rejects_repo_exposure_without_seams` pins
   malformed input handling.
 - `xtask::tests::lane1_repo_exposure_file_completion_check_requires_seams_and_closing_brace`
