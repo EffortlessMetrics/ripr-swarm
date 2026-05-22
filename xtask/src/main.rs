@@ -39665,6 +39665,12 @@ fn goals_status() -> Result<(), String> {
     let mut violations = stale_agent_boundary_language_violations()?;
     violations.extend(parse_violations);
     validate_campaign_manifest(&manifest, &mut violations)?;
+    validate_active_manifest_source_truth(
+        Path::new("."),
+        ".ripr/goals/active.toml",
+        &manifest,
+        &mut violations,
+    )?;
     let body = campaign_status_report_body(&manifest, &violations);
     write_report("goals.md", &body)?;
     println!("{body}");
@@ -39684,6 +39690,12 @@ fn goals_next() -> Result<(), String> {
     let mut violations = stale_agent_boundary_language_violations()?;
     violations.extend(parse_violations);
     validate_campaign_manifest(&manifest, &mut violations)?;
+    validate_active_manifest_source_truth(
+        Path::new("."),
+        ".ripr/goals/active.toml",
+        &manifest,
+        &mut violations,
+    )?;
     let body = campaign_next_report_body(&manifest, &violations);
     write_report("goals-next.md", &body)?;
     println!("{body}");
@@ -39987,6 +39999,12 @@ fn campaign_source_truth_violations_for_root(root: &Path) -> Result<Vec<String>,
     let active_path = root.join(".ripr/goals/active.toml");
     let (active_manifest, active_parse_violations) = parse_campaign_manifest(&active_path)?;
     violations.extend(active_parse_violations);
+    validate_active_manifest_source_truth(
+        root,
+        ".ripr/goals/active.toml",
+        &active_manifest,
+        &mut violations,
+    )?;
 
     let referenced = referenced_goal_manifest_paths(root)?;
     for reference in &referenced {
@@ -40013,6 +40031,124 @@ fn campaign_source_truth_violations_for_root(root: &Path) -> Result<Vec<String>,
     }
 
     Ok(violations)
+}
+
+fn validate_active_manifest_source_truth(
+    root: &Path,
+    manifest_path: &str,
+    manifest: &CampaignManifest,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let artifact_paths = doc_artifact_paths_by_id(root)?;
+    for item in &manifest.work_items {
+        let item_id = item.id.as_deref().unwrap_or("<missing>");
+        validate_manifest_artifact_reference(
+            root,
+            manifest_path,
+            item_id,
+            "proposal",
+            item.proposal.as_deref(),
+            &artifact_paths,
+            violations,
+        )?;
+        validate_manifest_artifact_reference(
+            root,
+            manifest_path,
+            item_id,
+            "plan",
+            item.plan.as_deref(),
+            &artifact_paths,
+            violations,
+        )?;
+        validate_manifest_artifact_reference(
+            root,
+            manifest_path,
+            item_id,
+            "spec",
+            item.spec.as_deref(),
+            &artifact_paths,
+            violations,
+        )?;
+        for spec in &item.specs {
+            validate_manifest_artifact_reference(
+                root,
+                manifest_path,
+                item_id,
+                "specs",
+                Some(spec.as_str()),
+                &artifact_paths,
+                violations,
+            )?;
+        }
+        validate_manifest_artifact_reference(
+            root,
+            manifest_path,
+            item_id,
+            "receipt",
+            item.receipt.as_deref(),
+            &artifact_paths,
+            violations,
+        )?;
+        validate_manifest_artifact_reference(
+            root,
+            manifest_path,
+            item_id,
+            "closeout",
+            item.closeout.as_deref(),
+            &artifact_paths,
+            violations,
+        )?;
+    }
+    Ok(())
+}
+
+fn doc_artifact_paths_by_id(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    let ledger_path = root.join(DOC_ARTIFACT_LEDGER);
+    if !ledger_path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let ledger = parse_doc_artifact_ledger(&ledger_path)?;
+    Ok(ledger
+        .artifacts
+        .into_iter()
+        .filter_map(|artifact| Some((artifact.id?, artifact.path?)))
+        .collect())
+}
+
+fn validate_manifest_artifact_reference(
+    root: &Path,
+    manifest_path: &str,
+    item_id: &str,
+    field: &str,
+    value: Option<&str>,
+    artifact_paths: &BTreeMap<String, String>,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let reference = repo_relative_reference(value);
+    if reference.is_empty() {
+        violations.push(format!(
+            "{manifest_path}:{item_id} has empty `{field}` source-of-truth reference"
+        ));
+        return Ok(());
+    }
+    if let Some(path) = artifact_paths.get(&reference) {
+        if !root.join(path).exists() {
+            violations.push(format!(
+                "{manifest_path}:{item_id} `{field}` references registered artifact `{reference}`, but `{path}` is missing"
+            ));
+        }
+        return Ok(());
+    }
+    if manifest_artifact_id_has_matching_file(root, &reference)? || root.join(&reference).exists() {
+        return Ok(());
+    }
+    violations.push(format!(
+        "{manifest_path}:{item_id} `{field}` references missing source-of-truth artifact or path `{reference}`"
+    ));
+    Ok(())
 }
 
 fn referenced_goal_manifest_paths(root: &Path) -> Result<BTreeSet<String>, String> {
@@ -40296,6 +40432,50 @@ fn spec_id_has_file(root: &Path, spec_id: &str) -> Result<bool, String> {
         };
         if name
             .strip_prefix(spec_id)
+            .is_some_and(|rest| rest.starts_with('-') && rest.ends_with(".md"))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn manifest_artifact_id_has_matching_file(root: &Path, artifact_id: &str) -> Result<bool, String> {
+    if is_spec_id(artifact_id) {
+        return spec_id_has_file(root, artifact_id);
+    }
+    let Some(directory) = artifact_id_fallback_directory(artifact_id) else {
+        return Ok(false);
+    };
+    artifact_id_has_markdown_file(root, directory, artifact_id)
+}
+
+fn artifact_id_fallback_directory(artifact_id: &str) -> Option<&'static str> {
+    if artifact_id.starts_with("RIPR-PROP-") {
+        Some("docs/proposals")
+    } else {
+        None
+    }
+}
+
+fn artifact_id_has_markdown_file(
+    root: &Path,
+    directory: &str,
+    artifact_id: &str,
+) -> Result<bool, String> {
+    let dir = root.join(directory);
+    if !dir.exists() {
+        return Ok(false);
+    }
+    for entry in
+        fs::read_dir(&dir).map_err(|err| format!("read {}: {err}", normalize_path(&dir)))?
+    {
+        let entry = entry.map_err(|err| format!("read {} entry: {err}", normalize_path(&dir)))?;
+        let Some(name) = entry.file_name().to_str().map(ToString::to_string) else {
+            continue;
+        };
+        if name
+            .strip_prefix(artifact_id)
             .is_some_and(|rest| rest.starts_with('-') && rest.ends_with(".md"))
         {
             return Ok(true);
@@ -60815,6 +60995,295 @@ commands = ["cargo xtask check-spec-format"]
 
         assert!(violations.is_empty(), "{violations:?}");
         Ok(())
+    }
+
+    #[test]
+    fn active_manifest_source_truth_accepts_registered_ids_and_existing_paths() -> Result<(), String>
+    {
+        with_temp_cwd("active-source-truth-valid", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-valid.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/example/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0009-fallback.md",
+                "RIPR-SPEC-0009",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-valid.md",
+                "RIPR-SPEC-0001",
+            );
+            write(&root.join("docs/handoffs/valid-receipt.md"), "# Receipt\n");
+            write(
+                &root.join("docs/handoffs/valid-closeout.md"),
+                "# Closeout\n",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"
+schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+path = "plans/example/implementation-plan.md"
+"#,
+            );
+            let manifest_path = root.join(".ripr/goals/active.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["done"]
+
+[[work_item]]
+id = "docs/valid"
+status = "done"
+branch = "docs-valid"
+stackable = false
+proposal = "RIPR-PROP-0001"
+plan = "RIPR-PLAN-0001"
+spec = "RIPR-SPEC-0009"
+specs = ["docs/specs/RIPR-SPEC-0001-valid.md"]
+receipt = "docs/handoffs/valid-receipt.md"
+closeout = "docs/handoffs/valid-closeout.md"
+acceptance = "done"
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let (manifest, parse_violations) = super::parse_campaign_manifest(&manifest_path)?;
+            if !parse_violations.is_empty() {
+                return Err(format!("unexpected parse violations: {parse_violations:?}"));
+            }
+
+            let mut violations = Vec::new();
+            super::validate_active_manifest_source_truth(
+                root,
+                ".ripr/goals/active.toml",
+                &manifest,
+                &mut violations,
+            )?;
+
+            if !violations.is_empty() {
+                return Err(format!(
+                    "unexpected active source truth violations: {violations:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn active_manifest_source_truth_reports_missing_artifact_references() -> Result<(), String> {
+        with_temp_cwd("active-source-truth-missing", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-other.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/example/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"
+schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+path = "plans/example/implementation-plan.md"
+"#,
+            );
+            let manifest_path = root.join(".ripr/goals/active.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["done"]
+
+[[work_item]]
+id = "docs/missing"
+status = "ready"
+branch = "docs-missing"
+stackable = false
+proposal = "RIPR-PROP-0999"
+plan = "RIPR-PLAN-0001"
+spec = "docs/specs/missing.md"
+acceptance = "done"
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let (manifest, parse_violations) = super::parse_campaign_manifest(&manifest_path)?;
+            if !parse_violations.is_empty() {
+                return Err(format!("unexpected parse violations: {parse_violations:?}"));
+            }
+
+            let mut violations = Vec::new();
+            super::validate_active_manifest_source_truth(
+                root,
+                ".ripr/goals/active.toml",
+                &manifest,
+                &mut violations,
+            )?;
+
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    ".ripr/goals/active.toml:docs/missing `proposal` references missing source-of-truth artifact or path `RIPR-PROP-0999`"
+                )),
+                "{violations:?}"
+            );
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    ".ripr/goals/active.toml:docs/missing `spec` references missing source-of-truth artifact or path `docs/specs/missing.md`"
+                )),
+                "{violations:?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn active_manifest_source_truth_reports_empty_and_registered_missing_references()
+    -> Result<(), String> {
+        with_temp_cwd("active-source-truth-empty-registered-missing", |root| {
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-valid.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"
+schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+path = "plans/example/missing-plan.md"
+"#,
+            );
+            let manifest_path = root.join(".ripr/goals/active.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["done"]
+
+[[work_item]]
+id = "docs/empty"
+status = "ready"
+branch = "docs-empty"
+stackable = false
+proposal = ""
+plan = "RIPR-PLAN-0001"
+spec = "RIPR-SPEC-0001"
+acceptance = "done"
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let (manifest, parse_violations) = super::parse_campaign_manifest(&manifest_path)?;
+            if !parse_violations.is_empty() {
+                return Err(format!("unexpected parse violations: {parse_violations:?}"));
+            }
+
+            let mut violations = Vec::new();
+            super::validate_active_manifest_source_truth(
+                root,
+                ".ripr/goals/active.toml",
+                &manifest,
+                &mut violations,
+            )?;
+
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    ".ripr/goals/active.toml:docs/empty has empty `proposal` source-of-truth reference"
+                )),
+                "{violations:?}"
+            );
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    ".ripr/goals/active.toml:docs/empty `plan` references registered artifact `RIPR-PLAN-0001`, but `plans/example/missing-plan.md` is missing"
+                )),
+                "{violations:?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn goals_status_and_next_validate_active_manifest_source_truth() -> Result<(), String> {
+        with_temp_cwd("goals-entrypoints-source-truth", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "active-campaign\n\n| `docs/valid` | ready |\n",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/proposals/RIPR-PROP-0001-valid.md",
+                "RIPR-PROP-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "plans/example/implementation-plan.md",
+                "RIPR-PLAN-0001",
+            );
+            write_doc_artifact_fixture(
+                root,
+                "docs/specs/RIPR-SPEC-0001-valid.md",
+                "RIPR-SPEC-0001",
+            );
+            write_doc_artifact_ledger_fixture(
+                root,
+                r#"
+schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+path = "plans/example/implementation-plan.md"
+"#,
+            );
+            write(
+                &root.join(".ripr/goals/active.toml"),
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["done"]
+
+[[work_item]]
+id = "docs/valid"
+status = "ready"
+branch = "docs-valid"
+stackable = false
+proposal = "RIPR-PROP-0001"
+plan = "RIPR-PLAN-0001"
+spec = "RIPR-SPEC-0001"
+acceptance = "done"
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+
+            super::run_output("git", &["init"])?;
+            super::run_output("git", &["add", "."])?;
+
+            super::goals_status()?;
+            super::goals_next()?;
+            Ok(())
+        })
     }
 
     #[test]
