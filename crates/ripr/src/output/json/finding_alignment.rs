@@ -256,6 +256,12 @@ pub(super) fn report_for_findings(findings: &[Finding]) -> Option<FindingAlignme
             {
                 raw_indices.push(literal_index);
             }
+            raw_indices.extend(config_policy_supporting_indices(
+                findings,
+                &used,
+                index,
+                &declaration.constant_name,
+            ));
 
             used[index] = true;
             for raw_index in raw_indices.iter().skip(1) {
@@ -1077,7 +1083,7 @@ fn classify_config_policy_constant(
         });
     }
 
-    if let Some(sink) = opaque_config_policy_lookup_sink_for(constant_name, &source_file) {
+    if let Some(sink) = opaque_config_policy_lookup_sink_for(constant_name, raw_findings) {
         if let Some((observer, related_test)) = observer_for_findings(raw_findings) {
             return observed_config_policy_classification(sink, observer, related_test);
         }
@@ -1356,14 +1362,13 @@ fn config_policy_visible_sink_for(constant_name: &str, file: &str) -> Option<Con
 
 fn opaque_config_policy_lookup_sink_for(
     constant_name: &str,
-    file: &str,
+    raw_findings: &[&Finding],
 ) -> Option<ConfigPolicySink> {
-    let file = normalize_token_text(file);
-
     if name_has_token(constant_name, "OPAQUE")
         && name_has_token(constant_name, "REPORT")
-        && file.contains("lookup")
-        && file.contains("report")
+        && raw_findings.iter().any(|finding| {
+            is_supported_opaque_report_lookup_evidence(constant_name, &finding.probe.expression)
+        })
     {
         return Some(ConfigPolicySink {
             role: "rendered_policy_label",
@@ -1377,6 +1382,25 @@ fn opaque_config_policy_lookup_sink_for(
     }
 
     None
+}
+
+fn is_supported_opaque_report_lookup_evidence(constant_name: &str, expression: &str) -> bool {
+    let expression = normalize_token_text(expression);
+    let constant = normalize_token_text(constant_name);
+
+    expression.contains(&constant)
+        && has_supported_lookup_owner(&expression)
+        && has_supported_report_output_sink(&expression)
+}
+
+fn has_supported_lookup_owner(expression: &str) -> bool {
+    expression.contains("lookup_report_label") || expression.contains("lookup_policy_label")
+}
+
+fn has_supported_report_output_sink(expression: &str) -> bool {
+    expression.contains("render_report")
+        || expression.contains("report_render")
+        || expression.contains("report_output")
 }
 
 fn is_internal_only_text(constant_name: &str, file: &str) -> bool {
@@ -1615,6 +1639,25 @@ fn adjacent_literal_index(
         .find_map(|(index, candidate)| {
             parse_string_literal(&candidate.probe.expression).map(|_| index)
         })
+}
+
+fn config_policy_supporting_indices(
+    findings: &[Finding],
+    used: &[bool],
+    declaration_index: usize,
+    constant_name: &str,
+) -> Vec<usize> {
+    let declaration = &findings[declaration_index];
+    findings
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != declaration_index && !used[*index])
+        .filter(|(_, candidate)| candidate.probe.location.file == declaration.probe.location.file)
+        .filter(|(_, candidate)| {
+            is_supported_opaque_report_lookup_evidence(constant_name, &candidate.probe.expression)
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 fn parse_config_policy_declaration(expression: &str) -> Option<PresentationTextDeclaration> {
@@ -3069,7 +3112,8 @@ mod tests {
     }
 
     #[test]
-    fn fixture_backed_opaque_report_lookup_becomes_actionable() -> Result<(), String> {
+    fn opaque_report_helper_names_without_supported_lookup_signal_stay_limited()
+    -> Result<(), String> {
         let findings = vec![
             finding_in_file(
                 "src/report_lookup.rs",
@@ -3090,6 +3134,57 @@ mod tests {
         ];
 
         let report = report_for_findings(&findings)
+            .ok_or_else(|| "opaque helper name guard should align".to_string())?;
+        let item = &report.items[0];
+        let config_policy = config_policy_for(item)?;
+
+        assert_eq!(report.summary.actionable_gaps, 0);
+        assert_eq!(report.summary.static_limitations, 1);
+        assert_eq!(report.summary.config_policy_actionable_output_observer, 0);
+        assert_eq!(report.summary.config_policy_static_limitations, 1);
+        assert_eq!(item.canonical_item_kind, "limitation");
+        assert_eq!(item.gap_state, "static_limitation");
+        assert_eq!(config_policy.visibility, "unknown");
+        assert_eq!(
+            item.static_limitations
+                .first()
+                .map(|limitation| limitation.category.as_str()),
+            Some("opaque_config_lookup")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_backed_opaque_report_lookup_with_supported_signal_becomes_actionable()
+    -> Result<(), String> {
+        let findings = vec![
+            finding_in_file(
+                "src/report_lookup.rs",
+                "decl",
+                62,
+                ExposureClass::Exposed,
+                ProbeFamily::FieldConstruction,
+                "pub const OPAQUE_REPORT_LABEL: &str =",
+            ),
+            finding_in_file(
+                "src/report_lookup.rs",
+                "literal",
+                63,
+                ExposureClass::StaticUnknown,
+                ProbeFamily::StaticUnknown,
+                "\"Opaque report label\";",
+            ),
+            finding_in_file(
+                "src/report_lookup.rs",
+                "sink",
+                64,
+                ExposureClass::Exposed,
+                ProbeFamily::SideEffect,
+                "render_report(lookup_report_label(OPAQUE_REPORT_LABEL));",
+            ),
+        ];
+
+        let report = report_for_findings(&findings)
             .ok_or_else(|| "fixture-backed opaque lookup should align".to_string())?;
         let item = &report.items[0];
         let config_policy = config_policy_for(item)?;
@@ -3102,6 +3197,7 @@ mod tests {
         assert_eq!(item.canonical_item_kind, "gap");
         assert_eq!(item.gap_state, "actionable");
         assert_eq!(item.actionability, "add_output_observer");
+        assert_eq!(item.raw_group_size, 3);
         assert!(item.static_limitations.is_empty());
         assert_eq!(config_policy.role, "rendered_policy_label");
         assert_eq!(config_policy.visibility, "user_visible");
@@ -3138,6 +3234,14 @@ mod tests {
                 ExposureClass::StaticUnknown,
                 ProbeFamily::StaticUnknown,
                 "\"Opaque report label\";",
+            ),
+            finding_in_file(
+                "src/report_lookup.rs",
+                "sink",
+                64,
+                ExposureClass::Exposed,
+                ProbeFamily::SideEffect,
+                "render_report(lookup_report_label(OPAQUE_REPORT_LABEL));",
             ),
         ];
 
