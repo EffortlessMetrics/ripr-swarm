@@ -230,11 +230,11 @@ Sampled audit delta for this slice:
 
 - before: `call_presence` had 770 static-limitation items, including 719
   `activation_owner_call_unresolved` limitations;
-- after: `call_presence` has 716 static-limitation items, including 664
+- after: `call_presence` has 715 static-limitation items, including 663
   `activation_owner_call_unresolved` limitations;
-- delta: -54 `call_presence` static limitations and -55
+- delta: -55 `call_presence` static limitations and -56
   `activation_owner_call_unresolved` limitations;
-- current `call_presence` scorecard work score: 4,560.
+- current `call_presence` scorecard work score: 4,554.
 
 ### Historical Proof
 
