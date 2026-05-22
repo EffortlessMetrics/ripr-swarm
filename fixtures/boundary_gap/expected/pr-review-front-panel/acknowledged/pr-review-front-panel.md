@@ -2,12 +2,19 @@
 
 Status: acknowledged
 
-Top issue:
+Start here:
+- State: actionable
+- Source: gate_decision
+- Identity: ack
 - File: src/ack.rs:5
+- Repair route: focused_test
 - Class: weakly_exposed
 - Missing discriminator: ack == 5
 - Suggested focused test: assert_eq!(ack(), 5)
 - Related test: tests/ack.rs::boundary
+- Verify command: not_available
+- Receipt: missing
+- Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.
 
 Movement:
 - New policy-eligible gaps: 0

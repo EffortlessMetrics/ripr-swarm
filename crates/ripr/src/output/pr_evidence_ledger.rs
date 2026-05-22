@@ -340,6 +340,58 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
         report.gate.mode.as_deref().unwrap_or("not_available"),
         report.gate.decision.as_deref().unwrap_or("not_available")
     ));
+
+    out.push_str("Start here:\n");
+    if let Some(route) = report.top_repair_route.as_ref() {
+        out.push_str(&format!("- Identity: {}\n", route_identity(route)));
+        if let Some(gap_id) = route.gap_id.as_deref() {
+            out.push_str(&format!("- Gap: {gap_id}\n"));
+        }
+        out.push_str(&format!("- Source: {}\n", route.source));
+        out.push_str(&format!("- Location: {}\n", route_location(route)));
+        out.push_str(&format!(
+            "- Repair route: {}\n",
+            route.repair_route.as_deref().unwrap_or("focused_test")
+        ));
+        if let Some(missing) = route.missing_discriminator.as_deref() {
+            out.push_str(&format!("- Missing discriminator: {missing}\n"));
+        }
+        if let Some(test) = route.suggested_test.as_deref() {
+            out.push_str(&format!("- Suggested test: {test}\n"));
+        }
+        if let Some(related) = route.related_test.as_deref() {
+            out.push_str(&format!("- Related test: {related}\n"));
+        }
+        if let Some(verify) = route.verify_command.as_deref() {
+            out.push_str(&format!("- Verify command: `{verify}`\n"));
+        }
+        if let Some(receipt) = route.receipt_command.as_deref() {
+            out.push_str(&format!("- Receipt command: `{receipt}`\n"));
+        }
+        out.push_str(&format!(
+            "- Receipt state: {}\n",
+            route.receipt_state.as_deref().unwrap_or("receipt_missing")
+        ));
+        if let Some(language) = route.language.as_deref() {
+            let status = route.language_status.as_deref().unwrap_or("unknown");
+            out.push_str(&format!("- Language: {language} ({status})\n"));
+        }
+        if let Some(limit) = route.static_limit_kind.as_deref() {
+            out.push_str(&format!("- Static limit: {limit}\n"));
+            if let Some(detail) = route.static_limit_detail.as_deref() {
+                out.push_str(&format!("  - {detail}\n"));
+            }
+        }
+        if let Some(agent) = route.agent_command.as_deref() {
+            out.push_str(&format!("- Agent handoff: `{agent}`\n"));
+        }
+        out.push_str("- Boundary: advisory static evidence only; raw counts below are supporting evidence and gate authority remains separate.\n");
+    } else {
+        out.push_str("- State: no canonical repair route available\n");
+        out.push_str("- Boundary: no route is not a coverage, runtime, mutation, gate, or merge-readiness claim.\n");
+    }
+
+    out.push_str("\nSupporting movement counts:\n");
     out.push_str("| Measure | Count |\n");
     out.push_str("| --- | ---: |\n");
     out.push_str(&format!(
@@ -370,55 +422,6 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
         "| Visible unresolved gaps | {} |\n",
         report.movement.visible_unresolved
     ));
-
-    if let Some(route) = report.top_repair_route.as_ref() {
-        out.push_str("\nTop focused test to add:\n");
-        out.push_str(&format!("- {}\n", route_headline(route)));
-        out.push_str("  Evidence boundary:\n");
-        if let Some(gap_id) = route.canonical_gap_id.as_deref() {
-            out.push_str(&format!("  - Canonical gap: {gap_id}\n"));
-        } else if let Some(gap_id) = route.gap_id.as_deref() {
-            out.push_str(&format!("  - Gap: {gap_id}\n"));
-        }
-        if let Some(language) = route.language.as_deref() {
-            let status = route.language_status.as_deref().unwrap_or("unknown");
-            out.push_str(&format!("  - Language: {language} ({status})\n"));
-        }
-        if let Some(limit) = route.static_limit_kind.as_deref() {
-            out.push_str(&format!("  - Static limit: {limit}\n"));
-            if let Some(detail) = route.static_limit_detail.as_deref() {
-                out.push_str(&format!("    - {detail}\n"));
-            }
-        }
-        out.push_str(&format!(
-            "  - Receipt state: {}\n",
-            route.receipt_state.as_deref().unwrap_or("receipt_missing")
-        ));
-        if let Some(repair_route) = route.repair_route.as_deref() {
-            out.push_str(&format!("  Repair route: {repair_route}\n"));
-        }
-        if let Some(missing) = route.missing_discriminator.as_deref() {
-            out.push_str(&format!("  Missing discriminator: {missing}\n"));
-        }
-        if let Some(gap_id) = route.gap_id.as_deref() {
-            out.push_str(&format!("  Gap: {gap_id}\n"));
-        }
-        if let Some(test) = route.suggested_test.as_deref() {
-            out.push_str(&format!("  Suggested test: {test}\n"));
-        }
-        if let Some(related) = route.related_test.as_deref() {
-            out.push_str(&format!("  Related test: {related}\n"));
-        }
-        if let Some(verify) = route.verify_command.as_deref() {
-            out.push_str(&format!("  Verify: {verify}\n"));
-        }
-        if let Some(receipt) = route.receipt_command.as_deref() {
-            out.push_str(&format!("  Receipt command: {receipt}\n"));
-        }
-        if let Some(agent) = route.agent_command.as_deref() {
-            out.push_str(&format!("  Agent: {agent}\n"));
-        }
-    }
 
     out.push_str("\nReceipts:\n");
     out.push_str(&format!(
@@ -508,6 +511,24 @@ pub(crate) fn render_pr_evidence_ledger_markdown(report: &PrEvidenceLedgerReport
     out.push_str(LIMITS_NOTE);
     out.push('\n');
     out
+}
+
+fn route_identity(route: &RepairRoute) -> String {
+    route
+        .canonical_gap_id
+        .as_deref()
+        .or(route.gap_id.as_deref())
+        .or(route.seam_id.as_deref())
+        .unwrap_or("not_available")
+        .to_string()
+}
+
+fn route_location(route: &RepairRoute) -> String {
+    match (route.path.as_deref(), route.line) {
+        (Some(path), Some(line)) => format!("{path}:{line}"),
+        (Some(path), None) => path.to_string(),
+        _ => "not_available".to_string(),
+    }
 }
 
 fn parse_sources(input: &PrEvidenceLedgerInput) -> ParsedSources {
@@ -1383,17 +1404,6 @@ fn history_json(history: &HistorySummary) -> Value {
     })
 }
 
-fn route_headline(route: &RepairRoute) -> String {
-    match (route.path.as_deref(), route.line) {
-        (Some(path), Some(line)) => format!("{path}:{line}"),
-        (Some(path), None) => path.to_string(),
-        _ => route
-            .seam_id
-            .clone()
-            .unwrap_or_else(|| "unknown repair route".to_string()),
-    }
-}
-
 fn path_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut cursor = value;
     for segment in path {
@@ -1630,8 +1640,9 @@ mod tests {
 
         let markdown = render_pr_evidence_ledger_markdown(&report);
         assert!(markdown.contains("# RIPR PR Evidence Ledger"));
+        assert!(markdown.contains("Start here:"));
+        assert!(markdown.contains("Supporting movement counts:"));
         assert!(markdown.contains("| Baseline gaps resolved | 3 |"));
-        assert!(markdown.contains("Top focused test to add:"));
         assert!(markdown.contains("Limits: Read-only advisory PR evidence ledger"));
         Ok(())
     }
@@ -1717,7 +1728,7 @@ mod tests {
         assert!(markdown.contains("src/pricing.rs:42"));
         assert!(markdown.contains("Gap: gap:pr:pricing:threshold-boundary"));
         assert!(markdown.contains("Gap decision ledger: gap-ledger.json"));
-        assert!(markdown.contains("Verify: cargo xtask fixtures boundary_gap"));
+        assert!(markdown.contains("Verify command: `cargo xtask fixtures boundary_gap`"));
         Ok(())
     }
 
@@ -1976,7 +1987,7 @@ mod tests {
             history_json: None,
         });
         let gate_markdown = render_pr_evidence_ledger_markdown(&gate_report);
-        assert!(gate_markdown.contains("- gate-seam"));
+        assert!(gate_markdown.contains("- Identity: gate-seam"));
         assert!(gate_markdown.contains("Coverage delta: 1.25"));
         let gate_json = render_pr_evidence_ledger_json(&gate_report)?;
         assert!(gate_json.contains("\"source\": \"gate_decision\""));
