@@ -301,6 +301,9 @@ mod tests {
         assert!(FIRST_ACTION_HELP.contains("--gap-ledger PATH"));
         assert!(FIRST_ACTION_HELP.contains("first-useful-action.json"));
         assert!(FIRST_ACTION_HELP.contains("read-only advisory router"));
+        assert!(FIRST_ACTION_HELP.contains("safe next action"));
+        assert!(FIRST_ACTION_HELP.contains("verify command, receipt command, and receipt path"));
+        assert!(FIRST_ACTION_HELP.contains("preview-limited evidence"));
         assert!(REPORTS_HELP.starts_with("Write reviewer-first report projections"));
         assert!(REPORTS_HELP.contains("Usage:"));
         assert!(REPORTS_HELP.contains("ripr reports index"));

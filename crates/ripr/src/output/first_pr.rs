@@ -1904,7 +1904,9 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
 }
 
 fn render_top_gap_markdown(selected: &Value, out: &mut String) {
-    out.push_str("## Recommendation\n\n");
+    out.push_str("## Start Here\n\n");
+    out.push_str("- State: `top_gap`\n");
+    out.push_str("- Safe next action: repair one named stable Rust gap.\n");
     let kind = selected
         .get("kind")
         .and_then(Value::as_str)
@@ -1929,10 +1931,13 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         out.push_str(&format!("- Focused proof intent: {intent}\n"));
     }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Verify: `{command}`\n"));
+        out.push_str(&format!("- Verify command: `{command}`\n"));
     }
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Receipt: `{command}`\n"));
+        out.push_str(&format!("- Receipt command: `{command}`\n"));
+    }
+    if let Some(path) = selected.get("receipt_path").and_then(Value::as_str) {
+        out.push_str(&format!("- Receipt path: `{path}`\n"));
     }
     out.push_str(
         "- Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\n\n",
@@ -1982,55 +1987,75 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         out.push('\n');
     }
     if let Some(command) = selected.get("verify_command").and_then(Value::as_str) {
-        out.push_str("Verify:\n");
+        out.push_str("Verify command:\n");
         out.push_str(&format!("`{command}`\n\n"));
     }
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
-        out.push_str("Receipt:\n");
+        out.push_str("Receipt command:\n");
         out.push_str(&format!("`{command}`\n\n"));
     }
     if let Some(command) = selected.get("agent_packet_command").and_then(Value::as_str) {
-        out.push_str("Agent packet:\n");
+        out.push_str("Agent packet command:\n");
         out.push_str(&format!("`{command}`\n"));
     }
 }
 
 fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
-    out.push_str("## Next\n\n");
+    out.push_str("## Start Here\n\n");
+    out.push_str("- State: `missing_artifact`\n");
+    out.push_str(
+        "- Safe next action: regenerate the missing artifact before assigning repair work.\n",
+    );
     let artifact = selected.get("artifact").unwrap_or(&Value::Null);
     let label = artifact
         .get("label")
         .and_then(Value::as_str)
         .unwrap_or("required artifact");
     let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
-    out.push_str(&format!("Regenerate missing {label}: `{path}`.\n\n"));
+    out.push_str(&format!("- Missing artifact: {label}\n"));
+    out.push_str(&format!("- Artifact path: `{path}`\n"));
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
-        out.push_str("Run:\n");
-        out.push_str(&format!("`{command}`\n"));
+        out.push_str(&format!("- Regeneration command: `{command}`\n"));
     }
 }
 
 fn render_no_action_markdown(selected: &Value, out: &mut String) {
-    out.push_str("## No Action\n\n");
+    out.push_str("## Start Here\n\n");
+    out.push_str(&format!(
+        "- State: `{}`\n",
+        selected
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("no_action")
+    ));
+    out.push_str(
+        "- Safe next action: stop on no-action; refresh evidence only after relevant PR changes.\n",
+    );
     let reason = selected
         .get("reason")
         .and_then(Value::as_str)
         .unwrap_or("No repairable PR-local Rust gap was selected.");
-    out.push_str(reason);
-    out.push_str("\n\nNo-action is not a runtime, coverage, or mutation adequacy claim.\n");
+    out.push_str(&format!("- Reason: {reason}\n"));
+    out.push_str("- Boundary: no actionable gap is not runtime, coverage, or mutation adequacy.\n");
 }
 
 fn render_blocked_markdown(selected: &Value, out: &mut String) {
-    out.push_str("## Blocked\n\n");
+    out.push_str("## Start Here\n\n");
+    let state = selected
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("blocked_artifact");
+    out.push_str(&format!("- State: `{state}`\n"));
+    out.push_str(
+        "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
+    );
     let message = selected
         .get("message")
         .and_then(Value::as_str)
         .unwrap_or("First-run packet is blocked by unavailable evidence.");
-    out.push_str(message);
-    out.push_str("\n\n");
+    out.push_str(&format!("- Reason: {message}\n"));
     if let Some(command) = selected.get("next_command").and_then(Value::as_str) {
-        out.push_str("Next:\n");
-        out.push_str(&format!("`{command}`\n"));
+        out.push_str(&format!("- Next command: `{command}`\n"));
     }
 }
 
@@ -2609,7 +2634,9 @@ mod tests {
         assert_eq!(packet["status"], "no_action");
         assert_eq!(packet["selected"]["state"], "empty_diff");
         assert_eq!(packet["selected"]["records_total"], 0);
-        assert!(markdown.contains("## No Action"));
+        assert!(markdown.contains("## Start Here"));
+        assert!(markdown.contains("- State: `empty_diff`"));
+        assert!(markdown.contains("- Safe next action: stop on no-action"));
         assert!(!markdown.contains("## Blocked"));
         cleanup(&repo)
     }
