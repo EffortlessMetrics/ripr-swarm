@@ -78,6 +78,7 @@ pub(crate) struct EvidenceRecordCanonicalItem {
     pub(crate) group_reason: Option<String>,
     pub(crate) primary_anchor: Option<EvidenceRecordPrimaryAnchor>,
     pub(crate) raw_spans: Vec<EvidenceRecordRawSpan>,
+    pub(crate) static_limitations: Vec<EvidenceRecordStaticLimitation>,
     pub(crate) why: String,
     pub(crate) recommended_repair: String,
     pub(crate) repair_route: Option<EvidenceRecordCanonicalRepairRoute>,
@@ -524,6 +525,7 @@ fn canonical_item_for(
         group_reason: group_reason.clone(),
         primary_anchor: primary_anchor_for(raw_findings, group_reason.as_deref()),
         raw_spans: raw_spans_for(raw_findings),
+        static_limitations: static_limitations.to_vec(),
         why: actionability.reason.clone(),
         recommended_repair: recommended_repair_for(
             gap_state,
@@ -1042,6 +1044,11 @@ fn canonical_item_json(item: &EvidenceRecordCanonicalItem) -> Value {
             .iter()
             .map(raw_span_json)
             .collect::<Vec<_>>(),
+        "static_limitations": item
+            .static_limitations
+            .iter()
+            .map(static_limitation_json)
+            .collect::<Vec<_>>(),
         "why": item.why.as_str(),
         "recommended_repair": item.recommended_repair.as_str(),
         "repair_route": item
@@ -1455,6 +1462,14 @@ mod tests {
         assert_eq!(json["canonical_item"]["actionability"], "static_limitation");
         assert_eq!(json["canonical_item"]["repair_route"], Value::Null);
         assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(
+            json["canonical_item"]["static_limitations"][0]["category"],
+            "activation_static_unknown"
+        );
+        assert_eq!(
+            json["canonical_item"]["static_limitations"][0]["repair_route"],
+            "analysis/static-limitation-taxonomy"
+        );
         assert_eq!(
             json["canonical_item"]["recommended_repair"],
             "Inspect static limitation `activation_static_unknown` via `analysis/static-limitation-taxonomy`."

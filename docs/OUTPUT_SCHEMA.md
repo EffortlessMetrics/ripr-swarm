@@ -1344,6 +1344,11 @@ Field contract:
 - `seams[].evidence_record.canonical_item.raw_spans[]` - source-span summary
   for every raw finding contributing to the canonical item. These spans are
   supporting evidence, not independent user-facing actions.
+- `seams[].evidence_record.canonical_item.static_limitations[]` - canonical
+  item-local copy of named analyzer limitations for static-limitation and
+  unknown states. Downstream canonical-item consumers may use these category
+  and repair-route rows to explain why an item is not actionable, but must not
+  treat them as user test debt.
 - `seams[].evidence_record.evidence_path` - typed reach, activate,
   propagate, observe, and discriminate stages. Each stage carries `state`,
   `confidence`, and `summary`.
