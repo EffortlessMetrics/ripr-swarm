@@ -207,11 +207,12 @@ First-run projection should reuse the same gap and repair vocabulary across:
 - LSP "start current repair" orchestration;
 - agent repair packet;
 - receipt instructions;
+- outcome receipt review packet;
 - first successful PR docs.
 
 Those surfaces may choose different levels of detail, but they should not
-disagree about the selected gap, repair route, verification command, or
-authority boundary.
+disagree about the selected gap, repair route, verification command, receipt
+movement, or authority boundary.
 
 ## Required Evidence
 
@@ -230,6 +231,9 @@ An implementation of this spec must provide:
   projections consume the start-here packet;
 - dogfood receipts showing selected gap, repair attempt, verification, receipt,
   and movement;
+- outcome receipts that answer what changed, what RIPR flagged before, what
+  focused proof signal moved, what remains weak or unknown, and what reviewers
+  should or should not infer;
 - docs that explain first-run adoption without requiring report graph
   knowledge.
 

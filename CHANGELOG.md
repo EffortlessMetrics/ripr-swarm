@@ -9,6 +9,10 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- `ripr outcome` receipts now include a reviewer-native `review_receipt`
+  section in JSON and a matching Markdown section that summarizes what changed,
+  what RIPR flagged before, which focused proof signals moved, what remains
+  weak or unknown, and what reviewers should inspect or avoid inferring.
 - `ripr first-pr` start-here packets now make the one-screen recommendation
   more explicit for repairable top gaps: current static evidence strength,
   missing discriminator, focused proof intent, receipt command, and receipt path
