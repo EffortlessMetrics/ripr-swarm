@@ -2701,7 +2701,7 @@ instead of presenting a misleading zero.
     "canonical_items": 1,
     "already_observed": 0,
     "internal_no_action": 0,
-    "static_limitations": 1,
+    "static_limitations": 4356,
     "unknown": 0,
     "raw_to_canonical_ratio": 2.0,
     "note": "Raw findings are diagnostic; actionable canonical gaps are the user-facing repair count."
@@ -2884,12 +2884,15 @@ Field contract:
   version, optional SHA-256, and a short note. Missing optional artifacts are
   reported instead of treated as failures.
 - `headline` - additive scorecard lead numbers for the finding-alignment
-  counting model. `primary_metric` is
+  counting model plus the audit-wide static-limitation headline.
+  `primary_metric` is
   `finding_alignment_actionable_unresolved_canonical_gaps`, `primary_count` is
   the actionable canonical gap count, and raw signals remain diagnostic context
-  alongside canonical item, already-observed, no-action, limitation, unknown,
-  and raw-to-canonical counts. This does not redefine public badges or gate
-  policy.
+  alongside canonical item, already-observed, no-action, unknown, and
+  raw-to-canonical counts. `static_limitations` mirrors the scorecard summary's
+  audit-wide `static_limitations_total`, including named run limitations that
+  are carried into the static-limitation taxonomy. This does not redefine public
+  badges or gate policy.
 - `summary` - headline scorecard counts copied from the current Lane 1 audit
   plus scorecard-local repair, delta availability, finding-alignment, and
   presentation-text counts. Finding-alignment counts preserve raw signals,
