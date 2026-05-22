@@ -3343,6 +3343,87 @@ cargo xtask check-pr
 git diff --check
 ```
 
+## Focused Lane 1 Tracker: Value Resolution Audit Fixes
+
+Tracker ID: `lane1-value-resolution-audit-fixes`
+
+Status: active. `.ripr/goals/active.toml` selects this tracker after the
+closed finding-alignment burn-down rail recorded `no_current_goal = true`.
+
+GitHub issue: [swarm #285](https://github.com/EffortlessMetrics/ripr-swarm/issues/285)
+
+Sources of truth:
+
+- [Lane 1 Value Resolution Audit Fixes tracker](lanes/LANE_1_VALUE_RESOLUTION_AUDIT_FIXES.md)
+- [Lane 1 Value Resolution Audit Fixes implementation plan](../plans/lane1-value-resolution-audit-fixes/implementation-plan.md)
+- [Lane 1 Finding Alignment Burn-Down closeout](handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md)
+- [RIPR-SPEC-0001](specs/RIPR-SPEC-0001-static-exposure-loop.md)
+  static exposure loop
+- [RIPR-SPEC-0021](specs/RIPR-SPEC-0021-evidence-record.md)
+  evidence record
+- [RIPR-SPEC-0045](specs/RIPR-SPEC-0045-finding-to-gap-alignment.md)
+  finding-to-gap alignment
+
+Objective:
+
+```text
+Burn down a fixture-backed slice of the predicate-boundary
+activation_value_unresolved bucket without broadening unsupported value flows
+or treating named static limitations as user test debt.
+```
+
+End state:
+
+- one audit-derived value-resolution sub-shape is fixture-backed before
+  analyzer behavior changes;
+- supported predicate-boundary cases move out of
+  `activation_value_unresolved` only when concrete activation values are
+  statically visible;
+- unsupported helper-built, cross-file, generated, macro-expanded, shadowed,
+  pattern-bound, non-literal, or opaque value flows remain named limitations;
+- raw findings remain supporting evidence and canonical items remain the
+  countable unit;
+- audit, scorecard, trend, and dogfood proof record the before/after movement
+  without changing PR/CI, editor, gate, badge, release, provider,
+  generated-test, source-edit, or mutation behavior.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `docs/lane1-value-resolution-audit-fixes-stack` | done | [swarm #285](https://github.com/EffortlessMetrics/ripr-swarm/issues/285) opens the active issue-backed rail, active manifest, lane tracker, implementation plan, and docs indexes without analyzer behavior. |
+| `fixtures/value-resolution-audit-corpus` | ready | Pin one audit-derived supported value-resolution sub-shape plus must-not-claim guards before analyzer behavior changes. |
+| `analysis/value-resolution-supported-subshape` | blocked | Move only the fixture-backed supported sub-shape out of `activation_value_unresolved` and keep unsupported value flows named. |
+| `report/value-resolution-audit-delta` | blocked | Record before/after Lane 1 audit, scorecard, and trend movement for the selected bucket. |
+| `dogfood/value-resolution-receipts` | blocked | Record material dogfood receipts with canonical gap identity, raw finding context, moved counts, remaining limitations, and static-evidence non-claims. |
+| `campaign/value-resolution-audit-closeout` | blocked | Close the rail with proof, remaining limits, downstream impact, and next-step selection. |
+
+Blocking conditions:
+
+- PR/CI rendering changes
+- inline PR comment publishing
+- LSP/editor polish
+- gate-policy or default-blocking changes
+- public badge or score redefinition
+- generated tests
+- automatic source edits
+- provider/model calls
+- mutation execution
+- treating named static limitations as user test debt
+
+Commands:
+
+```bash
+cargo xtask goals status
+cargo xtask goals next
+cargo xtask check-goals
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-pr
+git diff --check
+```
+
 ## Focused Lane 2 Tracker: Policy Readiness and Preview Evidence Governance
 
 Tracker ID: `policy-readiness-preview-evidence-governance`
