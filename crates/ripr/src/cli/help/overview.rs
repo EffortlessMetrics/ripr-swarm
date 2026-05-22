@@ -93,6 +93,7 @@ Start-here path:
   - `ripr doctor` checks whether the local workspace and config can produce evidence.
   - `ripr first-pr` and `ripr start-here` write `target/ripr/reports/start-here.{json,md}` from existing artifacts.
   - Safe next action means repair one named gap, regenerate a missing or malformed artifact, or stop on no-action.
+  - Missing artifact, stale evidence, wrong root, malformed artifact, and no actionable gap are explicit recovery states.
   - Verify command, receipt command, and receipt path are the static proof rail; receipts are advisory, not runtime adequacy or gate approval.
   - Preview-limited evidence stays syntax-first and advisory, with static limits before repair language.
 "#;

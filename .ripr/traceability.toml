@@ -3491,6 +3491,9 @@ tests = [
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/help.rs",
+  "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/main.rs",
 ]
 fixtures = [
@@ -3505,6 +3508,9 @@ code = [
   "crates/ripr/src/cli/help/overview.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "xtask/src/reports/pr_evidence_summary/render.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/cli/help/overview.rs",
 ]
 outputs = [
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
