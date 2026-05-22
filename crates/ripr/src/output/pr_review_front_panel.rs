@@ -395,21 +395,26 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
     out.push_str("# RIPR PR Review\n\n");
     out.push_str(&format!("Status: {}\n\n", report.status));
 
+    out.push_str("Start here:\n");
     if report.summary.top_issue_state == "missing_required_input" {
-        out.push_str("Next: regenerate the missing assistant proof artifact before acting on this panel.\n\n");
+        out.push_str("- State: missing required evidence\n");
+        out.push_str("- Safe next action: regenerate the missing assistant proof artifact before acting on this panel.\n");
         if let Some(warning) = report.warnings.first() {
-            out.push_str("Missing input:\n");
             out.push_str(&format!(
-                "- {}\n\n",
+                "- Missing input: {}\n",
                 str_or(warning.source_artifact.as_deref(), "not_available")
             ));
         }
+        out.push_str("- Boundary: advisory static evidence only; no gate, runtime, coverage, or mutation proof is implied.\n\n");
     } else if let Some(issue) = &report.top_issue {
-        out.push_str("Top issue:\n");
+        out.push_str(&format!("- State: {}\n", report.summary.top_issue_state));
+        out.push_str(&format!("- Source: {}\n", issue.source));
+        out.push_str(&format!("- Identity: {}\n", issue_primary_identity(issue)));
         out.push_str(&format!(
             "- File: {}\n",
             issue_location(issue).unwrap_or_else(|| "not_available".to_string())
         ));
+        out.push_str(&format!("- Repair route: {}\n", issue_repair_route(issue)));
         if let Some(classification) = &issue.classification {
             out.push_str(&format!("- Class: {classification}\n"));
         }
@@ -425,9 +430,17 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         if let Some(related) = &issue.related_test {
             out.push_str(&format!("- Related test: {related}\n"));
         }
+        out.push_str(&format!(
+            "- Verify command: {}\n",
+            markdown_command_or(issue.verify_command.as_deref(), "not_available")
+        ));
+        out.push_str(&format!("- Receipt: {}\n", issue_receipt_summary(issue)));
+        out.push_str("- Boundary: advisory static evidence only; gate authority remains separate and no runtime, coverage, mutation, or merge approval is implied.\n");
         out.push('\n');
     } else {
-        out.push_str("Next: no actionable PR-local RIPR guidance is available.\n\n");
+        out.push_str("- State: no actionable PR-local RIPR guidance\n");
+        out.push_str("- Safe next action: inspect supporting evidence or regenerate inputs after a relevant change.\n");
+        out.push_str("- Boundary: no actionable gap is not a coverage, runtime, mutation, gate, or merge-readiness claim.\n\n");
     }
 
     if report.summary.placement == "summary_only" {
@@ -571,6 +584,42 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         out.push_str(&format!("- {limit}\n"));
     }
     out
+}
+
+fn issue_primary_identity(issue: &PanelTopIssue) -> String {
+    issue
+        .canonical_gap_id
+        .as_deref()
+        .or(issue.seam_id.as_deref())
+        .unwrap_or("not_available")
+        .to_string()
+}
+
+fn issue_repair_route(issue: &PanelTopIssue) -> String {
+    if issue.suggested_test.is_some() {
+        "focused_test".to_string()
+    } else if issue.agent_command.is_some() {
+        "agent_handoff".to_string()
+    } else if issue.verify_command.is_some() {
+        "verify_existing_repair".to_string()
+    } else if issue.receipt.status != "not_available" {
+        "inspect_receipt_state".to_string()
+    } else {
+        "not_available".to_string()
+    }
+}
+
+fn markdown_command_or(command: Option<&str>, fallback: &str) -> String {
+    command
+        .map(|command| format!("`{command}`"))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn issue_receipt_summary(issue: &PanelTopIssue) -> String {
+    match issue.receipt.artifact.as_deref() {
+        Some(artifact) => format!("{} ({artifact})", issue.receipt.status),
+        None => issue.receipt.status.clone(),
+    }
 }
 
 pub(crate) use crate::output::path::display_path;

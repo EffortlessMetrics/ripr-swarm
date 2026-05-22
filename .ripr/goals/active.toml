@@ -88,6 +88,8 @@ acceptance = "CLI surfaces distinguish safe next action, missing artifacts, stal
 commands = [
   "cargo test -p ripr --lib first_pr",
   "cargo test -p ripr --lib help",
+  "cargo test -p ripr --lib cli",
+  "cargo test -p ripr --test cli_smoke",
   "cargo xtask check-output-contracts",
   "cargo xtask check-pr",
 ]
