@@ -120,6 +120,11 @@ RIPR artifacts. It writes one next useful test action or one fallback reason
 for developers, reviewers, or coding agents. It does not rerun analysis, post
 comments, edit source, generate tests, call a provider, run mutation testing,
 invent policy, or make CI blocking by default.
+
+Start-here vocabulary:
+  - safe next action means add one focused proof, refresh missing/stale/wrong-root/malformed evidence, or stop on no-action.
+  - verify command, receipt command, and receipt path are static movement evidence, not runtime adequacy.
+  - preview-limited evidence stays advisory and must show static limits before repair language.
 "#;
 pub(super) const CALIBRATE_HELP: &str = r#"Import cargo-mutants outcomes as advisory calibration over static evidence.
 
