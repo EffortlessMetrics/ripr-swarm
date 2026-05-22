@@ -9,6 +9,11 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Lane 1 repo-exposure capture now streams child stdout through the xtask
+  runner into `lane1-evidence-audit.repo-exposure.json`, counting bytes from the
+  writer path and overwriting stale capture files deterministically. This keeps
+  live `lane1-evidence-audit` generation from depending on direct child file
+  handle behavior for large repo-exposure payloads.
 - `cargo xtask evidence-health` now converts build/report runner failures into
   bounded warning artifacts instead of returning without
   `evidence-health.json` / `.md`. These limited reports overwrite stale

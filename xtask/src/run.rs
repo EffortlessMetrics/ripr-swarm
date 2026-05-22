@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -245,7 +245,7 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         )
     })?;
     let mut command = Command::new(program);
-    command.args(args).stdout(Stdio::from(stdout_file));
+    command.args(args).stdout(Stdio::piped());
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -253,6 +253,10 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("failed to run {error_context}: {err}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
     let stderr = child
         .stderr
         .take()
@@ -260,6 +264,7 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     let echo_latency_trace = envs
         .iter()
         .any(|(name, _)| *name == "RIPR_REPO_EXPOSURE_LATENCY_TRACE");
+    let stdout_writer = thread::spawn(move || stream_to_file(stdout, stdout_file));
     let stderr_reader = thread::spawn(move || {
         if echo_latency_trace {
             read_stream_with_latency_progress(stderr)
@@ -269,13 +274,14 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     });
 
     let wait_outcome = wait_for_child_with_timeout(&mut child, started, timeout, error_context)?;
+    let stdout_bytes = join_stream_file_writer(stdout_writer, "stdout", error_context)?;
     let stderr = join_stream_reader(stderr_reader, "stderr", error_context)?;
     Ok(TimedFileOutput {
         status: Some(wait_outcome.status),
         stderr,
         duration: wait_outcome.duration,
         timed_out: wait_outcome.timed_out,
-        stdout_bytes: stdout_file_len(stdout_path),
+        stdout_bytes,
     })
 }
 
@@ -343,19 +349,31 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
     }
 }
 
-fn stdout_file_len(path: &Path) -> usize {
-    fs::metadata(path)
-        .ok()
-        .and_then(|metadata| usize::try_from(metadata.len()).ok())
-        .unwrap_or(0)
-}
-
 fn read_stream<T: Read>(mut stream: T) -> Result<String, String> {
     let mut bytes = Vec::new();
     stream
         .read_to_end(&mut bytes)
         .map_err(|err| format!("failed to read process output: {err}"))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn stream_to_file<T: Read>(mut stream: T, mut file: fs::File) -> Result<usize, String> {
+    let mut total = 0usize;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let bytes = stream
+            .read(&mut buf)
+            .map_err(|err| format!("failed to read process stdout: {err}"))?;
+        if bytes == 0 {
+            break;
+        }
+        file.write_all(&buf[..bytes])
+            .map_err(|err| format!("failed to write process stdout: {err}"))?;
+        total = total.saturating_add(bytes);
+    }
+    file.flush()
+        .map_err(|err| format!("failed to flush process stdout: {err}"))?;
+    Ok(total)
 }
 
 fn read_stream_with_latency_progress<T: Read>(stream: T) -> Result<String, String> {
@@ -376,6 +394,19 @@ fn read_stream_with_latency_progress<T: Read>(stream: T) -> Result<String, Strin
         out.push_str(&line);
     }
     Ok(out)
+}
+
+fn join_stream_file_writer(
+    writer: thread::JoinHandle<Result<usize, String>>,
+    stream_name: &str,
+    error_context: &str,
+) -> Result<usize, String> {
+    match writer.join() {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "{stream_name} writer thread failed while running {error_context}"
+        )),
+    }
 }
 
 fn join_stream_reader(
@@ -587,6 +618,8 @@ mod tests {
                 .map(|duration| duration.as_nanos())
                 .unwrap_or(0)
         ));
+        fs::write(&path, "stale output")
+            .map_err(|err| format!("failed to write stale stdout file: {err}"))?;
         let args = vec!["--version".to_string()];
         let output = capture_stdout_to_file_with_timeout(
             "rustc",
@@ -610,6 +643,11 @@ mod tests {
             .map_err(|err| format!("failed to read streamed stdout file: {err}"))?;
         fs::remove_file(&path)
             .map_err(|err| format!("failed to remove streamed stdout file: {err}"))?;
+        if captured.contains("stale output") {
+            return Err(format!(
+                "captured stdout should overwrite stale file contents: {captured}"
+            ));
+        }
         if !captured.contains("rustc") {
             return Err(format!("captured stdout should name rustc: {captured}"));
         }
