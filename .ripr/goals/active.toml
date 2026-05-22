@@ -216,6 +216,23 @@ commands = [
 ]
 
 [[work_item]]
+id = "calibration/runtime-confidence-coverage-audit"
+status = "done"
+branch = "calibration-runtime-confidence-coverage-audit"
+stackable = false
+plan = "plans/lane1-finding-alignment-burndown/implementation-plan.md"
+specs = [
+  "docs/specs/RIPR-SPEC-0034-evidence-quality-scorecard.md",
+]
+acceptance = "Report calibrated-supported versus static-only canonical items by evidence class; top static-only classes remain visible; runtime-only signal does not create static gaps; cargo-mutants import planning stays linked to policy and does not become mutation execution."
+commands = [
+  "cargo xtask evidence-quality-scorecard",
+  "cargo xtask evidence-quality-trend",
+  "cargo xtask check-static-language",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
 id = "dogfood/finding-alignment-examples-refresh"
 status = "ready"
 branch = "dogfood-finding-alignment-examples-refresh"
