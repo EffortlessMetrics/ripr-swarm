@@ -5,6 +5,9 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 pub(crate) struct CapturedOutput {
     pub(crate) status: ExitStatus,
     pub(crate) stdout: String,
@@ -189,6 +192,7 @@ pub(crate) fn capture_output_with_timeout(
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args);
+    configure_timed_child_command(&mut command);
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -246,6 +250,7 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     })?;
     let mut command = Command::new(program);
     command.args(args).stdout(Stdio::piped());
+    configure_timed_child_command(&mut command);
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -319,6 +324,17 @@ fn wait_for_child_with_timeout(
     }
 }
 
+fn configure_timed_child_command(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
+    }
+}
+
 fn timeout_was_enforced(termination_requested: bool, _status: &ExitStatus) -> bool {
     termination_requested
 }
@@ -331,6 +347,7 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
     {
         return Ok(false);
     }
+    let group_terminated = terminate_timed_process_group(child);
     match child.kill() {
         Ok(()) => Ok(true),
         Err(kill_err) => {
@@ -339,13 +356,31 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
                 .map_err(|err| format!("failed to poll {error_context}: {err}"))?
                 .is_some()
             {
-                Ok(false)
+                Ok(group_terminated)
             } else {
                 Err(format!(
                     "failed to terminate timed-out {error_context}: {kill_err}"
                 ))
             }
         }
+    }
+}
+
+fn terminate_timed_process_group(child: &Child) -> bool {
+    #[cfg(unix)]
+    {
+        let group = format!("-{}", child.id());
+        let status = Command::new("kill")
+            .args(["-KILL", "--", group.as_str()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        status.is_ok_and(|status| status.success())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child;
+        false
     }
 }
 
@@ -604,6 +639,25 @@ mod tests {
         assert!(
             !output.status.is_some_and(|status| status.success()),
             "timed-out cargo metadata should not exit successfully"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_output_with_timeout_terminates_pipe_inheriting_descendants() -> Result<(), String> {
+        let args = vec!["-c".to_string(), "sleep 30 & wait".to_string()];
+        let output = capture_output_with_timeout(
+            "sh",
+            &args,
+            &[],
+            Duration::from_millis(100),
+            "pipe-inheriting descendant",
+        )?;
+
+        assert!(
+            output.timed_out,
+            "pipe-inheriting descendant should time out"
         );
         Ok(())
     }
