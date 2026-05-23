@@ -40,10 +40,6 @@ const MAX_RELATED_TESTS_PER_PACKET: usize = 8;
 const RUNTIME_CONFIRMATION_NOTE: &str =
     "optional cargo-mutants confirmation; ripr reports static evidence only";
 
-/// Boundary surfaced as a typed field so agent consumers can carry the
-/// same non-claim language as `ripr first-pr` without scraping prose.
-const STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.";
-
 /// Render every actionable `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
 /// intentional, and suppressed seams are skipped. `Opaque` seams emit a
