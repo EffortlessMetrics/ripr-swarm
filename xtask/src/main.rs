@@ -69686,6 +69686,51 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn ripr_swarm_attempt_dry_run_fails_closed_without_target_or_boundaries() -> Result<(), String>
+    {
+        let actionable_gaps = serde_json::json!({
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:missing-target",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/pricing.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                    "verify_command": "cargo test -p ripr pricing_threshold",
+                    "receipt_command_or_path": "cargo xtask receipts check",
+                    "confidence_basis": "static_only",
+                    "raw_findings": [],
+                    "static_limitations": []
+                }
+            ]
+        });
+
+        let attempt = ripr_swarm_attempt_dry_run_from_actionable_gaps_value(
+            &actionable_gaps,
+            "gap:missing-target",
+        )?;
+        assert_eq!(attempt.related_test_or_observer, "unknown");
+        assert!(attempt.must_not_change.is_empty());
+
+        let markdown = ripr_swarm_attempt_dry_run_markdown(&attempt);
+        for expected in [
+            "## Copy-Ready Operator Packet",
+            "No typed edit target is available; do not edit files until the packet is regenerated",
+            "`must_not_change` is missing; stop before editing files.",
+            "Stop if the required edit falls outside the allowed file",
+            "`receipt_result`: receipt command result, path, or precise reason not emitted.",
+        ] {
+            assert!(
+                markdown.contains(expected),
+                "expected dry-run markdown to contain {expected:?}:\n{markdown}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_attempt_dry_run_reports_blocked_packet_context() -> Result<(), String> {
         let actionable_gaps = serde_json::json!({
             "packets": [
