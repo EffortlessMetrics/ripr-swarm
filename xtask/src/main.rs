@@ -31428,12 +31428,8 @@ changing badge semantics. It does not edit `badges/*.json`.\n\n",
     body.push_str("## Public Headline Meaning\n\n");
     body.push_str("- `ripr` headline count: unresolved actionable static repair gaps.\n");
     body.push_str("- Public basis: `canonical_actionable_gap`.\n");
-    body.push_str(
-        "- `ripr+` only adds items that project into the same repair, verify, and receipt model.\n",
-    );
-    body.push_str(
-        "- Seam-native inventory and raw findings are supporting/internal diagnostics, not the public headline counter.\n\n",
-    );
+    body.push_str("- `ripr+` only adds items that project into the same repair, verify, and receipt model.\n");
+    body.push_str("- Seam-native inventory and raw findings are supporting/internal diagnostics, not the public headline counter.\n\n");
 
     body.push_str("## Current Public Endpoints\n\n");
     body.push_str("| Path | Label | Message | Color |\n");
@@ -31524,9 +31520,7 @@ changing badge semantics. It does not edit `badges/*.json`.\n\n",
         "- Basis: `{}`\n",
         markdown_cell(&report.recommended_public_projection)
     ));
-    body.push_str(
-        "- Rule: README/store badges should count unresolved actionable static repair gaps using `canonical_actionable_gap`; `ripr+` only adds items projected into the same repair, verify, and receipt model; seam-native counts stay supporting/internal.\n",
-    );
+    body.push_str("- Rule: README/store badges should count unresolved actionable static repair gaps using `canonical_actionable_gap`; `ripr+` only adds items projected into the same repair, verify, and receipt model; seam-native counts stay supporting/internal.\n");
 
     body.push_str("\n## Warnings\n\n");
     if report.warnings.is_empty() {
