@@ -1,6 +1,12 @@
 # RIPR-SPEC-0053: Start-Here Surface Convergence
 
-Status: proposed
+Status: accepted
+
+Accepted: 2026-05-22 after the Start-Here Surface Convergence closeout
+recorded PR/CI, CLI, receipt lifecycle, no-output/fail-closed, preview
+promotion-criteria, dogfood, and documentation proof while preserving the
+advisory, static-only, no-source-edit, no-generated-test, no-provider, and
+no-mutation boundary.
 
 ## Problem
 
