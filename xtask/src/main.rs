@@ -32133,6 +32133,7 @@ fn optional_count_label(count: Option<usize>) -> String {
 }
 
 fn run_repo_badge_artifact_job(format: &str, gap_ledger: Option<&Path>) -> Result<String, String> {
+    let timeout = Duration::from_millis(repo_badge_artifact_timeout_ms());
     if let Ok(ripr_bin) = std::env::var("RIPR_BIN") {
         let repo_root = repo_root()?;
         let mut args = vec![
@@ -32146,11 +32147,56 @@ fn run_repo_badge_artifact_job(format: &str, gap_ledger: Option<&Path>) -> Resul
             args.push("--gap-ledger".to_string());
             args.push(normalize_path(gap_ledger));
         }
-        return run_output_owned(&ripr_bin, &args);
+        return run_repo_badge_artifact_command(&ripr_bin, &args, format, timeout);
     }
 
     let args = repo_badge_artifact_command_args(format, gap_ledger);
-    run_output_owned("cargo", &args)
+    run_repo_badge_artifact_command("cargo", &args, format, timeout)
+}
+
+fn run_repo_badge_artifact_command(
+    program: &str,
+    args: &[String],
+    format: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let output = capture_output_with_timeout(
+        program,
+        args,
+        &[],
+        timeout,
+        &format!("repo badge artifact generation for {format}"),
+    )?;
+    repo_badge_artifact_stdout_from_output(program, args, format, timeout, output)
+}
+
+fn repo_badge_artifact_stdout_from_output(
+    program: &str,
+    args: &[String],
+    format: &str,
+    timeout: Duration,
+    output: TimedOutput,
+) -> Result<String, String> {
+    let command = format!("{} {}", program, args.join(" "));
+    if output.timed_out {
+        return Err(format!(
+            "{command} timed out after {} ms while generating repo badge artifact `{format}`; no public badge endpoint was refreshed and no public badge count is claimed. Rerun with {REPO_BADGE_ARTIFACT_TIMEOUT_ENV}=<milliseconds> only in an explicit badge refresh PR if the machine can afford the cost, or pass --gap-ledger to use an existing gap decision ledger.",
+            timeout.as_millis()
+        ));
+    }
+    let Some(status) = output.status else {
+        return Err(format!(
+            "{command} finished without an exit status while generating repo badge artifact `{format}`"
+        ));
+    };
+    if !status.success() {
+        return Err(format!(
+            "{command} failed with {status}\nstdout:\n{}\nstderr:\n{}",
+            output.stdout.trim(),
+            output.stderr.trim()
+        ));
+    }
+    Ok(output.stdout)
 }
 
 fn run_with_repo_root_cwd<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
@@ -32208,6 +32254,17 @@ fn repo_badge_artifact_command_args(format: &str, gap_ledger: Option<&Path>) -> 
         args.push(normalize_path(gap_ledger));
     }
     args
+}
+
+const REPO_BADGE_ARTIFACT_TIMEOUT_ENV: &str = "RIPR_REPO_BADGE_ARTIFACT_TIMEOUT_MS";
+const REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS: u64 = 90_000;
+
+fn repo_badge_artifact_timeout_ms() -> u64 {
+    std::env::var(REPO_BADGE_ARTIFACT_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS)
 }
 
 fn repo_badge_artifacts_summary_markdown(
@@ -50062,26 +50119,27 @@ mod tests {
         GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
         Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
         LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink, PrTriageCheck,
-        PrTriageFinding, PrTriagePullRequest, ReceiptRecord, RepoBadgeArtifactOptions,
-        RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
-        ReportIndexCampaign, ReportIndexEntry, ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH,
-        SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
-        StaticLanguageMatcher, TestOracleClass, WorktreeDoctorFinding, WorktreeDoctorSeverity,
-        actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
-        actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
-        badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
-        badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-        badge_artifacts_summary_markdown, badge_basis_canonical_projection,
-        badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-        badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
-        badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
-        build_no_panic_allowlist_proposals, build_repo_exposure_latency_report,
-        build_targeted_test_outcome_report, campaign_source_truth_violations_for_root,
-        check_allow_attributes, check_badge_diff_policy_with_context, check_doc_artifacts,
-        check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
-        check_network_policy, check_no_panic_family, check_process_policy, check_static_language,
-        check_support_tiers, check_workflows, ci_full_evidence_gates, cockpit_json,
-        cockpit_markdown, collect_panic_findings, collect_semantic_panic_findings, command_catalog,
+        PrTriageFinding, PrTriagePullRequest, REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord,
+        RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
+        RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
+        ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
+        SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher, TestOracleClass,
+        WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
+        actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
+        actionable_gap_outcomes_report_impl, badge_artifact_command_args,
+        badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
+        badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
+        badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
+        badge_basis_needs_repo_badge_plus_job, badge_basis_report_json,
+        badge_basis_report_markdown, badge_basis_seam_native_counts, badge_diff_policy_violations,
+        badge_native_audit_snapshot, build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
+        build_repo_exposure_latency_report, build_targeted_test_outcome_report,
+        campaign_source_truth_violations_for_root, check_allow_attributes,
+        check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+        check_executable_files, check_file_policy, check_local_context, check_network_policy,
+        check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
+        check_workflows, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+        collect_panic_findings, collect_semantic_panic_findings, command_catalog,
         command_catalog_violations, commands_report_json, commands_report_markdown,
         critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
         dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
@@ -50143,8 +50201,9 @@ mod tests {
         public_contract_rows, read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json,
         receipt_specs, receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
         render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
-        repo_badge_artifact_jobs, repo_badge_artifacts_summary_markdown,
-        repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+        repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+        repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
+        repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
         repo_exposure_latency_trace, repo_root, repo_seam_inventory_command_args_for_root,
         report_index_json, report_index_lane1_overall_status, report_index_lane1_readiness_packets,
@@ -64421,6 +64480,56 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
                 "expected --gap-ledger gap-ledger.json in repo args, got {args:?}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn repo_badge_artifact_timeout_reports_no_public_endpoint_claim() -> Result<(), String> {
+        let args = repo_badge_artifact_command_args("repo-badge-json", None);
+        let message = repo_badge_artifact_stdout_from_output(
+            "cargo",
+            &args,
+            "repo-badge-json",
+            Duration::from_millis(12),
+            TimedOutput {
+                status: None,
+                stdout: "partial badge output".to_string(),
+                stderr: "still scanning repo seams".to_string(),
+                duration: Duration::from_millis(13),
+                timed_out: true,
+            },
+        )
+        .expect_err("timeout should fail closed");
+
+        assert!(message.contains("timed out after 12 ms"));
+        assert!(message.contains("repo-badge-json"));
+        assert!(message.contains("no public badge endpoint was refreshed"));
+        assert!(message.contains("no public badge count is claimed"));
+        assert!(message.contains(REPO_BADGE_ARTIFACT_TIMEOUT_ENV));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_badge_artifact_nonzero_status_carries_stdout_and_stderr() -> Result<(), String> {
+        let args = repo_badge_artifact_command_args("repo-badge-json", None);
+        let message = repo_badge_artifact_stdout_from_output(
+            "cargo",
+            &args,
+            "repo-badge-json",
+            Duration::from_secs(90),
+            TimedOutput {
+                status: Some(failure_exit_status()),
+                stdout: "partial stdout".to_string(),
+                stderr: "repo badge failure".to_string(),
+                duration: Duration::from_millis(13),
+                timed_out: false,
+            },
+        )
+        .expect_err("non-zero status should fail closed");
+
+        assert!(message.contains("failed with"));
+        assert!(message.contains("partial stdout"));
+        assert!(message.contains("repo badge failure"));
         Ok(())
     }
 

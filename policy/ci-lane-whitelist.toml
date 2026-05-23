@@ -25,6 +25,10 @@ paths = ["target/ripr/reports/operator-cockpit.json", "target/ripr/reports/opera
 id = "release-readiness"
 paths = ["target/package/", "editors/vscode/dist/*.vsix", "dist/ripr-server-*", "dist/ripr-server-manifest-*.json"]
 
+[[artifact_family]]
+id = "public-badge-endpoints"
+paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
+
 [[lane]]
 id = "docs"
 posture = "required"
@@ -114,6 +118,16 @@ commands = ["cargo xtask check-doc-artifacts", "cargo xtask check-goals", "cargo
 estimated_lem = 3
 artifact_families = []
 description = "Proof-stack artifact, active goal, and support-tier claim map checks."
+
+[[lane]]
+id = "badge-endpoints"
+posture = "advisory"
+workflow = ".github/workflows/badge-endpoints.yml"
+jobs = ["refresh"]
+commands = ["cargo xtask badges"]
+estimated_lem = 5
+artifact_families = ["public-badge-endpoints"]
+description = "Generated public badge endpoint refresh, bounded so stale badge generation does not occupy main CI indefinitely."
 
 [[lane]]
 id = "vscode-compile"
