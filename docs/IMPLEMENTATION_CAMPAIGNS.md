@@ -4189,3 +4189,79 @@ Closeout:
 - [Actionable Surface Translation closeout](handoffs/2026-05-23-actionable-surface-translation-closeout.md)
   records the source-of-truth acceptance, surface proof audit, policy boundary,
   and next-campaign selection rule.
+
+## Campaign 28: First Useful PR Loop
+
+Campaign ID: `first-useful-pr-loop`
+
+Status: active.
+
+Actionable Surface Translation made the covered first screens speak the same
+repair-first language. This campaign uses that alignment to make one real Rust
+PR easy to run from changed behavior to focused proof and receipt.
+
+Objective:
+
+```text
+Make a new user, reviewer, or coding-agent operator get from one changed Rust
+behavior to one trustworthy repair receipt with minimal interpretation burden.
+```
+
+End state:
+
+- `ripr first-pr --root . --base origin/main --head HEAD` is the obvious
+  front door for one PR and explains the top repairable gap or clear no-action
+  state.
+- The first screen names changed behavior, weak proof, missing discriminator,
+  focused test intent, verify command, receipt command or path, and the
+  advisory/static boundary.
+- `ripr outcome` receipts are reviewer-native and explain before/after static
+  movement without implying mutation, coverage, correctness, gate, or merge
+  proof.
+- A tiny first-PR demo proves the before -> recommendation -> focused proof ->
+  outcome receipt path.
+- Generated CI, VS Code, and agent packets mirror the same top-gap, verify,
+  receipt, and non-claim language instead of introducing a second mental model.
+- Support-tier, traceability, and output-contract surfaces record exactly what
+  users may believe.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `goals/first-useful-pr-loop-activation` | ready | Select Campaign 28 as the active repo-owned goal, keep the campaign bounded to first useful PR usability, and record the next PR queue without changing product behavior. |
+| `docs/context-system-proof-stack-reconciliation` | blocked | Map proof-stack terminology into ripr's existing repo tracking and agent-context model without adding a runner-local goals namespace or a parallel docs/source-of-truth namespace. |
+| `goals/active-goal-freshness-check` | blocked | Harden goal validation so agents cannot follow stale closed campaigns without an explicit successor or no-current-goal marker. |
+| `cli/first-pr-front-door-polish` | blocked | Make `ripr first-pr` explain one top repairable gap or recovery state without forcing users to open secondary reports. |
+| `output/one-screen-recommendation-contract` | blocked | Golden-test the first screen so it always carries top gap, why it matters, weak evidence, missing discriminator, focused test intent, verify, receipt, and static boundary. |
+| `receipt/reviewer-native-outcome` | blocked | Make outcome receipts explain before/after static movement and reviewer belief boundaries. |
+| `fixtures/first-pr-demo-story` | blocked | Add a tiny fixture-backed before -> first-pr recommendation -> focused proof -> outcome receipt demo. |
+| `surfaces/first-useful-loop-convergence` | blocked | Make generated CI, VS Code, and agent packets mirror the CLI first-useful loop vocabulary and non-claims. |
+
+Commands:
+
+```bash
+cargo xtask check-goals
+cargo xtask goals next
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-doc-roles
+cargo xtask check-pr
+git diff --check
+```
+
+Blocking conditions:
+
+- analyzer truth changes in the activation PR
+- source-of-truth namespace duplication
+- runner-local goals or parallel docs/source-of-truth systems
+- source edits or generated tests
+- provider/model calls
+- mutation execution
+- support-tier promotion without a dedicated proof PR
+- default CI blocking or gate behavior changes
+- PR comment publishing changes
+- release, publish, signing, marketplace, or badge endpoint refresh work
+- runtime adequacy, coverage adequacy, proof-of-correctness, policy
+  eligibility, gate pass/fail, or merge-readiness claims
