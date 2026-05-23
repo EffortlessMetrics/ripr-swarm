@@ -2315,30 +2315,12 @@ fn validate_top_gap_contract(selected: &Value, violations: &mut Vec<String>) {
 }
 
 fn validate_top_gap_first_screen_fields(selected: &Value, violations: &mut Vec<String>) {
-    for key in [
-        "kind",
-        "changed_behavior",
-        "why",
-        "current_evidence_strength",
-        "missing_discriminator",
-        "focused_proof_intent",
-        "verify_command",
-    ] {
-        if selected.get(key).and_then(Value::as_str).is_none() {
-            violations.push(format!("top_gap selected.{key} is missing or not a string"));
-        }
-    }
     if selected
-        .get("receipt_command")
+        .get("changed_behavior")
         .and_then(Value::as_str)
         .is_none()
-        && selected
-            .get("receipt_path")
-            .and_then(Value::as_str)
-            .is_none()
     {
-        violations
-            .push("top_gap selected must include receipt_command or receipt_path".to_string());
+        violations.push("top_gap selected.changed_behavior is missing or not a string".to_string());
     }
 }
 
@@ -2448,18 +2430,19 @@ mod tests {
             "state": "top_gap",
             "output_state": "actionable_gap",
             "kind": "MissingBoundaryAssertion",
-            "changed_behavior": "amount >= threshold",
+            "why": "A related Rust test reaches this change.",
             "current_evidence_strength": "Static evidence found related Rust test context.",
             "missing_discriminator": "Equality-boundary assertion.",
             "focused_proof_intent": "Add one focused boundary assertion.",
             "verify_command": "cargo xtask fixtures boundary_gap",
-            "receipt_path": "target/ripr/receipts/gap.json"
+            "receipt_path": "target/ripr/receipts/gap.json",
+            "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY
         });
         let mut violations = Vec::new();
         validate_selected_state("actionable", &selected, &mut violations);
         assert_eq!(
             violations,
-            vec!["top_gap selected.why is missing or not a string"]
+            vec!["top_gap selected.changed_behavior is missing or not a string"]
         );
     }
 
