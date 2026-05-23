@@ -2,7 +2,7 @@
 
 Date: 2026-05-23
 
-Branch / PR: `docs-adoption-cleanup-reconcile` / pending
+Branch / PR: `docs-adoption-cleanup-reconcile` / #304
 
 ## Current Work Item
 

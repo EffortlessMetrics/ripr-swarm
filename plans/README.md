@@ -68,6 +68,9 @@ safer.
 - [Lane 1 value resolution audit fixes](lane1-value-resolution-audit-fixes/implementation-plan.md)
 - [Lane 4 PR / CI review cockpit](lane4-pr-ci-review-cockpit/README.md)
 - [Rust usable gap projection](rust-usable-gap-projection/README.md)
+
+## Historical plans
+
 - [Adoption integration cleanup](adoption-integration-cleanup/implementation-plan.md)
   (closed historical cleanup rail)
 
