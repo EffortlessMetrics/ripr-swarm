@@ -148,15 +148,15 @@ commands.
 The current `xtask` goals commands read this manifest:
 
 ```bash
-cargo xtask goals status
-cargo xtask goals next
-cargo xtask goals report
+rtk cargo xtask goals status
+rtk cargo xtask goals next
+rtk cargo xtask goals report
 ```
 
 Validate the manifest with:
 
 ```bash
-cargo xtask check-goals
+rtk cargo xtask check-goals
 ```
 
 `check-goals` validates the active execution manifest and the focused tracker
