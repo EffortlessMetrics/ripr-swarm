@@ -31431,9 +31431,7 @@ changing badge semantics. It does not edit `badges/*.json`.\n\n",
     body.push_str(
         "- `ripr+` only adds items that project into the same repair, verify, and receipt model.\n",
     );
-    body.push_str(
-        "- Seam-native inventory and raw findings are supporting/internal diagnostics, not the public headline counter.\n\n",
-    );
+    body.push_str("- Seam-native inventory and raw findings are supporting/internal diagnostics, not the public headline counter.\n\n");
 
     body.push_str("## Current Public Endpoints\n\n");
     body.push_str("| Path | Label | Message | Color |\n");
@@ -31524,9 +31522,7 @@ changing badge semantics. It does not edit `badges/*.json`.\n\n",
         "- Basis: `{}`\n",
         markdown_cell(&report.recommended_public_projection)
     ));
-    body.push_str(
-        "- Rule: README/store badges should count unresolved actionable static repair gaps using `canonical_actionable_gap`; `ripr+` only adds items projected into the same repair, verify, and receipt model; seam-native counts stay supporting/internal.\n",
-    );
+    body.push_str("- Rule: README/store badges should count unresolved actionable static repair gaps using `canonical_actionable_gap`; `ripr+` only adds items projected into the same repair, verify, and receipt model; seam-native counts stay supporting/internal.\n");
 
     body.push_str("\n## Warnings\n\n");
     if report.warnings.is_empty() {
@@ -63075,7 +63071,7 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
     }
 
     #[test]
-    fn badge_basis_canonical_projection_names_static_gap_basis() {
+    fn badge_basis_canonical_projection_names_static_repair_gaps() {
         let ripr = BadgeNativeAuditSnapshot {
             label: "ripr".to_string(),
             kind: "ripr".to_string(),
@@ -63116,6 +63112,79 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
                 .detail
                 .contains("unresolved actionable static repair gaps")
         );
+    }
+
+    #[test]
+    fn badge_basis_report_json_names_public_projection_rule() -> Result<(), String> {
+        let report = BadgeBasisReport {
+            status: "pass".to_string(),
+            current_public_endpoints: vec![],
+            current_repo_badges: vec![],
+            seam_native_counts: BadgeCountBreakdown {
+                status: "not_collected".to_string(),
+                source: "badge-basis".to_string(),
+                counts: BTreeMap::new(),
+                note: "supporting inventory".to_string(),
+            },
+            test_efficiency_counts: BadgeCountBreakdown {
+                status: "pass".to_string(),
+                source: "test-efficiency".to_string(),
+                counts: BTreeMap::new(),
+                note: "available".to_string(),
+            },
+            canonical_actionable_gap: BadgeCanonicalProjection {
+                status: "available".to_string(),
+                source: "repo-badge-artifacts".to_string(),
+                ripr_count: Some(3),
+                ripr_plus_count: Some(3),
+                detail: "canonical_actionable_gap basis".to_string(),
+            },
+            raw_alignment_signals: BadgeBasisSignal {
+                status: "supporting".to_string(),
+                source: "finding alignment".to_string(),
+                count: None,
+                detail: "supporting evidence".to_string(),
+            },
+            canonical_evidence_items: BadgeBasisSignal {
+                status: "supporting".to_string(),
+                source: "repo exposure".to_string(),
+                count: None,
+                detail: "supporting context".to_string(),
+            },
+            static_limitations: BadgeBasisSignal {
+                status: "available".to_string(),
+                source: "repo exposure".to_string(),
+                count: Some(0),
+                detail: "supporting inventory".to_string(),
+            },
+            suppressed_or_intentional_items: BadgeBasisSignal {
+                status: "available".to_string(),
+                source: "badge counts".to_string(),
+                count: Some(0),
+                detail: "out of headline".to_string(),
+            },
+            no_action_items: BadgeBasisSignal {
+                status: "requires_gap_decision_ledger".to_string(),
+                source: "none".to_string(),
+                count: None,
+                detail: "requires gap records".to_string(),
+            },
+            recommended_public_projection: "canonical_actionable_gap".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let json: Value = serde_json::from_str(&badge_basis_report_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        let rule = json
+            .pointer("/recommended_public_projection/rule")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing recommended public projection rule".to_string())?;
+
+        assert!(rule.contains("unresolved actionable static repair gaps"));
+        assert!(rule.contains("canonical_actionable_gap"));
+        assert!(rule.contains("repair, verify, and receipt model"));
+        assert!(rule.contains("supporting/internal"));
+        Ok(())
     }
 
     #[test]
@@ -63307,74 +63376,6 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
         assert!(markdown.contains("supporting/internal diagnostics"));
         assert!(markdown.contains("repair, verify, and receipt model"));
         assert!(markdown.contains("badges/ripr.json"));
-    }
-
-    #[test]
-    fn badge_basis_report_json_names_actionable_recommendation() -> Result<(), String> {
-        let report = BadgeBasisReport {
-            status: "pass".to_string(),
-            current_public_endpoints: Vec::new(),
-            current_repo_badges: Vec::new(),
-            seam_native_counts: BadgeCountBreakdown {
-                status: "not_collected".to_string(),
-                source: "cargo xtask badge-basis --include-seam-classes".to_string(),
-                counts: BTreeMap::new(),
-                note: "supporting/internal only".to_string(),
-            },
-            test_efficiency_counts: BadgeCountBreakdown {
-                status: "pass".to_string(),
-                source: "target/ripr/reports/test-efficiency.json".to_string(),
-                counts: BTreeMap::new(),
-                note: "available".to_string(),
-            },
-            canonical_actionable_gap: BadgeCanonicalProjection {
-                status: "available".to_string(),
-                source: "repo-badge-artifacts".to_string(),
-                ripr_count: Some(1),
-                ripr_plus_count: Some(1),
-                detail: "canonical_actionable_gap".to_string(),
-            },
-            raw_alignment_signals: BadgeBasisSignal {
-                status: "not_in_current_badge_generator".to_string(),
-                source: "finding alignment".to_string(),
-                count: None,
-                detail: "supporting evidence".to_string(),
-            },
-            canonical_evidence_items: BadgeBasisSignal {
-                status: "not_in_current_badge_generator".to_string(),
-                source: "repo exposure".to_string(),
-                count: None,
-                detail: "supporting evidence".to_string(),
-            },
-            static_limitations: BadgeBasisSignal {
-                status: "not_available".to_string(),
-                source: "repo exposure".to_string(),
-                count: None,
-                detail: "supporting inventory".to_string(),
-            },
-            suppressed_or_intentional_items: BadgeBasisSignal {
-                status: "available".to_string(),
-                source: "badge counts".to_string(),
-                count: Some(0),
-                detail: "out of headline".to_string(),
-            },
-            no_action_items: BadgeBasisSignal {
-                status: "requires_gap_decision_ledger".to_string(),
-                source: "none".to_string(),
-                count: None,
-                detail: "requires gap records".to_string(),
-            },
-            recommended_public_projection: "canonical_actionable_gap".to_string(),
-            warnings: Vec::new(),
-        };
-
-        let json = badge_basis_report_json(&report)?;
-
-        assert!(json.contains("unresolved actionable static repair gaps"));
-        assert!(json.contains("canonical_actionable_gap"));
-        assert!(json.contains("repair, verify, and receipt model"));
-        assert!(json.contains("supporting/internal"));
-        Ok(())
     }
 
     #[test]
