@@ -2458,9 +2458,7 @@ function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): string[]
     lines.push(`Receipt path: ${packet.receiptPath}`);
   }
   lines.push(`Warnings: ${packet.warningCount ?? 0}`);
-  if (packet.staticEvidenceBoundary) {
-    lines.push(`Boundary: ${packet.staticEvidenceBoundary}`);
-  }
+  lines.push(`Boundary: ${packet.staticEvidenceBoundary ?? 'Static editor evidence only.'}`);
   lines.push('First PR packet does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
   return lines;
 }
