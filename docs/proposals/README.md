@@ -91,4 +91,4 @@ Start new proposals from
 | [RIPR-PROP-0013](RIPR-PROP-0013-editor-actionable-gap-queue.md) | accepted | Editor actionable gap queue |
 | [RIPR-PROP-0014](RIPR-PROP-0014-ripr-swarm-repair-loop.md) | accepted | RIPR swarm repair loop |
 | [RIPR-PROP-0015](RIPR-PROP-0015-source-of-truth-control-plane.md) | accepted | Source-of-truth control plane |
-| [RIPR-PROP-0016](RIPR-PROP-0016-actionable-surface-translation.md) | proposed | Actionable surface translation |
+| [RIPR-PROP-0016](RIPR-PROP-0016-actionable-surface-translation.md) | accepted | Actionable surface translation |

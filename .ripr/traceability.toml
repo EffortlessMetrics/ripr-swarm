@@ -3872,9 +3872,34 @@ metrics = [
 id = "RIPR-SPEC-0059"
 name = "Actionable surface translation"
 spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
-tests = []
-fixtures = []
-code = []
+tests = [
+  "crates/ripr/src/output/badge/tests.rs::canonical_actionable_gap_badge_summary_counts_unique_repairable_gaps",
+  "xtask/src/main.rs::badge_basis_canonical_projection_names_static_repair_gaps",
+  "xtask/src/main.rs::badge_basis_report_json_names_public_projection_rule",
+  "xtask/src/main.rs::badge_basis_report_markdown_names_actionable_recommendation",
+  "xtask/src/main.rs::pr_actionable_front_panel_leads_with_typed_repair_delta",
+  "xtask/src/main.rs::pr_actionable_front_panel_fails_closed_without_artifacts",
+  "editors/vscode/test/suite/extension.test.ts::status model projects actionable gap queue state without producing packets",
+  "editors/vscode/test/suite/extension.test.ts::copyCurrentRepairPacket copies bounded queue packet for safe actionable state",
+  "editors/vscode/test/suite/extension.test.ts::copyRepoGapMap copies read-only orientation for safe queue states",
+  "xtask/src/main.rs::ripr_swarm_attempt_dry_run_renders_bounded_packet_context",
+  "xtask/src/main.rs::ripr_swarm_attempt_dry_run_does_not_turn_candidate_prose_into_allowed_file",
+  "xtask/src/main.rs::actionable_gap_outcomes_join_receipts_and_targeted_movement",
+  "xtask/src/main.rs::evidence_quality_trend_reports_no_history_explicitly",
+  "xtask/src/main.rs::evidence_quality_trend_reports_finding_alignment_presentation_text_deltas",
+]
+fixtures = [
+  "fixtures/editor_actionable_gap_queue",
+  "fixtures/swarm-plan-packet-corpus",
+  "fixtures/actionable-gap-outcomes-corpus",
+]
+code = [
+  "crates/ripr/src/output/badge",
+  "crates/ripr/src/output/pr_review_front_panel.rs",
+  "editors/vscode/src/client.ts",
+  "editors/vscode/src/extension.ts",
+  "xtask/src/main.rs",
+]
 outputs = [
   "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md",
   "docs/proposals/README.md",
@@ -3884,8 +3909,13 @@ outputs = [
   "plans/README.md",
   "docs/IMPLEMENTATION_PLAN.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
+  "docs/handoffs/2026-05-23-actionable-surface-translation-closeout.md",
+  "docs/handoffs/README.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "CHANGELOG.md",
   "policy/doc-artifacts.toml",
   ".ripr/goals/active.toml",
+  ".ripr/goals/archive/2026-05-23-actionable-surface-translation.toml",
   ".ripr/traceability.toml",
 ]
 metrics = [

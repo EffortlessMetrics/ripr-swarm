@@ -1,6 +1,6 @@
 # Actionable Surface Translation Implementation Plan
 
-Status: active
+Status: done
 
 Owner: cross-surface / repo-infra
 
@@ -78,15 +78,11 @@ Rollback:
 
 ## Current state
 
-`RIPR-SPEC-0059` already defines the cross-surface translation contract for
-badge, PR evidence, editor status, swarm dry-run, and outcome/trend surfaces.
-The missing piece is execution wiring: proposal rationale, implementation plan,
-active manifest, artifact ledger entries, and campaign map entries.
-
-This plan opens that execution rail without changing behavior. The first
-behavior-bearing slice should be the badge presentation pass because the public
-badge headline is the highest-risk place for users to misunderstand the
-actionable count.
+`RIPR-SPEC-0059` defines the cross-surface translation contract for badge, PR
+evidence, editor status, swarm dry-run, and outcome/trend surfaces. The
+campaign is now closed: badge, PR, editor, swarm, and outcome/trend surfaces
+all have focused proof, and the closeout records remaining advisory/static
+boundaries.
 
 ## Work items
 
@@ -560,7 +556,7 @@ git diff --check
 
 ### Work item: campaign/actionable-surface-translation-closeout
 
-Status: ready
+Status: done
 
 Linked proposal:
 
@@ -592,7 +588,7 @@ Issue:
 
 PR:
 
-- n/a
+- this PR
 
 #### Goal
 

@@ -9,6 +9,13 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Closed Actionable Surface Translation: badge-adjacent copy, PR evidence,
+  editor status, swarm dry-run packets, and outcome/trend reports now lead with
+  the same actionable canonical gap, repair route, verify/receipt, and
+  advisory-boundary framing. This is presentation/projection alignment only; it
+  does not change analyzer truth, badge endpoint semantics, gates, provider
+  behavior, generated tests, source edits, mutation execution, or release
+  publishing.
 - `cargo xtask evidence-quality-scorecard` now promotes the audit-derived
   evidence-class work queue into `recommended_repairs` before generic roadmap
   risks. The scorecard's top repair rows now point at the live dominant class
