@@ -1784,6 +1784,21 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
     ));
     match state.as_str() {
         "top_gap" => {
+            if let Some(kind) = string_path(selected, &["kind"]) {
+                out.push_str(&format!("Top actionable gap: {}\n", sentence_case(&kind)));
+            }
+            if let Some(changed) = string_path(selected, &["changed_behavior"]) {
+                out.push_str(&format!("Changed behavior: `{}`\n", changed.trim()));
+            }
+            if let Some(strength) = string_path(selected, &["current_evidence_strength"]) {
+                out.push_str(&format!("Current evidence strength: {strength}\n"));
+            }
+            if let Some(discriminator) = string_path(selected, &["missing_discriminator"]) {
+                out.push_str(&format!("Missing discriminator: {discriminator}\n"));
+            }
+            if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
+                out.push_str(&format!("Focused proof intent: {intent}\n"));
+            }
             if let Some(command) = string_path(selected, &["verify_command"]) {
                 out.push_str(&format!("Verify command: `{command}`\n"));
             }
@@ -1797,19 +1812,31 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
             ));
         }
         "missing_artifact" => {
+            let artifact = selected.get("artifact").unwrap_or(&Value::Null);
+            if let Some(label) = string_path(artifact, &["label"]) {
+                let path =
+                    string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
+                out.push_str(&format!("Missing artifact: {label} at `{path}`\n"));
+            }
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 out.push_str(&format!("Regeneration command: `{command}`\n"));
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
         "empty_diff" | "no_action" => {
+            if let Some(reason) = string_path(selected, &["reason"]) {
+                out.push_str(&format!("Reason: {reason}\n"));
+            }
             out.push_str("Verify command: `not_applicable`\n");
             out.push_str("Receipt command: `not_applicable`\n");
             out.push_str("Receipt path: `not_applicable`\n");
         }
         _ => {
+            if let Some(message) = string_path(selected, &["message"]) {
+                out.push_str(&format!("Recovery reason: {message}\n"));
+            }
             if let Some(command) = string_path(selected, &["next_command"]) {
-                out.push_str(&format!("Regeneration command: `{command}`\n"));
+                out.push_str(&format!("Next command: `{command}`\n"));
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
@@ -2362,6 +2389,22 @@ mod tests {
                 |command| command.contains("--gap-id gap:pr:pricing:threshold-boundary")
             )
         );
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains("Top actionable gap: missing boundary assertion"));
+        assert!(summary.contains("Changed behavior: `amount >= threshold`"));
+        assert!(summary.contains(
+            "Current evidence strength: Static evidence found related Rust test context"
+        ));
+        assert!(summary.contains(
+            "Missing discriminator: Equality-boundary assertion for the changed behavior."
+        ));
+        assert!(summary.contains(
+            "Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`"
+        ));
         cleanup(&repo)
     }
 
@@ -2379,6 +2422,15 @@ mod tests {
                 .as_str()
                 .is_some_and(|command| command.contains("ripr reports gap-ledger"))
         );
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains(
+            "Missing artifact: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
+        ));
+        assert!(summary.contains("Regeneration command: `ripr reports gap-ledger"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
@@ -2709,6 +2761,16 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "empty_diff");
         assert_eq!(packet["selected"]["output_state"], "clean");
         assert_eq!(packet["selected"]["records_total"], 0);
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary
+                .contains("Reason: The PR diff is empty, so no repairable Rust gap was selected.")
+        );
+        assert!(summary.contains("Verify command: `not_applicable`"));
         assert!(markdown.contains("## Start Here"));
         assert!(markdown.contains("- State: `empty_diff`"));
         assert!(markdown.contains("- Safe next action: stop on no-action"));
@@ -2843,6 +2905,7 @@ mod tests {
                     "gap_state": "actionable",
                     "policy_state": "new",
                     "repairability": "repairable",
+                    "changed_behavior": "amount >= threshold",
                     "anchor": {
                         "file": "src/pricing.rs",
                         "line": 42,
