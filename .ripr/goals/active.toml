@@ -78,7 +78,7 @@ commands = [
 
 [[work_item]]
 id = "goals/active-goal-freshness-check"
-status = "ready"
+status = "done"
 branch = "goals-active-goal-freshness-check"
 stackable = false
 acceptance = "Goal validation fails stale closed active campaigns unless a successor or no-current-goal marker is present, catches missing work-item proof commands, and keeps agents from following closed execution state."
@@ -91,12 +91,9 @@ commands = [
 
 [[work_item]]
 id = "cli/first-pr-front-door-polish"
-status = "blocked"
+status = "ready"
 branch = "cli-first-pr-front-door-polish"
 stackable = false
-blocked_by = [
-  "goals/active-goal-freshness-check",
-]
 acceptance = "A new user can run one first-pr command and understand the top repairable gap or recovery state without opening secondary reports."
 commands = [
   "cargo test -p ripr --lib first_pr",
