@@ -2000,6 +2000,9 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(changed) = selected.get("changed_behavior").and_then(Value::as_str) {
         out.push_str(&format!("- Changed behavior: `{}`\n", changed.trim()));
     }
+    if let Some(why) = selected.get("why").and_then(Value::as_str) {
+        out.push_str(&format!("- Why it matters: {why}\n"));
+    }
     if let Some(strength) = selected
         .get("current_evidence_strength")
         .and_then(Value::as_str)
@@ -2258,7 +2261,10 @@ fn validate_selected_state(status: &str, selected: &Value, violations: &mut Vec<
         None => violations.push("selected.output_state is missing or not a string".to_string()),
     }
     let expected_status = match state {
-        "top_gap" => "actionable",
+        "top_gap" => {
+            validate_top_gap_first_screen_fields(selected, violations);
+            "actionable"
+        }
         "missing_artifact" | "malformed_artifact" | "stale_artifact" | "wrong_root"
         | "blocked_artifact" | "timeout" => "blocked",
         "empty_diff" | "no_action" => "no_action",
@@ -2271,6 +2277,34 @@ fn validate_selected_state(status: &str, selected: &Value, violations: &mut Vec<
         violations.push(format!(
             "selected.state {state:?} requires status {expected_status:?}, found {status:?}"
         ));
+    }
+}
+
+fn validate_top_gap_first_screen_fields(selected: &Value, violations: &mut Vec<String>) {
+    for key in [
+        "kind",
+        "changed_behavior",
+        "why",
+        "current_evidence_strength",
+        "missing_discriminator",
+        "focused_proof_intent",
+        "verify_command",
+    ] {
+        if selected.get(key).and_then(Value::as_str).is_none() {
+            violations.push(format!("top_gap selected.{key} is missing or not a string"));
+        }
+    }
+    if selected
+        .get("receipt_command")
+        .and_then(Value::as_str)
+        .is_none()
+        && selected
+            .get("receipt_path")
+            .and_then(Value::as_str)
+            .is_none()
+    {
+        violations
+            .push("top_gap selected must include receipt_command or receipt_path".to_string());
     }
 }
 
@@ -2375,6 +2409,27 @@ mod tests {
     }
 
     #[test]
+    fn top_gap_contract_requires_first_screen_fields() {
+        let selected = json!({
+            "state": "top_gap",
+            "output_state": "actionable_gap",
+            "kind": "MissingBoundaryAssertion",
+            "changed_behavior": "amount >= threshold",
+            "current_evidence_strength": "Static evidence found related Rust test context.",
+            "missing_discriminator": "Equality-boundary assertion.",
+            "focused_proof_intent": "Add one focused boundary assertion.",
+            "verify_command": "cargo xtask fixtures boundary_gap",
+            "receipt_path": "target/ripr/receipts/gap.json"
+        });
+        let mut violations = Vec::new();
+        validate_selected_state("actionable", &selected, &mut violations);
+        assert_eq!(
+            violations,
+            vec!["top_gap selected.why is missing or not a string"]
+        );
+    }
+
+    #[test]
     fn selects_repairable_rust_gap_from_ledger() -> Result<(), String> {
         let repo = temp_repo("first-pr-select")?;
         let ledger = repo.join(DEFAULT_GAP_LEDGER);
@@ -2421,6 +2476,7 @@ mod tests {
         );
         assert!(summary.contains("Top actionable gap: missing boundary assertion"));
         assert!(summary.contains("Changed behavior: `amount >= threshold`"));
+        assert!(summary.contains("Why it matters: A related Rust test reaches this change"));
         assert!(summary.contains(
             "Current evidence strength: Static evidence found related Rust test context"
         ));

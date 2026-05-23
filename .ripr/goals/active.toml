@@ -105,7 +105,7 @@ commands = [
 
 [[work_item]]
 id = "output/one-screen-recommendation-contract"
-status = "ready"
+status = "done"
 branch = "output-one-screen-recommendation-contract"
 stackable = false
 acceptance = "Golden-backed first-pr output always includes top actionable gap, why it matters, current evidence strength, missing discriminator, focused test intent, exact verify command, receipt command or path, and static-evidence boundary."
@@ -119,12 +119,9 @@ commands = [
 
 [[work_item]]
 id = "receipt/reviewer-native-outcome"
-status = "blocked"
+status = "ready"
 branch = "receipt-reviewer-native-outcome"
 stackable = false
-blocked_by = [
-  "output/one-screen-recommendation-contract",
-]
 acceptance = "Outcome receipts explain what changed, what ripr flagged before, what proof was added outside ripr, what moved after verification, what remains weak or unknown, and what reviewers may or must not believe."
 commands = [
   "cargo test -p ripr --lib outcome",
