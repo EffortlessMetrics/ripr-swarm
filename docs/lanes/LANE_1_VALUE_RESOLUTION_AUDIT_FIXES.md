@@ -86,8 +86,8 @@ Lane 1 does not own:
 | `docs/lane1-value-resolution-audit-fixes-stack` | done | Open the issue-backed rail, active manifest, plan, lane tracker, and index links. |
 | `fixtures/value-resolution-audit-corpus` | done | Pin one audit-derived supported value-resolution sub-shape and must-not-claim guards before analyzer behavior. |
 | `analysis/value-resolution-supported-subshape` | done | Confirm the fixture-backed supported sub-shape is already handled by the existing value-resolution path while unsupported flows remain named limitations. |
-| `report/value-resolution-audit-delta` | ready | Record before/after audit, scorecard, and trend movement, including any zero-movement result from the already-supported sub-shape. |
-| `dogfood/value-resolution-receipts` | blocked | Record material dogfood receipts with canonical gap identity and non-claims. |
+| `report/value-resolution-audit-delta` | done | Record the sampled zero-movement audit delta and remaining `activation_value_unresolved` queue in the [Value Resolution Audit Delta](../handoffs/2026-05-22-value-resolution-audit-delta.md). |
+| `dogfood/value-resolution-receipts` | ready | Record material dogfood receipts with canonical gap identity and non-claims. |
 | `campaign/value-resolution-audit-closeout` | blocked | Close the rail with proof, remaining limits, and next-step selection. |
 
 ## Operating Rules

@@ -232,7 +232,7 @@ the audit reveals a second safe sub-shape.
 
 ## Work Item: `report/value-resolution-audit-delta`
 
-Status: ready
+Status: done
 Blocks:
 - `dogfood/value-resolution-receipts`
 Blocked by:
@@ -250,8 +250,10 @@ numbers in a handoff.
 
 ### Evidence Delta
 
-The before/after audit, scorecard, and trend should make the moved limitation
-count and remaining unsupported shapes visible.
+The audit, scorecard, and trend make the zero-movement sampled result and
+remaining unsupported shapes visible. The selected supported sub-shape was
+already implemented, so this report records current evidence rather than
+claiming analyzer movement.
 
 ### Non-Goals
 
@@ -287,9 +289,13 @@ This slice should not be used to hide a small or zero movement result. If the
 movement is zero, record why and decide whether to stop or choose a different
 sub-shape.
 
+This slice recorded the zero-movement result in
+`docs/handoffs/2026-05-22-value-resolution-audit-delta.md` and keeps the rail
+moving to dogfood receipts rather than pretending the sampled scorecard moved.
+
 ## Work Item: `dogfood/value-resolution-receipts`
 
-Status: blocked
+Status: ready
 Blocks:
 - `campaign/value-resolution-audit-closeout`
 Blocked by:
