@@ -4103,3 +4103,83 @@ Blocking conditions:
   claims
 - unsaved-buffer overlays, CodeLens, inlay hints, semantic tokens, or inline
   patch application in this campaign
+
+## Cross-Surface Campaign: Actionable Surface Translation
+
+Campaign ID: `actionable-surface-translation`
+
+Status: active.
+
+The repo now has actionable canonical gap packets, editor queue projection,
+swarm dry-run attempts, outcome joins, and start-here surfaces. The next
+cross-surface slice is translation: make every first-screen surface answer the
+same repair-first question without changing analyzer truth or claim authority.
+
+Objective:
+
+```text
+Make badge, PR, editor, swarm dry-run, and outcome/trend surfaces translate
+existing actionable canonical gap evidence into the same repair-first user
+questions.
+```
+
+End state:
+
+- badge-adjacent copy explains unresolved actionable static repair gaps at point
+  of use;
+- PR evidence leads with actionable delta and one top next repair packet before
+  raw finding totals;
+- editor Show Status leads with one safe repair action or one precise
+  fail-closed reason;
+- swarm dry-run output includes a compact copy-ready operator or external-agent
+  packet;
+- outcome and trend reports lead with receipt-linked movement since the
+  previous refresh;
+- advisory/static boundaries remain visible and no covered surface claims
+  runtime adequacy, coverage adequacy, mutation proof, policy eligibility, gate
+  pass/fail, merge readiness, source-edit automation, generated tests, or
+  provider execution.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `docs/actionable-surface-translation-stack` | done | Added RIPR-PROP-0016, linked RIPR-SPEC-0059 to RIPR-PLAN-0059, registered the artifacts, updated indexes, and selected this active manifest without behavior changes. |
+| `badge/actionable-basis-presentation` | ready | Make badge-adjacent copy and badge-basis output explain the headline count as unresolved actionable static repair gaps using `canonical_actionable_gap` as the public basis. |
+| `pr/actionable-delta-front-panel` | blocked | Make PR evidence lead with repo/PR actionable delta and one top next repair packet before raw finding or seam-inventory totals. |
+| `editor/repair-first-status-hierarchy` | blocked | Make editor Show Status lead with one safe repair action or one precise fail-closed reason. |
+| `swarm/dry-run-copy-ready-packet` | blocked | Make dry-run attempt output compact and directly copy-ready for human or external-agent operators. |
+| `outcome/movement-front-section` | blocked | Make outcome/trend front sections lead with receipt-linked movement since prior refresh. |
+| `campaign/actionable-surface-translation-closeout` | blocked | Close only after all covered surfaces prove the translation contract and remaining limits are recorded. |
+
+Commands:
+
+```bash
+cargo xtask check-doc-artifacts
+cargo xtask check-goals
+cargo xtask goals next
+cargo xtask check-doc-index
+cargo xtask markdown-links
+cargo xtask check-static-language
+cargo xtask check-doc-roles
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-support-tiers
+cargo xtask check-pr
+git diff --check
+```
+
+Blocking conditions:
+
+- analyzer truth changes
+- actionable-gap producer or schema changes
+- support-tier promotion in the activation PR
+- public badge semantic change in the activation PR
+- default CI blocking or gate behavior changes
+- PR comment publishing changes
+- source edits or generated tests
+- provider/model calls
+- mutation execution
+- release, publish, signing, or marketplace work
+- runtime adequacy, coverage adequacy, proof-of-correctness, policy
+  eligibility, gate pass/fail, or merge-readiness claims
