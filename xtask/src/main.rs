@@ -41060,6 +41060,15 @@ fn validate_campaign_manifest(
     {
         violations.push("campaign is missing non-empty `title`".to_string());
     }
+    if campaign_status == Some("active") {
+        let archived_ids = archived_closed_campaign_ids(Path::new("."), violations)?;
+        if let Some(paths) = archived_ids.get(id) {
+            violations.push(format!(
+                "active campaign id `{id}` reopens archived closed campaign manifest {}; select a new campaign id or record an explicit successor/supersession",
+                paths.join(", ")
+            ));
+        }
+    }
     if manifest.end_state.is_empty() {
         violations.push("campaign has no end_state entries".to_string());
     }
@@ -41223,6 +41232,42 @@ fn validate_campaign_manifest(
     }
 
     Ok(())
+}
+
+fn archived_closed_campaign_ids(
+    root: &Path,
+    violations: &mut Vec<String>,
+) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let archive_dir = root.join(".ripr/goals/archive");
+    let mut ids = BTreeMap::<String, Vec<String>>::new();
+    if !archive_dir.exists() {
+        return Ok(ids);
+    }
+
+    for entry in fs::read_dir(&archive_dir)
+        .map_err(|err| format!("read {}: {err}", normalize_path(&archive_dir)))?
+    {
+        let entry =
+            entry.map_err(|err| format!("read {} entry: {err}", normalize_path(&archive_dir)))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+
+        let (manifest, parse_violations) = parse_campaign_manifest(&path)?;
+        violations.extend(parse_violations);
+        if manifest.status.as_deref() != Some("closed") {
+            continue;
+        }
+        let Some(id) = manifest.id.as_deref() else {
+            continue;
+        };
+        ids.entry(id.to_string())
+            .or_default()
+            .push(normalize_repo_relative(root, &path));
+    }
+
+    Ok(ids)
 }
 
 fn campaign_source_truth_violations() -> Result<Vec<String>, String> {
@@ -62743,6 +62788,70 @@ commands = ["cargo xtask check-pr"]
             assert!(validation.is_ok(), "{validation:?}");
 
             assert!(violations.is_empty(), "{violations:?}");
+        });
+    }
+
+    #[test]
+    fn campaign_manifest_rejects_reopening_archived_closed_campaign_id() {
+        with_temp_cwd("campaign-reopens-archive", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "first-useful-pr-loop\n\n| `goals/test` | ready |\n",
+            );
+            write(
+                &root.join(".ripr/goals/archive/2026-05-22-first-useful-pr-loop.toml"),
+                r#"
+id = "first-useful-pr-loop"
+title = "First Useful PR Loop"
+status = "closed"
+no_current_goal = true
+end_state = ["Closed proof exists."]
+
+[[work_item]]
+id = "goals/test"
+status = "done"
+branch = "goals-test"
+stackable = false
+acceptance = "Closed proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "first-useful-pr-loop"
+title = "First Useful PR Loop"
+status = "active"
+end_state = ["A new active campaign exists."]
+
+[[work_item]]
+id = "goals/test"
+status = "ready"
+branch = "goals-test"
+stackable = false
+acceptance = "Select the campaign."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("active campaign id `first-useful-pr-loop` reopens archived closed campaign manifest")
+                }),
+                "{violations:?}"
+            );
         });
     }
 
