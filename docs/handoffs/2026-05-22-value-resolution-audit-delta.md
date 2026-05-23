@@ -14,10 +14,11 @@ delta. The selected shape was already supported by the current analyzer, so the
 report result is intentionally zero movement rather than a hidden improvement
 claim.
 
-This handoff preserves the durable audit-delta state for dogfood receipt and
-closeout work. It does not change analyzer behavior, output schemas, PR/CI
-rendering, editor behavior, gates, badges, release behavior, generated tests,
-source edits, provider calls, or mutation execution.
+This handoff preserves the durable audit-delta state for closeout work and the
+boundary later carried by the dogfood receipt. It does not change analyzer
+behavior, output schemas, PR/CI rendering, editor behavior, gates, badges,
+release behavior, generated tests, source edits, provider calls, or mutation
+execution.
 
 ## Selected Sub-Shape
 
@@ -104,8 +105,8 @@ regression.
   the current analyzer.
 - Unsupported value flows remain named static limitations rather than user test
   debt.
-- The follow-up dogfood receipt should preserve the same zero-movement boundary
-  and non-claims before closeout.
+- The checked dogfood receipt preserves the same zero-movement boundary and
+  non-claims before closeout.
 
 ## What This Does Not Prove
 
@@ -138,7 +139,7 @@ git diff --check
 
 ## Next Work
 
-`campaign/value-resolution-audit-closeout` is the next ready work item after
-the checked dogfood receipt lands. It should close the rail with the selected
-sub-shape, validation commands, zero movement, dogfood receipt, remaining
-limitations, downstream non-impact, and the next Lane 1 selection rule.
+`campaign/value-resolution-audit-closeout` is the next ready work item. It
+should close the rail with the selected sub-shape, validation commands, zero
+movement, dogfood receipt, remaining limitations, downstream non-impact, and the
+next Lane 1 selection rule.
