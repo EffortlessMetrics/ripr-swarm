@@ -2513,17 +2513,6 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
     "agent_receipt": "target/ripr/reports/agent-receipt.json",
     "targeted_test_outcome": "target/ripr/reports/targeted-test-outcome.json"
   },
-  "movement_front": {
-    "actionable_total": 25,
-    "actionable_delta_since_prior_refresh": -1,
-    "delta_basis": "negative resolved count from joined receipt or targeted-test outcome artifacts",
-    "resolved": 1,
-    "improved": 1,
-    "unchanged_after_attempt": 1,
-    "orphaned_receipts": 1,
-    "missing_receipts": 24,
-    "top_blocked_reason": "receipt_missing_or_mismatch"
-  },
   "summary": {
     "packets_total": 25,
     "outcomes_total": 25,
@@ -2538,6 +2527,16 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
     "receipts_present": 1,
     "receipts_missing_after_input": 24,
     "orphaned_receipts": 1
+  },
+  "movement_front": {
+    "current_actionable_count": 25,
+    "receipt_linked_actionable_delta": -1,
+    "resolved": 1,
+    "improved": 1,
+    "unchanged_after_attempt": 1,
+    "missing_receipts": 24,
+    "orphaned_receipts": 1,
+    "top_blocked_reason": "missing_receipts"
   },
   "outcomes": [
     {
@@ -2585,14 +2584,16 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
 `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
 and `unknown`. Raw findings do not determine outcome state; the join is based
 on canonical packet identity, seam identity, or the packet primary anchor.
-`movement_front` is the first-screen operator summary. It reports current
-actionable total, known delta from joined movement artifacts, resolved,
-improved, unchanged-after-attempt, orphaned/missing receipt counts, and the top
-blocked reason. The delta is not a historical baseline reconstruction.
 `receipt_state` uses the canonical receipt lifecycle vocabulary:
 `receipt_missing`, `receipt_found`, `receipt_stale`,
 `receipt_gap_mismatch`, `receipt_movement_improved`,
 `receipt_movement_unchanged`, or `receipt_not_applicable`.
+`movement_front` is the first-screen outcome summary. It reports the current
+actionable packet count, receipt-linked actionable delta, resolved/improved
+movement, unchanged attempts, missing/orphaned receipts, and the top follow-up
+blocker. The delta is receipt-linked static movement only: it is not mutation
+confirmation, runtime adequacy, policy eligibility, gate passage, or merge
+readiness.
 `orphaned_receipts[]` preserves receipt artifacts that do not match any current
 packet so attempt history remains visible without creating new actionable gaps.
 
@@ -3087,6 +3088,18 @@ values, but movement and badge-readiness deltas remain unknown.
     "unknown_metrics": 27,
     "no_history": true
   },
+  "movement_front": {
+    "current_actionable_count": 926,
+    "actionable_delta_since_prior_refresh": null,
+    "resolved": null,
+    "improved": null,
+    "unchanged_after_attempt": null,
+    "missing_receipts": null,
+    "orphaned_receipts": null,
+    "top_blocked_reason": "trend_history_unavailable",
+    "receipt_linked_movement_source": "unavailable_in_evidence_quality_trend",
+    "next_receipt_linked_command": "cargo xtask actionable-gap-outcomes"
+  },
   "metric_trends": [
     {
       "metric": "finding_alignment_actionable_unresolved_canonical_gaps",
@@ -3137,6 +3150,15 @@ Field contract:
   explicit previous paths are bounded unavailable-input states.
 - `summary.status` - `improvement`, `regression`, `mixed`, `unchanged`, or
   `unknown`.
+- `movement_front` - the first-screen movement panel. In
+  `evidence-quality-trend`, `current_actionable_count` and
+  `actionable_delta_since_prior_refresh` come from the scorecard trend for
+  `finding_alignment_actionable_unresolved_canonical_gaps`. Receipt-linked
+  `resolved`, `improved`, `unchanged_after_attempt`, `missing_receipts`, and
+  `orphaned_receipts` are `null` because this report does not read receipt
+  artifacts; operators should run `cargo xtask actionable-gap-outcomes` for
+  receipt-linked movement. This field does not imply runtime adequacy, mutation
+  proof, policy eligibility, gate passage, or merge readiness.
 - `metric_trends[]` - comparable Lane 1 evidence-quality metrics with
   nullable `before`, `after`, and `delta` values plus a direction. Lower counts
   are better for debt and uncertainty metrics; higher counts are better for
@@ -3168,9 +3190,9 @@ Field contract:
   regression from its counts. Missing or malformed explicit previous artifacts
   are reported as `evidence_quality_trend_previous_artifact_unavailable`.
 
-The Markdown sibling prints bounded sections for summary, metric trends,
-static limitation category trends, runtime confidence static-only class trends,
-and unknowns.
+The Markdown sibling starts with a movement front section, then prints bounded
+sections for summary, metric trends, static limitation category trends, runtime
+confidence static-only class trends, and unknowns.
 
 ## Repo Exposure Latency Report
 
