@@ -20517,15 +20517,33 @@ fn ripr_swarm_attempt_dry_run_markdown(attempt: &RiprSwarmAttemptDryRun) -> Stri
 }
 
 fn ripr_swarm_attempt_allowed_file_line(attempt: &RiprSwarmAttemptDryRun) -> String {
+    if attempt.swarm_state != "queued" {
+        return format!(
+            "No file edits are authorized while swarm_state is `{}`",
+            attempt.swarm_state
+        );
+    }
     if attempt.related_test_or_observer != "unknown" {
-        format!(
-            "{} (bounded repair target)",
-            attempt.related_test_or_observer
-        )
+        let target = ripr_swarm_attempt_related_target_file(&attempt.related_test_or_observer)
+            .unwrap_or_else(|| attempt.related_test_or_observer.clone());
+        format!("{} (bounded repair target)", target)
     } else {
         "No typed edit target is available; do not edit files until the packet is regenerated"
             .to_string()
     }
+}
+
+fn ripr_swarm_attempt_related_target_file(related: &str) -> Option<String> {
+    related
+        .split_once("::")
+        .map(|(file, _)| file)
+        .filter(|file| !file.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let looks_like_path =
+                (related.contains('/') || related.contains('\\')) && related.contains('.');
+            looks_like_path.then(|| related.to_string())
+        })
 }
 
 fn ripr_swarm_plan_blocked_report(
@@ -69663,7 +69681,7 @@ covered_by = ["cargo xtask check-file-policy"]
             "## Copy-Ready Operator Packet",
             "Task:",
             "Allowed files:",
-            "tests/pricing.rs::pricing_threshold (bounded repair target)",
+            "tests/pricing.rs (bounded repair target)",
             "Do-not-change boundaries:",
             "Repair target:",
             "Stop conditions:",
