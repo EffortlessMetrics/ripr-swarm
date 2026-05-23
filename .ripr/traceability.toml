@@ -3876,8 +3876,16 @@ tests = []
 fixtures = []
 code = []
 outputs = [
+  "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md",
+  "docs/proposals/README.md",
   "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md",
   "docs/specs/README.md",
+  "plans/actionable-surface-translation/implementation-plan.md",
+  "plans/README.md",
+  "docs/IMPLEMENTATION_PLAN.md",
+  "docs/IMPLEMENTATION_CAMPAIGNS.md",
+  "policy/doc-artifacts.toml",
+  ".ripr/goals/active.toml",
   ".ripr/traceability.toml",
 ]
 metrics = [
