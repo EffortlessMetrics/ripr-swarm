@@ -4190,15 +4190,17 @@ Closeout:
   records the source-of-truth acceptance, surface proof audit, policy boundary,
   and next-campaign selection rule.
 
-## Campaign 28: First Useful PR Loop
+## Cross-Surface Campaign: First Useful PR Loop Continuation
 
-Campaign ID: `first-useful-pr-loop`
+Campaign ID: `first-useful-pr-loop-continuation`
 
 Status: active.
 
 Actionable Surface Translation made the covered first screens speak the same
-repair-first language. This campaign uses that alignment to make one real Rust
-PR easy to run from changed behavior to focused proof and receipt.
+repair-first language. Campaign 28 is already closed and archived, so this
+successor campaign continues the same product loop without reactivating the
+closed manifest id. It uses the new alignment to make one real Rust PR easy to
+run from changed behavior to focused proof and receipt.
 
 Objective:
 
@@ -4229,7 +4231,7 @@ Work items:
 
 | Work item | Status | Notes |
 | --- | --- | --- |
-| `goals/first-useful-pr-loop-activation` | ready | Select Campaign 28 as the active repo-owned goal, keep the campaign bounded to first useful PR usability, and record the next PR queue without changing product behavior. |
+| `goals/first-useful-pr-loop-activation` | ready | Select the First Useful PR Loop continuation as the active repo-owned goal, keep the campaign bounded to first useful PR usability, and record the next PR queue without changing product behavior. |
 | `docs/context-system-proof-stack-reconciliation` | blocked | Map proof-stack terminology into ripr's existing repo tracking and agent-context model without adding a runner-local goals namespace or a parallel docs/source-of-truth namespace. |
 | `goals/active-goal-freshness-check` | blocked | Harden goal validation so agents cannot follow stale closed campaigns without an explicit successor or no-current-goal marker. |
 | `cli/first-pr-front-door-polish` | blocked | Make `ripr first-pr` explain one top repairable gap or recovery state without forcing users to open secondary reports. |

@@ -1,12 +1,13 @@
-id = "first-useful-pr-loop"
-title = "First Useful PR Loop"
+id = "first-useful-pr-loop-continuation"
+title = "First Useful PR Loop Continuation"
 status = "active"
 lane = "cross-surface"
 
-# This campaign is selected after Actionable Surface Translation closed with
-# `no_current_goal = true`. It makes the existing repair-loop machinery easier
-# to use on one real Rust PR before adding broader control-plane or automation
-# surfaces.
+# This successor campaign is selected after Actionable Surface Translation
+# closed with `no_current_goal = true`. It continues the archived First Useful
+# PR Loop without reactivating the closed campaign id, and makes the existing
+# repair-loop machinery easier to use on one real Rust PR before adding broader
+# control-plane or automation surfaces.
 
 objective = """
 Make a new user, reviewer, or coding-agent operator get from one changed Rust
@@ -50,7 +51,7 @@ id = "goals/first-useful-pr-loop-activation"
 status = "ready"
 branch = "campaign-first-useful-pr-loop"
 stackable = false
-acceptance = "Select Campaign 28 as the active repo-owned goal, keep the campaign bounded to first useful PR usability, and record the next PR queue without changing product behavior."
+acceptance = "Select the First Useful PR Loop continuation as the active repo-owned goal, keep the campaign bounded to first useful PR usability, and record the next PR queue without changing product behavior."
 commands = [
   "cargo xtask check-goals",
   "cargo xtask goals next",
