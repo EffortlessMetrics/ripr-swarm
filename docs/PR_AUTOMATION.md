@@ -728,7 +728,8 @@ cargo xtask first-pr
 
 `cockpit` gives maintainers the repo-level action queue, `pr-ready` checks local
 PR readiness before opening or updating a branch, and `first-pr` writes the
-start-here packet for one repairable analyzer gap. These commands are advisory;
+start-here packet for one safe repair action when validated evidence supports
+one. These commands are advisory;
 they do not close PRs, alter manifests, promote claims, or prove the
 self-hosted routed-runner closeout.
 
