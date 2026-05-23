@@ -73,6 +73,7 @@ commands = [
 [[work_item]]
 id = "fixtures/gap-decision-ledger-corpus"
 status = "done"
+fixture = "fixtures/gap-decision-ledger/corpus.json"
 acceptance = "Corpus pins gap kinds, scopes, policy states, repairability, projection surfaces, static-unknown report-only behavior, output-golden repair, preview ineligibility, missing artifact regeneration, and receipt movement."
 commands = [
   "cargo test -p xtask gap_decision_ledger",
