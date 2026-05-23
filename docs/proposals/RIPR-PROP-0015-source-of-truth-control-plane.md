@@ -21,20 +21,15 @@ Linked ADRs:
 
 Linked work items:
 
-- #112 `docs: define source-of-truth stack`
-- #116 `docs: add proof-stack templates`
-- Follow-up: `docs(spec): add source-of-truth stack contract`
-- Follow-up: `policy(docs): add document artifact ledger`
-- Follow-up: `xtask: validate document artifact ledger`
-- Follow-up: `docs: add support tier claim map`
-- Follow-up: `xtask: validate support tier claims`
-- Follow-up: `ripr: add active goal manifest contract`
-- Follow-up: `xtask: validate active goal manifest`
-- Follow-up: `github: add source-of-truth PR and issue templates`
-- Follow-up: `ci: add advisory source-of-truth checks`
-- Follow-up: `xtask: add source-of-truth graph report`
-- Follow-up: `xtask: generate PR body from plan item`
-- Follow-up: `xtask: add closeout generator`
+- Current plan:
+  [Source-of-truth control plane implementation plan](../../plans/source-of-truth/implementation-plan.md)
+- Current-state reconciliation slice: `docs/source-of-truth-current-state`.
+- Remaining slice: `docs/source-of-truth-closeout`.
+- Completed stack surfaces include doctrine docs, templates, stack spec,
+  document artifact ledger, document artifact validator, support-tier claim map,
+  support-tier validator, active-goal validation, source-of-truth PR and issue
+  templates, advisory Source of Truth CI, graph report, PR-body generator, and
+  closeout generator.
 
 Support-tier impact:
 

@@ -43,6 +43,8 @@ can answer these questions from the repository instead of from chat history:
   explains why this repo is adopting the control-plane lane.
 - [Source-of-truth stack spec](../specs/RIPR-SPEC-0060-source-of-truth-stack.md)
   defines the behavior contract for the linked artifact graph.
+- [Source-of-truth implementation plan](../../plans/source-of-truth/implementation-plan.md)
+  records the current and remaining PR-sized reconciliation slices.
 - [Artifact taxonomy](artifact-taxonomy.md) defines each layer's ownership.
 - [Linking model](linking-model.md) defines how artifacts form one graph.
 - [Agent operating model](agent-operating-model.md) defines how Codex and other
@@ -76,7 +78,10 @@ the actual diff and validation evidence.
 
 ## Enforcement state
 
-This docs slice defines doctrine only. It does not add validators or CI gates.
+The original doctrine slice defined the model before enforcing it. The current
+repo now has advisory validators and a source-of-truth workflow for the
+registered graph, active goals, and support-tier claim map. Those checks are
+still narrower than product correctness and are not branch-protection gates.
 
 Existing repo checks cover the model at different layers:
 
@@ -99,6 +104,9 @@ above.
 
 ## Claim boundary
 
-These files make the source-of-truth stack easier to find and apply. They do not
-prove artifact links, validate support-tier claims, enforce policy ledgers, or
-change CI behavior.
+These files explain the source-of-truth stack and point to the proof commands
+that operate it. Enforcement comes from the named `cargo xtask` commands and
+the advisory workflow, not from this prose. The current checks prove registered
+artifact links, active-goal shape, and support-tier proof-command references;
+they do not prove product behavior, infer support-tier or policy impact, promote
+CI to blocking, or replace policy-specific ledger checks.

@@ -16,7 +16,7 @@ Linked ADRs:
 
 Linked plan:
 
-- Planned: `plans/source-of-truth/implementation-plan.md`
+- [Source-of-truth control plane implementation plan](../../plans/source-of-truth/implementation-plan.md)
 
 Support-tier impact:
 
@@ -174,7 +174,7 @@ ledger has changed.
 
 ## Test Mapping
 
-Planned focused tests for `cargo xtask check-doc-artifacts`:
+Focused tests for `cargo xtask check-doc-artifacts` include:
 
 - `rejects_duplicate_artifact_id`;
 - `rejects_missing_artifact_file`;
@@ -184,7 +184,7 @@ Planned focused tests for `cargo xtask check-doc-artifacts`:
 - `rejects_kind_path_mismatch`;
 - `accepts_standalone_spec_reason`.
 
-Planned focused tests for `cargo xtask check-goals` source-of-truth coverage:
+Focused tests for `cargo xtask check-goals` source-of-truth coverage include:
 
 - `rejects_unknown_goal_status`;
 - `rejects_unknown_work_item_status`;
@@ -193,7 +193,7 @@ Planned focused tests for `cargo xtask check-goals` source-of-truth coverage:
 - `rejects_unknown_referenced_artifact`;
 - `rejects_unsupported_policy_field`.
 
-Planned focused tests for `cargo xtask check-support-tiers`:
+Focused tests for `cargo xtask check-support-tiers` include:
 
 - `rejects_stable_claim_without_proof`;
 - `rejects_empty_proof_command`;
@@ -213,7 +213,8 @@ cargo xtask check-static-language
 
 ## Implementation Mapping
 
-This spec coordinates these planned source-of-truth slices:
+This spec coordinates these current source-of-truth slices and remaining
+closeout work:
 
 - document artifact ledger in `policy/doc-artifacts.toml`;
 - `cargo xtask check-doc-artifacts`;

@@ -85,17 +85,22 @@ Done work must name proof, not vibes. A plan item or closeout should include:
 Support-tier rows map product claims to proof commands. Specs may reference the
 support-tier row, but the support-tier row owns the claim/proof mapping.
 
-## Planned validator responsibilities
+## Validator responsibilities
 
-A future `check-doc-artifacts` style validator should be able to verify:
+The current validators split graph, goal, support-tier, and policy proof instead
+of making one document or one check own every layer.
+
+`cargo xtask check-doc-artifacts` verifies registered document graph facts:
 
 - artifact IDs are unique;
 - linked IDs resolve;
 - declared paths exist;
 - accepted specs link to a proposal or record a standalone reason;
 - plans link to at least one proposal or spec;
-- active goal work items reference real artifacts;
-- support-tier claims name proof commands;
-- policy exceptions include owner, reason, scope, and review posture.
 
-This PR does not implement that validator.
+`cargo xtask check-goals` verifies active-goal and work-item shape, including
+proof commands and unsupported fields. `cargo xtask check-support-tiers`
+verifies support-tier proof-command references. Policy-specific ledgers and
+workflows own exception scope, owner, reason, and review posture.
+`cargo xtask repo-contract-report` composes these facts into an advisory graph
+packet; it is not a gate and does not infer product correctness.
