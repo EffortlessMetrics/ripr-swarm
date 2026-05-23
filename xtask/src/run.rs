@@ -375,7 +375,7 @@ fn terminate_timed_process_group(child: &Child) -> bool {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        return status.is_ok_and(|status| status.success());
+        status.is_ok_and(|status| status.success())
     }
     #[cfg(not(unix))]
     {
