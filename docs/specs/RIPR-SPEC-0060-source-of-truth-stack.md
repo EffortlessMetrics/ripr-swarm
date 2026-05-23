@@ -1,6 +1,6 @@
 # RIPR-SPEC-0060: Source-of-truth Stack
 
-Status: proposed
+Status: accepted
 
 Owner: repo-infra / source-of-truth
 
@@ -20,26 +20,36 @@ Linked plan:
 
 Support-tier impact:
 
-- Future support-tier rows should map source-of-truth product claims to proof
-  commands. This spec does not promote a claim by itself.
+- The existing `Source-of-truth artifact graph` support-tier row maps the
+  accepted source-of-truth claim to proof commands. This closeout does not
+  promote a stronger tier.
 
 Policy impact:
 
-- Future policy slices should register document artifacts and source-of-truth
-  validation posture in policy ledgers. This spec does not mutate a ledger by
-  itself.
+- `policy/doc-artifacts.toml` registers this spec, its proposal, the
+  implementation plan, and the closeout. This closeout does not change CI lane,
+  lint, file, package, no-panic, release, or branch-protection policy.
 
 Required evidence:
 
+- `cargo xtask check-doc-artifacts`
+- `cargo xtask check-goals`
+- `cargo xtask check-support-tiers`
+- `cargo xtask repo-contract-report`
+- `cargo xtask check-doc-index`
+- `cargo xtask markdown-links`
+- `cargo xtask check-static-language`
+- `cargo xtask check-pr`
 - `git diff --check`
-- `cargo xtask check-spec-format`
-- `cargo xtask check-spec-numbering`
 
 Claim boundary:
 
-- This spec defines the intended behavior contract for the source-of-truth
-  stack. It does not implement the validators, reports, CI wiring, support-tier
-  claims, policy ledgers, PR body generator, or closeout generator.
+- This accepted spec defines the repo-local behavior contract for the
+  source-of-truth stack. The landed validators and reports prove the registered
+  artifact graph, active-goal shape, and support-tier proof-command references
+  in their documented scope. They do not infer support-tier or policy impact,
+  promote advisory CI to blocking, prove analyzer correctness, or replace
+  future tokmd productization work.
 
 Rollback:
 
@@ -213,8 +223,7 @@ cargo xtask check-static-language
 
 ## Implementation Mapping
 
-This spec coordinates these current source-of-truth slices and remaining
-closeout work:
+This spec coordinates these accepted source-of-truth surfaces:
 
 - document artifact ledger in `policy/doc-artifacts.toml`;
 - `cargo xtask check-doc-artifacts`;
@@ -226,6 +235,7 @@ closeout work:
 - `cargo xtask repo-contract-report`;
 - `cargo xtask pr-body --work-item <id>`;
 - `cargo xtask closeout --goal <goal-id>`.
+- [source-of-truth closeout](../handoffs/2026-05-23-source-of-truth-control-plane-closeout.md).
 
 Existing related surfaces:
 

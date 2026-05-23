@@ -1,6 +1,6 @@
 # Source-of-truth control plane implementation plan
 
-Status: active
+Status: done
 
 Owner: repo-infra / source-of-truth
 
@@ -80,7 +80,7 @@ The repo has the core source-of-truth stack in place:
 - `cargo xtask pr-body --work-item <id>`;
 - `cargo xtask closeout --goal <goal-id>`.
 
-The plan is intentionally descriptive for the current lane state. It does not
+The plan is intentionally descriptive for the closed lane state. It does not
 select a new active campaign; `.ripr/goals/active.toml` remains the active-goal
 manifest and currently records `no_current_goal = true`.
 
@@ -185,7 +185,7 @@ git diff --check
 
 ### Work item: docs/source-of-truth-closeout
 
-Status: ready
+Status: done
 
 Linked proposal:
 
@@ -217,7 +217,7 @@ Issue:
 
 PR:
 
-- n/a
+- this PR
 
 #### Goal
 
@@ -228,12 +228,10 @@ closeout.
 
 #### Production delta
 
-- Update proposal/spec status only if current evidence satisfies their exit
-  criteria.
+- Update proposal/spec status to match current evidence.
 - Add a closeout handoff that records proof, claim boundary, and remaining
   future tokmd/productization work.
-- Register the closeout in `policy/doc-artifacts.toml` if the proposal/spec move
-  to an accepted or implemented state.
+- Register the closeout in `policy/doc-artifacts.toml`.
 
 #### Non-goals
 
@@ -246,6 +244,8 @@ closeout.
 - Proposal/spec status matches current evidence.
 - Closeout records commands run, claim changes, policy changes, remaining work,
   and next recommended goal or `no_current_goal = true`.
+- `policy/doc-artifacts.toml` registers the done closeout and marks this plan
+  done.
 
 #### Proof commands
 
@@ -282,10 +282,9 @@ git diff --check
 
 ## Closeout criteria
 
-- The source-of-truth proposal and spec status are no stronger than the proof
+- The source-of-truth proposal and spec are accepted only to the proof level
   recorded for the lane.
 - The plan, support-tier row, policy ledger, advisory workflow, PR/issue
-  templates, graph report, PR body generator, and closeout generator are either
+  templates, graph report, PR body generator, and closeout generator are
   verified current or explicitly left as remaining work.
-- `.ripr/goals/active.toml` records an active successor or intentionally records
-  `no_current_goal = true`.
+- `.ripr/goals/active.toml` intentionally records `no_current_goal = true`.
