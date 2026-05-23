@@ -4108,7 +4108,7 @@ Blocking conditions:
 
 Campaign ID: `actionable-surface-translation`
 
-Status: active.
+Status: complete.
 
 The repo now has actionable canonical gap packets, editor queue projection,
 swarm dry-run attempts, outcome joins, and start-here surfaces. The next
@@ -4150,7 +4150,7 @@ Work items:
 | `editor/repair-first-status-hierarchy` | done | Editor Show Status now starts with a repair cockpit block naming workspace/current-file actionable state, top repair, related proof, verify command, receipt state, and fail-closed next action. |
 | `swarm/dry-run-copy-ready-packet` | done | `ripr-swarm attempt --dry-run` now starts with a compact copy-ready operator packet naming task, allowed files, boundaries, repair target, verify/receipt commands, stop conditions, and return format. |
 | `outcome/movement-front-section` | done | Actionable-gap outcomes now lead with receipt-linked movement since prior refresh: current actionable count, receipt-linked delta, resolved, improved, unchanged after attempt, missing/orphaned receipts, and top blocked reason. |
-| `campaign/actionable-surface-translation-closeout` | ready | Close only after all covered surfaces prove the translation contract and remaining limits are recorded. |
+| `campaign/actionable-surface-translation-closeout` | done | [Actionable Surface Translation closeout](handoffs/2026-05-23-actionable-surface-translation-closeout.md) records the PR chain, validation, claim boundary, remaining limits, and no selected successor. |
 
 Commands:
 
@@ -4183,3 +4183,9 @@ Blocking conditions:
 - release, publish, signing, or marketplace work
 - runtime adequacy, coverage adequacy, proof-of-correctness, policy
   eligibility, gate pass/fail, or merge-readiness claims
+
+Closeout:
+
+- [Actionable Surface Translation closeout](handoffs/2026-05-23-actionable-surface-translation-closeout.md)
+  records the source-of-truth acceptance, surface proof audit, policy boundary,
+  and next-campaign selection rule.

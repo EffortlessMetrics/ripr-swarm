@@ -1,6 +1,6 @@
 # RIPR-SPEC-0059: Actionable Surface Translation
 
-Status: proposed
+Status: accepted
 
 Linked proposal: [RIPR-PROP-0016](../proposals/RIPR-PROP-0016-actionable-surface-translation.md)
 
