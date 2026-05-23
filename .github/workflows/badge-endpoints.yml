@@ -28,7 +28,6 @@ jobs:
 
       - name: Refresh badge endpoints
         timeout-minutes: 10
-        continue-on-error: true
         env:
           RIPR_REPO_BADGE_ARTIFACT_TIMEOUT_MS: "120000"
         run: cargo xtask badges
