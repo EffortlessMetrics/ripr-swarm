@@ -1343,6 +1343,12 @@ impl RepoExposureLatencySummary {
 
 fn repo_exposure_latency_report_summary(root: &Path) -> Option<RepoExposureLatencySummary> {
     let report = read_json(&resolve_path(root, DEFAULT_REPO_EXPOSURE_LATENCY_JSON)).ok()?;
+    if string_path(&report, &["schema_version"]).as_deref() != Some(SCHEMA_VERSION)
+        || string_path(&report, &["tool"]).as_deref() != Some("ripr")
+        || string_path(&report, &["report"]).as_deref() != Some("repo-exposure-latency")
+    {
+        return None;
+    }
     let run = report
         .get("runs")?
         .as_array()?
@@ -2823,6 +2829,54 @@ mod tests {
         assert!(message.contains(DEFAULT_REPO_EXPOSURE_LATENCY_JSON));
         assert!(message.contains(DEFAULT_REPO_EXPOSURE_LATENCY_REPORT));
         assert!(message.contains("fail"));
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_repo_exposure_ignores_wrong_identity_latency_report() -> Result<(), String> {
+        let repo = temp_repo("first-pr-existing-latency-wrong-identity")?;
+        fs::create_dir_all(repo.join("xtask/src"))
+            .map_err(|err| format!("mkdir xtask src: {err}"))?;
+        fs::write(
+            repo.join("xtask/src/command.rs"),
+            "\"repo-exposure-latency-report\"",
+        )
+        .map_err(|err| format!("write xtask command catalog: {err}"))?;
+        write_json(
+            &repo.join(DEFAULT_REPO_EXPOSURE_LATENCY_JSON),
+            json!({
+                "schema_version": "0.1",
+                "tool": "other-tool",
+                "report": "other-report",
+                "runs": [
+                    {
+                        "format": "repo-exposure-json",
+                        "status": "timeout",
+                        "duration_ms": 30000,
+                        "trace": [
+                            {
+                                "phase": "untrusted_phase",
+                                "status": "untrusted_status",
+                                "duration_ms": 1
+                            }
+                        ]
+                    }
+                ]
+            }),
+        )?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        let message = packet["selected"]["message"]
+            .as_str()
+            .ok_or_else(|| "selected message missing".to_string())?;
+        assert!(message.contains("run the bounded repo-exposure latency report"));
+        assert!(!message.contains("untrusted_phase"));
+        assert!(!message.contains("untrusted_status"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
