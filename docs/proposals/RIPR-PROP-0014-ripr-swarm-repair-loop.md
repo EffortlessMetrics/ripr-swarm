@@ -2,10 +2,10 @@
 
 Status: accepted
 
-Accepted: 2026-05-20 after the 0.7 swarm repair-loop dogfood and release
-readiness closeout recorded fixture-backed planning, dry-run attempt,
-outcome-join, human workflow, and external-agent handoff proof while preserving
-the advisory, dry-run-first, source-edit-free boundary.
+Accepted: 2026-05-23 based on the 2026-05-20 0.7 swarm repair-loop dogfood
+and release-readiness closeout that recorded fixture-backed planning, dry-run
+attempt, outcome-join, human workflow, and external-agent handoff proof while
+preserving the advisory, dry-run-first, source-edit-free boundary.
 
 Owner: Lane 1 - Evidence Accuracy / ripr-swarm
 

@@ -2,10 +2,10 @@
 
 Status: accepted
 
-Accepted: 2026-05-20 as the external-agent boundary for the implemented 0.7
-swarm repair loop. This remains a documentation contract over one bounded
-operator-mediated packet; it does not add provider SDKs, autonomous repair,
-source-edit authority, or merge authority.
+Accepted: 2026-05-23 based on the 2026-05-20 external-agent boundary evidence
+for the implemented 0.7 swarm repair loop. This remains a documentation
+contract over one bounded operator-mediated packet; it does not add provider
+SDKs, autonomous repair, source-edit authority, or merge authority.
 
 ## Problem
 
