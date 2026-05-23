@@ -10,6 +10,7 @@ State: actionable
 - Safe next action: repair one named stable Rust gap.
 - Top actionable gap: missing boundary assertion
 - Changed behavior: `amount >= threshold`
+- Why it matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior.
 - Current evidence strength: Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.
 - Missing discriminator: Equality-boundary assertion for the changed behavior.
 - Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`: `assert_eq!(discount(100, 100), 90)`.

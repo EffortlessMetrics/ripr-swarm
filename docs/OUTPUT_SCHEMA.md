@@ -7684,9 +7684,10 @@ Field contract:
 
 Markdown should fit in a PR summary, local handoff, or generated CI summary. It
 should show the selected top gap, no-action state, or blocked recovery state
-first. For a top gap, the first screen must include changed behavior, current
-evidence strength, missing discriminator, focused proof intent, verify command,
-receipt command, and the static advisory boundary before deeper artifact links.
+first. For a top gap, the first screen must include changed behavior, why it
+matters, current evidence strength, missing discriminator, focused proof intent,
+verify command, receipt command or path, and the static advisory boundary before
+deeper artifact links.
 `empty_diff` must render as a no-action state, not a blocked repair.
 
 ### Review Guidance Outcome Receipt

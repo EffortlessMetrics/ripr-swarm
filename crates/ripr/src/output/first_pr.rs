@@ -2000,6 +2000,9 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(changed) = selected.get("changed_behavior").and_then(Value::as_str) {
         out.push_str(&format!("- Changed behavior: `{}`\n", changed.trim()));
     }
+    if let Some(why) = selected.get("why").and_then(Value::as_str) {
+        out.push_str(&format!("- Why it matters: {why}\n"));
+    }
     if let Some(strength) = selected
         .get("current_evidence_strength")
         .and_then(Value::as_str)
@@ -2256,7 +2259,10 @@ fn validate_selected_state(status: &str, selected: &Value, violations: &mut Vec<
         None => violations.push("selected.output_state is missing or not a string".to_string()),
     }
     let expected_status = match state {
-        "top_gap" => "actionable",
+        "top_gap" => {
+            validate_top_gap_first_screen_fields(selected, violations);
+            "actionable"
+        }
         "missing_artifact" | "malformed_artifact" | "stale_artifact" | "wrong_root"
         | "blocked_artifact" | "timeout" => "blocked",
         "empty_diff" | "no_action" => "no_action",
@@ -2302,6 +2308,16 @@ fn validate_top_gap_contract(selected: &Value, violations: &mut Vec<String>) {
             "selected.static_evidence_boundary must be {STATIC_EVIDENCE_BOUNDARY:?}, found {boundary:?}"
         )),
         None => violations.push("selected top_gap must name static_evidence_boundary".to_string()),
+    }
+}
+
+fn validate_top_gap_first_screen_fields(selected: &Value, violations: &mut Vec<String>) {
+    if selected
+        .get("changed_behavior")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        violations.push("top_gap selected.changed_behavior is missing or not a string".to_string());
     }
 }
 
@@ -2402,6 +2418,28 @@ mod tests {
                 "Choose a head with changes or rerun after committing PR work: `ripr first-pr --root . --base origin/main --head HEAD`."
             ),
             "Choose a head with changes or rerun after committing PR work: `ripr first-pr --root . --base origin/main --head HEAD`."
+        );
+    }
+
+    #[test]
+    fn top_gap_contract_requires_first_screen_fields() {
+        let selected = json!({
+            "state": "top_gap",
+            "output_state": "actionable_gap",
+            "kind": "MissingBoundaryAssertion",
+            "why": "A related Rust test reaches this change.",
+            "current_evidence_strength": "Static evidence found related Rust test context.",
+            "missing_discriminator": "Equality-boundary assertion.",
+            "focused_proof_intent": "Add one focused boundary assertion.",
+            "verify_command": "cargo xtask fixtures boundary_gap",
+            "receipt_path": "target/ripr/receipts/gap.json",
+            "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY
+        });
+        let mut violations = Vec::new();
+        validate_selected_state("actionable", &selected, &mut violations);
+        assert_eq!(
+            violations,
+            vec!["top_gap selected.changed_behavior is missing or not a string"]
         );
     }
 
