@@ -90,6 +90,36 @@ Lane 1 does not own:
 | `dogfood/value-resolution-receipts` | ready | Record material dogfood receipts with canonical gap identity and non-claims. |
 | `campaign/value-resolution-audit-closeout` | blocked | Close the rail with proof, remaining limits, and next-step selection. |
 
+## Audit Delta
+
+The selected supported sub-shape is the same-test struct literal projection with
+source-order and mutation guards pinned by the fixture corpus. The follow-up
+analysis slice confirmed this shape was already supported before an analyzer
+delta was required, so the report result is zero movement rather than a hidden
+claim of improvement.
+
+| Signal | Current result |
+| --- | ---: |
+| Sampled seams | 5000 of 40233 |
+| Raw headline gaps | 1567 |
+| Canonical gap groups | 1383 |
+| Actionable canonical gaps | 61 |
+| Missing discriminators | 149 |
+| Static limitations | 1551 |
+| Predicate-boundary limitations | 318 |
+| `activation_value_unresolved` limitations | 315 |
+
+Recent scorecard deltas were unchanged for duplicate-looking groups, missing
+discriminators, total static limitations, actionable finding-alignment items,
+and repair-route coverage. The trend report has status `unknown` because no
+previous comparable snapshot was available and the current scorecard carries
+bounded-run diagnostics.
+
+Remaining `activation_value_unresolved` findings stay on
+`analysis/value-resolution-audit-fixes`. This report does not prove runtime
+behavior, mutation adequacy, coverage adequacy, public badge movement, or any
+new product claim.
+
 ## Operating Rules
 
 - Start from audit and scorecard evidence.
