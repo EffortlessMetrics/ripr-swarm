@@ -64559,16 +64559,18 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
 
     #[test]
     fn repo_badge_artifact_command_runs_with_timeout() -> Result<(), String> {
-        let args = vec!["--version".to_string()];
-        let stdout = run_repo_badge_artifact_command(
-            "rustc",
-            &args,
-            "repo-badge-json",
-            Duration::from_secs(30),
-        )?;
+        with_repo_cwd(|| {
+            let args = vec!["--version".to_string()];
+            let stdout = run_repo_badge_artifact_command(
+                "rustc",
+                &args,
+                "repo-badge-json",
+                Duration::from_secs(30),
+            )?;
 
-        assert!(stdout.contains("rustc"));
-        Ok(())
+            assert!(stdout.contains("rustc"));
+            Ok(())
+        })
     }
 
     #[test]
