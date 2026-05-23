@@ -32260,8 +32260,11 @@ const REPO_BADGE_ARTIFACT_TIMEOUT_ENV: &str = "RIPR_REPO_BADGE_ARTIFACT_TIMEOUT_
 const REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS: u64 = 90_000;
 
 fn repo_badge_artifact_timeout_ms() -> u64 {
-    std::env::var(REPO_BADGE_ARTIFACT_TIMEOUT_ENV)
-        .ok()
+    repo_badge_artifact_timeout_ms_from_env(std::env::var(REPO_BADGE_ARTIFACT_TIMEOUT_ENV).ok())
+}
+
+fn repo_badge_artifact_timeout_ms_from_env(value: Option<String>) -> u64 {
+    value
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS)
@@ -50119,27 +50122,27 @@ mod tests {
         GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
         Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
         LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink, PrTriageCheck,
-        PrTriageFinding, PrTriagePullRequest, REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord,
-        RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
-        RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
-        ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
-        SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher, TestOracleClass,
-        WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
-        actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
-        actionable_gap_outcomes_report_impl, badge_artifact_command_args,
-        badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
-        badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
-        badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
-        badge_basis_needs_repo_badge_plus_job, badge_basis_report_json,
-        badge_basis_report_markdown, badge_basis_seam_native_counts, badge_diff_policy_violations,
-        badge_native_audit_snapshot, build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
-        build_repo_exposure_latency_report, build_targeted_test_outcome_report,
-        campaign_source_truth_violations_for_root, check_allow_attributes,
-        check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
-        check_executable_files, check_file_policy, check_local_context, check_network_policy,
-        check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
-        check_workflows, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
-        collect_panic_findings, collect_semantic_panic_findings, command_catalog,
+        PrTriageFinding, PrTriagePullRequest, REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS,
+        REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord, RepoBadgeArtifactOptions,
+        RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
+        ReportIndexCampaign, ReportIndexEntry, ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH,
+        SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
+        StaticLanguageMatcher, TestOracleClass, WorktreeDoctorFinding, WorktreeDoctorSeverity,
+        actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
+        actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
+        badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
+        badge_artifact_native_slot, badge_artifacts_impl_with_runners,
+        badge_artifacts_summary_markdown, badge_basis_canonical_projection,
+        badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
+        badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
+        badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
+        build_no_panic_allowlist_proposals, build_repo_exposure_latency_report,
+        build_targeted_test_outcome_report, campaign_source_truth_violations_for_root,
+        check_allow_attributes, check_badge_diff_policy_with_context, check_doc_artifacts,
+        check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
+        check_network_policy, check_no_panic_family, check_process_policy, check_static_language,
+        check_support_tiers, check_workflows, ci_full_evidence_gates, cockpit_json,
+        cockpit_markdown, collect_panic_findings, collect_semantic_panic_findings, command_catalog,
         command_catalog_violations, commands_report_json, commands_report_markdown,
         critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
         dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
@@ -50202,8 +50205,8 @@ mod tests {
         receipt_specs, receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
         render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
         repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-        repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
-        repo_exposure_latency_markdown, repo_exposure_latency_run,
+        repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+        repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
         repo_exposure_latency_trace, repo_root, repo_seam_inventory_command_args_for_root,
         report_index_json, report_index_lane1_overall_status, report_index_lane1_readiness_packets,
@@ -64530,6 +64533,75 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
         assert!(message.contains("failed with"));
         assert!(message.contains("partial stdout"));
         assert!(message.contains("repo badge failure"));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_badge_artifact_stdout_returns_stdout_on_success() -> Result<(), String> {
+        let args = repo_badge_artifact_command_args("repo-badge-json", None);
+        let stdout = repo_badge_artifact_stdout_from_output(
+            "cargo",
+            &args,
+            "repo-badge-json",
+            Duration::from_secs(90),
+            TimedOutput {
+                status: Some(success_exit_status()),
+                stdout: "badge json\n".to_string(),
+                stderr: String::new(),
+                duration: Duration::from_millis(13),
+                timed_out: false,
+            },
+        )?;
+
+        assert_eq!(stdout, "badge json\n");
+        Ok(())
+    }
+
+    #[test]
+    fn repo_badge_artifact_missing_status_reports_format() -> Result<(), String> {
+        let args = repo_badge_artifact_command_args("repo-badge-shields", None);
+        let message = repo_badge_artifact_stdout_from_output(
+            "cargo",
+            &args,
+            "repo-badge-shields",
+            Duration::from_secs(90),
+            TimedOutput {
+                status: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                duration: Duration::from_millis(13),
+                timed_out: false,
+            },
+        )
+        .expect_err("missing status should fail closed");
+
+        assert!(message.contains("finished without an exit status"));
+        assert!(message.contains("repo-badge-shields"));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_badge_artifact_timeout_ms_uses_positive_env_override_only() -> Result<(), String> {
+        assert_eq!(
+            repo_badge_artifact_timeout_ms_from_env(None),
+            REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_badge_artifact_timeout_ms_from_env(Some(String::new())),
+            REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_badge_artifact_timeout_ms_from_env(Some("0".to_string())),
+            REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_badge_artifact_timeout_ms_from_env(Some("not-a-timeout".to_string())),
+            REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_badge_artifact_timeout_ms_from_env(Some("120000".to_string())),
+            120_000
+        );
         Ok(())
     }
 
