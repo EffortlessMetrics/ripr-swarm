@@ -69,5 +69,5 @@ observable behavior.
 | [RIPR-SPEC-0056](RIPR-SPEC-0056-public-actionable-projection.md) | accepted | Public actionable projection |
 | [RIPR-SPEC-0057](RIPR-SPEC-0057-ripr-swarm-repair-loop.md) | accepted | RIPR swarm repair loop |
 | [RIPR-SPEC-0058](RIPR-SPEC-0058-ripr-swarm-external-agent-handoff.md) | accepted | RIPR swarm external agent handoff |
-| [RIPR-SPEC-0059](RIPR-SPEC-0059-actionable-surface-translation.md) | proposed | Actionable surface translation |
+| [RIPR-SPEC-0059](RIPR-SPEC-0059-actionable-surface-translation.md) | accepted | Actionable surface translation |
 | [RIPR-SPEC-0060](RIPR-SPEC-0060-source-of-truth-stack.md) | accepted | Source-of-truth stack |

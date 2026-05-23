@@ -1,6 +1,6 @@
 # RIPR-PROP-0016: Actionable Surface Translation
 
-Status: proposed
+Status: accepted
 
 Owner: cross-surface / repo-infra
 

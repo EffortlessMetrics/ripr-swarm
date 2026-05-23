@@ -1,3 +1,4 @@
+# Archived by `cargo xtask closeout --goal actionable-surface-translation` on 2026-05-23.
 id = "actionable-surface-translation"
 title = "Actionable Surface Translation"
 status = "closed"

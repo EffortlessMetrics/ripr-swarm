@@ -3872,14 +3872,28 @@ metrics = [
 id = "RIPR-SPEC-0059"
 name = "Actionable surface translation"
 spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
-tests = []
-fixtures = []
+tests = [
+  "xtask::tests::badge_basis_report_json_names_public_projection_rule",
+  "xtask::tests::pr_actionable_front_panel_leads_with_typed_repair_delta",
+  "editors/vscode/test/suite/extension.test.ts::status model projects actionable gap queue state without producing packets",
+  "editors/vscode/test/suite/extension.test.ts::copyCurrentRepairPacket copies bounded queue packet for safe actionable state",
+  "xtask::tests::ripr_swarm_attempt_dry_run_renders_bounded_packet_context",
+  "xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states",
+  "xtask::tests::actionable_gap_outcomes_join_receipts_and_targeted_movement",
+]
+fixtures = [
+  "fixtures/editor_actionable_gap_queue",
+  "fixtures/swarm-plan-packet-corpus",
+  "fixtures/actionable-gap-outcomes-corpus",
+  "fixtures/boundary_gap/expected/pr-review-front-panel",
+]
 code = []
 outputs = [
   "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md",
   "docs/proposals/README.md",
   "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md",
   "docs/specs/README.md",
+  "docs/handoffs/2026-05-23-actionable-surface-translation-closeout.md",
   "plans/actionable-surface-translation/implementation-plan.md",
   "plans/README.md",
   "docs/IMPLEMENTATION_PLAN.md",

@@ -1,6 +1,6 @@
 # Actionable Surface Translation Implementation Plan
 
-Status: active
+Status: closed
 
 Owner: cross-surface / repo-infra
 
@@ -304,7 +304,7 @@ Issue:
 
 PR:
 
-- this PR
+- #315
 
 #### Goal
 
@@ -450,7 +450,7 @@ Issue:
 
 PR:
 
-- this PR
+- #317
 
 #### Goal
 
@@ -523,7 +523,7 @@ Issue:
 
 PR:
 
-- this PR
+- #320
 
 #### Goal
 
@@ -560,7 +560,7 @@ git diff --check
 
 ### Work item: campaign/actionable-surface-translation-closeout
 
-Status: ready
+Status: done
 
 Linked proposal:
 
@@ -592,7 +592,7 @@ Issue:
 
 PR:
 
-- n/a
+- this PR
 
 #### Goal
 
