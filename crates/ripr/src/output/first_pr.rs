@@ -1793,7 +1793,7 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
                 out.push_str(&format!("Changed behavior: `{}`\n", changed.trim()));
             }
             if let Some(why) = string_path(selected, &["why"]) {
-                out.push_str(&format!("Why it matters: {why}\n"));
+                out.push_str(&format!("Why this matters: {why}\n"));
             }
             if let Some(strength) = string_path(selected, &["current_evidence_strength"]) {
                 out.push_str(&format!("Current evidence strength: {strength}\n"));
@@ -1803,9 +1803,6 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
             }
             if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
                 out.push_str(&format!("Focused proof intent: {intent}\n"));
-            }
-            if let Some(why) = string_path(selected, &["why"]) {
-                out.push_str(&format!("Why this matters: {why}\n"));
             }
             if let Some(command) = string_path(selected, &["verify_command"]) {
                 out.push_str(&format!("Verify command: `{command}`\n"));
