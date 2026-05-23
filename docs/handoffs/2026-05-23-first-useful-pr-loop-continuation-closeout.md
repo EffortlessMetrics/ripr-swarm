@@ -6,7 +6,7 @@ Branch: `campaign-first-useful-pr-loop-continuation-closeout`
 
 Current work item: `campaign/first-useful-pr-loop-continuation-closeout`
 
-Active goal: `first-useful-pr-loop-continuation`
+Closed goal: `first-useful-pr-loop-continuation`
 
 ## Current State
 
