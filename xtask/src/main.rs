@@ -20852,10 +20852,6 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     let swarm_state = if static_limitations_count > 0 || gap_state == "static_limitation" {
         blocked_reasons.push("static_limitation_present".to_string());
         "blocked_by_static_limitation".to_string()
-    } else if requires_operator_judgment {
-        blocked_reasons
-            .push("static_only_predicate_boundary_requires_operator_judgment".to_string());
-        "blocked_by_operator_judgment".to_string()
     } else if !missing_context.is_empty() {
         blocked_reasons.extend(
             missing_context
@@ -20863,6 +20859,10 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
                 .map(|field| format!("missing_{field}")),
         );
         "blocked_by_missing_context".to_string()
+    } else if requires_operator_judgment {
+        blocked_reasons
+            .push("static_only_predicate_boundary_requires_operator_judgment".to_string());
+        "blocked_by_operator_judgment".to_string()
     } else {
         "queued".to_string()
     };
@@ -70127,6 +70127,106 @@ covered_by = ["cargo xtask check-file-policy"]
             markdown.contains(
                 "Do not rank static-only predicate-boundary packets as swarm-ready without stronger evidence."
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_missing_context_before_static_only_operator_judgment()
+    -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "summary": {
+                "raw_signals": 1,
+                "canonical_items": 1,
+                "actionable_gaps": 1
+            },
+            "packets": [
+                {
+                    "packet_id": "packet:static-only-boundary-missing-context",
+                    "canonical_gap_id": "gap:static-only-boundary-missing-context",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "actionability": "extend_related_test",
+                    "source_file": "src/pricing.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                    "repair_route_source": "canonical_item.repair_route",
+                    "related_test_or_observer": {
+                        "file": "tests/pricing.rs",
+                        "name": "threshold"
+                    },
+                    "confidence_basis": "static_only",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}
+                    ],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let packet = report
+            .packets
+            .first()
+            .ok_or_else(|| "expected one swarm-plan packet".to_string())?;
+
+        assert_eq!(packet.swarm_state, "blocked_by_missing_context");
+        assert!(
+            packet
+                .missing_context
+                .iter()
+                .any(|context| context == "verify_command")
+        );
+        assert!(
+            packet
+                .missing_context
+                .iter()
+                .any(|context| context == "receipt_command")
+        );
+        assert!(
+            packet
+                .blocked_reasons
+                .iter()
+                .any(|reason| reason == "missing_verify_command")
+        );
+        assert!(
+            packet
+                .blocked_reasons
+                .iter()
+                .any(|reason| reason == "missing_receipt_command")
+        );
+        assert!(!packet.blocked_reasons.iter().any(|reason| {
+            reason == "static_only_predicate_boundary_requires_operator_judgment"
+        }));
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["swarm_ready_packets"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            value["summary"]["blocked_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["summary"]["missing_verify_command"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["summary"]["missing_receipt_command"],
+            serde_json::Value::from(1)
         );
         Ok(())
     }
