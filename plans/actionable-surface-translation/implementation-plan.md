@@ -226,7 +226,7 @@ Issue:
 
 PR:
 
-- pending
+- #314
 
 #### Goal
 
