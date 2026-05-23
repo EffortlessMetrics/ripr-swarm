@@ -8683,7 +8683,8 @@ return an actionable error instead of a repair packet.
         },
         "static_limitations": []
       },
-      "runtime_confirmation": "optional cargo-mutants confirmation; ripr reports static evidence only"
+      "runtime_confirmation": "optional cargo-mutants confirmation; ripr reports static evidence only",
+      "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."
     }
   ]
 }
@@ -8757,7 +8758,7 @@ Field contract:
   It is the same repair vocabulary used by PR comment projection.
 - `packets[].llm_guidance.copyable_packet` - optional GapRecord-backed
   pasteable repair packet for coding agents. It carries `task`, `context`,
-  `repair`, `verification`, `stop_conditions`, `do_not_do`,
+  `repair`, `verification`, `receipt`, `stop_conditions`, `do_not_do`,
   `authority_boundary`, static evidence boundary context, and a Markdown
   sibling with the same sections. It is additive and derives only from the
   selected `GapRecord`; it does not rerun analysis, edit source, generate
@@ -8835,6 +8836,9 @@ Field contract:
   agent that `ripr` is preflight static evidence and runtime
   mutation confirmation (e.g., `cargo-mutants`) is a separate
   calibration step.
+- `packets[].static_evidence_boundary` - typed non-claim boundary for coding
+  agents and editor surfaces. Consumers should copy this field rather than
+  infer runtime, coverage, correctness, gate, or merge claims from prose.
 
 The packet is the agent's work order: it names the seam, the missing
 discriminator, the oracle shape, and an assertion template — but never
