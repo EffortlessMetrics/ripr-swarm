@@ -88,6 +88,8 @@ struct ActionSelected {
     path: Option<String>,
     line: Option<u64>,
     classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_evidence_strength: Option<String>,
     missing_discriminator: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     gap_id: Option<String>,
@@ -95,6 +97,19 @@ struct ActionSelected {
     canonical_gap_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     repair_route: Option<String>,
+}
+
+impl ActionSelected {
+    fn with_inferred_current_evidence_strength(mut self) -> Self {
+        if self.current_evidence_strength.is_none() {
+            self.current_evidence_strength = current_evidence_strength_for_selection(
+                self.repair_route.as_deref(),
+                self.classification.as_deref(),
+                self.seam_kind.as_deref(),
+            );
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -308,7 +323,12 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
     let evidence_strength = report
         .selected
         .as_ref()
-        .and_then(|selected| selected.classification.as_deref())
+        .and_then(|selected| {
+            selected
+                .current_evidence_strength
+                .as_deref()
+                .or(selected.classification.as_deref())
+        })
         .unwrap_or(report.status.as_str());
     let missing_discriminator = report
         .selected
@@ -1018,11 +1038,16 @@ fn selected_from_gap_record(
         path: string_from_sources(&[(anchor, &["file"]), (repair_route, &["target_file"])]),
         line: u64_from_sources(&[(anchor, &["line"]), (repair_route, &["target_line"])]),
         classification: string_path(record, &["gap_state"]),
+        current_evidence_strength: current_evidence_strength_from_sources(&[
+            Some(record),
+            repair_route,
+        ]),
         missing_discriminator: string_path(repair_route?, &["assertion_shape"]),
         gap_id: string_path(record, &["gap_id"]),
         canonical_gap_id: string_path(record, &["canonical_gap_id"]),
         repair_route: string_path(repair_route?, &["route_kind"]),
     })
+    .map(ActionSelected::with_inferred_current_evidence_strength)
 }
 
 fn target_from_gap_record(record: &Value) -> Option<ActionTarget> {
@@ -1089,6 +1114,10 @@ fn selected_from_editor_context(
             (Some(editor_context), &["grip_class"]),
             (Some(editor_context), &["selected", "classification"]),
         ]),
+        current_evidence_strength: current_evidence_strength_from_sources(&[
+            Some(editor_context),
+            editor_context.get("selected"),
+        ]),
         missing_discriminator: string_from_sources(&[
             (Some(editor_context), &["missing_discriminator"]),
             (Some(editor_context), &["missing_observation"]),
@@ -1098,6 +1127,7 @@ fn selected_from_editor_context(
         canonical_gap_id: None,
         repair_route: None,
     })
+    .map(ActionSelected::with_inferred_current_evidence_strength)
 }
 
 fn selected_from_assistant_proof(
@@ -1114,11 +1144,13 @@ fn selected_from_assistant_proof(
         path: string_from_sources(&[(seam, &["path"])]),
         line: u64_from_sources(&[(seam, &["line"])]),
         classification: classification_from_sources(&[(seam, &["grip_class"])]),
+        current_evidence_strength: current_evidence_strength_from_sources(&[seam]),
         missing_discriminator: string_from_sources(&[(seam, &["missing_discriminator"])]),
         gap_id: None,
         canonical_gap_id: None,
         repair_route: None,
     })
+    .map(ActionSelected::with_inferred_current_evidence_strength)
 }
 
 fn selected_from_receipt_or_sources(
@@ -1165,6 +1197,16 @@ fn selected_from_receipt_or_sources(
                 .as_ref()
                 .and_then(|selected| selected.classification.clone())
         }),
+        current_evidence_strength: current_evidence_strength_from_sources(&[
+            Some(receipt),
+            receipt_seam,
+            proof,
+        ])
+        .or_else(|| {
+            proof_selected
+                .as_ref()
+                .and_then(|selected| selected.current_evidence_strength.clone())
+        }),
         missing_discriminator: string_from_sources(&[(proof, &["missing_discriminator"])]).or_else(
             || {
                 proof_selected
@@ -1176,6 +1218,7 @@ fn selected_from_receipt_or_sources(
         canonical_gap_id: None,
         repair_route: None,
     })
+    .map(ActionSelected::with_inferred_current_evidence_strength)
 }
 
 fn selected_from_guidance(
@@ -1210,11 +1253,13 @@ fn selected_from_guidance(
             (item, &["grip_class"]),
             (item, &["classification"]),
         ]),
+        current_evidence_strength: current_evidence_strength_from_sources(&[item]),
         missing_discriminator: string_from_sources(&[(item, &["missing_discriminator"])]),
         gap_id: None,
         canonical_gap_id: None,
         repair_route: None,
     })
+    .map(ActionSelected::with_inferred_current_evidence_strength)
 }
 
 fn selected_baseline_only(
@@ -1288,11 +1333,13 @@ fn selected_from_delta_item(source: &str, source_artifact: String, item: &Value)
             (Some(item), &["classification"]),
             (Some(item), &["static_class"]),
         ]),
+        current_evidence_strength: current_evidence_strength_from_sources(&[Some(item)]),
         missing_discriminator: string_path(item, &["missing_discriminator"]),
         gap_id: None,
         canonical_gap_id: None,
         repair_route: None,
     }
+    .with_inferred_current_evidence_strength()
 }
 
 fn weakly_exposed_boundary_selected(
@@ -1311,11 +1358,13 @@ fn weakly_exposed_boundary_selected(
         path,
         line,
         classification: Some("weakly_exposed".to_string()),
+        current_evidence_strength: None,
         missing_discriminator,
         gap_id: None,
         canonical_gap_id: None,
         repair_route: None,
     }
+    .with_inferred_current_evidence_strength()
 }
 
 fn target_from_sources(parsed: &ParsedSources) -> Option<ActionTarget> {
@@ -1544,6 +1593,64 @@ fn classification_from_sources(sources: &[(Option<&Value>, &[&str])]) -> Option<
         "strongly_gripped" => "exposed".to_string(),
         other => other.to_string(),
     })
+}
+
+fn current_evidence_strength_from_sources(sources: &[Option<&Value>]) -> Option<String> {
+    sources.iter().find_map(|source| {
+        let source = (*source)?;
+        string_from_sources(&[
+            (Some(source), &["current_evidence_strength"]),
+            (Some(source), &["evidence", "current_evidence_strength"]),
+            (Some(source), &["selected", "current_evidence_strength"]),
+        ])
+    })
+}
+
+fn current_evidence_strength_for_selection(
+    repair_route: Option<&str>,
+    classification: Option<&str>,
+    seam_kind: Option<&str>,
+) -> Option<String> {
+    match repair_route.or(seam_kind) {
+        Some("MissingOutputContract" | "AddOutputGolden" | "RegenerateArtifact") => Some(
+            "Static evidence found changed user-facing output, but no checked output or golden proof is attached."
+                .to_string(),
+        ),
+        Some(
+            "MissingBoundaryAssertion" | "MissingValueAssertion" | "MissingErrorDiscriminator"
+            | "AddBoundaryAssertion" | "AddTargetedAssertion" | "predicate_boundary",
+        ) => Some(
+            "Static evidence found related test context, but the current check is weak because the discriminator is missing."
+                .to_string(),
+        ),
+        _ => match classification {
+            Some("weakly_exposed") => Some(
+                "Static evidence found related test context, but the current check is weak because the discriminator is missing."
+                    .to_string(),
+            ),
+            Some("reachable_unrevealed") => Some(
+                "Static evidence found reachable changed behavior, but no current check observes the changed result."
+                    .to_string(),
+            ),
+            Some("no_static_path") => Some(
+                "Static analysis did not find a current test path to the changed behavior."
+                    .to_string(),
+            ),
+            Some("exposed") => Some(
+                "Static evidence found a current check that appears to observe the changed behavior."
+                    .to_string(),
+            ),
+            Some(kind @ ("static_unknown" | "infection_unknown" | "propagation_unknown")) => {
+                Some(format!(
+                    "Static evidence is `{kind}`; no runtime proof is claimed."
+                ))
+            }
+            Some(other) => Some(format!(
+                "Static evidence reported `{other}`; no runtime proof is claimed."
+            )),
+            None => None,
+        },
+    }
 }
 
 fn string_from_sources(sources: &[(Option<&Value>, &[&str])]) -> Option<String> {
