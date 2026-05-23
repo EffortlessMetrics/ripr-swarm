@@ -1784,6 +1784,24 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
     ));
     match state.as_str() {
         "top_gap" => {
+            if let Some(kind) = string_path(selected, &["kind"]) {
+                out.push_str(&format!("Top repairable gap: {}\n", sentence_case(&kind)));
+            }
+            if let Some(changed) = string_path(selected, &["changed_behavior"]) {
+                out.push_str(&format!("Changed behavior: `{}`\n", changed.trim()));
+            }
+            if let Some(why) = string_path(selected, &["why"]) {
+                out.push_str(&format!("Why it matters: {why}\n"));
+            }
+            if let Some(strength) = string_path(selected, &["current_evidence_strength"]) {
+                out.push_str(&format!("Current proof weakness: {strength}\n"));
+            }
+            if let Some(discriminator) = string_path(selected, &["missing_discriminator"]) {
+                out.push_str(&format!("Missing discriminator: {discriminator}\n"));
+            }
+            if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
+                out.push_str(&format!("Focused test intent: {intent}\n"));
+            }
             if let Some(command) = string_path(selected, &["verify_command"]) {
                 out.push_str(&format!("Verify command: `{command}`\n"));
             }
@@ -1797,19 +1815,31 @@ fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path
             ));
         }
         "missing_artifact" => {
+            if let Some(label) = string_path(selected, &["artifact", "label"]) {
+                out.push_str(&format!("Missing artifact: {label}\n"));
+            }
+            if let Some(path) = string_path(selected, &["artifact", "path"]) {
+                out.push_str(&format!("Artifact path: `{path}`\n"));
+            }
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 out.push_str(&format!("Regeneration command: `{command}`\n"));
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
         "empty_diff" | "no_action" => {
+            if let Some(reason) = string_path(selected, &["reason"]) {
+                out.push_str(&format!("Reason: {reason}\n"));
+            }
             out.push_str("Verify command: `not_applicable`\n");
             out.push_str("Receipt command: `not_applicable`\n");
             out.push_str("Receipt path: `not_applicable`\n");
         }
         _ => {
+            if let Some(message) = string_path(selected, &["message"]) {
+                out.push_str(&format!("Blocked reason: {message}\n"));
+            }
             if let Some(command) = string_path(selected, &["next_command"]) {
-                out.push_str(&format!("Regeneration command: `{command}`\n"));
+                out.push_str(&format!("Next command: `{command}`\n"));
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
