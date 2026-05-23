@@ -127,7 +127,7 @@ commands = [
 
 [[work_item]]
 id = "swarm/dry-run-copy-ready-packet"
-status = "ready"
+status = "done"
 branch = "swarm-dry-run-copy-ready-packet"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
@@ -142,15 +142,12 @@ commands = [
 
 [[work_item]]
 id = "outcome/movement-front-section"
-status = "blocked"
+status = "ready"
 branch = "outcome-movement-front-section"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
 spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
 plan = "plans/actionable-surface-translation/implementation-plan.md"
-blocked_by = [
-  "swarm/dry-run-copy-ready-packet",
-]
 acceptance = "Outcome and trend front sections lead with receipt-linked movement since prior refresh: total actionable count, delta, resolved, improved, unchanged after attempt, orphaned/missing receipts, and top blocked reason."
 commands = [
   "cargo xtask actionable-gap-outcomes",

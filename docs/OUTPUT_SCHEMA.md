@@ -2455,6 +2455,15 @@ public badge semantics.
 The dry-run output includes:
 
 ```text
+copy-ready operator packet
+task
+allowed files
+do-not-change boundaries
+repair target
+verify command
+receipt command
+stop conditions
+required return format
 canonical_gap_id
 evidence_class
 source_file

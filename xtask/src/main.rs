@@ -20367,6 +20367,69 @@ fn ripr_swarm_attempt_dry_run_markdown(attempt: &RiprSwarmAttemptDryRun) -> Stri
     let mut out = String::new();
     out.push_str("# RIPR Swarm Attempt Dry Run\n\n");
     out.push_str("This command prints bounded repair context only. It does not edit files, run tests, call providers, generate tests, create receipts, run mutation testing, merge code, or change public badge semantics.\n\n");
+    out.push_str("## Copy-Ready Operator Packet\n\n");
+    out.push_str("Task:\n");
+    out.push_str(&format!(
+        "- Repair one actionable canonical gap: `{}`.\n",
+        audit_markdown_cell(&attempt.canonical_gap_id)
+    ));
+    out.push_str(&format!(
+        "- Packet: `{}` (`{}`).\n",
+        audit_markdown_cell(&attempt.packet_id),
+        audit_markdown_cell(&attempt.swarm_state)
+    ));
+    out.push_str("\nAllowed files:\n");
+    out.push_str(&format!(
+        "- {}.\n",
+        audit_markdown_cell(&ripr_swarm_attempt_allowed_file_line(attempt))
+    ));
+    out.push_str(&format!(
+        "- Read-only context: `{}`.\n",
+        audit_markdown_cell(&attempt.source_file)
+    ));
+    out.push_str("\nDo-not-change boundaries:\n");
+    if attempt.must_not_change.is_empty() {
+        out.push_str("- `must_not_change` is missing; stop before editing files.\n");
+    } else {
+        for boundary in &attempt.must_not_change {
+            out.push_str(&format!("- {}\n", audit_markdown_cell(boundary)));
+        }
+    }
+    out.push_str("\nRepair target:\n");
+    out.push_str(&format!(
+        "- Kind: `{}`.\n",
+        audit_markdown_cell(&attempt.repair_kind)
+    ));
+    out.push_str(&format!(
+        "- Route: {}.\n",
+        audit_markdown_cell(&attempt.repair_route)
+    ));
+    out.push_str(&format!(
+        "- Assertion or observer: {}.\n",
+        audit_markdown_cell(&attempt.assertion_shape)
+    ));
+    out.push_str("\nVerify command:\n");
+    out.push_str(&format!("```bash\n{}\n```\n\n", attempt.verify_command));
+    out.push_str("Receipt command:\n");
+    out.push_str(&format!(
+        "```bash\n{}\n```\n\n",
+        attempt.receipt_command_or_path
+    ));
+    out.push_str("Stop conditions:\n");
+    out.push_str("- Stop if the actionable-gaps artifact is stale, wrong-root, malformed, or missing this packet.\n");
+    out.push_str("- Stop if the required edit falls outside the allowed file or violates a do-not-change boundary.\n");
+    out.push_str("- Stop if the verify or receipt command is missing, unsafe, or cannot run in this workspace.\n");
+    out.push_str(
+        "- Stop if static limitations or blocked context make this packet not repair-ready.\n\n",
+    );
+    out.push_str("Required return format:\n");
+    out.push_str("- `packet_id`: packet attempted.\n");
+    out.push_str("- `files_changed`: workspace-relative files changed, or `none`.\n");
+    out.push_str("- `verify_result`: command run plus pass/fail/not-run.\n");
+    out.push_str(
+        "- `receipt_result`: receipt command result, path, or precise reason not emitted.\n",
+    );
+    out.push_str("- `remaining_blockers`: any stale, wrong-root, unsafe, static-limited, or scope blocker.\n\n");
     out.push_str("## Packet\n\n");
     out.push_str("| Field | Value |\n");
     out.push_str("| --- | --- |\n");
@@ -20451,6 +20514,36 @@ fn ripr_swarm_attempt_dry_run_markdown(attempt: &RiprSwarmAttemptDryRun) -> Stri
         attempt.static_limitations_count
     ));
     out
+}
+
+fn ripr_swarm_attempt_allowed_file_line(attempt: &RiprSwarmAttemptDryRun) -> String {
+    if attempt.swarm_state != "queued" {
+        return format!(
+            "No file edits are authorized while swarm_state is `{}`",
+            attempt.swarm_state
+        );
+    }
+    if attempt.related_test_or_observer != "unknown" {
+        let target = ripr_swarm_attempt_related_target_file(&attempt.related_test_or_observer)
+            .unwrap_or_else(|| attempt.related_test_or_observer.clone());
+        format!("{} (bounded repair target)", target)
+    } else {
+        "No typed edit target is available; do not edit files until the packet is regenerated"
+            .to_string()
+    }
+}
+
+fn ripr_swarm_attempt_related_target_file(related: &str) -> Option<String> {
+    related
+        .split_once("::")
+        .map(|(file, _)| file)
+        .filter(|file| !file.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let looks_like_path =
+                (related.contains('/') || related.contains('\\')) && related.contains('.');
+            looks_like_path.then(|| related.to_string())
+        })
 }
 
 fn ripr_swarm_plan_blocked_report(
@@ -69585,6 +69678,15 @@ covered_by = ["cargo xtask check-file-policy"]
         let markdown = ripr_swarm_attempt_dry_run_markdown(&attempt);
         for expected in [
             "# RIPR Swarm Attempt Dry Run",
+            "## Copy-Ready Operator Packet",
+            "Task:",
+            "Allowed files:",
+            "tests/pricing.rs (bounded repair target)",
+            "Do-not-change boundaries:",
+            "Repair target:",
+            "Stop conditions:",
+            "Required return format:",
+            "`files_changed`: workspace-relative files changed",
             "gap:ready-boundary",
             "add_boundary_assertion",
             "cargo test -p ripr pricing_threshold",
