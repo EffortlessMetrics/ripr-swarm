@@ -287,14 +287,14 @@ work from this reporting PR.
 ### Notes
 
 This slice records a zero movement result because the selected fixture-backed
-sub-shape was already handled before analyzer code changed. The rail continues
-to dogfood receipts so the remaining limitation state and non-claims are
-captured before closeout. The durable state is recorded in
+sub-shape was already handled before analyzer code changed. The follow-up
+dogfood receipt captures the remaining limitation state and non-claims before
+closeout. The durable state is recorded in
 `docs/handoffs/2026-05-22-value-resolution-audit-delta.md`.
 
 ## Work Item: `dogfood/value-resolution-receipts`
 
-Status: ready
+Status: done
 Blocks:
 - `campaign/value-resolution-audit-closeout`
 Blocked by:
@@ -302,17 +302,18 @@ Blocked by:
 
 ### Goal
 
-Record material dogfood receipts for the value-resolution movement.
+Record material dogfood receipts for the value-resolution movement and
+zero-movement non-claims.
 
 ### Production Delta
 
-Evidence only. Add handoff or dogfood receipt artifacts that show the selected
+Evidence only. Add checked dogfood receipt artifacts that show the selected
 case, command path, before/after state, remaining limitations, and non-claims.
 
 ### Evidence Delta
 
-Receipts connect the analyzer movement to canonical gap identity and downstream
-consumer expectations.
+Receipts connect the analyzer movement, including zero movement, to canonical
+gap identity and downstream consumer expectations.
 
 ### Non-Goals
 
@@ -345,11 +346,13 @@ place.
 
 ### Notes
 
-Dogfood receipts should preserve that static movement is not mutation proof.
+The checked dogfood receipt records the selected supported sub-shape as
+no-action evidence because the analyzer already supported it. It also preserves
+the remaining `activation_value_unresolved` limitation count and non-claims.
 
 ## Work Item: `campaign/value-resolution-audit-closeout`
 
-Status: blocked
+Status: ready
 Blocks: n/a
 Blocked by:
 - `dogfood/value-resolution-receipts`
