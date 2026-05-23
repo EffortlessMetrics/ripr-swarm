@@ -1,5 +1,6 @@
 use crate::agent::loop_commands::{
-    WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, outcome_command, shell_arg,
+    WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+    check_repo_exposure_command, outcome_command, shell_arg,
 };
 use crate::config::CONFIG_FILE_NAME;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
@@ -19,12 +20,14 @@ const DEFAULT_BASE: &str = "origin/main";
 const DEFAULT_HEAD: &str = "HEAD";
 const START_HERE_JSON: &str = "start-here.json";
 const START_HERE_MD: &str = "start-here.md";
+const DEFAULT_REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
 const DEFAULT_GAP_LEDGER: &str = "target/ripr/reports/gap-decision-ledger.json";
 const DEFAULT_FIRST_ACTION: &str = "target/ripr/reports/first-useful-action.json";
 const DEFAULT_REVIEW_COMMENTS: &str = "target/ripr/review/comments.json";
 const DEFAULT_AGENT_PACKET: &str = "target/ripr/workflow/agent-packet.json";
 const DEFAULT_GATE_DECISION: &str = "target/ripr/reports/gate-decision.json";
 const DEFAULT_RECEIPTS_DIR: &str = "target/ripr/receipts";
+const REPO_EXPOSURE_LATENCY_REPORT_COMMAND: &str = "cargo xtask repo-exposure-latency-report";
 pub(crate) const STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,12 +231,7 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
     let mut warnings = Vec::new();
     let selection = match read_json(&gap_path) {
         Ok(gap_ledger) => select_from_gap_ledger(&gap_ledger, root, options),
-        Err(ArtifactReadError::Missing) => Selection::missing_artifact(
-            "gap_ledger",
-            "Gap decision ledger",
-            &options.gap_ledger,
-            regenerate_gap_ledger_command(&options.gap_ledger),
-        ),
+        Err(ArtifactReadError::Missing) => missing_gap_ledger_selection(root, options),
         Err(ArtifactReadError::Malformed(message)) => Selection::blocked(
             "malformed_artifact",
             format!("The gap decision ledger could not be parsed: {message}"),
@@ -1272,6 +1270,52 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
     )
 }
 
+fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Selection {
+    let repo_exposure = resolve_path(root, DEFAULT_REPO_EXPOSURE);
+    if !repo_exposure.exists() {
+        return missing_repo_exposure_selection(root, options);
+    }
+    Selection::missing_artifact(
+        "gap_ledger",
+        "Gap decision ledger",
+        &options.gap_ledger,
+        regenerate_gap_ledger_command(&options.gap_ledger),
+    )
+}
+
+fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Selection {
+    if repo_exposure_latency_report_available(root) {
+        return Selection::blocked(
+            "blocked_artifact",
+            format!(
+                "Repo exposure report is missing at `{DEFAULT_REPO_EXPOSURE}`; run the bounded repo-exposure latency report before assigning repair work."
+            ),
+            Some(repo_exposure_latency_report_command(&options.root)),
+        );
+    }
+    Selection::missing_artifact(
+        "repo_exposure",
+        "Repo exposure report",
+        DEFAULT_REPO_EXPOSURE,
+        regenerate_repo_exposure_command(&options.root),
+    )
+}
+
+fn repo_exposure_latency_report_available(root: &Path) -> bool {
+    fs::read_to_string(root.join("xtask/src/command.rs"))
+        .is_ok_and(|text| text.contains("\"repo-exposure-latency-report\""))
+}
+
+fn repo_exposure_latency_report_command(root: &str) -> String {
+    if root == "." {
+        return REPO_EXPOSURE_LATENCY_REPORT_COMMAND.to_string();
+    }
+    format!(
+        "cd {} && {REPO_EXPOSURE_LATENCY_REPORT_COMMAND}",
+        shell_arg(root)
+    )
+}
+
 fn ledger_reports_timeout(value: &Value) -> bool {
     matches!(
         string_path(value, &["status"])
@@ -1635,6 +1679,10 @@ fn regenerate_gap_ledger_command(out: &str) -> String {
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out {out} --out-md {}",
         with_extension(out, "md")
     )
+}
+
+fn regenerate_repo_exposure_command(root: &str) -> String {
+    check_repo_exposure_command(root, "instant", DEFAULT_REPO_EXPOSURE)
 }
 
 fn git_worktree_available(root: &Path) -> Result<bool, String> {
@@ -2503,14 +2551,116 @@ mod tests {
     }
 
     #[test]
-    fn missing_gap_ledger_writes_recovery_packet() -> Result<(), String> {
-        let repo = temp_repo("first-pr-missing")?;
+    fn missing_repo_exposure_blocks_before_gap_ledger() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-repo-exposure")?;
         let options = FirstPrOptions::default();
         write_first_pr(&repo, &options)?;
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert_eq!(packet["selected"]["artifact"]["id"], "repo_exposure");
+        assert_eq!(
+            packet["selected"]["artifact"]["path"],
+            DEFAULT_REPO_EXPOSURE
+        );
+        assert!(
+            packet["selected"]["regeneration_command"]
+                .as_str()
+                .is_some_and(|command| command
+                    == "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json")
+        );
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains(
+            "Missing artifact: Repo exposure report at `target/ripr/reports/repo-exposure.json`"
+        ));
+        assert!(summary.contains("Regeneration command: `ripr check --root . --mode instant"));
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_repo_exposure_uses_bounded_latency_report_when_available() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-repo-exposure-latency")?;
+        fs::create_dir_all(repo.join("xtask/src"))
+            .map_err(|err| format!("mkdir xtask src: {err}"))?;
+        fs::write(
+            repo.join("xtask/src/command.rs"),
+            "\"repo-exposure-latency-report\"",
+        )
+        .map_err(|err| format!("write xtask command catalog: {err}"))?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert!(
+            packet["selected"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Repo exposure report is missing"))
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            REPO_EXPOSURE_LATENCY_REPORT_COMMAND
+        );
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains("Recovery reason: Repo exposure report is missing"));
+        assert!(summary.contains("Next command: `cargo xtask repo-exposure-latency-report`"));
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_repo_exposure_roots_bounded_latency_command_for_custom_root() -> Result<(), String> {
+        let repo = temp_repo("first-pr-missing-repo-exposure-latency-root")?;
+        fs::create_dir_all(repo.join("xtask/src"))
+            .map_err(|err| format!("mkdir xtask src: {err}"))?;
+        fs::write(
+            repo.join("xtask/src/command.rs"),
+            "\"repo-exposure-latency-report\"",
+        )
+        .map_err(|err| format!("write xtask command catalog: {err}"))?;
+        let options = FirstPrOptions {
+            root: repo.display().to_string(),
+            ..FirstPrOptions::default()
+        };
+        let packet = render_start_here_packet(&repo, &options);
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert_eq!(
+            packet["selected"]["next_command"],
+            format!(
+                "cd {} && {REPO_EXPOSURE_LATENCY_REPORT_COMMAND}",
+                shell_arg(&options.root)
+            )
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_gap_ledger_writes_recovery_packet_after_repo_exposure_exists() -> Result<(), String>
+    {
+        let repo = temp_repo("first-pr-missing-gap-ledger")?;
+        fs::create_dir_all(repo.join("target/ripr/reports"))
+            .map_err(|err| format!("mkdir reports dir: {err}"))?;
+        fs::write(repo.join(DEFAULT_REPO_EXPOSURE), "{}")
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
