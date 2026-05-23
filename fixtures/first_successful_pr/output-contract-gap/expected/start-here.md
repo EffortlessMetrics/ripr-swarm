@@ -10,6 +10,7 @@ State: actionable
 - Safe next action: repair one named stable Rust gap.
 - Top actionable gap: missing output contract
 - Changed behavior: `APPLE_M3_AIR_DEVICE_LABELS_TEXT`
+- Why this matters: User-facing output changed, but the gap ledger did not find checked output or golden evidence for the changed text.
 - Current evidence strength: Static evidence found changed user-facing output, but no checked output or golden proof is attached.
 - Missing discriminator: Checked output or golden proof for the changed text.
 - Focused proof intent: Add or update the output proof in `fixtures/device-labels/expected/human.txt` so `golden output contains APPLE_M3_AIR_DEVICE_LABELS_TEXT`.

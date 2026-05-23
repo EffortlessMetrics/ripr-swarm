@@ -9551,6 +9551,7 @@ fn validate_first_successful_pr_actionable_json(
 ) {
     for (path, label) in [
         (&["selected", "kind"][..], "top actionable gap"),
+        (&["selected", "changed_behavior"][..], "changed behavior"),
         (&["selected", "why"][..], "why this matters"),
         (
             &["selected", "current_evidence_strength"][..],
@@ -9599,7 +9600,8 @@ fn validate_first_successful_pr_actionable_markdown(
 ) {
     for required in [
         "- Top actionable gap:",
-        "Why this matters:",
+        "- Changed behavior:",
+        "- Why this matters:",
         "- Current evidence strength:",
         "- Missing discriminator:",
         "- Focused proof intent:",
@@ -52419,9 +52421,11 @@ mod tests {
         assert!(report.contains("is missing `No runtime mutation proof`"));
         assert!(report.contains("is missing `No merge approval`"));
         assert!(report.contains("actionable packet must name top actionable gap"));
+        assert!(report.contains("actionable packet must name changed behavior"));
         assert!(report.contains("actionable packet must name why this matters"));
         assert!(report.contains("actionable packet must name static_evidence_boundary"));
         assert!(report.contains("actionable Markdown must include `- Top actionable gap:`"));
+        assert!(report.contains("actionable Markdown must include `- Why this matters:`"));
         assert!(report.contains("actionable Markdown must include receipt command or path"));
         Ok(())
     }
