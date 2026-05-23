@@ -30897,7 +30897,7 @@ fn build_badge_basis_report(
             source: "repo exposure / gap ledger artifacts".to_string(),
             count: None,
             detail:
-                "Canonical evidence identity is supporting context unless it projects into canonical_actionable_gap, the public headline basis for unresolved actionable static repair gaps."
+                "Canonical evidence identity is available to downstream reports, but the current public endpoint generator does not count it as the headline unit."
                     .to_string(),
         },
         static_limitations,
@@ -49016,17 +49016,17 @@ mod tests {
         actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
         badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
         badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-        badge_artifacts_summary_markdown, badge_basis_derived_ripr_plus_snapshot,
-        badge_basis_needs_repo_badge_plus_job, badge_basis_report_markdown,
-        badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
-        build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
-        build_repo_exposure_latency_report, build_targeted_test_outcome_report,
-        campaign_source_truth_violations_for_root, check_allow_attributes,
-        check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
-        check_executable_files, check_file_policy, check_local_context, check_network_policy,
-        check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
-        check_workflows, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
-        collect_panic_findings, collect_semantic_panic_findings, command_catalog,
+        badge_artifacts_summary_markdown, badge_basis_canonical_projection,
+        badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
+        badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
+        badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
+        build_no_panic_allowlist_proposals, build_repo_exposure_latency_report,
+        build_targeted_test_outcome_report, campaign_source_truth_violations_for_root,
+        check_allow_attributes, check_badge_diff_policy_with_context, check_doc_artifacts,
+        check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
+        check_network_policy, check_no_panic_family, check_process_policy, check_static_language,
+        check_support_tiers, check_workflows, ci_full_evidence_gates, cockpit_json,
+        cockpit_markdown, collect_panic_findings, collect_semantic_panic_findings, command_catalog,
         command_catalog_violations, commands_report_json, commands_report_markdown,
         critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
         dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
@@ -63075,6 +63075,50 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
     }
 
     #[test]
+    fn badge_basis_canonical_projection_names_static_gap_basis() {
+        let ripr = BadgeNativeAuditSnapshot {
+            label: "ripr".to_string(),
+            kind: "ripr".to_string(),
+            scope: "repo".to_string(),
+            basis: "canonical_actionable_gap".to_string(),
+            message: "12".to_string(),
+            status: "warn".to_string(),
+            color: "orange".to_string(),
+            counts: BTreeMap::new(),
+            reason_counts: BTreeMap::new(),
+            warnings: Vec::new(),
+        };
+        let ripr_plus = BadgeNativeAuditSnapshot {
+            label: "ripr+".to_string(),
+            kind: "ripr_plus".to_string(),
+            scope: "repo".to_string(),
+            basis: "canonical_actionable_gap".to_string(),
+            message: "14".to_string(),
+            status: "warn".to_string(),
+            color: "orange".to_string(),
+            counts: BTreeMap::new(),
+            reason_counts: BTreeMap::new(),
+            warnings: Vec::new(),
+        };
+
+        let projection = badge_basis_canonical_projection(
+            &RepoBadgeArtifactOptions::default(),
+            &ripr,
+            &ripr_plus,
+        );
+
+        assert_eq!(projection.status, "available");
+        assert_eq!(projection.ripr_count, Some(12));
+        assert_eq!(projection.ripr_plus_count, Some(14));
+        assert!(projection.detail.contains("canonical_actionable_gap"));
+        assert!(
+            projection
+                .detail
+                .contains("unresolved actionable static repair gaps")
+        );
+    }
+
+    #[test]
     fn repo_badge_artifacts_summary_markdown_carries_baseline_disclaimer() -> Result<(), String> {
         let markdown = repo_badge_artifacts_summary_markdown(
             STUB_RIPR_NATIVE_JSON,
@@ -63263,6 +63307,74 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
         assert!(markdown.contains("supporting/internal diagnostics"));
         assert!(markdown.contains("repair, verify, and receipt model"));
         assert!(markdown.contains("badges/ripr.json"));
+    }
+
+    #[test]
+    fn badge_basis_report_json_names_actionable_recommendation() -> Result<(), String> {
+        let report = BadgeBasisReport {
+            status: "pass".to_string(),
+            current_public_endpoints: Vec::new(),
+            current_repo_badges: Vec::new(),
+            seam_native_counts: BadgeCountBreakdown {
+                status: "not_collected".to_string(),
+                source: "cargo xtask badge-basis --include-seam-classes".to_string(),
+                counts: BTreeMap::new(),
+                note: "supporting/internal only".to_string(),
+            },
+            test_efficiency_counts: BadgeCountBreakdown {
+                status: "pass".to_string(),
+                source: "target/ripr/reports/test-efficiency.json".to_string(),
+                counts: BTreeMap::new(),
+                note: "available".to_string(),
+            },
+            canonical_actionable_gap: BadgeCanonicalProjection {
+                status: "available".to_string(),
+                source: "repo-badge-artifacts".to_string(),
+                ripr_count: Some(1),
+                ripr_plus_count: Some(1),
+                detail: "canonical_actionable_gap".to_string(),
+            },
+            raw_alignment_signals: BadgeBasisSignal {
+                status: "not_in_current_badge_generator".to_string(),
+                source: "finding alignment".to_string(),
+                count: None,
+                detail: "supporting evidence".to_string(),
+            },
+            canonical_evidence_items: BadgeBasisSignal {
+                status: "not_in_current_badge_generator".to_string(),
+                source: "repo exposure".to_string(),
+                count: None,
+                detail: "supporting evidence".to_string(),
+            },
+            static_limitations: BadgeBasisSignal {
+                status: "not_available".to_string(),
+                source: "repo exposure".to_string(),
+                count: None,
+                detail: "supporting inventory".to_string(),
+            },
+            suppressed_or_intentional_items: BadgeBasisSignal {
+                status: "available".to_string(),
+                source: "badge counts".to_string(),
+                count: Some(0),
+                detail: "out of headline".to_string(),
+            },
+            no_action_items: BadgeBasisSignal {
+                status: "requires_gap_decision_ledger".to_string(),
+                source: "none".to_string(),
+                count: None,
+                detail: "requires gap records".to_string(),
+            },
+            recommended_public_projection: "canonical_actionable_gap".to_string(),
+            warnings: Vec::new(),
+        };
+
+        let json = badge_basis_report_json(&report)?;
+
+        assert!(json.contains("unresolved actionable static repair gaps"));
+        assert!(json.contains("canonical_actionable_gap"));
+        assert!(json.contains("repair, verify, and receipt model"));
+        assert!(json.contains("supporting/internal"));
+        Ok(())
     }
 
     #[test]
