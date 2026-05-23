@@ -4148,8 +4148,8 @@ Work items:
 | `badge/actionable-basis-presentation` | done | Badge-adjacent copy and badge-basis output explain the headline count as unresolved actionable static repair gaps using `canonical_actionable_gap` as the public basis. |
 | `pr/actionable-delta-front-panel` | done | PR summary now starts with an advisory actionable repair front panel over existing actionable-gaps, outcome, and PR front-panel artifacts before raw path inventory. |
 | `editor/repair-first-status-hierarchy` | done | Editor Show Status now starts with a repair cockpit block naming workspace/current-file actionable state, top repair, related proof, verify command, receipt state, and fail-closed next action. |
-| `swarm/dry-run-copy-ready-packet` | ready | Make dry-run attempt output compact and directly copy-ready for human or external-agent operators. |
-| `outcome/movement-front-section` | blocked | Make outcome/trend front sections lead with receipt-linked movement since prior refresh. |
+| `swarm/dry-run-copy-ready-packet` | done | `ripr-swarm attempt --dry-run` now starts with a compact copy-ready operator packet naming task, allowed files, boundaries, repair target, verify/receipt commands, stop conditions, and return format. |
+| `outcome/movement-front-section` | ready | Make outcome/trend front sections lead with receipt-linked movement since prior refresh. |
 | `campaign/actionable-surface-translation-closeout` | blocked | Close only after all covered surfaces prove the translation contract and remaining limits are recorded. |
 
 Commands:

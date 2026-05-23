@@ -418,7 +418,7 @@ git diff --check
 
 ### Work item: swarm/dry-run-copy-ready-packet
 
-Status: ready
+Status: done
 
 Linked proposal:
 
@@ -450,7 +450,7 @@ Issue:
 
 PR:
 
-- n/a
+- this PR
 
 #### Goal
 
@@ -491,7 +491,7 @@ git diff --check
 
 ### Work item: outcome/movement-front-section
 
-Status: blocked
+Status: ready
 
 Linked proposal:
 
@@ -511,7 +511,7 @@ Blocks:
 
 Blocked by:
 
-- `swarm/dry-run-copy-ready-packet`
+- n/a
 
 Branch:
 
