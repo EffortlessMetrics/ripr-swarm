@@ -36,8 +36,8 @@ hard_rules = [
 non_goals = [
   "no analyzer truth changes",
   "no actionable-gap producer or schema changes",
-  "no support-tier promotion in the activation PR",
-  "no public badge semantic change in the activation PR",
+  "no support-tier promotion without a dedicated support-tier PR",
+  "no public badge endpoint semantic change in presentation-only slices",
   "no default CI blocking or gate behavior changes",
   "no PR comment publishing changes",
   "no source edits or generated tests",
