@@ -2,6 +2,10 @@
 
 Status: proposed
 
+Linked proposal: [RIPR-PROP-0016](../proposals/RIPR-PROP-0016-actionable-surface-translation.md)
+
+Linked plan: [RIPR-PLAN-0059](../../plans/actionable-surface-translation/implementation-plan.md)
+
 ## Problem
 
 RIPR public projection now uses a more correct unit (`canonical_actionable_gap`),

@@ -1,179 +1,193 @@
-id = "lane1-value-resolution-audit-fixes"
-title = "Lane 1 Value Resolution Audit Fixes"
-status = "closed"
-no_current_goal = true
-lane = "1"
-issue = "285"
+id = "actionable-surface-translation"
+title = "Actionable Surface Translation"
+status = "active"
+lane = "cross-surface"
 
-# This campaign is selected from repo-owned Lane 1 proof, not chat history.
-# The closed finding-alignment burn-down closeout points future Lane 1 work at
-# fresh audit and scorecard evidence; the current scorecard names
-# `predicate_boundary` / `activation_value_unresolved` as the next
-# value-resolution repair route.
+# This campaign is selected from repo-owned RIPR-SPEC-0059 after the
+# source-of-truth control-plane lane closed with `no_current_goal = true`.
+# The campaign translates existing actionable canonical gap evidence across
+# badge, PR, editor, swarm dry-run, and outcome surfaces without changing
+# analyzer truth or claim authority.
 
 objective = """
-Burn down a fixture-backed slice of the `activation_value_unresolved` static
-limitation bucket for predicate-boundary evidence while preserving canonical
-items as the countable unit and keeping unsupported value flows named as
-analyzer limitations.
+Make covered user-facing surfaces lead with the same repair-first question:
+what actionable canonical gap remains, what repair route is safe, what verifies
+movement, what receipt records it, and what remains advisory or static-only?
 """
 
 end_state = [
-  "the selected value-resolution sub-shape is pinned by positive and must-not-claim fixtures before analyzer behavior changes",
-  "supported predicate-boundary cases move out of `activation_value_unresolved` only when concrete activation values are statically visible",
-  "unsupported helper-built, cross-file, generated, macro, shadowed, pattern-bound, or opaque value flows remain named static limitations",
-  "raw findings remain supporting evidence and canonical items remain the countable unit",
-  "audit and scorecard output record before/after movement for the selected bucket without changing PR/CI, editor, gate, badge, release, provider, generated-test, source-edit, or mutation behavior",
+  "badge-adjacent copy explains unresolved actionable static repair gaps at point of use",
+  "PR evidence leads with actionable delta and one top next repair packet before raw finding totals",
+  "editor Show Status leads with one safe repair action or one precise fail-closed reason",
+  "swarm dry-run output includes a compact copy-ready operator or external-agent packet",
+  "outcome and trend reports lead with receipt-linked movement since the previous refresh",
+  "all covered surfaces preserve advisory/static boundaries and avoid runtime, coverage, mutation, gate, policy, or merge-readiness claims",
 ]
 
 hard_rules = [
-  "fixture first",
-  "audit-driven repairs before heuristics",
-  "raw findings remain supporting evidence",
-  "canonical items are the countable evidence unit",
-  "predicate-boundary actionability still requires concrete activation values",
-  "named static limitations are analyzer work, not user test debt",
-  "unsupported value flows must stay explicitly limited",
-  "runtime-only signal does not create static gaps",
+  "typed fields decide and prose explains",
+  "actionable canonical gaps are the primary public repair unit",
+  "raw findings and seam-native inventory remain supporting context",
+  "advisory and static boundaries remain visible",
+  "gate authority stays with explicit gate artifacts",
+  "receipts record static movement only",
 ]
 
 non_goals = [
-  "no PR or CI rendering changes",
-  "no inline PR comment publishing",
-  "no LSP or editor polish",
-  "no gate-policy changes or default blocking",
-  "no public badge or score redefinition",
-  "no generated tests",
-  "no automatic source edits",
+  "no analyzer truth changes",
+  "no actionable-gap producer or schema changes",
+  "no support-tier promotion in the activation PR",
+  "no public badge semantic change in the activation PR",
+  "no default CI blocking or gate behavior changes",
+  "no PR comment publishing changes",
+  "no source edits or generated tests",
   "no provider/model calls",
   "no mutation execution",
-  "no release or publishing work",
+  "no release, publish, signing, or marketplace work",
+  "no runtime adequacy, coverage adequacy, proof-of-correctness, policy eligibility, gate pass/fail, or merge-readiness claim",
 ]
 
 [[work_item]]
-id = "docs/lane1-value-resolution-audit-fixes-stack"
+id = "docs/actionable-surface-translation-stack"
 status = "done"
-branch = "goals-activate-value-resolution-audit-fixes"
+branch = "docs-activate-actionable-surface-translation"
 stackable = false
-plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md",
-  "docs/specs/RIPR-SPEC-0021-evidence-record.md",
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-]
-acceptance = "Open the issue-backed Lane 1 value-resolution audit-fixes rail, wire the active manifest, lane tracker, implementation plan, and indexes, and leave the first behavior-bearing work item ready without changing analyzer behavior."
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+acceptance = "Open the Actionable Surface Translation proposal, plan, active manifest, artifact ledger entries, indexes, campaign map, and traceability outputs without changing product behavior."
 commands = [
-  "cargo xtask goals status",
+  "cargo xtask check-doc-artifacts",
+  "cargo xtask check-goals",
   "cargo xtask goals next",
+  "cargo xtask pr-body --work-item docs/actionable-surface-translation-stack",
+  "cargo xtask repo-contract-report",
+  "cargo xtask check-doc-index",
+  "cargo xtask markdown-links",
+  "cargo xtask check-static-language",
+  "cargo xtask check-doc-roles",
+  "cargo xtask check-traceability",
+  "cargo xtask check-capabilities",
+  "cargo xtask check-support-tiers",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "badge/actionable-basis-presentation"
+status = "ready"
+branch = "badge-actionable-basis-presentation"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+blocked_by = [
+  "docs/actionable-surface-translation-stack",
+]
+acceptance = "Badge-adjacent public copy and badge-basis output define the headline count as unresolved actionable static repair gaps, name `canonical_actionable_gap` as the public basis, keep seam-native inventory supporting/internal, and preserve existing advisory badge semantics."
+commands = [
+  "cargo xtask badge-basis",
+  "cargo xtask check-badge-diff-policy",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-static-language",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "pr/actionable-delta-front-panel"
+status = "blocked"
+branch = "pr-actionable-delta-front-panel"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+blocked_by = [
+  "badge/actionable-basis-presentation",
+]
+acceptance = "PR evidence front panels lead with repo actionable count, PR-local actionable count, new/resolved gaps, receipt state, blocked/static-limited counts, and one top next repair packet before raw finding or seam inventory totals."
+commands = [
+  "cargo xtask pr-summary",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "editor/repair-first-status-hierarchy"
+status = "blocked"
+branch = "editor-repair-first-status-hierarchy"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+blocked_by = [
+  "pr/actionable-delta-front-panel",
+]
+acceptance = "Editor Show Status leads with workspace/current-file actionable state, top repair item, related test or target, verify command, receipt state, and next safe command or precise fail-closed reason."
+commands = [
+  "cargo test -p ripr lsp --lib",
+  "npm --prefix editors/vscode run compile",
+  "npm --prefix editors/vscode run test:e2e",
+  "cargo xtask lsp-cockpit-report",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "swarm/dry-run-copy-ready-packet"
+status = "blocked"
+branch = "swarm-dry-run-copy-ready-packet"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+blocked_by = [
+  "editor/repair-first-status-hierarchy",
+]
+acceptance = "`ripr-swarm attempt --dry-run` emits a compact copy-ready operator or external-agent packet with task, allowed files, do-not-change boundaries, repair target, verify command, receipt command, stop conditions, and required return format."
+commands = [
+  "cargo test -p xtask ripr_swarm_attempt --bin xtask",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "outcome/movement-front-section"
+status = "blocked"
+branch = "outcome-movement-front-section"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+blocked_by = [
+  "swarm/dry-run-copy-ready-packet",
+]
+acceptance = "Outcome and trend front sections lead with receipt-linked movement since prior refresh: total actionable count, delta, resolved, improved, unchanged after attempt, orphaned/missing receipts, and top blocked reason."
+commands = [
+  "cargo xtask actionable-gap-outcomes",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "campaign/actionable-surface-translation-closeout"
+status = "blocked"
+branch = "campaign-actionable-surface-translation-closeout"
+stackable = false
+proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
+spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
+plan = "plans/actionable-surface-translation/implementation-plan.md"
+blocked_by = [
+  "outcome/movement-front-section",
+]
+acceptance = "Close the campaign only after badge, PR, editor, swarm, and outcome/trend surfaces prove the first-screen translation required by RIPR-SPEC-0059 and the closeout records proof, claim boundary, remaining limits, and next recommended work."
+commands = [
+  "cargo xtask check-doc-artifacts",
   "cargo xtask check-goals",
   "cargo xtask check-doc-index",
   "cargo xtask markdown-links",
   "cargo xtask check-static-language",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "fixtures/value-resolution-audit-corpus"
-status = "done"
-branch = "fixtures-value-resolution-audit-corpus"
-stackable = false
-plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md",
-  "docs/specs/RIPR-SPEC-0021-evidence-record.md",
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-]
-acceptance = "Add an audit-derived fixture corpus for one selected `predicate_boundary` / `activation_value_unresolved` value-resolution sub-shape, including positive cases and negative guards for unsupported value flows, without changing analyzer behavior."
-commands = [
-  "cargo test -p xtask evidence_quality_benchmark",
-  "cargo xtask check-fixture-contracts",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "analysis/value-resolution-supported-subshape"
-status = "done"
-branch = "analysis-value-resolution-supported-subshape"
-stackable = false
-plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md",
-  "docs/specs/RIPR-SPEC-0021-evidence-record.md",
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-]
-blocked_by = [
-  "fixtures/value-resolution-audit-corpus",
-]
-acceptance = "Move only the fixture-backed supported sub-shape out of `activation_value_unresolved`; keep unsupported value flows named; preserve concrete activation-value requirements for predicate-boundary actionability; report audit and scorecard movement."
-commands = [
-  "cargo test -p ripr value_resolution --lib",
-  "cargo xtask lane1-evidence-audit",
-  "cargo xtask evidence-quality-scorecard",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "report/value-resolution-audit-delta"
-status = "done"
-branch = "report-value-resolution-audit-delta"
-stackable = false
-plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-]
-blocked_by = [
-  "analysis/value-resolution-supported-subshape",
-]
-acceptance = "Record before/after Lane 1 audit, evidence-quality scorecard, and trend movement for the selected value-resolution bucket without changing public badge semantics or downstream projection behavior."
-commands = [
-  "cargo xtask lane1-evidence-audit",
-  "cargo xtask evidence-quality-scorecard",
-  "cargo xtask evidence-quality-trend",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "dogfood/value-resolution-receipts"
-status = "done"
-branch = "dogfood-value-resolution-receipts"
-stackable = false
-plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-]
-blocked_by = [
-  "report/value-resolution-audit-delta",
-]
-acceptance = "Record material value-resolution dogfood receipts with canonical gap identity, raw finding context, before/after limitation movement, and explicit non-claims for unsupported shapes."
-commands = [
-  "cargo xtask dogfood",
-  "cargo xtask check-doc-index",
-  "cargo xtask markdown-links",
-  "cargo xtask check-static-language",
-  "cargo xtask check-pr",
-]
-
-[[work_item]]
-id = "campaign/value-resolution-audit-closeout"
-status = "done"
-branch = "campaign-value-resolution-audit-closeout"
-stackable = false
-plan = "plans/lane1-value-resolution-audit-fixes/implementation-plan.md"
-specs = [
-  "docs/specs/RIPR-SPEC-0045-finding-to-gap-alignment.md",
-]
-blocked_by = [
-  "dogfood/value-resolution-receipts",
-]
-acceptance = "Close the value-resolution audit-fixes rail only after fixtures, analyzer movement, audit delta, and dogfood receipts prove the selected sub-shape while preserving all unsupported value flows as named future work."
-commands = [
-  "cargo xtask goals status",
-  "cargo xtask goals next",
-  "cargo xtask check-doc-index",
-  "cargo xtask markdown-links",
-  "cargo xtask check-static-language",
+  "cargo xtask check-doc-roles",
+  "cargo xtask check-traceability",
+  "cargo xtask check-capabilities",
+  "cargo xtask check-support-tiers",
   "cargo xtask check-pr",
 ]

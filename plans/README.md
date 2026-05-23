@@ -58,6 +58,7 @@ safer.
 
 ## Current plans
 
+- [Actionable surface translation](actionable-surface-translation/implementation-plan.md)
 - [Campaign 27](campaign-27/README.md)
 - [Editor actionable gap queue](editor-actionable-gap-queue/implementation-plan.md)
 - [Editor adoption assurance](editor-adoption-assurance/implementation-plan.md)
