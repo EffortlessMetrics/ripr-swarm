@@ -491,7 +491,7 @@ git diff --check
 
 ### Work item: outcome/movement-front-section
 
-Status: ready
+Status: done
 
 Linked proposal:
 
@@ -523,7 +523,7 @@ Issue:
 
 PR:
 
-- n/a
+- #320
 
 #### Goal
 
@@ -560,7 +560,7 @@ git diff --check
 
 ### Work item: campaign/actionable-surface-translation-closeout
 
-Status: blocked
+Status: ready
 
 Linked proposal:
 
@@ -580,7 +580,7 @@ Blocks:
 
 Blocked by:
 
-- `outcome/movement-front-section`
+- n/a
 
 Branch:
 

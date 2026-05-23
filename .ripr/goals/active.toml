@@ -142,7 +142,7 @@ commands = [
 
 [[work_item]]
 id = "outcome/movement-front-section"
-status = "ready"
+status = "done"
 branch = "outcome-movement-front-section"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
@@ -157,15 +157,12 @@ commands = [
 
 [[work_item]]
 id = "campaign/actionable-surface-translation-closeout"
-status = "blocked"
+status = "ready"
 branch = "campaign-actionable-surface-translation-closeout"
 stackable = false
 proposal = "docs/proposals/RIPR-PROP-0016-actionable-surface-translation.md"
 spec = "docs/specs/RIPR-SPEC-0059-actionable-surface-translation.md"
 plan = "plans/actionable-surface-translation/implementation-plan.md"
-blocked_by = [
-  "outcome/movement-front-section",
-]
 acceptance = "Close the campaign only after badge, PR, editor, swarm, and outcome/trend surfaces prove the first-screen translation required by RIPR-SPEC-0059 and the closeout records proof, claim boundary, remaining limits, and next recommended work."
 commands = [
   "cargo xtask check-doc-artifacts",
