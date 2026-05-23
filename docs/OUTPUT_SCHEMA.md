@@ -8736,7 +8736,7 @@ Field contract:
   projection.
 - `packets[].llm_guidance.copyable_packet` - optional GapRecord-backed
   pasteable repair packet for coding agents. It carries `task`, `context`,
-  `repair`, `verification`, `stop_conditions`, `do_not_do`,
+  `repair`, `verification`, `receipt`, `stop_conditions`, `do_not_do`,
   `authority_boundary`, and a Markdown sibling with the same sections. It is
   additive and derives only from the selected `GapRecord`; it does not rerun
   analysis, edit source, generate tests, call providers, change gate

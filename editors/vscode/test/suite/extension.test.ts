@@ -157,6 +157,9 @@ suite('Extension Smoke', () => {
         text.includes('gap:rust:pricing:discount:threshold-boundary')
       );
       assert.notStrictEqual(repairPacket, 'actionable-gap-queue-repair-sentinel');
+      assert.ok(repairPacket.includes('Changed behavior: amount >= threshold'), repairPacket);
+      assert.ok(repairPacket.includes('Missing discriminator: amount == threshold'), repairPacket);
+      assert.ok(repairPacket.includes('Focused proof intent: Add exact assertion for amount == threshold.'), repairPacket);
       assert.ok(repairPacket.includes('Repair kind: add_boundary_assertion'), repairPacket);
       assert.ok(repairPacket.includes('Run: ripr agent verify --root . --json'), repairPacket);
       assert.ok(repairPacket.includes('Record: ripr agent receipt --root . --json'), repairPacket);
@@ -171,6 +174,9 @@ suite('Extension Smoke', () => {
       );
       assert.notStrictEqual(repoMap, 'actionable-gap-queue-map-sentinel');
       assert.ok(repoMap.includes('Canonical gap id: gap:rust:pricing:discount:threshold-boundary'), repoMap);
+      assert.ok(repoMap.includes('Changed behavior: amount >= threshold'), repoMap);
+      assert.ok(repoMap.includes('Missing discriminator: amount == threshold'), repoMap);
+      assert.ok(repoMap.includes('Focused proof intent: Add exact assertion for amount == threshold.'), repoMap);
       assert.ok(repoMap.includes('Movement: improved'), repoMap);
       assert.ok(repoMap.includes('First PR packet state'), repoMap);
       assert.ok(repoMap.includes('This map is read-only orientation.'), repoMap);
@@ -1631,6 +1637,10 @@ suite('Extension Smoke', () => {
           'Actionable gap queue: top repair ready; target/ripr/reports/actionable-gaps.json is advisory.',
           'Top repair: add_boundary_assertion',
           'Gap identity: gap:rust:pricing:discount:threshold-boundary',
+          'Changed behavior: amount >= threshold',
+          'Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found.',
+          'Missing discriminator: amount == threshold',
+          'Focused proof intent: Add exact assertion for amount == threshold.',
           'Related test: tests/pricing.rs::premium_customer_gets_discount',
           'Verify: ripr agent verify --root . --json',
           'Receipt: ripr agent receipt --root . --json',
@@ -1794,6 +1804,10 @@ suite('Extension Smoke', () => {
       assert.ok(packet.includes('RIPR current repair packet'), packet);
       assert.ok(packet.includes('Repair this one canonical gap: gap:rust:pricing:discount:threshold-boundary.'), packet);
       assert.ok(packet.includes('Language: rust (stable)'), packet);
+      assert.ok(packet.includes('Changed behavior: amount >= threshold'), packet);
+      assert.ok(packet.includes('Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found.'), packet);
+      assert.ok(packet.includes('Missing discriminator: amount == threshold'), packet);
+      assert.ok(packet.includes('Focused proof intent: Add exact assertion for amount == threshold.'), packet);
       assert.ok(packet.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), packet);
       assert.ok(packet.includes('Repair kind: add_boundary_assertion'), packet);
       assert.ok(packet.includes('Target assertion or output proof: assert_eq!(discount(100, 100), 90)'), packet);
@@ -3267,6 +3281,8 @@ function actionableGapsReport(overrides: Record<string, unknown>): string {
         gap_state: 'actionable',
         actionability: 'extend_related_test',
         source_file: 'src/pricing.rs',
+        changed_behavior: 'amount >= threshold',
+        why: 'A related Rust test reaches this change, but no equality-boundary assertion was found.',
         primary_anchor: {
           file: 'src/pricing.rs',
           line: 42
@@ -3275,6 +3291,13 @@ function actionableGapsReport(overrides: Record<string, unknown>): string {
         target_test_type: 'boundary_discriminator',
         target_test: 'tests/pricing.rs::premium_customer_gets_discount',
         assertion_shape: 'assert_eq!(discount(100, 100), 90)',
+        missing_discriminators: [
+          {
+            value: 'amount == threshold',
+            reason: 'observed values do not include the equality-boundary case'
+          }
+        ],
+        recommended_repair: 'Add exact assertion for amount == threshold.',
         related_test_or_observer: {
           file: 'tests/pricing.rs',
           name: 'premium_customer_gets_discount',

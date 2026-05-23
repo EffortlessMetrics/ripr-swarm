@@ -419,21 +419,24 @@ fn pasteable_gap_repair_packet(
     let context = gap_record_packet_context(gap_ledger_path, record, route);
     let repair = gap_record_packet_repair(route);
     let verification = gap_record_packet_verification(record, verify_command);
+    let receipt = gap_record_packet_receipt(record);
     let do_not_do = gap_record_packet_do_not_do(record);
-    let markdown = pasteable_packet_markdown(
-        &task,
-        &context,
-        &repair,
-        &verification,
+    let markdown = pasteable_packet_markdown(PasteablePacketSections {
+        task: &task,
+        context: &context,
+        repair: &repair,
+        verification: &verification,
+        receipt: &receipt,
         stop_conditions,
-        &do_not_do,
+        do_not_do: &do_not_do,
         authority_boundary,
-    );
+    });
     json!({
         "task": task,
         "context": context,
         "repair": repair,
         "verification": verification,
+        "receipt": receipt,
         "stop_conditions": stop_conditions,
         "do_not_do": do_not_do,
         "authority_boundary": authority_boundary,
@@ -604,6 +607,26 @@ fn gap_record_packet_verification(record: &GapRecord, verify_command: &str) -> V
     verification
 }
 
+fn gap_record_packet_receipt(record: &GapRecord) -> Vec<String> {
+    let mut receipt = Vec::new();
+    if let Some(receipt_command) = record.receipt_command.as_deref() {
+        receipt.push(format!("Run `{receipt_command}` after verification."));
+    }
+    if let Some(receipt_path) = record
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.path.as_deref())
+    {
+        receipt.push(format!(
+            "Keep receipt artifact `{receipt_path}` with the review."
+        ));
+    }
+    if receipt.is_empty() {
+        receipt.push("No receipt command or path was supplied by the gap record.".to_string());
+    }
+    receipt
+}
+
 fn gap_record_packet_do_not_do(record: &GapRecord) -> Vec<String> {
     let mut guidance = vec![
         "Do not edit production code unless the focused proof exposes a real product defect."
@@ -619,30 +642,35 @@ fn gap_record_packet_do_not_do(record: &GapRecord) -> Vec<String> {
     guidance
 }
 
-fn pasteable_packet_markdown(
-    task: &str,
-    context: &[String],
-    repair: &[String],
-    verification: &[String],
-    stop_conditions: &[String],
-    do_not_do: &[String],
-    authority_boundary: &str,
-) -> String {
+struct PasteablePacketSections<'a> {
+    task: &'a str,
+    context: &'a [String],
+    repair: &'a [String],
+    verification: &'a [String],
+    receipt: &'a [String],
+    stop_conditions: &'a [String],
+    do_not_do: &'a [String],
+    authority_boundary: &'a str,
+}
+
+fn pasteable_packet_markdown(sections: PasteablePacketSections<'_>) -> String {
     let mut out = String::new();
     out.push_str("## Task\n");
-    out.push_str(task);
+    out.push_str(sections.task);
     out.push_str("\n\n## Context\n");
-    push_markdown_bullets(&mut out, context);
+    push_markdown_bullets(&mut out, sections.context);
     out.push_str("\n## Repair\n");
-    push_markdown_bullets(&mut out, repair);
+    push_markdown_bullets(&mut out, sections.repair);
     out.push_str("\n## Verification\n");
-    push_markdown_bullets(&mut out, verification);
+    push_markdown_bullets(&mut out, sections.verification);
+    out.push_str("\n## Receipt\n");
+    push_markdown_bullets(&mut out, sections.receipt);
     out.push_str("\n## Stop Conditions\n");
-    push_markdown_bullets(&mut out, stop_conditions);
+    push_markdown_bullets(&mut out, sections.stop_conditions);
     out.push_str("\n## Do Not Do\n");
-    push_markdown_bullets(&mut out, do_not_do);
+    push_markdown_bullets(&mut out, sections.do_not_do);
     out.push_str("\n## Authority\n");
-    out.push_str(authority_boundary);
+    out.push_str(sections.authority_boundary);
     out
 }
 
@@ -1923,6 +1951,7 @@ mod tests {
             "## Context",
             "## Repair",
             "## Verification",
+            "## Receipt",
             "## Stop Conditions",
             "## Do Not Do",
         ] {
@@ -1975,6 +2004,10 @@ mod tests {
         assert!(
             copyable_markdown.contains("- cargo xtask fixtures boundary_gap"),
             "copyable packet should include verification: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains("- Run `ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json` after verification."),
+            "copyable packet should include receipt instructions: {copyable_markdown}"
         );
         assert!(
             copyable_markdown.contains("- Stop if this is baseline debt."),

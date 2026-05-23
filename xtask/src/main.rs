@@ -44972,10 +44972,22 @@ fn write_pr_actionable_top_packet(
     if let Some(source_file) = pr_string_path(packet, &["source_file"]) {
         body.push_str(&format!("- source: `{}`\n", md_escape(&source_file)));
     }
+    if let Some(changed) = pr_string_path(packet, &["changed_behavior"]) {
+        body.push_str(&format!("- Changed behavior: {}\n", md_escape(&changed)));
+    }
     body.push_str(&format!(
         "- repair kind: `{}`\n",
         pr_string_path(packet, &["repair_kind"]).unwrap_or_else(|| "unknown".to_string())
     ));
+    if let Some(missing) = pr_packet_missing_discriminator(packet) {
+        body.push_str(&format!(
+            "- Missing discriminator: {}\n",
+            md_escape(&missing)
+        ));
+    }
+    if let Some(intent) = pr_packet_focused_proof_intent(packet) {
+        body.push_str(&format!("- Focused proof intent: {}\n", md_escape(&intent)));
+    }
     if let Some(related) = pr_related_test_summary(packet) {
         body.push_str(&format!("- related test or observer: {related}\n"));
     }
@@ -44990,6 +45002,27 @@ fn write_pr_actionable_top_packet(
     {
         body.push_str(&format!("- receipt: `{}`\n", md_escape(&receipt)));
     }
+}
+
+fn pr_packet_missing_discriminator(packet: &Value) -> Option<String> {
+    pr_string_path(packet, &["missing_discriminator"])
+        .or_else(|| {
+            audit_get(packet, &["missing_discriminators"])
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| pr_string_path(item, &["value"]))
+        })
+        .or_else(|| pr_string_path(packet, &["candidate_value_or_observer"]))
+        .or_else(|| pr_string_path(packet, &["assertion_shape"]))
+}
+
+fn pr_packet_focused_proof_intent(packet: &Value) -> Option<String> {
+    pr_string_path(packet, &["focused_proof_intent"])
+        .or_else(|| pr_string_path(packet, &["recommended_repair"]))
+        .or_else(|| {
+            pr_string_path(packet, &["assertion_shape"])
+                .map(|assertion| format!("Add or strengthen `{assertion}`."))
+        })
 }
 
 fn pr_related_test_summary(packet: &Value) -> Option<String> {
@@ -56177,7 +56210,11 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
                     "gap_state": "actionable",
                     "public_projection_eligible": true,
                     "source_file": "src/pricing.rs",
+                    "changed_behavior": "amount >= threshold",
                     "repair_kind": "add_boundary_assertion",
+                    "missing_discriminators": [
+                        {"value": "amount == threshold"}
+                    ],
                     "recommended_repair": "Add exact assertion for amount == threshold.",
                     "verify_command": "ripr agent verify --root . --json",
                     "receipt_command_or_path": "ripr agent receipt --root . --json",
@@ -56231,6 +56268,11 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             "- blocked/static-limited gaps: `3` static limitation(s), `1` static-limited packet(s)"
         ));
         assert!(body.contains("- canonical gap: `gap:abc`"));
+        assert!(body.contains("- Changed behavior: amount >= threshold"));
+        assert!(body.contains("- Missing discriminator: amount == threshold"));
+        assert!(
+            body.contains("- Focused proof intent: Add exact assertion for amount == threshold.")
+        );
         assert!(
             body.contains("- related test or observer: `tests/pricing.rs:42` `discount_boundary`")
         );
