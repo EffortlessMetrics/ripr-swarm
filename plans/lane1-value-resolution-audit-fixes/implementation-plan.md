@@ -232,7 +232,7 @@ the audit reveals a second safe sub-shape.
 
 ## Work Item: `report/value-resolution-audit-delta`
 
-Status: ready
+Status: done
 Blocks:
 - `dogfood/value-resolution-receipts`
 Blocked by:
@@ -240,18 +240,21 @@ Blocked by:
 
 ### Goal
 
-Record the evidence movement caused by the supported sub-shape.
+Record the evidence movement caused by the supported sub-shape, including the
+zero-movement result when the shape was already supported.
 
 ### Production Delta
 
-Report or documentation evidence only. Refresh generated reports only when the
-repo pattern calls for checked-in outputs; otherwise record commands and
-numbers in a handoff.
+Report and documentation evidence only. Generated reports stay in
+`target/ripr/reports/`; this slice records the command-backed numbers and claim
+boundary in the lane tracker.
 
 ### Evidence Delta
 
-The before/after audit, scorecard, and trend should make the moved limitation
-count and remaining unsupported shapes visible.
+The audit and scorecard show the selected same-test struct literal projection
+sub-shape was already supported, so the moved limitation count is zero. The
+remaining `activation_value_unresolved` count stays visible for the next
+dogfood receipt slice.
 
 ### Non-Goals
 
@@ -283,13 +286,14 @@ work from this reporting PR.
 
 ### Notes
 
-This slice should not be used to hide a small or zero movement result. If the
-movement is zero, record why and decide whether to stop or choose a different
-sub-shape.
+This slice records a zero movement result because the selected fixture-backed
+sub-shape was already handled before analyzer code changed. The rail continues
+to dogfood receipts so the remaining limitation state and non-claims are
+captured before closeout.
 
 ## Work Item: `dogfood/value-resolution-receipts`
 
-Status: blocked
+Status: ready
 Blocks:
 - `campaign/value-resolution-audit-closeout`
 Blocked by:
