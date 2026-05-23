@@ -44,7 +44,9 @@ can answer these questions from the repository instead of from chat history:
 - [Source-of-truth stack spec](../specs/RIPR-SPEC-0060-source-of-truth-stack.md)
   defines the behavior contract for the linked artifact graph.
 - [Source-of-truth implementation plan](../../plans/source-of-truth/implementation-plan.md)
-  records the current and remaining PR-sized reconciliation slices.
+  records the closed PR-sized reconciliation slices and proof commands.
+- [Source-of-truth closeout](../handoffs/2026-05-23-source-of-truth-control-plane-closeout.md)
+  records what landed, what proof ran, what claims changed, and what remains.
 - [Artifact taxonomy](artifact-taxonomy.md) defines each layer's ownership.
 - [Linking model](linking-model.md) defines how artifacts form one graph.
 - [Agent operating model](agent-operating-model.md) defines how Codex and other

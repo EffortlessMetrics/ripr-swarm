@@ -1,6 +1,6 @@
 # RIPR-PROP-0015: Source-of-truth Control Plane
 
-Status: proposed
+Status: accepted
 
 Owner: repo-infra / source-of-truth
 
@@ -21,44 +21,59 @@ Linked ADRs:
 
 Linked work items:
 
-- Current plan:
+- Closed plan:
   [Source-of-truth control plane implementation plan](../../plans/source-of-truth/implementation-plan.md)
 - Current-state reconciliation slice: `docs/source-of-truth-current-state`.
-- Remaining slice: `docs/source-of-truth-closeout`.
+- Closeout slice: `docs/source-of-truth-closeout`.
 - Completed stack surfaces include doctrine docs, templates, stack spec,
   document artifact ledger, document artifact validator, support-tier claim map,
   support-tier validator, active-goal validation, source-of-truth PR and issue
   templates, advisory Source of Truth CI, graph report, PR-body generator, and
   closeout generator.
+- Closeout:
+  [Source-of-truth control plane closeout](../handoffs/2026-05-23-source-of-truth-control-plane-closeout.md)
 
 Support-tier impact:
 
-- None for this proposal slice.
-- Future support-tier rows should own product claim to proof-command mapping.
+- No tier promotion in the closeout slice.
+- The existing `Source-of-truth artifact graph` support-tier row owns the
+  product claim to proof-command mapping.
 
 Policy impact:
 
-- None for this proposal slice.
-- Future policy-ledger slices should register doc artifacts, CI lanes, and
-  other governed exceptions or proof obligations.
+- `policy/doc-artifacts.toml` records this proposal, the linked spec, the
+  implementation plan, and the closeout.
+- No CI lane, lint, file, package, no-panic, release, or branch-protection
+  policy changed in the closeout slice.
 
 Required evidence:
 
+- `cargo xtask check-doc-artifacts`
+- `cargo xtask check-goals`
+- `cargo xtask check-support-tiers`
+- `cargo xtask repo-contract-report`
+- `cargo xtask check-doc-index`
+- `cargo xtask markdown-links`
+- `cargo xtask check-static-language`
+- `cargo xtask check-pr`
 - `git diff --check`
 
 Non-goals:
 
-- No validator implementation in this proposal PR.
 - No blocking CI changes.
 - No support-tier promotion.
-- No policy-ledger mutation.
+- No policy-ledger mutation beyond document artifact status and closeout
+  registration.
 - No package split or public schema change.
 
 Claim boundary:
 
-- This proposal explains why the control plane exists and what shape the lane
-  should take. It does not prove links, validate artifacts, or authorize
-  stronger product claims.
+- This accepted proposal records why the source-of-truth control plane exists
+  and which repo-local proof stack landed. The validators prove registered
+  artifact integrity, active-goal shape, and support-tier proof-command
+  references; they do not prove analyzer correctness, runtime adequacy,
+  coverage adequacy, mutation outcomes, release readiness, or blocking CI
+  promotion.
 
 Rollback:
 
@@ -254,7 +269,7 @@ beyond the first stack spec.
 
 ## Exit criteria
 
-This proposal can move to `accepted` when:
+This proposal moved to `accepted` on 2026-05-23 because:
 
 - `RIPR-SPEC-0060` is added and indexed;
 - document artifacts are registered in a parseable policy ledger;
@@ -273,3 +288,6 @@ This proposal can move to `accepted` when:
   changed, what remains, and the next recommended goal;
 - the claim boundary remains honest: validators prove repo artifact integrity
   and linked proof obligations, not product correctness beyond the named proof.
+
+The closeout is recorded in
+[`docs/handoffs/2026-05-23-source-of-truth-control-plane-closeout.md`](../handoffs/2026-05-23-source-of-truth-control-plane-closeout.md).
