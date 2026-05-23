@@ -41371,10 +41371,7 @@ fn validate_active_manifest_archive_freshness(
 
     for path in archive_paths {
         let normalized = normalize_repo_relative(root, &path);
-        let (archived_manifest, parse_violations) = parse_campaign_manifest(&path)?;
-        for violation in parse_violations {
-            violations.push(format!("{normalized}: {violation}"));
-        }
+        let (archived_manifest, _parse_violations) = parse_campaign_manifest(&path)?;
         if archived_manifest.id.as_deref() == Some(active_id) {
             violations.push(format!(
                 "{manifest_path} reactivates archived campaign id `{active_id}` from `{normalized}`; select a new campaign id or restore the closed/no-current-goal manifest"
@@ -63006,6 +63003,63 @@ commands = ["cargo xtask check-pr"]
             write(
                 &root.join(".ripr/goals/archive/2026-05-21-closed-campaign.toml"),
                 closed_manifest,
+            );
+
+            let (manifest, parse_violations) = parse_campaign_manifest(&active_path)?;
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            super::validate_active_manifest_source_truth(
+                root,
+                ".ripr/goals/active.toml",
+                &manifest,
+                &mut violations,
+            )?;
+
+            assert!(violations.is_empty(), "{violations:?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn active_manifest_archive_check_ignores_historical_schema_drift() -> Result<(), String> {
+        with_temp_cwd("campaign-archive-schema-drift", |root| {
+            let active_path = root.join(".ripr/goals/active.toml");
+            write(
+                &active_path,
+                r#"
+id = "new-campaign"
+title = "New Campaign"
+status = "active"
+end_state = ["New active work."]
+
+[[work_item]]
+id = "docs/test"
+status = "ready"
+branch = "docs-test"
+stackable = false
+acceptance = "New active work."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            write(
+                &root.join(".ripr/goals/archive/2026-05-21-old-campaign.toml"),
+                r#"
+id = "old-campaign"
+title = "Old Campaign"
+status = "closed"
+no_current_goal = true
+end_state = ["Closed proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "done"
+branch = "docs-test"
+stackable = false
+fixture = "fixtures/old-campaign/corpus.json"
+acceptance = "Closed proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
             );
 
             let (manifest, parse_violations) = parse_campaign_manifest(&active_path)?;
