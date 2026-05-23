@@ -4233,8 +4233,8 @@ Work items:
 | --- | --- | --- |
 | `goals/first-useful-pr-loop-activation` | done | Selected the First Useful PR Loop continuation as the active repo-owned goal without changing analyzer behavior. |
 | `docs/context-system-proof-stack-reconciliation` | done | Mapped proof-stack terminology into the repo tracking model and Codex Goals entrypoint without adding a runner-local goals namespace or a parallel docs/source-of-truth namespace. |
-| `goals/active-goal-freshness-check` | ready | Harden goal validation after the terminology reconciliation so agents cannot follow stale closed campaigns without an explicit successor or no-current-goal marker. |
-| `cli/first-pr-front-door-polish` | blocked | Make `ripr first-pr` explain one top repairable gap or recovery state after the goal-freshness guardrail is in place. |
+| `goals/active-goal-freshness-check` | done | Confirmed goal validation rejects stale closed campaigns without an explicit successor or no-current-goal marker and keeps proof-command checks in place. |
+| `cli/first-pr-front-door-polish` | ready | Make `ripr first-pr` explain one top repairable gap or recovery state after the goal-freshness guardrail is in place. |
 | `output/one-screen-recommendation-contract` | blocked | Golden-test the first screen so it always carries top gap, why it matters, weak evidence, missing discriminator, focused test intent, verify, receipt, and static boundary. |
 | `receipt/reviewer-native-outcome` | blocked | Make outcome receipts explain before/after static movement and reviewer belief boundaries. |
 | `fixtures/first-pr-demo-story` | blocked | Add a tiny fixture-backed before -> first-pr recommendation -> focused proof -> outcome receipt demo. |
