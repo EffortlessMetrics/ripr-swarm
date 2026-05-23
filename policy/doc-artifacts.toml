@@ -43,3 +43,12 @@ path = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
 status = "proposed"
 owner = "repo-infra"
 linked_proposal = "RIPR-PROP-0015"
+
+[[artifact]]
+id = "RIPR-PLAN-0060"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0015"
+linked_spec = "RIPR-SPEC-0060"
