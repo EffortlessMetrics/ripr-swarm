@@ -2,7 +2,7 @@
 
 Date: 2026-05-23
 
-Branch / PR: `docs-source-of-truth-closeout` / pending
+Branch / PR: `docs-source-of-truth-closeout` / #300
 
 Current work item: `docs/source-of-truth-closeout`
 
@@ -49,11 +49,11 @@ inference.
 | Closeout generator | #139 added `cargo xtask closeout --goal <goal-id>`. |
 | Active goal artifact validation | #177 hardened active-goal artifact reference validation. |
 | Current-state reconciliation | #298 added RIPR-PLAN-0060, registered it in the artifact ledger, and aligned proposal/spec/front-door docs with the current validator-backed state. |
-| Closeout state | This PR accepts the proposal/spec, marks RIPR-PLAN-0060 done, registers this closeout, and records the lane boundary. |
+| Closeout state | #300 accepted the proposal/spec, marked RIPR-PLAN-0060 done, registered this closeout, and recorded the lane boundary. |
 
 ## Proof Executed
 
-Closeout validation for this PR:
+Closeout validation for #300:
 
 ```bash
 cargo xtask check-doc-artifacts

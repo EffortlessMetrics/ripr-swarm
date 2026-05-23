@@ -120,7 +120,7 @@ Issue:
 
 PR:
 
-- this PR
+- #298
 
 #### Goal
 
@@ -217,7 +217,7 @@ Issue:
 
 PR:
 
-- this PR
+- #300
 
 #### Goal
 
