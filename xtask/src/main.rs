@@ -41820,6 +41820,21 @@ fn campaign_next_report_body(manifest: &CampaignManifest, violations: &[String])
         .collect::<Vec<_>>();
     if ready.is_empty() {
         body.push_str("No ready work items.\n\n");
+        if manifest.status.as_deref() == Some("closed")
+            && let Some(successor) = manifest
+                .successor
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        {
+            body.push_str("## Successor Goal\n\n");
+            body.push_str(&format!(
+                "The active manifest is closed and records successor `{successor}`; do not continue the closed campaign or infer a different successor from chat history.\n\n",
+            ));
+            body.push_str(
+                "Record or select the successor campaign in `.ripr/goals/active.toml` before starting behavior work.\n\n",
+            );
+        }
         if manifest.status.as_deref() == Some("closed") && manifest.no_current_goal == Some(true) {
             body.push_str("## No Current Goal\n\n");
             body.push_str(
@@ -62829,6 +62844,26 @@ commands = ["cargo xtask check-pr"]
     }
 
     #[test]
+    fn goals_next_reports_successor_guidance_for_closed_manifest() {
+        let manifest = CampaignManifest {
+            status: Some("closed".to_string()),
+            successor: Some("next-campaign".to_string()),
+            ..Default::default()
+        };
+
+        let body = super::campaign_next_report_body(&manifest, &[]);
+
+        assert!(body.contains("No ready work items."));
+        assert!(body.contains("## Successor Goal"));
+        assert!(body.contains("records successor `next-campaign`"));
+        assert!(body.contains("do not continue the closed campaign"));
+        assert!(
+            body.contains("Record or select the successor campaign in `.ripr/goals/active.toml`")
+        );
+        assert!(!body.contains("## No Current Goal"));
+    }
+
+    #[test]
     fn campaign_manifest_rejects_closed_without_successor_or_no_current_goal_marker() {
         with_temp_cwd("campaign-closed-stale", |root| {
             write(
@@ -62917,6 +62952,119 @@ commands = ["cargo xtask check-pr"]
                 "{violations:?}"
             );
         });
+    }
+
+    #[test]
+    fn campaign_manifest_rejects_done_work_item_without_proof_commands() {
+        with_temp_cwd("campaign-done-without-proof", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "active-campaign\n\n| `docs/test` | done |\n",
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["Active proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "done"
+branch = "docs-test"
+stackable = false
+acceptance = "Closed proof exists."
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("docs/test is missing command entries")),
+                "{violations:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn campaign_manifest_rejects_unknown_work_item_proof_command() {
+        with_temp_cwd("campaign-unknown-proof-command", |root| {
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "active-campaign\n\n| `docs/test` | ready |\n",
+            );
+            let manifest_path = root.join("campaign.toml");
+            write(
+                &manifest_path,
+                r#"
+id = "active-campaign"
+title = "Active Campaign"
+status = "active"
+end_state = ["Active proof exists."]
+
+[[work_item]]
+id = "docs/test"
+status = "ready"
+branch = "docs-test"
+stackable = false
+acceptance = "Proof command must be known."
+commands = ["cargo xtask missing-command"]
+"#,
+            );
+            let result = parse_campaign_manifest(&manifest_path);
+            assert!(result.is_ok(), "{result:?}");
+            let (manifest, parse_violations) = match result {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+
+            let validation = super::validate_campaign_manifest(&manifest, &mut violations);
+            assert!(validation.is_ok(), "{validation:?}");
+
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    "docs/test lists unknown or unsupported command `cargo xtask missing-command`"
+                )),
+                "{violations:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn goals_next_reports_stale_closed_campaign_as_failed_state() {
+        let manifest = CampaignManifest {
+            status: Some("closed".to_string()),
+            ..Default::default()
+        };
+        let violations = vec![
+            "closed active campaign must declare `successor = \"<campaign-id>\"` or `no_current_goal = true` before it can remain in `.ripr/goals/active.toml`"
+                .to_string(),
+        ];
+
+        let body = super::campaign_next_report_body(&manifest, &violations);
+
+        assert!(body.contains("Status: fail"));
+        assert!(body.contains("No ready work items."));
+        assert!(body.contains("closed active campaign must declare"));
+        assert!(!body.contains("## No Current Goal"));
+        assert!(!body.contains(
+            "do not continue the closed campaign or infer a successor from chat history"
+        ));
     }
 
     #[test]
