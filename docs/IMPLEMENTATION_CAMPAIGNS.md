@@ -4276,3 +4276,9 @@ Blocking conditions:
 - release, publish, signing, marketplace, or badge endpoint refresh work
 - runtime adequacy, coverage adequacy, proof-of-correctness, policy
   eligibility, gate pass/fail, or merge-readiness claims
+
+Closeout:
+
+- [First Useful PR Loop Continuation closeout](handoffs/2026-05-23-first-useful-pr-loop-continuation-closeout.md)
+  records the first-pr surface convergence audit, static/advisory claim
+  boundary, archived manifest, and no selected successor campaign.
