@@ -1,6 +1,6 @@
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-    check_repo_exposure_command, outcome_command, shell_arg,
+    check_repo_exposure_command, display_path, outcome_command, shell_arg,
 };
 use crate::config::CONFIG_FILE_NAME;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
@@ -1290,7 +1290,7 @@ fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Sel
             format!(
                 "Repo exposure report is missing at `{DEFAULT_REPO_EXPOSURE}`; run the bounded repo-exposure latency report before assigning repair work."
             ),
-            Some(REPO_EXPOSURE_LATENCY_REPORT_COMMAND.to_string()),
+            Some(repo_exposure_latency_report_command(&options.root)),
         );
     }
     Selection::missing_artifact(
@@ -1304,6 +1304,17 @@ fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Sel
 fn repo_exposure_latency_report_available(root: &Path) -> bool {
     fs::read_to_string(root.join("xtask/src/command.rs"))
         .is_ok_and(|text| text.contains("\"repo-exposure-latency-report\""))
+}
+
+fn repo_exposure_latency_report_command(root: &str) -> String {
+    if root == DEFAULT_ROOT {
+        return REPO_EXPOSURE_LATENCY_REPORT_COMMAND.to_string();
+    }
+    let manifest_path = display_path(&Path::new(root).join("Cargo.toml"));
+    format!(
+        "cargo run --manifest-path {} -p xtask -- repo-exposure-latency-report",
+        shell_arg(&manifest_path)
+    )
 }
 
 fn ledger_reports_timeout(value: &Value) -> bool {
@@ -2607,6 +2618,37 @@ mod tests {
         assert!(summary.contains("Next command: `cargo xtask repo-exposure-latency-report`"));
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_repo_exposure_roots_bounded_latency_report_for_custom_root() -> Result<(), String> {
+        let invocation_root = temp_repo("first-pr-invocation-root")?;
+        let repo = temp_repo("first-pr custom-root latency")?;
+        fs::create_dir_all(repo.join("xtask/src"))
+            .map_err(|err| format!("mkdir xtask src: {err}"))?;
+        fs::write(
+            repo.join("xtask/src/command.rs"),
+            "\"repo-exposure-latency-report\"",
+        )
+        .map_err(|err| format!("write xtask command catalog: {err}"))?;
+        let root_arg = display_path(&repo);
+        let options = FirstPrOptions {
+            root: root_arg,
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&invocation_root, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let manifest_path = display_path(&repo.join("Cargo.toml"));
+        assert_eq!(
+            packet["selected"]["next_command"],
+            format!(
+                "cargo run --manifest-path {} -p xtask -- repo-exposure-latency-report",
+                shell_arg(&manifest_path)
+            )
+        );
+        check_first_pr(&invocation_root, &options)?;
+        cleanup(&repo)?;
+        cleanup(&invocation_root)
     }
 
     #[test]
