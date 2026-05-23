@@ -1286,14 +1286,14 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
 }
 
 fn missing_repo_exposure_selection(root: &Path, options: &FirstPrOptions) -> Selection {
-    if let Some(summary) = repo_exposure_latency_report_summary(root) {
-        return Selection::blocked(
-            "timeout",
-            summary.message(),
-            Some(repo_exposure_latency_report_command(&options.root)),
-        );
-    }
     if repo_exposure_latency_report_available(root) {
+        if let Some(summary) = repo_exposure_latency_report_summary(root) {
+            return Selection::blocked(
+                "timeout",
+                summary.message(),
+                Some(repo_exposure_latency_report_command(&options.root)),
+            );
+        }
         return Selection::blocked(
             "blocked_artifact",
             format!(
@@ -2671,6 +2671,42 @@ mod tests {
         assert!(summary.contains("Recovery reason: Repo exposure report is missing"));
         assert!(summary.contains("Next command: `cargo xtask repo-exposure-latency-report`"));
         check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_repo_exposure_ignores_latency_report_when_xtask_command_is_unavailable()
+    -> Result<(), String> {
+        let repo = temp_repo("first-pr-existing-latency-without-xtask")?;
+        write_json(
+            &repo.join(DEFAULT_REPO_EXPOSURE_LATENCY_JSON),
+            json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "report": "repo-exposure-latency",
+                "status": "warn",
+                "runs": [
+                    {
+                        "format": "repo-exposure-json",
+                        "status": "timeout",
+                        "duration_ms": 30000
+                    }
+                ]
+            }),
+        )?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert_eq!(packet["selected"]["artifact"]["id"], "repo_exposure");
+        assert!(
+            packet["selected"]["regeneration_command"]
+                .as_str()
+                .is_some_and(|command| command
+                    == "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json")
+        );
         cleanup(&repo)
     }
 
