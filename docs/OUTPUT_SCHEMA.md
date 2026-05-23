@@ -2513,6 +2513,17 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
     "agent_receipt": "target/ripr/reports/agent-receipt.json",
     "targeted_test_outcome": "target/ripr/reports/targeted-test-outcome.json"
   },
+  "movement_front": {
+    "actionable_total": 25,
+    "actionable_delta_since_prior_refresh": -1,
+    "delta_basis": "negative resolved count from joined receipt or targeted-test outcome artifacts",
+    "resolved": 1,
+    "improved": 1,
+    "unchanged_after_attempt": 1,
+    "orphaned_receipts": 1,
+    "missing_receipts": 24,
+    "top_blocked_reason": "receipt_missing_or_mismatch"
+  },
   "summary": {
     "packets_total": 25,
     "outcomes_total": 25,
@@ -2574,6 +2585,10 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
 `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
 and `unknown`. Raw findings do not determine outcome state; the join is based
 on canonical packet identity, seam identity, or the packet primary anchor.
+`movement_front` is the first-screen operator summary. It reports current
+actionable total, known delta from joined movement artifacts, resolved,
+improved, unchanged-after-attempt, orphaned/missing receipt counts, and the top
+blocked reason. The delta is not a historical baseline reconstruction.
 `receipt_state` uses the canonical receipt lifecycle vocabulary:
 `receipt_missing`, `receipt_found`, `receipt_stale`,
 `receipt_gap_mismatch`, `receipt_movement_improved`,

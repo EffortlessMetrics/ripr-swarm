@@ -1053,6 +1053,18 @@ struct ActionableGapOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ActionableGapOutcomesFrontSection {
+    actionable_total: usize,
+    actionable_delta_since_prior_refresh: isize,
+    resolved: usize,
+    improved: usize,
+    unchanged_after_attempt: usize,
+    orphaned_receipts: usize,
+    missing_receipts: usize,
+    top_blocked_reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ActionableGapOrphanedReceipt {
     receipt_id: String,
     seam_id: Option<String>,
@@ -22055,6 +22067,7 @@ fn actionable_gap_outcome_state_for_direction(direction: &str, bucket: &str) -> 
 
 fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<String, String> {
     let state_counts = actionable_gap_outcome_state_counts(&report.outcomes);
+    let movement_front = actionable_gap_outcomes_front_section(report, &state_counts);
     let value = serde_json::json!({
         "schema_version": "0.1",
         "tool": "ripr",
@@ -22067,6 +22080,7 @@ fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<
             "agent_receipt": report.agent_receipt_path,
             "targeted_test_outcome": report.targeted_test_outcome_path,
         },
+        "movement_front": actionable_gap_outcomes_front_json(&movement_front),
         "summary": {
             "packets_total": report.packets_total,
             "outcomes_total": report.outcomes.len(),
@@ -22098,6 +22112,44 @@ fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<
             rendered
         })
         .map_err(|err| format!("failed to render actionable-gap outcomes JSON: {err}"))
+}
+
+fn actionable_gap_outcomes_front_section(
+    report: &ActionableGapOutcomesReport,
+    state_counts: &BTreeMap<String, usize>,
+) -> ActionableGapOutcomesFrontSection {
+    let resolved = state_counts.get("resolved").copied().unwrap_or(0);
+    ActionableGapOutcomesFrontSection {
+        actionable_total: report.packets_total,
+        actionable_delta_since_prior_refresh: -(resolved as isize),
+        resolved,
+        improved: state_counts.get("evidence_improved").copied().unwrap_or(0),
+        unchanged_after_attempt: state_counts.get("evidence_unchanged").copied().unwrap_or(0),
+        orphaned_receipts: report.orphaned_receipts.len(),
+        missing_receipts: report
+            .outcomes
+            .iter()
+            .filter(|outcome| {
+                outcome.receipt_state == RECEIPT_MISSING
+                    || outcome.receipt_state == RECEIPT_GAP_MISMATCH
+            })
+            .count(),
+        top_blocked_reason: actionable_gap_outcomes_top_blocked_reason(report),
+    }
+}
+
+fn actionable_gap_outcomes_front_json(front: &ActionableGapOutcomesFrontSection) -> Value {
+    serde_json::json!({
+        "actionable_total": front.actionable_total,
+        "actionable_delta_since_prior_refresh": front.actionable_delta_since_prior_refresh,
+        "delta_basis": "negative resolved count from joined receipt or targeted-test outcome artifacts",
+        "resolved": front.resolved,
+        "improved": front.improved,
+        "unchanged_after_attempt": front.unchanged_after_attempt,
+        "orphaned_receipts": front.orphaned_receipts,
+        "missing_receipts": front.missing_receipts,
+        "top_blocked_reason": front.top_blocked_reason,
+    })
 }
 
 fn actionable_gap_outcome_json(outcome: &ActionableGapOutcome) -> Value {
@@ -22153,11 +22205,95 @@ fn actionable_gap_outcome_state_counts(
     counts
 }
 
+fn actionable_gap_outcomes_top_blocked_reason(report: &ActionableGapOutcomesReport) -> String {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for outcome in &report.outcomes {
+        let reason = if outcome.receipt_state == RECEIPT_MISSING
+            || outcome.receipt_state == RECEIPT_GAP_MISMATCH
+        {
+            Some("receipt_missing_or_mismatch")
+        } else {
+            match outcome.outcome_state.as_str() {
+                "not_attempted" => Some("not_attempted"),
+                "attempted_no_receipt" => Some("attempted_no_receipt"),
+                "evidence_unchanged" => Some("evidence_unchanged_after_attempt"),
+                "evidence_regressed" => Some("evidence_regressed_after_attempt"),
+                "unknown" => Some("unknown_movement"),
+                _ => None,
+            }
+        };
+        if let Some(reason) = reason {
+            audit_increment(&mut counts, reason);
+        }
+    }
+    if !report.orphaned_receipts.is_empty() {
+        audit_increment(&mut counts, "orphaned_receipts");
+    }
+    counts
+        .into_iter()
+        .max_by(|left, right| {
+            left.1
+                .cmp(&right.1)
+                .then_with(|| {
+                    actionable_gap_blocked_reason_priority(&left.0)
+                        .cmp(&actionable_gap_blocked_reason_priority(&right.0))
+                })
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|(reason, _)| reason)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn actionable_gap_blocked_reason_priority(reason: &str) -> usize {
+    match reason {
+        "receipt_missing_or_mismatch" => 60,
+        "orphaned_receipts" => 50,
+        "attempted_no_receipt" => 40,
+        "evidence_regressed_after_attempt" => 30,
+        "evidence_unchanged_after_attempt" => 20,
+        "unknown_movement" => 10,
+        "not_attempted" => 1,
+        _ => 0,
+    }
+}
+
 fn actionable_gap_outcomes_markdown(report: &ActionableGapOutcomesReport) -> String {
     let mut out = String::new();
     let state_counts = actionable_gap_outcome_state_counts(&report.outcomes);
+    let movement_front = actionable_gap_outcomes_front_section(report, &state_counts);
     out.push_str("# Actionable Gap Outcomes\n\n");
     out.push_str("Advisory Lane 1 join from actionable-gap packets to optional receipt and targeted-test outcome artifacts.\n\n");
+    out.push_str("## Movement Front Section\n\n");
+    out.push_str("| Metric | Value |\n");
+    out.push_str("| --- | ---: |\n");
+    out.push_str(&format!(
+        "| Total actionable count | {} |\n",
+        movement_front.actionable_total
+    ));
+    out.push_str(&format!(
+        "| Actionable delta since prior refresh | {} |\n",
+        movement_front.actionable_delta_since_prior_refresh
+    ));
+    out.push_str(&format!("| Resolved | {} |\n", movement_front.resolved));
+    out.push_str(&format!("| Improved | {} |\n", movement_front.improved));
+    out.push_str(&format!(
+        "| Unchanged after attempt | {} |\n",
+        movement_front.unchanged_after_attempt
+    ));
+    out.push_str(&format!(
+        "| Orphaned receipts | {} |\n",
+        movement_front.orphaned_receipts
+    ));
+    out.push_str(&format!(
+        "| Missing receipts | {} |\n",
+        movement_front.missing_receipts
+    ));
+    out.push_str(&format!(
+        "| Top blocked reason | {} |\n\n",
+        audit_markdown_cell(&movement_front.top_blocked_reason)
+    ));
+    out.push_str("Delta is the negative resolved count from joined receipt or targeted-test outcome artifacts. It does not infer newly introduced gaps from absent historical baselines.\n\n");
+
     out.push_str("## Inputs\n\n");
     out.push_str(&format!(
         "- actionable gaps: `{}`\n",
@@ -70190,6 +70326,125 @@ covered_by = ["cargo xtask check-file-policy"]
                 .iter()
                 .any(|violation| violation.contains("unsupported receipt_command"))
         );
+    }
+
+    #[test]
+    fn actionable_gap_outcomes_leads_with_receipt_linked_movement() -> Result<(), String> {
+        let packets = serde_json::json!({
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:improved",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/pricing.rs",
+                    "primary_anchor": {"file": "src/pricing.rs", "line": 10},
+                    "verify_command": "cargo test pricing_improved",
+                    "receipt_command_or_path": "ripr agent receipt --seam-id improved --json"
+                },
+                {
+                    "canonical_gap_id": "gap:unchanged",
+                    "evidence_class": "error_path",
+                    "repair_kind": "add_error_assertion",
+                    "source_file": "src/parser.rs",
+                    "primary_anchor": {"file": "src/parser.rs", "line": 20},
+                    "verify_command": "cargo test parser_unchanged",
+                    "receipt_command_or_path": "ripr agent receipt --seam-id unchanged --json"
+                },
+                {
+                    "canonical_gap_id": "gap:resolved",
+                    "evidence_class": "output_contract",
+                    "repair_kind": "add_output_golden",
+                    "source_file": "src/report.rs",
+                    "primary_anchor": {"file": "src/report.rs", "line": 30},
+                    "verify_command": "cargo test report_resolved",
+                    "receipt_command_or_path": "ripr agent receipt --seam-id resolved --json"
+                },
+                {
+                    "canonical_gap_id": "gap:missing",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/missing.rs",
+                    "primary_anchor": {"file": "src/missing.rs", "line": 40},
+                    "verify_command": "cargo test missing_receipt",
+                    "receipt_command_or_path": "ripr agent receipt --seam-id missing --json"
+                }
+            ]
+        });
+        let receipts = serde_json::json!({
+            "receipts": [
+                {
+                    "seam": {
+                        "seam_id": "improved",
+                        "file": "src/pricing.rs",
+                        "line": 10,
+                        "change": "improved",
+                        "before": "weakly_gripped",
+                        "after": "strongly_gripped"
+                    }
+                },
+                {
+                    "seam": {
+                        "seam_id": "unchanged",
+                        "file": "src/parser.rs",
+                        "line": 20,
+                        "change": "unchanged",
+                        "before": "weakly_gripped",
+                        "after": "weakly_gripped"
+                    }
+                },
+                {
+                    "seam": {
+                        "seam_id": "resolved",
+                        "file": "src/report.rs",
+                        "line": 30,
+                        "change": "resolved",
+                        "before": "weakly_gripped"
+                    }
+                },
+                {
+                    "seam": {
+                        "seam_id": "old-gap",
+                        "file": "src/old.rs",
+                        "line": 7,
+                        "change": "improved"
+                    }
+                }
+            ]
+        });
+        let report = actionable_gap_outcomes_report_from_values(
+            &packets,
+            Some(&receipts),
+            None,
+            "target/ripr/reports/actionable-gaps.json".to_string(),
+            Some("target/ripr/reports/agent-receipt.json".to_string()),
+            None,
+        )?;
+        let json = actionable_gap_outcomes_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["movement_front"]["actionable_total"], 4);
+        assert_eq!(
+            value["movement_front"]["actionable_delta_since_prior_refresh"],
+            -1
+        );
+        assert_eq!(value["movement_front"]["resolved"], 1);
+        assert_eq!(value["movement_front"]["improved"], 1);
+        assert_eq!(value["movement_front"]["unchanged_after_attempt"], 1);
+        assert_eq!(value["movement_front"]["orphaned_receipts"], 1);
+        assert_eq!(value["movement_front"]["missing_receipts"], 1);
+        assert_eq!(
+            value["movement_front"]["top_blocked_reason"],
+            "receipt_missing_or_mismatch"
+        );
+
+        let markdown = actionable_gap_outcomes_markdown(&report);
+        assert!(
+            markdown.starts_with("# Actionable Gap Outcomes\n\nAdvisory Lane 1 join")
+                && markdown.contains("## Movement Front Section")
+                && markdown.contains("| Total actionable count | 4 |")
+                && markdown.contains("| Actionable delta since prior refresh | -1 |")
+                && markdown.contains("| Top blocked reason | receipt_missing_or_mismatch |")
+        );
+        Ok(())
     }
 
     #[test]
