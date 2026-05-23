@@ -42060,6 +42060,68 @@ fn campaign_next_report_body(manifest: &CampaignManifest, violations: &[String])
         .collect::<Vec<_>>();
     if ready.is_empty() {
         body.push_str("No ready work items.\n\n");
+        let blocked = manifest
+            .work_items
+            .iter()
+            .filter(|item| item.status.as_deref() == Some("blocked"))
+            .collect::<Vec<_>>();
+        if !blocked.is_empty() {
+            body.push_str("## Blocked Work Items\n\n");
+            let unfinished_are_blocked = manifest
+                .work_items
+                .iter()
+                .all(|item| matches!(item.status.as_deref(), Some("done") | Some("blocked")));
+            if unfinished_are_blocked {
+                body.push_str(
+                    "All unfinished work items are blocked; do not infer ready work from chat history.\n\n",
+                );
+            } else {
+                body.push_str(
+                    "These work items are blocked and are not selectable until their blockers are resolved.\n\n",
+                );
+            }
+            if let Some(issue) = manifest
+                .issue
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                body.push_str(&format!("- campaign tracker: {issue}\n"));
+            }
+            if !manifest.end_state.is_empty() {
+                body.push_str("- campaign boundary:\n");
+                for entry in &manifest.end_state {
+                    body.push_str(&format!("  - {entry}\n"));
+                }
+            }
+            body.push('\n');
+            for item in blocked {
+                body.push_str(&format!(
+                    "- `{}` on branch `{}`\n",
+                    item.id.as_deref().unwrap_or("<missing>"),
+                    item.branch.as_deref().unwrap_or("<missing>")
+                ));
+                body.push_str(&format!(
+                    "  blocked reason: {}\n",
+                    item.blocked_reason.as_deref().unwrap_or("<missing>")
+                ));
+                if item.blocked_by.is_empty() {
+                    body.push_str("  blocked by: <none declared>\n");
+                } else {
+                    body.push_str("  blocked by:\n");
+                    for dependency in &item.blocked_by {
+                        body.push_str(&format!("  - `{dependency}`\n"));
+                    }
+                }
+                if let Some(acceptance) = item.acceptance.as_ref() {
+                    body.push_str(&format!("  acceptance: {acceptance}\n"));
+                }
+            }
+            body.push('\n');
+            body.push_str(
+                "Resolve the named blocker or record an accepted bounded blocker in the manifest before selecting closeout work.\n\n",
+            );
+        }
         if manifest.status.as_deref() == Some("closed")
             && let Some(successor) = manifest
                 .successor
@@ -63116,6 +63178,65 @@ commands = ["cargo xtask check-pr"]
             "do not continue the closed campaign or infer a successor from chat history"
         ));
         assert!(body.contains("Record the selected successor in `.ripr/goals/active.toml`"));
+    }
+
+    #[test]
+    fn goals_next_reports_blocked_items_when_no_ready_work_remains() {
+        let manifest = CampaignManifest {
+            status: Some("active".to_string()),
+            issue: Some("https://github.com/EffortlessMetrics/ripr-swarm/issues/34".to_string()),
+            end_state: vec![
+                "issue #34 records CX53 primary proof or a bounded blocker".to_string(),
+                "issue #24 records the same cutover disposition".to_string(),
+            ],
+            work_items: vec![
+                super::CampaignWorkItem {
+                    id: Some("ops/current-routed-proof-refresh".to_string()),
+                    status: Some("done".to_string()),
+                    branch: Some("ops-current-routed-proof-refresh".to_string()),
+                    ..Default::default()
+                },
+                super::CampaignWorkItem {
+                    id: Some("ops/cx53-cx43-proof-closeout".to_string()),
+                    status: Some("blocked".to_string()),
+                    branch: Some("ops-cx53-cx43-proof-closeout".to_string()),
+                    blocked_reason: Some(
+                        "runner_image_unavailable leaves CX53/CX43 unproved".to_string(),
+                    ),
+                    acceptance: Some(
+                        "Close only after CX53 and CX43 proof or an accepted blocker.".to_string(),
+                    ),
+                    ..Default::default()
+                },
+                super::CampaignWorkItem {
+                    id: Some("campaign/self-hosted-routed-runner-proof-closeout".to_string()),
+                    status: Some("blocked".to_string()),
+                    branch: Some("campaign-self-hosted-routed-runner-proof-closeout".to_string()),
+                    blocked_by: vec!["ops/cx53-cx43-proof-closeout".to_string()],
+                    blocked_reason: Some(
+                        "Closeout depends on the self-hosted route proof.".to_string(),
+                    ),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let body = super::campaign_next_report_body(&manifest, &[]);
+
+        assert!(body.contains("No ready work items."));
+        assert!(body.contains("## Blocked Work Items"));
+        assert!(body.contains("All unfinished work items are blocked"));
+        assert!(body.contains("https://github.com/EffortlessMetrics/ripr-swarm/issues/34"));
+        assert!(body.contains("issue #24 records the same cutover disposition"));
+        assert!(body.contains("`ops/cx53-cx43-proof-closeout`"));
+        assert!(body.contains("runner_image_unavailable leaves CX53/CX43 unproved"));
+        assert!(body.contains("blocked by: <none declared>"));
+        assert!(body.contains("`campaign/self-hosted-routed-runner-proof-closeout`"));
+        assert!(body.contains("- `ops/cx53-cx43-proof-closeout`"));
+        assert!(body.contains("Resolve the named blocker or record an accepted bounded blocker"));
+        assert!(!body.contains("## No Current Goal"));
+        assert!(!body.contains("## Successor Goal"));
     }
 
     #[test]
