@@ -1034,6 +1034,18 @@ struct ActionableGapOutcomesReport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ActionableGapOutcomeMovementFront {
+    current_actionable_count: usize,
+    receipt_linked_actionable_delta: i64,
+    resolved: usize,
+    improved: usize,
+    unchanged_after_attempt: usize,
+    missing_receipts: usize,
+    orphaned_receipts: usize,
+    top_blocked_reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ActionableGapOutcome {
     canonical_gap_id: String,
     evidence_class: String,
@@ -22066,6 +22078,7 @@ fn actionable_gap_outcome_state_for_direction(direction: &str, bucket: &str) -> 
 
 fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<String, String> {
     let state_counts = actionable_gap_outcome_state_counts(&report.outcomes);
+    let movement_front = actionable_gap_outcomes_movement_front(report, &state_counts);
     let value = serde_json::json!({
         "schema_version": "0.1",
         "tool": "ripr",
@@ -22093,6 +22106,7 @@ fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<
             "receipts_missing_after_input": report.outcomes.iter().filter(|outcome| outcome.receipt_state == RECEIPT_MISSING).count(),
             "orphaned_receipts": report.orphaned_receipts.len(),
         },
+        "movement_front": actionable_gap_outcomes_movement_front_json(&movement_front),
         "outcomes": report.outcomes.iter().map(actionable_gap_outcome_json).collect::<Vec<_>>(),
         "orphaned_receipts": report.orphaned_receipts.iter().map(actionable_gap_orphaned_receipt_json).collect::<Vec<_>>(),
         "must_not_infer": [
@@ -22109,6 +22123,83 @@ fn actionable_gap_outcomes_json(report: &ActionableGapOutcomesReport) -> Result<
             rendered
         })
         .map_err(|err| format!("failed to render actionable-gap outcomes JSON: {err}"))
+}
+
+fn actionable_gap_outcomes_movement_front(
+    report: &ActionableGapOutcomesReport,
+    state_counts: &BTreeMap<String, usize>,
+) -> ActionableGapOutcomeMovementFront {
+    let resolved = state_counts.get("resolved").copied().unwrap_or(0);
+    let improved = state_counts.get("evidence_improved").copied().unwrap_or(0);
+    let unchanged_after_attempt = state_counts.get("evidence_unchanged").copied().unwrap_or(0);
+    let missing_receipts = report
+        .outcomes
+        .iter()
+        .filter(|outcome| outcome.receipt_state == RECEIPT_MISSING)
+        .count();
+    let orphaned_receipts = report.orphaned_receipts.len();
+    ActionableGapOutcomeMovementFront {
+        current_actionable_count: report.packets_total,
+        receipt_linked_actionable_delta: -(resolved as i64),
+        resolved,
+        improved,
+        unchanged_after_attempt,
+        missing_receipts,
+        orphaned_receipts,
+        top_blocked_reason: actionable_gap_outcomes_top_blocked_reason(
+            state_counts,
+            missing_receipts,
+            orphaned_receipts,
+        ),
+    }
+}
+
+fn actionable_gap_outcomes_top_blocked_reason(
+    state_counts: &BTreeMap<String, usize>,
+    missing_receipts: usize,
+    orphaned_receipts: usize,
+) -> String {
+    for (reason, count) in [
+        (
+            "evidence_regressed",
+            state_counts.get("evidence_regressed").copied().unwrap_or(0),
+        ),
+        ("missing_receipts", missing_receipts),
+        ("orphaned_receipts", orphaned_receipts),
+        (
+            "attempted_no_receipt",
+            state_counts
+                .get("attempted_no_receipt")
+                .copied()
+                .unwrap_or(0),
+        ),
+        (
+            "unchanged_after_attempt",
+            state_counts.get("evidence_unchanged").copied().unwrap_or(0),
+        ),
+        (
+            "not_attempted",
+            state_counts.get("not_attempted").copied().unwrap_or(0),
+        ),
+    ] {
+        if count > 0 {
+            return reason.to_string();
+        }
+    }
+    "none".to_string()
+}
+
+fn actionable_gap_outcomes_movement_front_json(front: &ActionableGapOutcomeMovementFront) -> Value {
+    serde_json::json!({
+        "current_actionable_count": front.current_actionable_count,
+        "receipt_linked_actionable_delta": front.receipt_linked_actionable_delta,
+        "resolved": front.resolved,
+        "improved": front.improved,
+        "unchanged_after_attempt": front.unchanged_after_attempt,
+        "missing_receipts": front.missing_receipts,
+        "orphaned_receipts": front.orphaned_receipts,
+        "top_blocked_reason": front.top_blocked_reason,
+    })
 }
 
 fn actionable_gap_outcome_json(outcome: &ActionableGapOutcome) -> Value {
@@ -22167,8 +22258,39 @@ fn actionable_gap_outcome_state_counts(
 fn actionable_gap_outcomes_markdown(report: &ActionableGapOutcomesReport) -> String {
     let mut out = String::new();
     let state_counts = actionable_gap_outcome_state_counts(&report.outcomes);
+    let movement_front = actionable_gap_outcomes_movement_front(report, &state_counts);
     out.push_str("# Actionable Gap Outcomes\n\n");
     out.push_str("Advisory Lane 1 join from actionable-gap packets to optional receipt and targeted-test outcome artifacts.\n\n");
+    out.push_str("## Movement Since Prior Refresh\n\n");
+    out.push_str("This front section is receipt-linked static movement. It does not claim runtime adequacy, mutation proof, policy eligibility, gate passage, or merge readiness.\n\n");
+    out.push_str("| Metric | Value |\n");
+    out.push_str("| --- | ---: |\n");
+    out.push_str(&format!(
+        "| Current actionable count | {} |\n",
+        movement_front.current_actionable_count
+    ));
+    out.push_str(&format!(
+        "| Receipt-linked actionable delta | {} |\n",
+        movement_front.receipt_linked_actionable_delta
+    ));
+    out.push_str(&format!("| Resolved | {} |\n", movement_front.resolved));
+    out.push_str(&format!("| Improved | {} |\n", movement_front.improved));
+    out.push_str(&format!(
+        "| Unchanged after attempt | {} |\n",
+        movement_front.unchanged_after_attempt
+    ));
+    out.push_str(&format!(
+        "| Missing receipts | {} |\n",
+        movement_front.missing_receipts
+    ));
+    out.push_str(&format!(
+        "| Orphaned receipts | {} |\n",
+        movement_front.orphaned_receipts
+    ));
+    out.push_str(&format!(
+        "| Top blocked reason | {} |\n\n",
+        audit_markdown_cell(&movement_front.top_blocked_reason)
+    ));
     out.push_str("## Inputs\n\n");
     out.push_str(&format!(
         "- actionable gaps: `{}`\n",
@@ -26378,6 +26500,18 @@ struct EvidenceQualityTrendReport {
     unknowns: Vec<EvidenceQualityTrendUnknown>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EvidenceQualityTrendMovementFront {
+    current_actionable_count: Option<usize>,
+    actionable_delta_since_prior_refresh: Option<isize>,
+    resolved: Option<usize>,
+    improved: Option<usize>,
+    unchanged_after_attempt: Option<usize>,
+    missing_receipts: Option<usize>,
+    orphaned_receipts: Option<usize>,
+    top_blocked_reason: String,
+}
+
 struct EvidenceQualityTrendMetricSpec<'a> {
     metric: &'a str,
     label: &'a str,
@@ -27344,6 +27478,7 @@ fn trend_push_unknown(
 }
 
 fn evidence_quality_trend_json(report: &EvidenceQualityTrendReport) -> Result<String, String> {
+    let movement_front = evidence_quality_trend_movement_front(report);
     let value = serde_json::json!({
         "schema_version": EVIDENCE_QUALITY_TREND_SCHEMA_VERSION,
         "tool": "ripr",
@@ -27368,6 +27503,7 @@ fn evidence_quality_trend_json(report: &EvidenceQualityTrendReport) -> Result<St
             "unknown_metrics": report.summary.unknown_metrics,
             "no_history": report.summary.no_history,
         },
+        "movement_front": evidence_quality_trend_movement_front_json(&movement_front),
         "metric_trends": evidence_quality_trend_metrics_json(&report.metric_trends),
         "static_limitation_category_trends": evidence_quality_trend_metrics_json(&report.static_limitation_category_trends),
         "runtime_confidence_static_only_class_trends": evidence_quality_trend_metrics_json(&report.runtime_confidence_static_only_class_trends),
@@ -27382,6 +27518,64 @@ fn evidence_quality_trend_json(report: &EvidenceQualityTrendReport) -> Result<St
     serde_json::to_string_pretty(&value)
         .map(|json| format!("{json}\n"))
         .map_err(|err| format!("failed to render evidence quality trend JSON: {err}"))
+}
+
+fn evidence_quality_trend_movement_front(
+    report: &EvidenceQualityTrendReport,
+) -> EvidenceQualityTrendMovementFront {
+    let actionable = report
+        .metric_trends
+        .iter()
+        .find(|trend| trend.metric == "finding_alignment_actionable_unresolved_canonical_gaps");
+    EvidenceQualityTrendMovementFront {
+        current_actionable_count: actionable.and_then(|trend| trend.after),
+        actionable_delta_since_prior_refresh: actionable.and_then(|trend| trend.delta),
+        resolved: None,
+        improved: None,
+        unchanged_after_attempt: None,
+        missing_receipts: None,
+        orphaned_receipts: None,
+        top_blocked_reason: evidence_quality_trend_top_blocked_reason(report),
+    }
+}
+
+fn evidence_quality_trend_top_blocked_reason(report: &EvidenceQualityTrendReport) -> String {
+    if let Some(unknown) = report
+        .unknowns
+        .iter()
+        .find(|unknown| unknown.kind == "current_scorecard_limited")
+        .or_else(|| {
+            report
+                .unknowns
+                .iter()
+                .find(|unknown| unknown.kind == "trend_history_unavailable")
+        })
+    {
+        return unknown.kind.clone();
+    }
+    if let Some(regressed) = report
+        .metric_trends
+        .iter()
+        .find(|trend| trend.direction == "regression")
+    {
+        return format!("metric_regression:{}", regressed.metric);
+    }
+    "receipt_linked_outcomes_unavailable".to_string()
+}
+
+fn evidence_quality_trend_movement_front_json(front: &EvidenceQualityTrendMovementFront) -> Value {
+    serde_json::json!({
+        "current_actionable_count": front.current_actionable_count,
+        "actionable_delta_since_prior_refresh": front.actionable_delta_since_prior_refresh,
+        "resolved": front.resolved,
+        "improved": front.improved,
+        "unchanged_after_attempt": front.unchanged_after_attempt,
+        "missing_receipts": front.missing_receipts,
+        "orphaned_receipts": front.orphaned_receipts,
+        "top_blocked_reason": front.top_blocked_reason,
+        "receipt_linked_movement_source": "unavailable_in_evidence_quality_trend",
+        "next_receipt_linked_command": "cargo xtask actionable-gap-outcomes",
+    })
 }
 
 fn evidence_quality_trend_metrics_json(metrics: &[EvidenceQualityTrendMetric]) -> Vec<Value> {
@@ -27401,11 +27595,46 @@ fn evidence_quality_trend_metrics_json(metrics: &[EvidenceQualityTrendMetric]) -
         .collect()
 }
 
+fn trend_optional_usize_cell(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+fn trend_optional_isize_cell(value: Option<isize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
 fn evidence_quality_trend_markdown(report: &EvidenceQualityTrendReport) -> String {
+    let movement_front = evidence_quality_trend_movement_front(report);
     let mut out = String::new();
     out.push_str("# Lane 1 evidence quality trend\n\n");
     out.push_str("Status: advisory\n\n");
     out.push_str("This repo-local trend compares existing Lane 1 scorecard or audit snapshots. It does not change analyzer behavior, gate policy, PR or CI projection, editor output, source files, generated tests, provider calls, score definitions, or runtime execution.\n\n");
+
+    out.push_str("## Movement Since Prior Refresh\n\n");
+    out.push_str("This front section reports scorecard movement for actionable counts. Receipt-linked resolved, improved, unchanged, missing-receipt, and orphaned-receipt movement belongs to `cargo xtask actionable-gap-outcomes`; this trend report does not infer those states from scorecard deltas.\n\n");
+    out.push_str("| Metric | Value |\n");
+    out.push_str("| --- | ---: |\n");
+    out.push_str(&format!(
+        "| Current actionable count | {} |\n",
+        trend_optional_usize_cell(movement_front.current_actionable_count)
+    ));
+    out.push_str(&format!(
+        "| Delta since prior refresh | {} |\n",
+        trend_optional_isize_cell(movement_front.actionable_delta_since_prior_refresh)
+    ));
+    out.push_str("| Resolved | unavailable |\n");
+    out.push_str("| Improved | unavailable |\n");
+    out.push_str("| Unchanged after attempt | unavailable |\n");
+    out.push_str("| Missing receipts | unavailable |\n");
+    out.push_str("| Orphaned receipts | unavailable |\n");
+    out.push_str(&format!(
+        "| Top blocked reason | {} |\n\n",
+        audit_markdown_cell(&movement_front.top_blocked_reason)
+    ));
 
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Value |\n");
@@ -70943,12 +71172,31 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(value["summary"]["not_attempted"], 1);
         assert_eq!(value["summary"]["attempted_no_receipt"], 1);
         assert_eq!(value["summary"]["receipts_present"], 1);
+        assert_eq!(value["movement_front"]["current_actionable_count"], 5);
+        assert_eq!(
+            value["movement_front"]["receipt_linked_actionable_delta"],
+            -1
+        );
+        assert_eq!(value["movement_front"]["resolved"], 1);
+        assert_eq!(value["movement_front"]["improved"], 1);
+        assert_eq!(value["movement_front"]["unchanged_after_attempt"], 1);
+        assert_eq!(value["movement_front"]["missing_receipts"], 4);
+        assert_eq!(
+            value["movement_front"]["top_blocked_reason"],
+            "missing_receipts"
+        );
         assert_eq!(
             value["outcomes"][0]["reason"],
             "Matched agent receipt artifact."
         );
         let markdown = actionable_gap_outcomes_markdown(&report);
         assert!(markdown.contains("# Actionable Gap Outcomes"));
+        assert!(markdown.contains("## Movement Since Prior Refresh"));
+        assert!(markdown.contains("| Current actionable count | 5 |"));
+        assert!(markdown.contains("| Receipt-linked actionable delta | -1 |"));
+        assert!(markdown.contains("| Unchanged after attempt | 1 |"));
+        assert!(markdown.contains("| Missing receipts | 4 |"));
+        assert!(markdown.contains("| Top blocked reason | missing_receipts |"));
         assert!(markdown.contains("gap:seam-c"));
         assert!(markdown.contains("resolved"));
         Ok(())
@@ -71002,7 +71250,9 @@ covered_by = ["cargo xtask check-file-policy"]
                 .map_err(|err| format!("failed to read outcomes Markdown: {err}"))?;
             assert!(json.contains("\"report\": \"actionable-gap-outcomes\""));
             assert!(json.contains("\"evidence_improved\": 1"));
+            assert!(json.contains("\"movement_front\""));
             assert!(markdown.contains("# Actionable Gap Outcomes"));
+            assert!(markdown.contains("## Movement Since Prior Refresh"));
             assert!(markdown.contains("gap:seam-a"));
             Ok(())
         })
@@ -72678,6 +72928,18 @@ covered_by = ["cargo xtask check-file-policy"]
             value["summary"]["no_history"],
             serde_json::Value::from(true)
         );
+        assert_eq!(
+            value["movement_front"]["current_actionable_count"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["movement_front"]["actionable_delta_since_prior_refresh"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["movement_front"]["top_blocked_reason"],
+            "trend_history_unavailable"
+        );
         assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
             unknowns
                 .iter()
@@ -72685,6 +72947,11 @@ covered_by = ["cargo xtask check-file-policy"]
         }));
         let markdown = evidence_quality_trend_markdown(&report);
         assert!(markdown.contains("Lane 1 evidence quality trend"));
+        assert!(markdown.contains("## Movement Since Prior Refresh"));
+        assert!(markdown.contains("| Current actionable count | unavailable |"));
+        assert!(markdown.contains("| Delta since prior refresh | unavailable |"));
+        assert!(markdown.contains("| Improved | unavailable |"));
+        assert!(markdown.contains("| Missing receipts | unavailable |"));
         assert!(markdown.contains("Metric Trends"));
         assert!(markdown.contains("Unknowns"));
         Ok(())
@@ -73109,6 +73376,15 @@ covered_by = ["cargo xtask check-file-policy"]
         let json = evidence_quality_trend_json(&report)?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["movement_front"]["current_actionable_count"], 2);
+        assert_eq!(
+            value["movement_front"]["actionable_delta_since_prior_refresh"],
+            -3
+        );
+        assert_eq!(
+            value["movement_front"]["top_blocked_reason"],
+            "metric_regression:finding_alignment_static_unknown_without_named_limitation"
+        );
         let metric_trends = value["metric_trends"]
             .as_array()
             .ok_or_else(|| "metric_trends should be an array".to_string())?;
@@ -73138,6 +73414,10 @@ covered_by = ["cargo xtask check-file-policy"]
             == "finding_alignment_actionable_gap_packet_public_projection_excluded_packets"));
 
         let markdown = evidence_quality_trend_markdown(&report);
+        assert!(markdown.contains("## Movement Since Prior Refresh"));
+        assert!(markdown.contains("| Current actionable count | 2 |"));
+        assert!(markdown.contains("| Delta since prior refresh | -3 |"));
+        assert!(markdown.contains("| Orphaned receipts | unavailable |"));
         assert!(markdown.contains("Actionable canonical gaps"));
         assert!(markdown.contains("Finding-alignment canonical items without repair route"));
         assert!(markdown.contains("Finding-alignment canonical items without verify command"));

@@ -4149,8 +4149,8 @@ Work items:
 | `pr/actionable-delta-front-panel` | done | PR summary now starts with an advisory actionable repair front panel over existing actionable-gaps, outcome, and PR front-panel artifacts before raw path inventory. |
 | `editor/repair-first-status-hierarchy` | done | Editor Show Status now starts with a repair cockpit block naming workspace/current-file actionable state, top repair, related proof, verify command, receipt state, and fail-closed next action. |
 | `swarm/dry-run-copy-ready-packet` | done | `ripr-swarm attempt --dry-run` now starts with a compact copy-ready operator packet naming task, allowed files, boundaries, repair target, verify/receipt commands, stop conditions, and return format. |
-| `outcome/movement-front-section` | ready | Make outcome/trend front sections lead with receipt-linked movement since prior refresh. |
-| `campaign/actionable-surface-translation-closeout` | blocked | Close only after all covered surfaces prove the translation contract and remaining limits are recorded. |
+| `outcome/movement-front-section` | done | Actionable-gap outcomes now lead with receipt-linked movement since prior refresh: current actionable count, receipt-linked delta, resolved, improved, unchanged after attempt, missing/orphaned receipts, and top blocked reason. |
+| `campaign/actionable-surface-translation-closeout` | ready | Close only after all covered surfaces prove the translation contract and remaining limits are recorded. |
 
 Commands:
 
