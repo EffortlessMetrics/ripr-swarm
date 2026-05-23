@@ -30897,7 +30897,7 @@ fn build_badge_basis_report(
             source: "repo exposure / gap ledger artifacts".to_string(),
             count: None,
             detail:
-                "Canonical evidence identity is available to downstream reports, but the current public endpoint generator does not count it as the headline unit."
+                "Canonical evidence identity is supporting context unless it projects into canonical_actionable_gap, the public headline basis for unresolved actionable static repair gaps."
                     .to_string(),
         },
         static_limitations,
@@ -31229,7 +31229,7 @@ fn badge_basis_canonical_projection(
             ripr_count: ripr.message.parse::<usize>().ok(),
             ripr_plus_count: ripr_plus.message.parse::<usize>().ok(),
             detail:
-                "The current repo badge generator uses unresolved actionable canonical repair items."
+                "The current repo badge generator uses canonical_actionable_gap to count unresolved actionable static repair gaps."
                     .to_string(),
         };
     }
@@ -31393,7 +31393,7 @@ fn badge_basis_report_json(report: &BadgeBasisReport) -> Result<String, String> 
         },
         "recommended_public_projection": {
             "basis": &report.recommended_public_projection,
-            "rule": "README/store badges should count unresolved actionable canonical repair items; seam-native inventory stays in internal reports.",
+            "rule": "README/store badges should count unresolved actionable static repair gaps using canonical_actionable_gap; ripr+ adds only items projected into the same repair, verify, and receipt model; seam-native inventory stays supporting/internal.",
         },
         "warnings": &report.warnings,
         "non_claims": [
@@ -31425,6 +31425,15 @@ fn badge_basis_report_markdown(report: &BadgeBasisReport) -> String {
         "This report decomposes the committed public badge endpoint counts before \
 changing badge semantics. It does not edit `badges/*.json`.\n\n",
     );
+    body.push_str("## Public Headline Meaning\n\n");
+    body.push_str("- `ripr` headline count: unresolved actionable static repair gaps.\n");
+    body.push_str("- Public basis: `canonical_actionable_gap`.\n");
+    body.push_str(
+        "- `ripr+` only adds items that project into the same repair, verify, and receipt model.\n",
+    );
+    body.push_str(
+        "- Seam-native inventory and raw findings are supporting/internal diagnostics, not the public headline counter.\n\n",
+    );
 
     body.push_str("## Current Public Endpoints\n\n");
     body.push_str("| Path | Label | Message | Color |\n");
@@ -31454,7 +31463,7 @@ changing badge semantics. It does not edit `badges/*.json`.\n\n",
         ));
     }
 
-    body.push_str("\n## Seam-Native Inventory\n\n");
+    body.push_str("\n## Supporting/Internal Seam-Native Inventory\n\n");
     body.push_str(&format!(
         "Status: `{}`\n\nSource: `{}`\n\n{}\n\n",
         report.seam_native_counts.status,
@@ -31516,7 +31525,7 @@ changing badge semantics. It does not edit `badges/*.json`.\n\n",
         markdown_cell(&report.recommended_public_projection)
     ));
     body.push_str(
-        "- Rule: README/store badges should count unresolved actionable canonical repair items. Seam-native counts stay in internal reports.\n",
+        "- Rule: README/store badges should count unresolved actionable static repair gaps using `canonical_actionable_gap`; `ripr+` only adds items projected into the same repair, verify, and receipt model; seam-native counts stay supporting/internal.\n",
     );
 
     body.push_str("\n## Warnings\n\n");
@@ -63248,8 +63257,11 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
         };
         let markdown = badge_basis_report_markdown(&report);
         assert!(markdown.contains("# ripr Public Badge Basis Audit"));
+        assert!(markdown.contains("unresolved actionable static repair gaps"));
         assert!(markdown.contains("`seam_native`"));
         assert!(markdown.contains("`canonical_actionable_gap`"));
+        assert!(markdown.contains("supporting/internal diagnostics"));
+        assert!(markdown.contains("repair, verify, and receipt model"));
         assert!(markdown.contains("badges/ripr.json"));
     }
 
