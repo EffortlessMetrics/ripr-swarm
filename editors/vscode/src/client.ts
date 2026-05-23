@@ -1181,8 +1181,10 @@ export interface RiprFirstPrPacketStatus {
   selectedState?: string;
   selectedKind?: string;
   changedBehavior?: string;
+  currentEvidenceStrength?: string;
   missingDiscriminator?: string;
   focusedProofIntent?: string;
+  staticEvidenceBoundary?: string;
   why?: string;
   gapId?: string;
   canonicalGapId?: string;
@@ -2270,6 +2272,9 @@ function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
   if (packet.changedBehavior) {
     lines.push(`Changed behavior: ${packet.changedBehavior}`);
   }
+  if (packet.currentEvidenceStrength) {
+    lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
+  }
   if (packet.missingDiscriminator) {
     lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
   }
@@ -2297,7 +2302,7 @@ function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
   lines.push(`Warnings: ${packet.warningCount ?? 0}`);
   lines.push('');
   lines.push('Limits and non-claims:');
-  lines.push('- Advisory static evidence only.');
+  lines.push(`- ${packet.staticEvidenceBoundary ?? 'Advisory static evidence only.'}`);
   lines.push('- Does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
   lines.push('- Does not edit source, generate tests, publish PR comments, or run providers.');
   return lines.join('\n');
@@ -2315,6 +2320,9 @@ function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
   }
   if (packet.changedBehavior) {
     lines.push(`Changed behavior: ${packet.changedBehavior}`);
+  }
+  if (packet.currentEvidenceStrength) {
+    lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
     lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
@@ -2356,7 +2364,7 @@ function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
   lines.push('- Return the receipt path and result.');
   lines.push('');
   lines.push('Limits and non-claims:');
-  lines.push('- Static editor evidence only.');
+  lines.push(`- ${packet.staticEvidenceBoundary ?? 'Static editor evidence only.'}`);
   lines.push('- Does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
   lines.push('- Does not edit source, generate tests, publish PR comments, or run providers.');
   return lines.join('\n');
@@ -2425,6 +2433,9 @@ function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): string[]
   if (packet.changedBehavior) {
     lines.push(`Changed behavior: ${packet.changedBehavior}`);
   }
+  if (packet.currentEvidenceStrength) {
+    lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
+  }
   if (packet.missingDiscriminator) {
     lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
   }
@@ -2447,6 +2458,9 @@ function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): string[]
     lines.push(`Receipt path: ${packet.receiptPath}`);
   }
   lines.push(`Warnings: ${packet.warningCount ?? 0}`);
+  if (packet.staticEvidenceBoundary) {
+    lines.push(`Boundary: ${packet.staticEvidenceBoundary}`);
+  }
   lines.push('First PR packet does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status.');
   return lines;
 }
@@ -3347,8 +3361,10 @@ function validateFirstPrPacket(
     selectedState,
     selectedKind: stringField(selected, 'kind'),
     changedBehavior: stringField(selected, 'changed_behavior'),
+    currentEvidenceStrength: stringField(selected, 'current_evidence_strength'),
     missingDiscriminator: stringField(selected, 'missing_discriminator'),
     focusedProofIntent: stringField(selected, 'focused_proof_intent'),
+    staticEvidenceBoundary: stringField(selected, 'static_evidence_boundary'),
     why: stringField(selected, 'why'),
     gapId: stringField(selected, 'gap_id'),
     canonicalGapId: stringField(selected, 'canonical_gap_id'),

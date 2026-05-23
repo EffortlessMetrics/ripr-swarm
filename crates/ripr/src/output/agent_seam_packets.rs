@@ -39,6 +39,10 @@ const MAX_RELATED_TESTS_PER_PACKET: usize = 8;
 const RUNTIME_CONFIRMATION_NOTE: &str =
     "optional cargo-mutants confirmation; ripr reports static evidence only";
 
+/// Boundary surfaced as a typed field so agent consumers can carry the
+/// same non-claim language as `ripr first-pr` without scraping prose.
+const STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.";
+
 /// Render every actionable `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
 /// intentional, and suppressed seams are skipped. `Opaque` seams emit a
@@ -178,6 +182,7 @@ pub(crate) fn render_agent_gap_record_packet_json(
             "copyable_packet": pasteable_packet,
         },
         "runtime_confirmation": RUNTIME_CONFIRMATION_NOTE,
+        "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
     });
     let envelope = json!({
         "schema_version": AGENT_SEAM_PACKET_SCHEMA_VERSION,
@@ -922,8 +927,12 @@ fn push_packet_json(
     out.push_str(&evidence_record.to_string());
     out.push_str(",\n");
     out.push_str(&format!(
-        "      \"runtime_confirmation\": \"{}\"\n",
+        "      \"runtime_confirmation\": \"{}\",\n",
         json_escape(RUNTIME_CONFIRMATION_NOTE)
+    ));
+    out.push_str(&format!(
+        "      \"static_evidence_boundary\": \"{}\"\n",
+        json_escape(STATIC_EVIDENCE_BOUNDARY)
     ));
     out.push_str("    }");
 }
@@ -1557,6 +1566,9 @@ mod tests {
         if !json.contains("\"runtime_confirmation\":") {
             return Err(format!("missing runtime_confirmation: {json}"));
         }
+        if !json.contains("\"static_evidence_boundary\": \"static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\"") {
+            return Err(format!("missing static_evidence_boundary: {json}"));
+        }
         Ok(())
     }
 
@@ -1886,6 +1898,13 @@ mod tests {
         assert!(
             packet.get("confidence").is_none(),
             "gap packets must not carry generic confidence: {json}"
+        );
+        assert_eq!(
+            packet
+                .get("static_evidence_boundary")
+                .and_then(serde_json::Value::as_str),
+            Some(STATIC_EVIDENCE_BOUNDARY),
+            "gap packets should carry the typed static boundary: {json}"
         );
         assert!(
             json.contains("Stop if this is baseline debt."),

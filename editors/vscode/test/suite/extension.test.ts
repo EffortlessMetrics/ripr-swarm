@@ -1183,10 +1183,18 @@ suite('Extension Smoke', () => {
     assert.strictEqual(repairable.gapId, 'gap:pr:pricing:threshold-boundary');
     assert.strictEqual(repairable.canonicalGapId, 'gap:rust:pricing:discount:threshold-boundary');
     assert.strictEqual(repairable.changedBehavior, 'amount >= threshold');
+    assert.strictEqual(
+      repairable.currentEvidenceStrength,
+      'Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.'
+    );
     assert.strictEqual(repairable.missingDiscriminator, 'Equality-boundary assertion for the changed behavior.');
     assert.strictEqual(
       repairable.focusedProofIntent,
       'Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'
+    );
+    assert.strictEqual(
+      repairable.staticEvidenceBoundary,
+      'static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.'
     );
     assert.strictEqual(repairable.verifyCommand, 'cargo xtask fixtures boundary_gap');
     assert.strictEqual(
@@ -1459,11 +1467,13 @@ suite('Extension Smoke', () => {
       assert.ok(statusOutput.includes('Packet: target/ripr/first-pr/start-here.md'));
       assert.ok(statusOutput.includes('Gap identity: gap:rust:pricing:discount:threshold-boundary'));
       assert.ok(statusOutput.includes('Changed behavior: amount >= threshold'));
+      assert.ok(statusOutput.includes('Current evidence strength: Static evidence found related Rust test context'));
       assert.ok(statusOutput.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'));
       assert.ok(statusOutput.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'));
       assert.ok(statusOutput.includes('Verify: cargo xtask fixtures boundary_gap'));
       assert.ok(statusOutput.includes('Receipt: ripr agent receipt --root . --json'));
       assert.ok(statusOutput.includes('Receipt path: target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json'));
+      assert.ok(statusOutput.includes('Boundary: static advisory evidence only; not runtime proof'));
       assert.ok(statusOutput.includes('does not prove runtime adequacy, mutation coverage, policy eligibility, or gate status'));
       const diagnosis = await diagnoseSetupReport(context);
       assert.ok(diagnosis.includes('First PR packet: top repairable gap available; target/ripr/first-pr/start-here.json is advisory.'));
@@ -2009,9 +2019,11 @@ suite('Extension Smoke', () => {
       assert.ok(context.clipboardWrites.at(-1)?.includes('RIPR first-pr summary'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Gap identity: gap:rust:pricing:discount:threshold-boundary'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Changed behavior: amount >= threshold'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('Current evidence strength: Static evidence found related Rust test context'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Receipt path: target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('static advisory evidence only; not runtime proof'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Does not prove runtime adequacy'));
 
       await withCurrentFirstPrDiagnostic({
@@ -2023,11 +2035,13 @@ suite('Extension Smoke', () => {
         assert.ok(repairPacket.includes('RIPR first-pr repair packet'), repairPacket);
         assert.ok(repairPacket.includes('Repair route: AddBoundaryAssertion'), repairPacket);
         assert.ok(repairPacket.includes('Changed behavior: amount >= threshold'), repairPacket);
+        assert.ok(repairPacket.includes('Current evidence strength: Static evidence found related Rust test context'), repairPacket);
         assert.ok(repairPacket.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'), repairPacket);
         assert.ok(repairPacket.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'), repairPacket);
         assert.ok(repairPacket.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), repairPacket);
         assert.ok(repairPacket.includes('Receipt path:'), repairPacket);
         assert.ok(repairPacket.includes('target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json'), repairPacket);
+        assert.ok(repairPacket.includes('static advisory evidence only; not runtime proof'), repairPacket);
         assert.ok(repairPacket.includes('Do not broaden scope.'), repairPacket);
 
         await context.controller.copyFirstPrVerifyCommand();
@@ -3196,8 +3210,10 @@ function firstPrPacket(overrides: Record<string, unknown>): string {
       canonical_gap_id: 'gap:rust:pricing:discount:threshold-boundary',
       kind: 'MissingBoundaryAssertion',
       changed_behavior: 'amount >= threshold',
+      current_evidence_strength: 'Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.',
       missing_discriminator: 'Equality-boundary assertion for the changed behavior.',
       focused_proof_intent: 'Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).',
+      static_evidence_boundary: 'static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.',
       why: 'A related Rust test reaches this change, but no equality-boundary assertion was found.',
       verify_command: 'cargo xtask fixtures boundary_gap',
       receipt_command: 'ripr agent receipt --root . --json',

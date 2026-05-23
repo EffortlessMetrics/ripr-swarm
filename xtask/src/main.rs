@@ -7707,6 +7707,12 @@ const ACTIONABLE_GAP_OUTCOMES_REQUIRED_CASES: &[(&str, &str, &str)] = &[
 ];
 
 const FIRST_SUCCESSFUL_PR_CORPUS: &str = "fixtures/first_successful_pr/corpus.json";
+const FIRST_PR_BOUNDARY_CHANGED_BEHAVIOR: &str = "amount >= threshold";
+const FIRST_PR_BOUNDARY_CURRENT_EVIDENCE_STRENGTH: &str = "Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.";
+const FIRST_PR_BOUNDARY_MISSING_DISCRIMINATOR: &str =
+    "Equality-boundary assertion for the changed behavior.";
+const FIRST_PR_BOUNDARY_FOCUSED_PROOF_INTENT: &str =
+    "Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).";
 const FIRST_PR_STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.";
 
 const FIRST_SUCCESSFUL_PR_REQUIRED_CASES: &[(&str, &str, &str, &str)] = &[
@@ -10449,6 +10455,9 @@ fn validate_editor_first_pr_bridge_packet(
             "editor first-pr bridge case {case} receipt_movement must be {expected_movement}"
         ));
     }
+    if editor_first_pr_bridge_case_requires_first_screen_contract(case) {
+        validate_editor_first_pr_bridge_first_screen_contract(case, packet, violations);
+    }
     for field in [
         "runtime_adequacy_claim",
         "mutation_proof_claim",
@@ -10459,6 +10468,51 @@ fn validate_editor_first_pr_bridge_packet(
             violations.push(format!(
                 "editor first-pr bridge case {case} first-pr-status must deny {field}"
             ));
+        }
+    }
+}
+
+fn editor_first_pr_bridge_case_requires_first_screen_contract(case: &str) -> bool {
+    matches!(
+        case,
+        "packet_found_repairable"
+            | "receipt_improved_packet_ready"
+            | "receipt_unchanged_packet_ready"
+    )
+}
+
+fn validate_editor_first_pr_bridge_first_screen_contract(
+    case: &str,
+    packet: &Value,
+    violations: &mut Vec<String>,
+) {
+    for (field, expected) in [
+        ("changed_behavior", FIRST_PR_BOUNDARY_CHANGED_BEHAVIOR),
+        (
+            "current_evidence_strength",
+            FIRST_PR_BOUNDARY_CURRENT_EVIDENCE_STRENGTH,
+        ),
+        (
+            "missing_discriminator",
+            FIRST_PR_BOUNDARY_MISSING_DISCRIMINATOR,
+        ),
+        (
+            "focused_proof_intent",
+            FIRST_PR_BOUNDARY_FOCUSED_PROOF_INTENT,
+        ),
+        (
+            "static_evidence_boundary",
+            FIRST_PR_STATIC_EVIDENCE_BOUNDARY,
+        ),
+    ] {
+        match json_string_field(packet, field) {
+            Some(value) if value == expected => {}
+            Some(value) => violations.push(format!(
+                "editor first-pr bridge case {case} first-pr-status {field} must be {expected:?}, got {value:?}"
+            )),
+            None => violations.push(format!(
+                "editor first-pr bridge case {case} first-pr-status must name {field}"
+            )),
         }
     }
 }
@@ -34693,6 +34747,13 @@ fn dogfood_editor_first_pr_bridge_run(
             }
             packet_state =
                 json_string_field(&packet, "packet_state").unwrap_or_else(|| "missing".to_string());
+            if editor_first_pr_bridge_case_requires_first_screen_contract(&scenario.name) {
+                validate_editor_first_pr_bridge_first_screen_contract(
+                    &scenario.name,
+                    &packet,
+                    &mut errors,
+                );
+            }
             safe_actions = json_string_array_field(&packet, "safe_actions");
             suppressed_actions = json_string_array_field(&packet, "suppressed_actions");
             receipt_movement = json_string_field(&packet, "receipt_movement");
