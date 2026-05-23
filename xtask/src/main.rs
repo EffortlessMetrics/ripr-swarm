@@ -50221,17 +50221,17 @@ mod tests {
         ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
         ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions,
         ripr_swarm_readiness_summary, routed_rust_workflow_contract_violations,
-        run_ci_full_evidence_gates, sarif_policy_report_json, sarif_policy_report_markdown,
-        semantic_selector_matches, should_scan_static_language_path, should_skip_path,
-        sorted_allowlist_content, sorted_capability_blocks_content, sorted_command_catalog_content,
-        sorted_markdown_index_table_content, sorted_traceability_behavior_blocks_content,
-        spec_id_from_path, spec_ids_in_text, spec_numbering_violations, specs,
-        static_language_allowlist_covers, status_for_report, suggested_fixes_patch,
-        suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
-        targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
-        test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
-        test_oracle_tests_in_text, unknown_command_message,
-        validate_actionable_gap_outcomes_fixture_case,
+        run_ci_full_evidence_gates, run_repo_badge_artifact_command, sarif_policy_report_json,
+        sarif_policy_report_markdown, semantic_selector_matches, should_scan_static_language_path,
+        should_skip_path, sorted_allowlist_content, sorted_capability_blocks_content,
+        sorted_command_catalog_content, sorted_markdown_index_table_content,
+        sorted_traceability_behavior_blocks_content, spec_id_from_path, spec_ids_in_text,
+        spec_numbering_violations, specs, static_language_allowlist_covers, status_for_report,
+        suggested_fixes_patch, suspicious_runtime_file_names, targeted_test_outcome,
+        targeted_test_outcome_report_json, targeted_test_outcome_report_markdown,
+        test_efficiency_entry, test_efficiency_report_json, test_efficiency_report_markdown,
+        test_oracle_report_json, test_oracle_report_markdown, test_oracle_tests_in_text,
+        unknown_command_message, validate_actionable_gap_outcomes_fixture_case,
         validate_actionable_gap_outcomes_fixture_corpus, validate_local_context_allowlist,
         validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
         vscode_compile_command, vscode_extension_dir, vscode_package_command,
@@ -64555,6 +64555,22 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
 
         assert_eq!(stdout, "badge json\n");
         Ok(())
+    }
+
+    #[test]
+    fn repo_badge_artifact_command_runs_with_timeout() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let args = vec!["--version".to_string()];
+            let stdout = run_repo_badge_artifact_command(
+                "rustc",
+                &args,
+                "repo-badge-json",
+                Duration::from_secs(30),
+            )?;
+
+            assert!(stdout.contains("rustc"));
+            Ok(())
+        })
     }
 
     #[test]
