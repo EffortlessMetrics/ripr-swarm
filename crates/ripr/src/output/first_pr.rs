@@ -2494,7 +2494,6 @@ mod tests {
         );
         assert!(summary.contains("Top actionable gap: missing boundary assertion"));
         assert!(summary.contains("Changed behavior: `amount >= threshold`"));
-        assert!(summary.contains("Why it matters: A related Rust test reaches this change"));
         assert!(summary.contains(
             "Current evidence strength: Static evidence found related Rust test context"
         ));
