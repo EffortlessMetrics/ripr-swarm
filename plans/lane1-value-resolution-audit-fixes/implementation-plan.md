@@ -1,6 +1,6 @@
 # Lane 1 Value Resolution Audit Fixes Implementation Plan
 
-Status: active
+Status: closed
 Owner: Lane 1
 Linked proposal: n/a
 Linked specs:
@@ -352,7 +352,7 @@ the remaining `activation_value_unresolved` limitation count and non-claims.
 
 ## Work Item: `campaign/value-resolution-audit-closeout`
 
-Status: ready
+Status: done
 Blocks: n/a
 Blocked by:
 - `dogfood/value-resolution-receipts`
@@ -409,5 +409,7 @@ closeout handoff if the closeout landed prematurely.
 
 ### Notes
 
+The closeout is recorded in
+`docs/handoffs/2026-05-23-lane1-value-resolution-audit-fixes-closeout.md`.
 Do not keep adding value-resolution changes under this rail after closeout
 without a fresh issue-backed successor.
