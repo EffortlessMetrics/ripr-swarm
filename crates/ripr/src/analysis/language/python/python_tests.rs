@@ -432,6 +432,10 @@ fn line_for_offset_counts_newlines() {
     let source = "alpha\nbeta\ngamma";
     // Offset 0 is line 1.
     assert_eq!(line_for_offset(source, 0), 1);
+    // Offset exactly on the newline stops before counting that newline.
+    assert_eq!(line_for_offset(source, 5), 1);
+    // Offset immediately after the newline counts the next segment as line 2.
+    assert_eq!(line_for_offset(source, 6), 2);
     // Offset on the second segment is line 2.
     assert_eq!(line_for_offset(source, 7), 2);
     // Offset past end stops at the last counted line.
