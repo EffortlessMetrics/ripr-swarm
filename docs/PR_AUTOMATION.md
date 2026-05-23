@@ -696,21 +696,42 @@ patches are repair hints, not policy exceptions: they must not carry badge
 counts, golden blessings, baselines, suppressions, dependency exceptions, or
 schema changes.
 
-## Current Automation Queue
+## Current Automation Entry Point
 
-Campaign 1 and Campaign 2 are complete. Campaign 3 is active, and
-`.ripr/goals/active.toml` plus `cargo xtask goals next` are the source of truth
-for product work. The next automation path should improve trusted-change
-evidence without delaying Campaign 3:
+GitHub is the live board for PR automation. Start with open PRs before creating
+new local work:
 
-| Order | PR | Purpose |
-| ---: | --- | --- |
-| 1 | `devex/onboard-doctor` | Report whether the local checkout and toolchain are ready to work. |
-| 2 | `devex/install-hooks` | Generate local hooks without checking executable scripts into the repo. |
-| 3 | `xtask/command-registry` | Make the growing command surface self-describing. |
+```bash
+cargo xtask pr-triage-report
+```
 
-Analyzer work can now move through Codex Goals campaigns. Each campaign may span
-multiple PRs, while each work item should still follow the scoped PR contract.
+If no PR is waiting, read the active execution state:
+
+```bash
+cargo xtask goals next
+```
+
+When the command reports ready work, follow the named work item and keep the PR
+inside the scoped PR contract. When it reports only blocked work, do not infer
+ready work from chat history. Resolve the named blocker, record an accepted
+bounded blocker in the manifest, or choose a separate high-leverage cleanup that
+does not claim the blocked campaign is complete.
+
+For repo-ops automation, use the current mechanical front doors instead of old
+campaign queue names:
+
+```bash
+cargo xtask cockpit
+cargo xtask pr-ready
+cargo xtask first-pr
+```
+
+`cockpit` gives maintainers the repo-level action queue, `pr-ready` checks local
+PR readiness before opening or updating a branch, and `first-pr` writes the
+start-here packet for one safe repair action when validated evidence supports
+one. These commands are advisory;
+they do not close PRs, alter manifests, promote claims, or prove the
+self-hosted routed-runner closeout.
 
 ## Source-Of-Truth PR Body Scaffold
 
