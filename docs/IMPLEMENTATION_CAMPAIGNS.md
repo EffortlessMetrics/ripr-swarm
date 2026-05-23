@@ -4234,7 +4234,7 @@ Work items:
 | `goals/first-useful-pr-loop-activation` | done | Selected the First Useful PR Loop continuation as the active repo-owned goal without changing analyzer behavior. |
 | `docs/context-system-proof-stack-reconciliation` | done | Mapped proof-stack terminology into the repo tracking model and Codex Goals entrypoint without adding a runner-local goals namespace or a parallel docs/source-of-truth namespace. |
 | `goals/active-goal-freshness-check` | done | Pinned goal validation for stale closed campaigns, missing work-item proof commands, unknown proof commands, and failed `goals next` reporting before product behavior work resumes. |
-| `cli/first-pr-front-door-polish` | done | Made `ripr first-pr` explain the selected repair context or recovery state directly, including the top actionable gap, changed behavior, why it matters, evidence strength, missing discriminator, focused proof intent, verify command, receipt command, artifact paths, static boundary, and concrete recovery/no-action reasons. |
+| `cli/first-pr-front-door-polish` | done | `ripr first-pr` now explains one top repairable gap, no-action state, or recovery state directly in stdout after #332. |
 | `output/one-screen-recommendation-contract` | ready | Golden-test the first screen so it always carries top gap, why it matters, weak evidence, missing discriminator, focused test intent, verify, receipt, and static boundary. |
 | `receipt/reviewer-native-outcome` | blocked | Make outcome receipts explain before/after static movement and reviewer belief boundaries. |
 | `fixtures/first-pr-demo-story` | blocked | Add a tiny fixture-backed before -> first-pr recommendation -> focused proof -> outcome receipt demo. |
