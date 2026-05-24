@@ -30,12 +30,17 @@ is set to anything other than `advisory`, no band triggers a blocking failure.
 
 ## LEM estimation
 
-At the time of this document, LEM is estimated statically by the PR Plan
-workflow from the risk-pack / lane mapping in:
+Target behavior: LEM is estimated statically by the PR Plan workflow from the
+risk-pack / lane mapping in:
 
 - `policy/ci-risk-packs.toml` — changed-path → risk-pack mapping
 - `policy/ci-lane-whitelist.toml` — risk-pack → lane mapping with base LEM
 - `policy/ci-budget.toml` — budget band thresholds and enforcement policy
+
+Current behavior: the PR Plan workflow is structural advisory only. It writes
+the changed-file list and ledger-presence summary, but it does not yet emit a
+numeric LEM forecast or `target/ci/ci-plan.json`; see
+[`pr-plan.md`](pr-plan.md) and [`current-state.md`](current-state.md).
 
 Once `ci-actuals.json` data exists, the planner reads observed lane history and
 replaces the static base LEM with learned estimates:
