@@ -102,19 +102,21 @@ All lanes must pass the same global gates:
 | --- | --- | --- | --- |
 | A. Control Plane / CI Truth | Workflow truth, advisory semantics, runner proof disposition, report consistency | Control-plane status + workflow/runner receipts | Hide unknown failures as advisory |
 | B. Judgment Routing | `blocked_by_operator_judgment` packet routing + decision ledger | Judgment packets + decision receipts | Mark packets ready by visibility alone |
-| C. Evidence Ladder / Readiness | Evidence levels, readiness names, allowed actions | Evidence ladder + readiness contract | Use ambiguous “ready” without readiness target |
+| C. Evidence Ladder / Readiness | Evidence levels, readiness names, allowed actions | Evidence ladder + readiness contract | Use ambiguous "ready" without readiness target |
 | D. Analyzer Evidence Movement | Narrow class-by-class evidence movement with fixture backing | Evidence audits + fixture-backed readiness deltas | Overclaim runtime/mutation adequacy |
 | E. Source Promotion | Bounded swarm-proof to source-proof promotion path | Promotion candidates + source template + closeout receipts | Backdoor unauthorized source edits |
-| F. Operator UX / Product Surface | First-useful “what now?” guidance and recovery docs | Roadmap/operator guidance artifacts | Create status-only docs churn |
+| F. Operator UX / Product Surface | First-useful "what now?" guidance and recovery docs | Roadmap/operator guidance artifacts | Create status-only docs churn |
 | G. Bounded Attempts (gated) | Attempt contracts and receipt model for dry-run/test-only work | Attempt schemas + attempt outcome receipts | Run production source edits by default |
 
-Lanes **A-F may proceed now in parallel**. Lane **G may design now**, but
-execution remains gated on control-plane truth, judgment routing, evidence
-ladder readiness semantics, and explicit authority checks.
+Lanes **A-F may proceed in parallel when selected by the active goal, issue
+ledger, or implementation plan**. Lane **G may design now**, but execution
+remains gated on control-plane truth, judgment routing, evidence ladder
+readiness semantics, and explicit authority checks.
 
 ### Shared Evidence Vocabulary
 
-All lane artifacts should carry an explicit evidence level:
+New lane artifacts that introduce or change readiness, routing, or handoff
+behavior should carry an explicit evidence level:
 
 - `E0`: raw static signal (report only)
 - `E1`: canonical actionable gap (surface in reports)
