@@ -15,7 +15,7 @@ concurrency:
 jobs:
   rust-tests:
     name: rust-tests-junit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
