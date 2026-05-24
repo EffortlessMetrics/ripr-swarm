@@ -93,10 +93,10 @@ acceptance = "Refresh current-main routed proof on #34 and #24, recording whethe
 # - #24 after #397: https://github.com/EffortlessMetrics/ripr-swarm/issues/24#issuecomment-4527750005
 # Current issue-ledger disposition remains GitHub-hosted fallback success with
 # target=github and CX53/CX43 skipped. The latest receipt records
-# runner_api_failed with runner_query=not_attempted, so runner visibility/read
-# access is not established as current; older receipts that showed visible
-# runners with zero idle image-ready capacity are historical, not the current
-# blocker shape.
+# reason=runner_api_failed with runner_query=not_attempted, so runner
+# visibility/read access is not established as current; older receipts that
+# showed visible runners with zero idle image-ready capacity are historical, not
+# the current blocker shape.
 commands = [
   "cargo xtask check-goals",
   "cargo xtask goals next",
