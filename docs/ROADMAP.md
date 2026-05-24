@@ -69,6 +69,12 @@ phase chain. Multiple lanes may move at the same time, but all lanes must
 converge through shared claim boundaries, evidence-level semantics, authority
 boundaries, and durable receipts.
 
+Roadmap eligibility is not execution authority. A lane starts only when current
+repo state selects it: an open PR, an accepted proposal/spec/plan work item, an
+active goal item, or an issue that links to those artifacts. If
+`cargo xtask goals next` says all unfinished items are blocked, this roadmap
+does not create a hidden ready item.
+
 The operating rule is:
 
 ```text
@@ -108,8 +114,9 @@ All lanes must pass the same global gates:
 | F. Operator UX / Product Surface | First-useful "what now?" guidance and recovery docs | Roadmap/operator guidance artifacts | Create status-only docs churn |
 | G. Bounded Attempts (gated) | Attempt contracts and receipt model for dry-run/test-only work | Attempt schemas + attempt outcome receipts | Run production source edits by default |
 
-Lanes **A-F may proceed in parallel when selected by the active goal, issue
-ledger, or implementation plan**. Lane **G may design now**, but execution
+Lanes **A-F may proceed in parallel** only through PR-sized slices selected by
+the active goal, issue ledger, implementation plan, or source-of-truth stack.
+Lane **G is design-eligible** under the same selection rule, but execution
 remains gated on control-plane truth, judgment routing, evidence ladder
 readiness semantics, and explicit authority checks.
 
@@ -130,6 +137,8 @@ behavior should carry an explicit evidence level:
 Readiness labels should always be concrete, for example
 `ready_for_report`, `ready_for_judgment`, `ready_for_dry_run`,
 `ready_for_test_only_attempt`, and `ready_for_source_promotion`.
+These labels are descriptive; they do not grant source-promotion, dry-run, or
+merge authority without the linked proof and authority boundary.
 
 ## Current Position
 
