@@ -79,8 +79,8 @@ Labels documented in `docs/CI.md` (labels section):
 - `release-check` uses the release-band mapping and runs the release-surface
   lanes that are currently wired. Today, that is the legacy Rust package list
   and publish dry-run proof.
-- `ci-budget-ack` records that the author acknowledges elevated forecast (no
-  budget effect).
+- `ci-budget-ack` records that the author acknowledges an over-budget forecast
+  at the `large` band (no budget effect).
 
 ## Why advisory first
 
