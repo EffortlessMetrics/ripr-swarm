@@ -13,7 +13,7 @@ vocabulary; the next section separates current wiring from target behavior.
 | `release-check` | Runs the currently wired release-surface proof without opting into every `full-ci` lane. Today that means the legacy Rust package list and publish dry-run steps. |
 | `ci-budget-ack` | Acknowledges an over-budget forecast at the `elevated` band. Budget-neutral; does not run additional lanes. |
 | `vscode` | Target label for forcing the VS Code extension lane on PRs that do not touch `editors/vscode/` but need it. |
-| `coverage` | Target label for forcing coverage lanes and uploading coverage artifacts. |
+| `coverage` | Documented target label for future coverage-lane selection; current coverage workflow runs on PRs, pushes, and manual dispatch without reading this label. |
 | `clippy-future` | Runs future or candidate Clippy lint lanes in advisory mode. |
 | `ripr-waive` | Target label for acknowledging a `ripr` soft-gate finding for this PR. Requires a written reason in the PR body. |
 
