@@ -5,6 +5,7 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main, master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,6 +20,7 @@ concurrency:
 
 jobs:
   rust:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -138,7 +140,7 @@ jobs:
             printf "\n" >> "$GITHUB_STEP_SUMMARY" && cat target/xtask/impacted-evidence/latest.md >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload ripr reports
-        if: always()
+        if: failure() || contains(github.event.pull_request.labels.*.name, 'full-ci')
         uses: actions/upload-artifact@v7
         with:
           name: ripr-pr-reports
@@ -151,6 +153,7 @@ jobs:
           if-no-files-found: ignore
 
   msrv:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -162,6 +165,7 @@ jobs:
       - run: cargo check --workspace --all-targets
 
   vscode:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
     defaults:
       run:
