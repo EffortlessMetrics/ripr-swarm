@@ -25,7 +25,7 @@ Budget bands:
 | `small` | 0-5 LEM | docs, policy metadata, or focused code checks |
 | `medium` | 6-20 LEM | ordinary product PR with Rust and policy gates |
 | `large` | 21-60 LEM | multi-surface PR, extension checks, or broad evidence artifacts |
-| `release` | 60+ LEM | explicit `release-check` or `full-ci` proof |
+| `release` | 61+ LEM | explicit `release-check` or `full-ci` proof |
 
 CI lanes are grouped by posture, not by how convenient they are to place in one
 workflow file.
