@@ -90,9 +90,11 @@ the actual diff and validation evidence.
 ## Enforcement state
 
 The original doctrine slice defined the model before enforcing it. The current
-repo now has advisory validators and a source-of-truth workflow for the
-registered graph, active goals, and support-tier claim map. Those checks are
-still narrower than product correctness and are not branch-protection gates.
+repo now has advisory validators for document artifacts, active goals, and the
+support-tier claim map. The source-of-truth workflow runs those three narrow
+validators; the graph report remains a separate report-only command. Those
+checks are still narrower than product correctness and are not
+branch-protection gates.
 
 Existing repo checks cover the model at different layers:
 
