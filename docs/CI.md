@@ -78,8 +78,8 @@ workflow behavior documented in [Current Workflows](#current-workflows).
   - `policy/**`, `plans/**`, `badges/**`, `AGENTS.md`;
   - `.github/CODEOWNERS`, `.github/dependabot.yml`,
     `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/**`;
-  - `.codex/campaigns/**`, `docs/tracking/**`, `ci/hardware/**` receipt files,
-    `.rails/**`, `.uselesskey/**`.
+  - `docs/tracking/**`, `ci/hardware/**` receipt files, `.rails/**`,
+    `.uselesskey/**`.
 - Treat `.github/workflows/**` as a special workflow-change surface:
   - not docs-light;
   - route to minimal hosted workflow safety/validation unless policy requires
