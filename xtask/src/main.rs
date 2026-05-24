@@ -40027,6 +40027,13 @@ fn pr_body_from_root(root: &Path, work_item_id: &str) -> Result<String, String> 
                 display_repo_path(root, &active_path)
             )
         })?;
+    let status = item.status.as_deref().unwrap_or("<missing>");
+    if !matches!(status, "ready" | "active") {
+        return Err(format!(
+            "{0} work item `{work_item_id}` has status `{status}`; `pr-body` only generates PR bodies for ready or active work items. Run `cargo xtask goals next` before selecting work.",
+            display_repo_path(root, &active_path)
+        ));
+    }
 
     let ledger_path = root.join(DOC_ARTIFACT_LEDGER);
     let artifacts = if ledger_path.exists() {
@@ -40044,7 +40051,6 @@ fn pr_body_from_root(root: &Path, work_item_id: &str) -> Result<String, String> 
     let plan = pr_body_artifact_reference(root, &artifacts, item.plan.as_deref())?;
     let issue = manifest.issue.as_deref().unwrap_or("none");
     let branch = item.branch.as_deref().unwrap_or("<missing>");
-    let status = item.status.as_deref().unwrap_or("<missing>");
     let acceptance = item
         .acceptance
         .as_deref()
@@ -62907,6 +62913,43 @@ owner = "repo-infra"
                 .expect_err("unknown work item should fail PR body generation");
             assert!(
                 error.contains("does not contain work item `docs/missing`"),
+                "{error}"
+            );
+        });
+    }
+
+    #[test]
+    fn pr_body_rejects_blocked_work_item() {
+        with_temp_cwd("pr-body-blocked-work-item", |root| {
+            write_repo_contract_report_fixture(root, true);
+
+            let error = super::pr_body_from_root(root, "docs/wait")
+                .expect_err("blocked work item should fail PR body generation");
+            assert!(
+                error.contains("work item `docs/wait` has status `blocked`"),
+                "{error}"
+            );
+            assert!(
+                error.contains("only generates PR bodies for ready or active work items"),
+                "{error}"
+            );
+            assert!(error.contains("cargo xtask goals next"), "{error}");
+        });
+    }
+
+    #[test]
+    fn pr_body_rejects_done_work_item() {
+        with_temp_cwd("pr-body-done-work-item", |root| {
+            write_repo_contract_report_fixture(root, true);
+
+            let error = super::pr_body_from_root(root, "docs/ledger")
+                .expect_err("done work item should fail PR body generation");
+            assert!(
+                error.contains("work item `docs/ledger` has status `done`"),
+                "{error}"
+            );
+            assert!(
+                error.contains("only generates PR bodies for ready or active work items"),
                 "{error}"
             );
         });

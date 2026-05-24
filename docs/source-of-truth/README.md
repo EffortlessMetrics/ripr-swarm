@@ -70,7 +70,9 @@ path, but `ripr` agents should follow the repo-local `.ripr` path unless a
 later PR changes the schema and documentation together.
 
 `cargo xtask pr-body --work-item <id>` can generate
-`target/ripr/reports/source-of-truth-pr-body.md` from one active-goal work item.
+`target/ripr/reports/source-of-truth-pr-body.md` from one ready or active work
+item in the active-goal manifest. It refuses blocked or already done items so
+blocked state cannot become PR text by accident.
 `cargo xtask closeout --goal <goal-id>` can generate a handoff scaffold under
 `docs/handoffs/` and an archive copy under `.ripr/goals/archive/`.
 
