@@ -69,6 +69,12 @@ phase chain. Multiple lanes may move at the same time, but all lanes must
 converge through shared claim boundaries, evidence-level semantics, authority
 boundaries, and durable receipts.
 
+Roadmap eligibility is not execution authority. A lane starts only when current
+repo state selects it: an open PR, an accepted proposal/spec/plan work item, an
+active goal item, or an issue that links to those artifacts. If
+`cargo xtask goals next` says all unfinished items are blocked, this roadmap
+does not create a hidden ready item.
+
 The operating rule is:
 
 ```text
@@ -102,15 +108,17 @@ All lanes must pass the same global gates:
 | --- | --- | --- | --- |
 | A. Control Plane / CI Truth | Workflow truth, advisory semantics, runner proof disposition, report consistency | Control-plane status + workflow/runner receipts | Hide unknown failures as advisory |
 | B. Judgment Routing | `blocked_by_operator_judgment` packet routing + decision ledger | Judgment packets + decision receipts | Mark packets ready by visibility alone |
-| C. Evidence Ladder / Readiness | Evidence levels, readiness names, allowed actions | Evidence ladder + readiness contract | Use ambiguous “ready” without readiness target |
+| C. Evidence Ladder / Readiness | Evidence levels, readiness names, allowed actions | Evidence ladder + readiness contract | Use ambiguous "ready" without readiness target |
 | D. Analyzer Evidence Movement | Narrow class-by-class evidence movement with fixture backing | Evidence audits + fixture-backed readiness deltas | Overclaim runtime/mutation adequacy |
 | E. Source Promotion | Bounded swarm-proof to source-proof promotion path | Promotion candidates + source template + closeout receipts | Backdoor unauthorized source edits |
-| F. Operator UX / Product Surface | First-useful “what now?” guidance and recovery docs | Roadmap/operator guidance artifacts | Create status-only docs churn |
+| F. Operator UX / Product Surface | First-useful "what now?" guidance and recovery docs | Roadmap/operator guidance artifacts | Create status-only docs churn |
 | G. Bounded Attempts (gated) | Attempt contracts and receipt model for dry-run/test-only work | Attempt schemas + attempt outcome receipts | Run production source edits by default |
 
-Lanes **A-F may proceed now in parallel**. Lane **G may design now**, but
-execution remains gated on control-plane truth, judgment routing, evidence
-ladder readiness semantics, and explicit authority checks.
+Lanes **A-F may proceed in parallel** only through PR-sized slices selected by
+the live board or source-of-truth stack. Lane **G is design-eligible** under the
+same selection rule, but execution remains gated on control-plane truth,
+judgment routing, evidence ladder readiness semantics, and explicit authority
+checks.
 
 ### Shared Evidence Vocabulary
 
@@ -128,6 +136,8 @@ All lane artifacts should carry an explicit evidence level:
 Readiness labels should always be concrete, for example
 `ready_for_report`, `ready_for_judgment`, `ready_for_dry_run`,
 `ready_for_test_only_attempt`, and `ready_for_source_promotion`.
+These labels are descriptive; they do not grant source-promotion, dry-run, or
+merge authority without the linked proof and authority boundary.
 
 ## Current Position
 
