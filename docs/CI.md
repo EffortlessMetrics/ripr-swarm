@@ -46,6 +46,92 @@ already implement PR planning, label-gated lane selection, CI actuals, or
 budget enforcement. Until those later PRs land, the "Current Workflows" section
 below remains the source of truth for what GitHub Actions runs today.
 
+## Codex CI-Efficiency Compatibility Invariants (Hard Guardrails)
+
+When asking Codex or other automation agents to "make CI cheaper," treat this
+section as strict compatibility policy, not optional optimization guidance.
+
+### 1) Concurrency semantics for heavy/core PR workflows
+
+- Do **not** flip heavy/core Rust workflows to `cancel-in-progress: true` as a
+  generic efficiency change.
+- Preserve the "single active run + single pending replacement slot" behavior:
+  - an already-running job continues;
+  - a newer run replaces any older pending run;
+  - the active run is not killed near completion.
+- Preferred pattern:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+```
+
+Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
+an explicit documented exception.
+
+### 2) Change classification before lane selection
+
+- Do **not** route all changed files through Rust CI.
+- Treat metadata/control-plane surfaces as light paths unless mixed with real
+  Rust/build/test changes, including:
+  - `docs/**`, markdown-only edits, `README*`, `CHANGELOG*`, `SECURITY*`,
+    `CONTRIBUTING*`;
+  - `policy/**`, `plans/**`, `badges/**`, `AGENTS.md`;
+  - `.github/CODEOWNERS`, `.github/dependabot.yml`,
+    `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/**`;
+  - `.codex/campaigns/**`, `docs/tracking/**`, `ci/hardware/**` receipt files,
+    `.rails/**`, `.uselesskey/**`.
+- Treat `.github/workflows/**` as a special workflow-change surface:
+  - not docs-light;
+  - route to minimal hosted workflow safety/validation unless policy requires
+    more.
+
+### 3) Default PR policy
+
+Classify first, then choose the cheapest truthful lane:
+
+- docs/control-plane-only -> no Rust compile;
+- workflow-only -> hosted YAML/workflow validation, no full Rust by default;
+- Rust source/build/test touched -> routed Rust-small;
+- hardware/GPU/receipt-only -> syntax/receipt validation only;
+- mixed or unknown -> Rust-small, not full CI.
+
+Full CI is opt-in by policy trigger (label/manual dispatch/main push/release/
+schedule/merge queue), not the default PR path.
+
+### 4) Hosted fallback policy
+
+- Do **not** silently replace self-hosted Rust-small with a full GitHub-hosted
+  equivalent.
+- Runner readiness/availability/token failures should not auto-trigger a
+  75-120 minute hosted substitute.
+- Expensive hosted fallback must be explicit via labels/dispatch inputs such as
+  `full-ci`, `allow-github-hosted`, or `ci-budget-ack`.
+
+### 5) Artifact policy
+
+- Avoid default-path artifact uploads with `if: always()` unless merge policy
+  requires them and they are tiny.
+- Prefer upload-on-failure with short retention (3-7 days) for diagnostics.
+- Keep receipt uploads minimal, especially for docs/control-plane-only paths.
+
+### 6) Required validation for CI-only efficiency PRs
+
+Every CI-efficiency PR should show evidence for:
+
+- `git diff --check`;
+- YAML parse validation for each edited workflow;
+- classification dry-run or unit checks covering:
+  - docs-only;
+  - `.rails/**`;
+  - `.uselesskey/**`;
+  - workflow file change;
+  - Rust file change;
+  - mixed docs + Rust;
+- explicit confirmation that heavy/core concurrency semantics stayed no-cancel
+  unless intentionally documented.
+
 ### PR Planning
 
 Every pull request should eventually get a cheap CI forecast before heavier
