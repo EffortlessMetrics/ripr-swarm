@@ -49,32 +49,30 @@ below remains the source of truth for what GitHub Actions runs today.
 ## Codex CI-Efficiency Compatibility Invariants (Hard Guardrails)
 
 When asking Codex or other automation agents to "make CI cheaper," treat this
-section as strict compatibility policy, not optional optimization guidance.
+section as strict compatibility policy for CI-efficiency PRs. It constrains
+future workflow and planner changes, but it does not override the current
+workflow behavior documented in [Current Workflows](#current-workflows).
 
 ### 1) Concurrency semantics for heavy/core PR workflows
 
-- Do **not** flip heavy/core Rust workflows to `cancel-in-progress: true` as a
-  generic efficiency change.
-- Preserve the "single active run + single pending replacement slot" behavior:
-  - an already-running job continues;
-  - a newer run replaces any older pending run;
-  - the active run is not killed near completion.
-- Preferred pattern:
-
-```yaml
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
-```
-
-Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
-an explicit documented exception.
+- Do **not** change heavy/core workflow concurrency as a generic efficiency
+  edit. The PR must name the current behavior and the intended behavior.
+- Treat both models as product decisions:
+  - no-cancel preserves a running expensive job and allows only one pending
+    replacement;
+  - synchronize-cancel favors the latest commit and may abandon near-complete
+    work.
+- Any switch to or from `cancel-in-progress` must document the affected
+  workflows, rollback path, cost tradeoff, and review impact.
+- Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
+  an explicit documented exception.
 
 ### 2) Change classification before lane selection
 
-- Do **not** route all changed files through Rust CI.
-- Treat metadata/control-plane surfaces as light paths unless mixed with real
-  Rust/build/test changes, including:
+- Do **not** build a future planner that routes all changed files through Rust
+  CI.
+- Treat metadata/control-plane surfaces as candidates for light paths unless
+  mixed with real Rust/build/test changes, including:
   - `docs/**`, markdown-only edits, `README*`, `CHANGELOG*`, `SECURITY*`,
     `CONTRIBUTING*`;
   - `policy/**`, `plans/**`, `badges/**`, `AGENTS.md`;
@@ -86,10 +84,14 @@ an explicit documented exception.
   - not docs-light;
   - route to minimal hosted workflow safety/validation unless policy requires
     more.
+- Until a classifier is implemented and validated, the active workflows remain
+  the source of truth. Do not claim a docs-only PR skipped Rust proof unless the
+  check run evidence shows that it did.
 
-### 3) Default PR policy
+### 3) Target PR planner policy
 
-Classify first, then choose the cheapest truthful lane:
+The target planner should classify first, then choose the cheapest truthful
+lane:
 
 - docs/control-plane-only -> no Rust compile;
 - workflow-only -> hosted YAML/workflow validation, no full Rust by default;
@@ -100,14 +102,18 @@ Classify first, then choose the cheapest truthful lane:
 Full CI is opt-in by policy trigger (label/manual dispatch/main push/release/
 schedule/merge queue), not the default PR path.
 
-### 4) Hosted fallback policy
+### 4) Hosted fallback boundary
 
-- Do **not** silently replace self-hosted Rust-small with a full GitHub-hosted
-  equivalent.
-- Runner readiness/availability/token failures should not auto-trigger a
-  75-120 minute hosted substitute.
-- Expensive hosted fallback must be explicit via labels/dispatch inputs such as
-  `full-ci`, `allow-github-hosted`, or `ci-budget-ack`.
+- Do **not** remove, narrow, or relabel the current protected GitHub-hosted
+  Rust-small fallback without updating the routed-runner docs, active-goal
+  state, and branch-protection contract in the same PR.
+- The current routed Rust-small workflow may select GitHub-hosted when a PR is
+  untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
+  runner is available. That result remains a valid protected-path success while
+  the CX53/CX43 proof closeout is blocked.
+- Do **not** replace a targeted Rust-small fallback with broader hosted full CI
+  unless the PR names the cost, proof obligation, and explicit trigger such as
+  `full-ci`, `release-check`, or `ci-budget-ack`.
 
 ### 5) Artifact policy
 
@@ -118,19 +124,20 @@ schedule/merge queue), not the default PR path.
 
 ### 6) Required validation for CI-only efficiency PRs
 
-Every CI-efficiency PR should show evidence for:
+Every CI-efficiency PR should show evidence appropriate to the edited surface:
 
 - `git diff --check`;
-- YAML parse validation for each edited workflow;
-- classification dry-run or unit checks covering:
+- docs/policy-only changes: the relevant docs, policy, and static-language
+  checks, plus an explicit claim boundary;
+- workflow changes: YAML/workflow validation and a note confirming the current
+  and intended concurrency semantics;
+- classification logic changes: dry-run or unit checks covering:
   - docs-only;
   - `.rails/**`;
   - `.uselesskey/**`;
   - workflow file change;
   - Rust file change;
-  - mixed docs + Rust;
-- explicit confirmation that heavy/core concurrency semantics stayed no-cancel
-  unless intentionally documented.
+  - mixed docs + Rust.
 
 ### PR Planning
 
