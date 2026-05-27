@@ -2529,14 +2529,17 @@ It does not silently drop the plan or infer work from stale Markdown.
 ```
 
 `swarm_state = queued` means the packet is ready for a bounded dry-run repair
-attempt. Packets missing required typed context use
-`blocked_by_missing_context`. Packets with static limitations use
-`blocked_by_static_limitation`. Static-only predicate-boundary assertion
-packets use `blocked_by_operator_judgment`; they remain visible but are not
-default swarm-ready until upstream evidence is fixture-backed, calibrated, or
-explicitly operator-selected. Ranking is advisory and never redefines
-actionability; it starts from the canonical packet state already emitted by Lane
-1.
+attempt. Queued packets require a structured `repair_route` object and a typed
+workspace-relative `related_test_or_observer` or `candidate_value_or_observer`
+target. Candidate prose, `repair_route_source` hints, and top-level
+repair-shape strings remain supporting context only; they do not authorize file
+edits or swarm-ready ranking by themselves. Packets missing required typed
+context use `blocked_by_missing_context`. Packets with static limitations use
+`blocked_by_static_limitation`. Static-only predicate-boundary assertion packets
+use `blocked_by_operator_judgment`; they remain visible but are not default
+swarm-ready until upstream evidence is fixture-backed, calibrated, or explicitly
+operator-selected. Ranking is advisory and never redefines actionability; it
+starts from the canonical packet state already emitted by Lane 1.
 
 ## RIPR Swarm Attempt Dry Run
 
