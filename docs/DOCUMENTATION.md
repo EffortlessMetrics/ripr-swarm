@@ -91,6 +91,7 @@ Current how-to docs:
 - [Lane 1 finding alignment burn-down tracker](lanes/LANE_1_FINDING_ALIGNMENT_BURNDOWN.md)
 - [Lane 1 finding alignment burn-down closeout](handoffs/2026-05-22-lane1-finding-alignment-burndown-closeout.md)
 - [Lane 1 value resolution audit fixes tracker](lanes/LANE_1_VALUE_RESOLUTION_AUDIT_FIXES.md)
+- [Lane 1 evidence-to-repair closeout audit](handoffs/2026-05-27-lane1-evidence-to-repair-closeout-audit.md)
 - [Lane 2 policy readiness tracker](policy/POLICY_READINESS.md)
 - [Lane 2 policy operations tracker](policy/POLICY_OPERATIONS.md)
 - [Preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md)
@@ -217,6 +218,7 @@ Current explanation docs:
 - [User-visible output evidence proposal](proposals/RIPR-PROP-0005-user-visible-output-evidence.md)
 - [Lane 1 finding alignment burn-down plan](../plans/lane1-finding-alignment-burndown/implementation-plan.md)
 - [Lane 1 value resolution audit fixes plan](../plans/lane1-value-resolution-audit-fixes/implementation-plan.md)
+- [Lane 1 evidence-to-repair closeout audit](handoffs/2026-05-27-lane1-evidence-to-repair-closeout-audit.md)
 - [Adoption integration cleanup plan](../plans/adoption-integration-cleanup/implementation-plan.md)
   - closed historical cleanup rail
 - [Editor first-pr bridge proposal](proposals/RIPR-PROP-0010-editor-first-pr-bridge.md)
