@@ -2778,11 +2778,50 @@ badges.
     "unknown": 0,
     "orphaned_receipts": 1
   },
+  "repair_route_quality": [
+    {
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 2,
+      "repair_kind_improved": 1,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_success_rate": 0.5
+    }
+  ],
+  "top_failing_repair_routes": [
+    {
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 2,
+      "repair_kind_improved": 1,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_success_rate": 0.5
+    }
+  ],
+  "top_missing_evidence_fields": [
+    {
+      "label": "receipt_command",
+      "count": 1
+    }
+  ],
   "attempts": [
     {
       "packet_id": "packet-boundary-001",
       "canonical_gap_id": "gap:abc",
       "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc",
+      "evidence_class": "predicate_boundary",
+      "source_file": "src/pricing.rs",
+      "repair_kind": "add_boundary_assertion",
+      "target_test_type": "boundary_discriminator",
+      "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
       "actor_kind": "agent",
       "receipt_path": "target/ripr/reports/agent-receipt.json",
       "verify_command": "cargo test -p ripr boundary_gap",
@@ -2801,6 +2840,11 @@ badges.
       "packet_id": "packet-boundary-001",
       "canonical_gap_id": "gap:abc",
       "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc",
+      "evidence_class": "predicate_boundary",
+      "source_file": "src/pricing.rs",
+      "repair_kind": "add_boundary_assertion",
+      "target_test_type": "boundary_discriminator",
+      "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
       "actor_kind": "agent",
       "receipt_path": "target/ripr/reports/agent-receipt.json",
       "verify_command": "cargo test -p ripr boundary_gap",
@@ -2826,6 +2870,7 @@ badges.
     "not_attempted means no matching attempt artifact was supplied, not that repair failed",
     "receipt_present without movement is not evidence improvement",
     "orphaned receipts do not create new actionable gaps",
+    "repair-route quality is grouped from latest attempts by repair_kind; it is not a ranking gate",
     "ledger counts do not change public badge semantics or CI gate mode"
   ]
 }
@@ -2839,6 +2884,13 @@ attempt/improved/unchanged/regressed/resolved counts. The ledger preserves
 and `unknown` outcomes. Missing outcome inputs make the ledger
 `limited_incomplete_input`; missing swarm-plan input is consumable but
 explicitly limited because packet ids may be less complete.
+
+`repair_route_quality[]` is grouped from latest attempts by `repair_kind` and
+reports attempted, improved, unchanged, regressed, resolved, no-receipt,
+receipt-only, unknown, and success-rate counts. `top_failing_repair_routes[]`
+is the subset with unchanged, regressed, no-receipt, or unknown outcomes,
+ordered for analyzer-improvement routing. `top_missing_evidence_fields[]`
+counts missing route/verify/receipt fields that prevent route-quality analysis.
 
 ## RIPR Swarm Readiness
 
@@ -2870,6 +2922,12 @@ Swarm plan and readiness reports include `run_status` and `runtime_status`.
 Readiness preserves a limited swarm-plan input, and reports missing or malformed
 required plan input as `limited_incomplete_input` instead of turning absent
 packets into a clean zero-ready state.
+
+Readiness forwards attempt-ledger `repair_route_quality[]`,
+`top_failing_repair_routes[]`, and `top_missing_evidence_fields[]` so the next
+operator action can distinguish "try the next packet" from "fix the noisy
+repair route first." These fields are advisory quality signals and do not
+change badge, LSP, PR, or CI gate semantics.
 
 ```json
 {
@@ -2923,14 +2981,57 @@ packets into a clean zero-ready state.
     "resolved_packets": 1,
     "orphaned_receipts": 0
   },
+  "repair_route_quality": [
+    {
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 2,
+      "repair_kind_improved": 1,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_success_rate": 0.5
+    }
+  ],
+  "top_failing_repair_routes": [
+    {
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 2,
+      "repair_kind_improved": 1,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_success_rate": 0.5
+    }
+  ],
+  "top_missing_evidence_fields": [
+    {
+      "label": "receipt_command",
+      "count": 1
+    }
+  ],
   "next_actions": [
+    {
+      "kind": "improve_repair_route_quality",
+      "packet_id": null,
+      "canonical_gap_id": null,
+      "evidence_class": null,
+      "repair_kind": "add_boundary_assertion",
+      "command": "cargo xtask ripr-swarm attempt-ledger",
+      "reason": "`add_boundary_assertion` has 1 unchanged/regressed/no-receipt/unknown latest attempt(s); inspect route guidance before increasing packet volume"
+    },
     {
       "kind": "inspect_unchanged_attempts",
       "packet_id": null,
       "canonical_gap_id": null,
       "evidence_class": null,
       "repair_kind": null,
-      "command": "cargo xtask actionable-gap-outcomes",
+      "command": "cargo xtask ripr-swarm attempt-ledger",
       "reason": "1 attempted packet(s) left evidence unchanged; refine the repair route before retrying"
     },
     {
