@@ -1511,10 +1511,7 @@ fn observed_argument_selection(
         return ObservedArgumentSelection::AllArguments;
     };
     let parameters = function_parameters(owner_fn);
-    if let Some(left_index) = parameters.iter().position(|param| param == &left) {
-        return ObservedArgumentSelection::ArgumentIndices(vec![left_index]);
-    }
-    if let Some(left_index) = boundary_local_operand_parameter_index(owner_fn, &parameters, &left) {
+    if let Some(left_index) = boundary_operand_parameter_index(owner_fn, &parameters, &left) {
         return ObservedArgumentSelection::ArgumentIndices(vec![left_index]);
     }
     if let Some(right_index) = parameters.iter().position(|param| param == &right)
@@ -1523,8 +1520,7 @@ fn observed_argument_selection(
         return ObservedArgumentSelection::ArgumentIndices(vec![right_index]);
     }
     if !scalar_values(&left).is_empty()
-        && let Some(right_index) =
-            boundary_local_operand_parameter_index(owner_fn, &parameters, &right)
+        && let Some(right_index) = boundary_operand_parameter_index(owner_fn, &parameters, &right)
     {
         return ObservedArgumentSelection::ArgumentIndices(vec![right_index]);
     }
@@ -1542,6 +1538,17 @@ fn boundary_activation_operands_unresolved(
     )
 }
 
+fn boundary_operand_parameter_index(
+    owner_fn: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+) -> Option<usize> {
+    parameters
+        .iter()
+        .position(|parameter| parameter == operand)
+        .or_else(|| boundary_local_operand_parameter_index(owner_fn, parameters, operand))
+}
+
 fn boundary_local_operand_parameter_index(
     owner_fn: &FunctionSummary,
     parameters: &[String],
@@ -1557,6 +1564,7 @@ fn boundary_local_operand_parameter_index(
             || owner_fn
                 .body
                 .contains(&format!("if let Ok({operand}) = {parameter}"))
+            || body_contains_direct_local_alias(&owner_fn.body, operand, parameter)
             || (owner_fn.body.contains(&format!("match {parameter}"))
                 && (owner_fn.body.contains(&format!("Some({operand})"))
                     || owner_fn.body.contains(&format!("Ok({operand})"))))
@@ -1565,6 +1573,20 @@ fn boundary_local_operand_parameter_index(
         }
     }
     None
+}
+
+fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) -> bool {
+    body.lines().any(|line| {
+        let line = line.trim().trim_end_matches(';').trim();
+        let Some(binding) = line.strip_prefix("let ") else {
+            return false;
+        };
+        let Some((left, right)) = binding.split_once('=') else {
+            return false;
+        };
+        let local_name = left.split_once(':').map(|(name, _)| name).unwrap_or(left);
+        local_name.trim() == operand && right.trim() == parameter
+    })
 }
 
 fn activation_overlap_score(
@@ -1612,10 +1634,10 @@ fn boundary_equality_overlap_score(
         return 0;
     };
     let parameters = function_parameters(owner_fn);
-    let Some(left_index) = parameters.iter().position(|param| param == &left) else {
+    let Some(left_index) = boundary_operand_parameter_index(owner_fn, &parameters, &left) else {
         return 0;
     };
-    let Some(right_index) = parameters.iter().position(|param| param == &right) else {
+    let Some(right_index) = boundary_operand_parameter_index(owner_fn, &parameters, &right) else {
         return 0;
     };
 
@@ -4850,6 +4872,30 @@ mod tests {
     }
 
     #[test]
+    fn given_boundary_owner_call_when_input_operand_is_direct_parameter_alias_then_observed_values_are_resolved()
+    -> Result<(), String> {
+        let prod_src = r#"
+pub fn discounted_total(raw_amount: i32, threshold: i32) -> i32 {
+    let amount = raw_amount;
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+        let test = (
+            "tests/pricing_tests.rs",
+            "#[test] fn below_threshold() { \
+                 assert_eq!(discounted_total(50, 100), 50); \
+             }\n",
+        );
+        let values = observed_values_for(prod_src, &[test])?;
+        assert_eq!(
+            values,
+            vec!["50".to_string()],
+            "direct local aliases of owner parameters should resolve to the original owner-call argument"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_boundary_owner_call_when_input_operand_is_iterator_local_then_activation_is_static_limitation()
     -> Result<(), String> {
         let prod_src = "pub fn sum_from_offset(values: &[i32], offset: usize) -> i32 { \
@@ -4894,6 +4940,53 @@ mod tests {
         assert!(
             evidence.missing_discriminators.is_empty(),
             "unresolved iterator-local boundary must not emit exact candidate discriminator; got {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_boundary_owner_call_when_input_operand_is_computed_local_then_activation_stays_static_limitation()
+    -> Result<(), String> {
+        let prod_src = "pub fn discounted_total(raw_amount: i32, threshold: i32) -> i32 { \
+                            let amount = raw_amount + 1; \
+                            if amount >= threshold { amount - 10 } else { amount } \
+                        }\n";
+        let test = (
+            "tests/pricing_tests.rs",
+            "#[test] fn below_threshold() { \
+                 assert_eq!(discounted_total(50, 100), 51); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/pricing.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("local, iterator-derived, or computed"),
+            "computed local boundary operands must remain a named limitation; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "computed local activation values must not be invented from owner-call args; got {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "computed local boundary operands must not emit exact candidate discriminator; got {:?}",
             evidence.missing_discriminators
         );
         Ok(())
