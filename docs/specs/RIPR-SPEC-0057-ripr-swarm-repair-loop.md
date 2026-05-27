@@ -289,6 +289,13 @@ visible. A receipt that does not match any current canonical gap packet is
 reported as an orphaned receipt; it remains audit evidence and does not create
 a new actionable gap.
 
+The attempt ledger must preserve typed route context for each attempt when it
+is available: `evidence_class`, `source_file`, `repair_kind`,
+`target_test_type`, and `assertion_shape`. It must summarize latest attempts by
+`repair_kind` so repeated unchanged, regressed, no-receipt, or unknown outcomes
+become analyzer-improvement signals instead of disappearing into aggregate
+attempt counts.
+
 ## Dry-Run Commands
 
 The first implementation surface should be dry-run only:
@@ -316,11 +323,12 @@ The readiness report must also emit a bounded `next_actions` queue derived
 from those same artifacts. It may recommend refreshing missing or malformed
 inputs, repairing missing verify or receipt command projections, reconciling
 orphaned receipts, inspecting unchanged or regressed attempts, routing static
-limitations to the Lane 1 analyzer backlog, routing operator-judgment packets
-for manual selection or stronger upstream evidence, or dry-running a top
-swarm-ready packet. These actions are advisory coordination hints; they must not
-execute repairs, consume raw findings as work, change badge semantics, or hide
-blocked or uncertain evidence.
+limitations to the Lane 1 analyzer backlog, improving a noisy repair route
+before increasing packet volume, routing operator-judgment packets for manual
+selection or stronger upstream evidence, or dry-running a top swarm-ready
+packet. These actions are advisory coordination hints; they must not execute
+repairs, consume raw findings as work, change badge semantics, or hide blocked
+or uncertain evidence.
 
 `attempt --dry-run` prints the bounded packet context and the commands a human
 or external agent would run. It does not edit files, run tests, call providers,
@@ -454,7 +462,14 @@ Current implementation coverage:
   must-not-change boundaries;
 - `xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context`
   pins that blocked/static-limitation packets stay visible without becoming
-  repair-ready.
+  repair-ready;
+- `xtask::tests::ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest`
+  pins durable attempt history and latest-attempt selection;
+- `xtask::tests::ripr_swarm_attempt_ledger_summarizes_repair_route_quality`
+  pins typed route context, per-`repair_kind` route-quality metrics, top
+  failing routes, and missing evidence fields;
+- `xtask::tests::ripr_swarm_readiness_consumes_attempt_ledger_counts`
+  pins readiness consumption of the attempt ledger and repair-route quality.
 
 Follow-up implementation PRs should add tests for:
 
@@ -471,8 +486,11 @@ implementation surfaces are:
 - `cargo xtask ripr-swarm plan --top <n>` (implemented);
 - `cargo xtask ripr-swarm attempt --packet <id> --dry-run` (implemented);
 - `cargo xtask ripr-swarm readiness` (implemented);
+- `cargo xtask ripr-swarm attempt-ledger` (implemented);
 - `target/ripr/reports/swarm-plan.json` (implemented);
 - `target/ripr/reports/swarm-plan.md` (implemented);
+- `target/ripr/reports/swarm-attempt-ledger.json` (implemented);
+- `target/ripr/reports/swarm-attempt-ledger.md` (implemented);
 - `target/ripr/reports/swarm-readiness.json` (implemented);
 - `target/ripr/reports/swarm-readiness.md` (implemented);
 - `docs/RIPR_SWARM_HUMAN_WORKFLOW.md` (implemented);
@@ -496,4 +514,12 @@ Future reports should expose:
 - `swarm_verified_unchanged`;
 - `swarm_verified_regressed`;
 - `swarm_failed_to_apply`;
-- `swarm_orphaned_receipts`.
+- `swarm_orphaned_receipts`;
+- `repair_kind_attempted`;
+- `repair_kind_improved`;
+- `repair_kind_unchanged`;
+- `repair_kind_regressed`;
+- `repair_kind_resolved`;
+- `repair_kind_success_rate`;
+- `top_failing_repair_routes`;
+- `top_missing_evidence_fields`.
