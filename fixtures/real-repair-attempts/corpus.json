@@ -1,0 +1,173 @@
+{
+  "schema_version": "0.1",
+  "kind": "real_repair_attempts_corpus",
+  "spec": "RIPR-SPEC-0057",
+  "description": "Repo-local dogfood receipts for real Lane 1 repair-loop attempts, including successful, resolved, unchanged, and missing-receipt outcomes.",
+  "limits": [
+    "advisory reporting only",
+    "no provider calls",
+    "no autonomous edits",
+    "no mutation execution",
+    "no public badge changes",
+    "no CI gate changes"
+  ],
+  "cases": [
+    {
+      "id": "repair_route_quality_metrics_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#415",
+      "canonical_gap_id": "gap:repair-route-quality-metrics-missing",
+      "packet_id": "repair-route-quality-metrics-001",
+      "repair_kind": "add_repair_route_quality_metrics",
+      "target_test_or_observer_shape": "readiness and attempt-ledger report assertions over repair_kind attempted/improved/unchanged/regressed counts",
+      "verify_command": "cargo xtask check-pr",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask ripr-swarm readiness",
+      "receipt_path": "target/ripr/reports/swarm-readiness.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Added repair-route quality rollups and top failing/missing evidence route fields to attempt-ledger/readiness outputs.",
+      "evidence_movement": "Readiness can now show repair_kind success-rate evidence instead of only packet counts.",
+      "operator_note": "The route-quality attempt improved analyzer-backlog signal without changing badge, LSP, PR, or CI authority.",
+      "must_not_change": [
+        "public badge semantics",
+        "CI gate defaults",
+        "autonomous repair behavior"
+      ],
+      "raw_evidence_refs": [
+        "metrics/capabilities.toml:ripr_swarm_repair_loop",
+        "docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged repair-loop PR converted attempt outcomes into route-quality evidence."
+    },
+    {
+      "id": "readiness_top_next_action_resolved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#416",
+      "canonical_gap_id": "gap:readiness-top-next-action-missing",
+      "packet_id": "readiness-top-next-action-001",
+      "repair_kind": "add_readiness_top_next_action_projection",
+      "target_test_or_observer_shape": "readiness JSON and Markdown assertions that top_next_action equals next_actions[0]",
+      "verify_command": "cargo xtask check-pr",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask ripr-swarm readiness",
+      "receipt_path": "target/ripr/reports/swarm-readiness.json",
+      "receipt_state": "receipt_movement_resolved",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "resolved",
+      "outcome": "resolved",
+      "attempted_repair": "Added a stable top_next_action projection for downstream surfaces to consume directly.",
+      "evidence_movement": "The missing readiness projection gap was resolved by preserving next_actions[0] as a named contract field.",
+      "operator_note": "This makes LSP/PR/CI/badge projection thinner because they do not need to reinterpret raw findings for the first useful action.",
+      "must_not_change": [
+        "next_actions ranking source",
+        "raw finding interpretation",
+        "default advisory posture"
+      ],
+      "raw_evidence_refs": [
+        "docs/OUTPUT_SCHEMA.md:swarm-readiness",
+        "xtask/src/main.rs:ripr_swarm_readiness"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged readiness PR closed the missing top-next-action projection gap."
+    },
+    {
+      "id": "projection_alignment_receipt_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#417",
+      "canonical_gap_id": "gap:surface-projection-alignment-receipt-missing",
+      "packet_id": "surface-projection-alignment-001",
+      "repair_kind": "add_projection_alignment_receipt",
+      "target_test_or_observer_shape": "dogfood fixture proving one receipt-backed packet preserves canonical identity through attempt-ledger and readiness",
+      "verify_command": "cargo xtask check-pr",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask dogfood",
+      "receipt_path": "fixtures/surface-projection-alignment/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Added a surface-projection alignment dogfood corpus and dogfood report section.",
+      "evidence_movement": "The packet identity, repair kind, verify command, receipt command/state, outcome, and readiness top_next_action are now pinned together.",
+      "operator_note": "This improved proof that downstream surfaces are thin consumers of canonical state, but it deliberately did not change those surfaces.",
+      "must_not_change": [
+        "badge endpoint behavior",
+        "LSP/editor UX behavior",
+        "PR comment publishing",
+        "CI gate behavior"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/surface-projection-alignment/corpus.json",
+        "docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged dogfood PR added receipt-backed projection alignment proof."
+    },
+    {
+      "id": "targeted_outcome_left_gap_unchanged",
+      "source_ref": "docs/handoffs/2026-05-20-0.7-swarm-repair-loop-dogfood.md",
+      "canonical_gap_id": "gap:unchanged",
+      "packet_id": "evidence-unchanged-from-targeted-outcome",
+      "repair_kind": "add_exact_error_variant",
+      "target_test_or_observer_shape": "targeted-test outcome fixture with unchanged before/after grip evidence",
+      "verify_command": "cargo xtask actionable-gap-outcomes --actionable-gaps target/ripr/reports/0.7-dogfood-outcomes/evidence_unchanged_from_targeted_outcome.actionable-gaps.json --agent-receipt target/ripr/reports/0.7-dogfood-outcomes/evidence_unchanged_from_targeted_outcome.agent-receipt.json --targeted-test-outcome target/ripr/reports/0.7-dogfood-outcomes/evidence_unchanged_from_targeted_outcome.targeted-test-outcome.json",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask actionable-gap-outcomes",
+      "receipt_path": "docs/handoffs/2026-05-20-0.7-swarm-repair-loop-dogfood.md",
+      "receipt_state": "receipt_missing",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "evidence_unchanged",
+      "attempted_repair": "Exercised the outcome join where targeted movement exists but the static evidence did not improve.",
+      "evidence_movement": "Outcome reporting kept the unchanged attempt visible and did not mark the gap resolved.",
+      "operator_note": "This is intentionally not a success case; it proves failed or insufficient attempts do not disappear.",
+      "must_not_change": [
+        "resolved classification",
+        "receipt-missing visibility",
+        "orphan receipt handling"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/actionable-gap-outcomes-corpus/corpus.json:evidence_unchanged_from_targeted_outcome",
+        "docs/handoffs/2026-05-20-0.7-swarm-repair-loop-dogfood.md"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real dogfood outcome pass recorded unchanged evidence as visible non-success."
+    },
+    {
+      "id": "dry_run_receipt_command_missing_named",
+      "source_ref": "docs/handoffs/2026-05-20-0.7-swarm-repair-loop-dogfood.md",
+      "canonical_gap_id": "gap:report-config-label",
+      "packet_id": "gap:report-config-label",
+      "repair_kind": "add_output_observer",
+      "target_test_or_observer_shape": "report golden observer for rendered configuration label",
+      "verify_command": "cargo xtask goldens check",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask receipts check",
+      "receipt_path": null,
+      "receipt_state": "receipt_missing",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "attempted_no_receipt",
+      "attempted_repair": "Dry-ran a ready packet and checked verify/receipt command separation without fabricating missing receipts.",
+      "evidence_movement": "The verify command passed, while the receipt command named required missing receipt files.",
+      "operator_note": "This records a non-closed loop explicitly; a missing receipt remains a blocker rather than hidden success.",
+      "must_not_change": [
+        "receipt fabrication",
+        "source files",
+        "generated tests",
+        "provider calls"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/swarm-plan-packet-corpus/corpus.json:high_confidence_boundary_assertion_packet",
+        "docs/handoffs/2026-05-20-0.7-swarm-repair-loop-dogfood.md"
+      ],
+      "missing_receipt_reason": "receipt command reported required local receipts were absent",
+      "reason": "A real dogfood dry-run pass proved missing receipts stay named and do not become implicit success."
+    }
+  ]
+}

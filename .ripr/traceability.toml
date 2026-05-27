@@ -3797,11 +3797,13 @@ tests = [
   "xtask::tests::ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest",
   "xtask::tests::ripr_swarm_readiness_consumes_attempt_ledger_counts",
   "xtask::tests::dogfood_surface_projection_alignment_receipts_are_checked",
+  "xtask::tests::dogfood_real_repair_attempt_receipts_are_checked",
 ]
 fixtures = [
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/actionable-gap-outcomes-corpus",
   "fixtures/surface-projection-alignment",
+  "fixtures/real-repair-attempts",
 ]
 code = [
   "xtask/src/command.rs",
@@ -3838,6 +3840,7 @@ metrics = [
   "swarm_verified_regressed",
   "swarm_failed_to_apply",
   "swarm_orphaned_receipts",
+  "real_repair_attempt_receipts",
 ]
 
 [[behavior]]
