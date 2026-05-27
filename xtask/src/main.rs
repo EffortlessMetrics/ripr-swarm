@@ -23072,12 +23072,17 @@ fn ripr_swarm_readiness_json(report: &RiprSwarmReadinessReport) -> Result<String
             &report.top_failing_repair_routes
         ),
         "top_missing_evidence_fields": audit_top_counts_json(&report.top_missing_evidence_fields),
+        "top_next_action": report
+            .next_actions
+            .first()
+            .map(ripr_swarm_readiness_next_action_json),
         "next_actions": ripr_swarm_readiness_next_actions_json(&report.next_actions),
         "must_not_infer": [
             "readiness reports summarize existing swarm artifacts; they do not execute repairs",
             "raw findings remain supporting evidence, not swarm work",
             "missing outcome artifacts mean no outcome join is available, not that attempts failed",
             "repair-route quality is an analyzer improvement signal, not a public badge basis",
+            "top_next_action is a projection of next_actions[0], not a separate ranking source",
             "readiness counts do not change public badge semantics",
             "static limitations and blocked packets are not repair-ready work"
         ],
@@ -23430,18 +23435,20 @@ fn ripr_swarm_readiness_ready_packet_actions(
 fn ripr_swarm_readiness_next_actions_json(actions: &[RiprSwarmReadinessNextAction]) -> Vec<Value> {
     actions
         .iter()
-        .map(|action| {
-            serde_json::json!({
-                "kind": action.kind,
-                "packet_id": action.packet_id,
-                "canonical_gap_id": action.canonical_gap_id,
-                "evidence_class": action.evidence_class,
-                "repair_kind": action.repair_kind,
-                "command": action.command,
-                "reason": action.reason,
-            })
-        })
+        .map(ripr_swarm_readiness_next_action_json)
         .collect()
+}
+
+fn ripr_swarm_readiness_next_action_json(action: &RiprSwarmReadinessNextAction) -> Value {
+    serde_json::json!({
+        "kind": action.kind,
+        "packet_id": action.packet_id,
+        "canonical_gap_id": action.canonical_gap_id,
+        "evidence_class": action.evidence_class,
+        "repair_kind": action.repair_kind,
+        "command": action.command,
+        "reason": action.reason,
+    })
 }
 
 fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
@@ -23515,6 +23522,12 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         }
         out.push('\n');
     }
+    out.push_str("\n## Top Next Action\n\n");
+    if let Some(action) = report.next_actions.first() {
+        ripr_swarm_readiness_push_next_actions_table(&mut out, std::slice::from_ref(action));
+    } else {
+        out.push_str("No next action is available.\n\n");
+    }
     out.push_str("\n## Next Actions\n\n");
     ripr_swarm_readiness_push_next_actions_table(&mut out, &report.next_actions);
     out.push_str("\n## Must Not Infer\n\n");
@@ -23526,6 +23539,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
     out.push_str(
         "- Repair-route quality is an analyzer improvement signal, not a public badge basis.\n",
     );
+    out.push_str("- `top_next_action` is a projection of `next_actions[0]`, not a separate ranking source.\n");
     out.push_str("- Readiness counts do not change public badge semantics.\n");
     out.push_str("- Static limitations and blocked packets are not repair-ready work.\n");
     out
@@ -73096,6 +73110,10 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from("inspect_unchanged_attempts")
         );
         assert_eq!(
+            value["top_next_action"]["kind"],
+            serde_json::Value::from("inspect_unchanged_attempts")
+        );
+        assert_eq!(
             value["next_actions"][2]["kind"],
             serde_json::Value::from("attempt_ready_packet")
         );
@@ -73106,6 +73124,7 @@ covered_by = ["cargo xtask check-file-policy"]
         let markdown = ripr_swarm_readiness_markdown(&report);
         assert!(markdown.contains("# RIPR Swarm Readiness"));
         assert!(markdown.contains("actionable gaps total"));
+        assert!(markdown.contains("## Top Next Action"));
         assert!(markdown.contains("## Next Actions"));
         assert!(
             markdown
@@ -75351,6 +75370,11 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_missing_evidence_fields"][0]["label"],
             "receipt_command"
         );
+        assert_eq!(
+            value["top_next_action"]["kind"],
+            "reconcile_orphaned_receipts"
+        );
+        assert_eq!(value["top_next_action"], value["next_actions"][0]);
         Ok(())
     }
 

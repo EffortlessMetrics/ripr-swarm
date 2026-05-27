@@ -2928,6 +2928,9 @@ Readiness forwards attempt-ledger `repair_route_quality[]`,
 operator action can distinguish "try the next packet" from "fix the noisy
 repair route first." These fields are advisory quality signals and do not
 change badge, LSP, PR, or CI gate semantics.
+`top_next_action` is a single-object projection of `next_actions[0]` for
+thin downstream surfaces that need one canonical next route without
+reinterpreting the full advisory queue.
 
 ```json
 {
@@ -3015,6 +3018,15 @@ change badge, LSP, PR, or CI gate semantics.
       "count": 1
     }
   ],
+  "top_next_action": {
+    "kind": "improve_repair_route_quality",
+    "packet_id": null,
+    "canonical_gap_id": null,
+    "evidence_class": null,
+    "repair_kind": "add_boundary_assertion",
+    "command": "cargo xtask ripr-swarm attempt-ledger",
+    "reason": "`add_boundary_assertion` has 1 unchanged/regressed/no-receipt/unknown latest attempt(s); inspect route guidance before increasing packet volume"
+  },
   "next_actions": [
     {
       "kind": "improve_repair_route_quality",
@@ -3066,6 +3078,8 @@ change badge, LSP, PR, or CI gate semantics.
     "readiness reports summarize existing swarm artifacts; they do not execute repairs",
     "raw findings remain supporting evidence, not swarm work",
     "missing outcome artifacts mean no outcome join is available, not that attempts failed",
+    "repair-route quality is an analyzer improvement signal, not a public badge basis",
+    "top_next_action is a projection of next_actions[0], not a separate ranking source",
     "readiness counts do not change public badge semantics",
     "static limitations and blocked packets are not repair-ready work"
   ]
@@ -3081,7 +3095,9 @@ derived from the same plan and outcome artifacts. It can point operators to a
 ready dry-run packet, missing verify/receipt source fields, orphaned receipts,
 unchanged or regressed attempts, static-limitation backlog work, or
 operator-judgment packets that are visible but not default swarm-ready. It does
-not execute the action or consume raw findings as work.
+not execute the action or consume raw findings as work. `top_next_action` is
+the first item in that queue, duplicated as a stable object for badge, LSP, PR,
+CI, or other thin surfaces that should not implement their own ranking rules.
 
 
 ## Evidence Quality Scorecard
