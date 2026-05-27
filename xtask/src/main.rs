@@ -22036,12 +22036,7 @@ fn ripr_swarm_attempt_ledger_from_values(
     let latest_attempts = ripr_swarm_attempt_ledger_latest_attempts(&attempts);
     let orphaned_receipts = actionable_gap_outcomes
         .value
-        .map(|outcomes| {
-            audit_array(outcomes, &["orphaned_receipts"])
-                .into_iter()
-                .cloned()
-                .collect()
-        })
+        .map(|outcomes| audit_array(outcomes, &["orphaned_receipts"]).to_vec())
         .unwrap_or_default();
     let status = if actionable_gap_outcomes.value.is_some() {
         "advisory"
@@ -22648,12 +22643,9 @@ fn ripr_swarm_readiness_from_values(
     let next_actions = ripr_swarm_readiness_next_actions(
         &summary,
         swarm_plan.value,
-        &swarm_plan.state,
-        swarm_plan.limitation.as_deref(),
-        &actionable_gap_outcomes.state,
-        actionable_gap_outcomes.limitation.as_deref(),
-        &attempt_ledger.state,
-        attempt_ledger.limitation.as_deref(),
+        &swarm_plan,
+        &actionable_gap_outcomes,
+        &attempt_ledger,
     );
     let status = if swarm_plan.value.is_some() {
         "advisory"
@@ -22860,15 +22852,12 @@ const RIPR_SWARM_READINESS_NEXT_ACTION_PACKET_LIMIT: usize = 5;
 fn ripr_swarm_readiness_next_actions(
     summary: &RiprSwarmReadinessSummary,
     swarm_plan: Option<&Value>,
-    swarm_plan_state: &str,
-    swarm_plan_limitation: Option<&str>,
-    actionable_gap_outcomes_state: &str,
-    actionable_gap_outcomes_limitation: Option<&str>,
-    attempt_ledger_state: &str,
-    attempt_ledger_limitation: Option<&str>,
+    swarm_plan_input: &RiprSwarmReadinessInput<'_>,
+    actionable_gap_outcomes_input: &RiprSwarmReadinessInput<'_>,
+    attempt_ledger_input: &RiprSwarmReadinessInput<'_>,
 ) -> Vec<RiprSwarmReadinessNextAction> {
     let mut actions = Vec::new();
-    if swarm_plan_state != "read" {
+    if swarm_plan_input.state != "read" {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "refresh_swarm_plan".to_string(),
             packet_id: None,
@@ -22876,12 +22865,14 @@ fn ripr_swarm_readiness_next_actions(
             evidence_class: None,
             repair_kind: None,
             command: Some("cargo xtask ripr-swarm plan --top 10".to_string()),
-            reason: swarm_plan_limitation
+            reason: swarm_plan_input
+                .limitation
+                .as_deref()
                 .unwrap_or("swarm-plan input is not readable")
                 .to_string(),
         });
     }
-    if actionable_gap_outcomes_state != "read" {
+    if actionable_gap_outcomes_input.state != "read" {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "refresh_outcome_report".to_string(),
             packet_id: None,
@@ -22889,12 +22880,14 @@ fn ripr_swarm_readiness_next_actions(
             evidence_class: None,
             repair_kind: None,
             command: Some("cargo xtask actionable-gap-outcomes".to_string()),
-            reason: actionable_gap_outcomes_limitation
+            reason: actionable_gap_outcomes_input
+                .limitation
+                .as_deref()
                 .unwrap_or("actionable-gap outcome input is not readable")
                 .to_string(),
         });
     }
-    if attempt_ledger_state != "read" {
+    if attempt_ledger_input.state != "read" {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "refresh_attempt_ledger".to_string(),
             packet_id: None,
@@ -22902,7 +22895,9 @@ fn ripr_swarm_readiness_next_actions(
             evidence_class: None,
             repair_kind: None,
             command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
-            reason: attempt_ledger_limitation
+            reason: attempt_ledger_input
+                .limitation
+                .as_deref()
                 .unwrap_or("swarm-attempt-ledger input is not readable")
                 .to_string(),
         });
@@ -72874,12 +72869,24 @@ covered_by = ["cargo xtask check-file-policy"]
         let actions = ripr_swarm_readiness_next_actions(
             &summary,
             Some(&swarm_plan),
-            "read",
-            None,
-            "missing",
-            Some("failed to read actionable gap outcomes"),
-            "missing",
-            Some("failed to read attempt ledger"),
+            &RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            &RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read actionable gap outcomes".to_string()),
+                value: None,
+            },
+            &RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read attempt ledger".to_string()),
+                value: None,
+            },
         );
         assert!(
             actions
