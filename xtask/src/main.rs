@@ -883,6 +883,59 @@ struct DogfoodSurfaceProjectionAlignmentRun {
     errors: Vec<String>,
 }
 
+#[derive(Debug)]
+struct DogfoodRealRepairAttemptScenario {
+    name: String,
+    source_ref: String,
+    canonical_gap_id: String,
+    packet_id: String,
+    repair_kind: String,
+    target_test_or_observer_shape: String,
+    verify_command: String,
+    verify_result: String,
+    receipt_command: String,
+    receipt_path: Option<String>,
+    receipt_state: String,
+    actor_kind: String,
+    before_gap_state: String,
+    after_gap_state: String,
+    outcome: String,
+    attempted_repair: String,
+    evidence_movement: String,
+    operator_note: String,
+    must_not_change: Vec<String>,
+    raw_evidence_refs: Vec<String>,
+    missing_receipt_reason: Option<String>,
+    reason: String,
+}
+
+#[derive(Debug)]
+struct DogfoodRealRepairAttemptRun {
+    name: String,
+    source_ref: String,
+    canonical_gap_id: String,
+    packet_id: String,
+    repair_kind: String,
+    target_test_or_observer_shape: String,
+    verify_command: String,
+    verify_result: String,
+    receipt_command: String,
+    receipt_path: Option<String>,
+    receipt_state: String,
+    actor_kind: String,
+    before_gap_state: String,
+    after_gap_state: String,
+    outcome: String,
+    attempted_repair: String,
+    evidence_movement: String,
+    operator_note: String,
+    must_not_change: Vec<String>,
+    raw_evidence_refs: Vec<String>,
+    missing_receipt_reason: Option<String>,
+    reason: String,
+    errors: Vec<String>,
+}
+
 struct DogfoodPreviewProjectionRuns<'a> {
     generated_ci_cockpit: &'a [DogfoodGeneratedCiCockpitRun],
     language_preview: &'a [DogfoodLanguagePreviewRun],
@@ -900,6 +953,7 @@ struct DogfoodReportInputs<'a> {
     preview_projection_runs: &'a DogfoodPreviewProjectionRuns<'a>,
     finding_alignment_runs: &'a [DogfoodFindingAlignmentRun],
     surface_projection_alignment_runs: &'a [DogfoodSurfaceProjectionAlignmentRun],
+    real_repair_attempt_runs: &'a [DogfoodRealRepairAttemptRun],
     pr_inline_comment_runs: &'a [DogfoodPrInlineCommentRun],
 }
 
@@ -5255,6 +5309,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "real-repair-attempts"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
             )
@@ -7567,6 +7622,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_first_successful_pr_fixture_corpus(&mut violations)?;
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
     validate_gap_decision_ledger_fixture_corpus(&mut violations)?;
+    validate_real_repair_attempt_fixture_corpus(&mut violations)?;
     validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
     validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
@@ -7706,6 +7762,7 @@ const EVIDENCE_QUALITY_BENCHMARK_REQUIRED_CONFIG_POLICY_CASES: &[&str] = &[
 ];
 
 const FINDING_ALIGNMENT_DOGFOOD_CORPUS: &str = "fixtures/finding-alignment-dogfood/corpus.json";
+const REAL_REPAIR_ATTEMPTS_CORPUS: &str = "fixtures/real-repair-attempts/corpus.json";
 const SURFACE_PROJECTION_ALIGNMENT_CORPUS: &str =
     "fixtures/surface-projection-alignment/corpus.json";
 
@@ -7729,6 +7786,17 @@ const SURFACE_PROJECTION_ALIGNMENT_REQUIRED_CASES: &[(&str, &str)] = &[(
     "receipt_improved_top_next_action_alignment",
     "evidence_improved",
 )];
+
+const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
+    ("repair_route_quality_metrics_improved", "evidence_improved"),
+    ("readiness_top_next_action_resolved", "resolved"),
+    ("projection_alignment_receipt_improved", "evidence_improved"),
+    ("targeted_outcome_left_gap_unchanged", "evidence_unchanged"),
+    (
+        "dry_run_receipt_command_missing_named",
+        "attempted_no_receipt",
+    ),
+];
 
 const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
 
@@ -8639,6 +8707,93 @@ fn validate_finding_alignment_dogfood_fixture_corpus_at(
                 "finding alignment dogfood corpus is missing case {case_id}"
             )),
         }
+    }
+
+    Ok(())
+}
+
+fn validate_real_repair_attempt_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
+    let root = Path::new("fixtures/real-repair-attempts");
+    let corpus = root.join("corpus.json");
+    if !corpus.exists() {
+        violations.push(format!(
+            "real repair attempt fixture corpus is missing {}",
+            normalize_path(&corpus)
+        ));
+    }
+    validate_real_repair_attempt_fixture_corpus_at(
+        Path::new(REAL_REPAIR_ATTEMPTS_CORPUS),
+        violations,
+    )
+}
+
+fn validate_real_repair_attempt_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "real repair attempt corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let scenarios = dogfood_real_repair_attempt_scenarios();
+    let mut seen = BTreeMap::new();
+    let mut outcomes = BTreeMap::<String, usize>::new();
+    for scenario in &scenarios {
+        if seen
+            .insert(scenario.name.clone(), scenario.outcome.clone())
+            .is_some()
+        {
+            violations.push(format!(
+                "real repair attempt case {} is duplicated",
+                scenario.name
+            ));
+        }
+        *outcomes.entry(scenario.outcome.clone()).or_default() += 1;
+        let run = dogfood_real_repair_attempt_run(scenario);
+        for error in run.errors {
+            violations.push(format!(
+                "real repair attempt case {}: {error}",
+                scenario.name
+            ));
+        }
+    }
+
+    for (case_id, outcome) in REAL_REPAIR_ATTEMPTS_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == outcome => {}
+            Some(actual) => violations.push(format!(
+                "real repair attempt case {case_id} must have outcome {outcome}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "real repair attempt corpus is missing case {case_id}"
+            )),
+        }
+    }
+    if scenarios.len() < 3 {
+        violations
+            .push("real repair attempt corpus must record at least three attempts".to_string());
+    }
+    if !outcomes.contains_key("evidence_improved") {
+        violations.push(
+            "real repair attempt corpus must include at least one evidence_improved attempt"
+                .to_string(),
+        );
+    }
+    if !outcomes.contains_key("evidence_unchanged") {
+        violations.push(
+            "real repair attempt corpus must include at least one evidence_unchanged attempt"
+                .to_string(),
+        );
+    }
+    if !outcomes.contains_key("attempted_no_receipt") {
+        violations.push(
+            "real repair attempt corpus must include at least one attempted_no_receipt attempt"
+                .to_string(),
+        );
     }
 
     Ok(())
@@ -34679,6 +34834,10 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
         .into_iter()
         .map(|scenario| dogfood_surface_projection_alignment_run(&scenario))
         .collect::<Vec<_>>();
+    let real_repair_attempt_runs = dogfood_real_repair_attempt_scenarios()
+        .into_iter()
+        .map(|scenario| dogfood_real_repair_attempt_run(&scenario))
+        .collect::<Vec<_>>();
     let preview_projection_runs = DogfoodPreviewProjectionRuns {
         generated_ci_cockpit: &generated_ci_cockpit_runs,
         language_preview: &language_preview_runs,
@@ -34699,6 +34858,7 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
         preview_projection_runs: &preview_projection_runs,
         finding_alignment_runs: &finding_alignment_runs,
         surface_projection_alignment_runs: &surface_projection_alignment_runs,
+        real_repair_attempt_runs: &real_repair_attempt_runs,
         pr_inline_comment_runs: &pr_inline_comment_runs,
     };
     write_report("dogfood.md", &dogfood_report_markdown(&report_inputs))?;
@@ -37377,6 +37537,215 @@ fn dogfood_finding_alignment_run(
     }
 }
 
+fn dogfood_real_repair_attempt_scenarios() -> Vec<DogfoodRealRepairAttemptScenario> {
+    let corpus_path = Path::new(REAL_REPAIR_ATTEMPTS_CORPUS);
+    let fallback = |reason: String| {
+        vec![DogfoodRealRepairAttemptScenario {
+            name: "corpus".to_string(),
+            source_ref: "unknown".to_string(),
+            canonical_gap_id: "unknown".to_string(),
+            packet_id: "unknown".to_string(),
+            repair_kind: "unknown".to_string(),
+            target_test_or_observer_shape: "unknown".to_string(),
+            verify_command: "unknown".to_string(),
+            verify_result: "unknown".to_string(),
+            receipt_command: "unknown".to_string(),
+            receipt_path: None,
+            receipt_state: "unknown".to_string(),
+            actor_kind: "unknown".to_string(),
+            before_gap_state: "unknown".to_string(),
+            after_gap_state: "unknown".to_string(),
+            outcome: "unknown".to_string(),
+            attempted_repair: "unknown".to_string(),
+            evidence_movement: "unknown".to_string(),
+            operator_note: "unknown".to_string(),
+            must_not_change: Vec::new(),
+            raw_evidence_refs: Vec::new(),
+            missing_receipt_reason: None,
+            reason,
+        }]
+    };
+
+    let corpus = match read_json_value(corpus_path) {
+        Ok(value) => value,
+        Err(err) => return fallback(err),
+    };
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        return fallback("real repair attempt corpus schema_version must be 0.1".to_string());
+    }
+    if json_string_field(&corpus, "kind").as_deref() != Some("real_repair_attempts_corpus") {
+        return fallback(
+            "real repair attempt corpus kind must be real_repair_attempts_corpus".to_string(),
+        );
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0057") {
+        return fallback("real repair attempt corpus spec must be RIPR-SPEC-0057".to_string());
+    }
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        return fallback("real repair attempt corpus is missing cases array".to_string());
+    };
+
+    cases
+        .iter()
+        .map(|case| DogfoodRealRepairAttemptScenario {
+            name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
+            source_ref: json_string_field(case, "source_ref")
+                .unwrap_or_else(|| "unknown".to_string()),
+            canonical_gap_id: json_string_field(case, "canonical_gap_id")
+                .unwrap_or_else(|| "unknown".to_string()),
+            packet_id: json_string_field(case, "packet_id")
+                .unwrap_or_else(|| "unknown".to_string()),
+            repair_kind: json_string_field(case, "repair_kind")
+                .unwrap_or_else(|| "unknown".to_string()),
+            target_test_or_observer_shape: json_string_field(case, "target_test_or_observer_shape")
+                .unwrap_or_else(|| "unknown".to_string()),
+            verify_command: json_string_field(case, "verify_command")
+                .unwrap_or_else(|| "unknown".to_string()),
+            verify_result: json_string_field(case, "verify_result")
+                .unwrap_or_else(|| "unknown".to_string()),
+            receipt_command: json_string_field(case, "receipt_command")
+                .unwrap_or_else(|| "unknown".to_string()),
+            receipt_path: json_string_field(case, "receipt_path"),
+            receipt_state: json_string_field(case, "receipt_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            actor_kind: json_string_field(case, "actor_kind")
+                .unwrap_or_else(|| "unknown".to_string()),
+            before_gap_state: json_string_field(case, "before_gap_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            after_gap_state: json_string_field(case, "after_gap_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            outcome: json_string_field(case, "outcome").unwrap_or_else(|| "unknown".to_string()),
+            attempted_repair: json_string_field(case, "attempted_repair")
+                .unwrap_or_else(|| "unknown".to_string()),
+            evidence_movement: json_string_field(case, "evidence_movement")
+                .unwrap_or_else(|| "unknown".to_string()),
+            operator_note: json_string_field(case, "operator_note")
+                .unwrap_or_else(|| "unknown".to_string()),
+            must_not_change: json_string_array_field(case, "must_not_change"),
+            raw_evidence_refs: json_string_array_field(case, "raw_evidence_refs"),
+            missing_receipt_reason: json_string_field(case, "missing_receipt_reason"),
+            reason: json_string_field(case, "reason").unwrap_or_else(|| {
+                "real repair attempt corpus case did not document a reason".to_string()
+            }),
+        })
+        .collect()
+}
+
+fn dogfood_real_repair_attempt_run(
+    scenario: &DogfoodRealRepairAttemptScenario,
+) -> DogfoodRealRepairAttemptRun {
+    let mut errors = Vec::new();
+    if scenario.name.trim().is_empty() || scenario.name == "unknown" {
+        errors.push("case id must be present".to_string());
+    }
+    if scenario.source_ref.trim().is_empty() || scenario.source_ref == "unknown" {
+        errors.push("source_ref must name the PR, handoff, or run receipt".to_string());
+    }
+    if !scenario.canonical_gap_id.starts_with("gap:") {
+        errors.push(format!(
+            "canonical_gap_id must use gap: identity, got {}",
+            scenario.canonical_gap_id
+        ));
+    }
+    for (label, value) in [
+        ("packet_id", &scenario.packet_id),
+        ("repair_kind", &scenario.repair_kind),
+        (
+            "target_test_or_observer_shape",
+            &scenario.target_test_or_observer_shape,
+        ),
+        ("verify_command", &scenario.verify_command),
+        ("verify_result", &scenario.verify_result),
+        ("receipt_command", &scenario.receipt_command),
+        ("receipt_state", &scenario.receipt_state),
+        ("actor_kind", &scenario.actor_kind),
+        ("before_gap_state", &scenario.before_gap_state),
+        ("after_gap_state", &scenario.after_gap_state),
+        ("outcome", &scenario.outcome),
+        ("attempted_repair", &scenario.attempted_repair),
+        ("evidence_movement", &scenario.evidence_movement),
+        ("operator_note", &scenario.operator_note),
+    ] {
+        if value.trim().is_empty() || value == "unknown" {
+            errors.push(format!("{label} must be present"));
+        }
+    }
+    if scenario.must_not_change.is_empty() {
+        errors.push("must_not_change must name bounded edit constraints".to_string());
+    }
+    if scenario.raw_evidence_refs.is_empty() {
+        errors.push("raw_evidence_refs must keep lineage to source evidence".to_string());
+    }
+    if !matches!(
+        scenario.verify_result.as_str(),
+        "pass" | "fail" | "not_run" | "not_applicable"
+    ) {
+        errors.push(format!(
+            "verify_result must be pass, fail, not_run, or not_applicable, got {}",
+            scenario.verify_result
+        ));
+    }
+    if !matches!(
+        scenario.outcome.as_str(),
+        "attempted_no_receipt"
+            | "receipt_present"
+            | "evidence_improved"
+            | "evidence_unchanged"
+            | "evidence_regressed"
+            | "resolved"
+            | "unknown"
+    ) {
+        errors.push(format!(
+            "outcome must be a swarm attempt outcome, got {}",
+            scenario.outcome
+        ));
+    }
+    if scenario.outcome == "attempted_no_receipt" {
+        if scenario
+            .missing_receipt_reason
+            .as_deref()
+            .unwrap_or("")
+            .is_empty()
+        {
+            errors.push("attempted_no_receipt must include missing_receipt_reason".to_string());
+        }
+    } else if scenario.receipt_path.as_deref().unwrap_or("").is_empty() {
+        errors.push("receipt_path must be present for receipt-backed attempts".to_string());
+    }
+    if scenario.receipt_command == scenario.verify_command {
+        errors.push("receipt_command must stay distinct from verify_command".to_string());
+    }
+    if scenario.reason.trim().is_empty() {
+        errors.push("reason must explain why the attempt is useful dogfood".to_string());
+    }
+
+    DogfoodRealRepairAttemptRun {
+        name: scenario.name.clone(),
+        source_ref: scenario.source_ref.clone(),
+        canonical_gap_id: scenario.canonical_gap_id.clone(),
+        packet_id: scenario.packet_id.clone(),
+        repair_kind: scenario.repair_kind.clone(),
+        target_test_or_observer_shape: scenario.target_test_or_observer_shape.clone(),
+        verify_command: scenario.verify_command.clone(),
+        verify_result: scenario.verify_result.clone(),
+        receipt_command: scenario.receipt_command.clone(),
+        receipt_path: scenario.receipt_path.clone(),
+        receipt_state: scenario.receipt_state.clone(),
+        actor_kind: scenario.actor_kind.clone(),
+        before_gap_state: scenario.before_gap_state.clone(),
+        after_gap_state: scenario.after_gap_state.clone(),
+        outcome: scenario.outcome.clone(),
+        attempted_repair: scenario.attempted_repair.clone(),
+        evidence_movement: scenario.evidence_movement.clone(),
+        operator_note: scenario.operator_note.clone(),
+        must_not_change: scenario.must_not_change.clone(),
+        raw_evidence_refs: scenario.raw_evidence_refs.clone(),
+        missing_receipt_reason: scenario.missing_receipt_reason.clone(),
+        reason: scenario.reason.clone(),
+        errors,
+    }
+}
+
 fn dogfood_surface_projection_alignment_scenarios() -> Vec<DogfoodSurfaceProjectionAlignmentScenario>
 {
     let corpus_path = Path::new(SURFACE_PROJECTION_ALIGNMENT_CORPUS);
@@ -38093,6 +38462,7 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
     let preview_projection_runs = inputs.preview_projection_runs;
     let finding_alignment_runs = inputs.finding_alignment_runs;
     let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
+    let real_repair_attempt_runs = inputs.real_repair_attempt_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
 
     if runs.iter().any(|run| !run.errors.is_empty())
@@ -38123,6 +38493,9 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
             .iter()
             .any(|run| !run.errors.is_empty())
         || surface_projection_alignment_runs
+            .iter()
+            .any(|run| !run.errors.is_empty())
+        || real_repair_attempt_runs
             .iter()
             .any(|run| !run.errors.is_empty())
         || pr_inline_comment_runs
@@ -38170,6 +38543,7 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     let preview_projection_runs = inputs.preview_projection_runs;
     let finding_alignment_runs = inputs.finding_alignment_runs;
     let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
+    let real_repair_attempt_runs = inputs.real_repair_attempt_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
     let mut body = format!(
@@ -39092,6 +39466,130 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
             body.push('\n');
         }
     }
+    let real_attempts_total = real_repair_attempt_runs.len();
+    let real_attempts_improved = real_repair_attempt_runs
+        .iter()
+        .filter(|run| run.outcome == "evidence_improved")
+        .count();
+    let real_attempts_unchanged = real_repair_attempt_runs
+        .iter()
+        .filter(|run| run.outcome == "evidence_unchanged")
+        .count();
+    let real_attempts_regressed = real_repair_attempt_runs
+        .iter()
+        .filter(|run| run.outcome == "evidence_regressed")
+        .count();
+    let real_attempts_resolved = real_repair_attempt_runs
+        .iter()
+        .filter(|run| run.outcome == "resolved")
+        .count();
+    let real_attempts_missing_receipt = real_repair_attempt_runs
+        .iter()
+        .filter(|run| run.outcome == "attempted_no_receipt")
+        .count();
+    body.push_str("## Real Repair Attempt Receipts\n\n");
+    body.push_str("These receipts record repo-local repair attempts that exercised the Lane 1 packet loop against real PR or handoff evidence. The set intentionally includes non-win outcomes so unchanged or missing-receipt attempts remain visible instead of being curated away.\n\n");
+    body.push_str("- Default CI blocking: no\n");
+    body.push_str("- Receipt input: `fixtures/real-repair-attempts/corpus.json`\n");
+    body.push_str(&format!(
+        "- Attempted: {}; improved: {}; unchanged: {}; regressed: {}; resolved: {}; missing receipt: {}\n\n",
+        real_attempts_total,
+        real_attempts_improved,
+        real_attempts_unchanged,
+        real_attempts_regressed,
+        real_attempts_resolved,
+        real_attempts_missing_receipt
+    ));
+    body.push_str("| Case | Source | Gap ID | Packet | Repair | Verify | Outcome |\n");
+    body.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    for run in real_repair_attempt_runs {
+        body.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            markdown_cell(&run.name),
+            markdown_cell(&run.source_ref),
+            markdown_cell(&run.canonical_gap_id),
+            markdown_cell(&run.packet_id),
+            markdown_cell(&run.repair_kind),
+            markdown_cell(&run.verify_result),
+            markdown_cell(&run.outcome)
+        ));
+    }
+    body.push('\n');
+    for run in real_repair_attempt_runs {
+        body.push_str(&format!("### Real Repair Attempt `{}`\n\n", run.name));
+        body.push_str(&format!(
+            "- Canonical gap ID: `{}`\n",
+            markdown_cell(&run.canonical_gap_id)
+        ));
+        body.push_str(&format!(
+            "- Packet ID: `{}`\n",
+            markdown_cell(&run.packet_id)
+        ));
+        body.push_str(&format!(
+            "- Target shape: `{}`\n",
+            markdown_cell(&run.target_test_or_observer_shape)
+        ));
+        body.push_str(&format!(
+            "- Verify command: `{}`\n",
+            markdown_cell(&run.verify_command)
+        ));
+        body.push_str(&format!(
+            "- Verify result: `{}`\n",
+            markdown_cell(&run.verify_result)
+        ));
+        body.push_str(&format!(
+            "- Receipt command: `{}`\n",
+            markdown_cell(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "- Receipt path: `{}`\n",
+            markdown_cell(run.receipt_path.as_deref().unwrap_or("missing"))
+        ));
+        body.push_str(&format!(
+            "- Receipt state: `{}`\n",
+            markdown_cell(&run.receipt_state)
+        ));
+        body.push_str(&format!(
+            "- Before/after: `{}` -> `{}`\n",
+            markdown_cell(&run.before_gap_state),
+            markdown_cell(&run.after_gap_state)
+        ));
+        body.push_str(&format!(
+            "- Attempted repair: {}\n",
+            markdown_cell(&run.attempted_repair)
+        ));
+        body.push_str(&format!(
+            "- Evidence movement: {}\n",
+            markdown_cell(&run.evidence_movement)
+        ));
+        body.push_str(&format!(
+            "- Operator note: {}\n",
+            markdown_cell(&run.operator_note)
+        ));
+        if let Some(reason) = &run.missing_receipt_reason {
+            body.push_str(&format!(
+                "- Missing receipt reason: {}\n",
+                markdown_cell(reason)
+            ));
+        }
+        body.push_str(&format!(
+            "- Must not change: `{}`\n",
+            markdown_cell(&run.must_not_change.join(", "))
+        ));
+        body.push_str(&format!(
+            "- Raw evidence refs: `{}`\n",
+            markdown_cell(&run.raw_evidence_refs.join(", "))
+        ));
+        if run.errors.is_empty() {
+            body.push_str("- Receipt validation: pass\n\n");
+        } else {
+            body.push_str(&format!(
+                "- Receipt validation: fail - `{}`\n\n",
+                markdown_cell(&run.errors.join("; "))
+            ));
+        }
+    }
+
     body.push_str("## PR Inline Comment Publisher Receipts\n\n");
     body.push_str("These receipts validate checked `comment-publish-plan.{json,md}` fixture outputs for the documented Campaign 26 inline-comment publisher routes. They verify opt-in modes, safe publish flags, summary-only exclusion, cap behavior, dedupe/upsert, stale-existing cleanup planning, fork or token blockers, missing-input blockers, and advisory limits without posting real PR comments.\n\n");
     body.push_str("- Default CI blocking: no\n");
@@ -39276,6 +39774,7 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
     let preview_projection_runs = inputs.preview_projection_runs;
     let finding_alignment_runs = inputs.finding_alignment_runs;
     let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
+    let real_repair_attempt_runs = inputs.real_repair_attempt_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
     let mut body = format!(
@@ -40210,6 +40709,145 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str("        \"advisory_consumers\": [");
         write_json_string_array(&mut body, &run.advisory_consumers);
         body.push_str("],\n");
+        body.push_str(&format!(
+            "        \"reason\": \"{}\",\n",
+            json_escape(&run.reason)
+        ));
+        body.push_str("        \"errors\": [");
+        write_json_string_array(&mut body, &run.errors);
+        body.push_str("]\n      }");
+    }
+    body.push_str("\n    ]\n  },\n  \"real_repair_attempts\": {\n");
+    body.push_str("    \"default_ci_blocking\": false,\n");
+    body.push_str("    \"receipt_dir\": \"fixtures/real-repair-attempts\",\n");
+    body.push_str("    \"summary\": {\n");
+    body.push_str(&format!(
+        "      \"attempted\": {},\n",
+        real_repair_attempt_runs.len()
+    ));
+    body.push_str(&format!(
+        "      \"improved\": {},\n",
+        real_repair_attempt_runs
+            .iter()
+            .filter(|run| run.outcome == "evidence_improved")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"unchanged\": {},\n",
+        real_repair_attempt_runs
+            .iter()
+            .filter(|run| run.outcome == "evidence_unchanged")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"regressed\": {},\n",
+        real_repair_attempt_runs
+            .iter()
+            .filter(|run| run.outcome == "evidence_regressed")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"resolved\": {},\n",
+        real_repair_attempt_runs
+            .iter()
+            .filter(|run| run.outcome == "resolved")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"attempted_no_receipt\": {}\n",
+        real_repair_attempt_runs
+            .iter()
+            .filter(|run| run.outcome == "attempted_no_receipt")
+            .count()
+    ));
+    body.push_str("    },\n    \"cases\": [\n");
+    for (index, run) in real_repair_attempt_runs.iter().enumerate() {
+        if index > 0 {
+            body.push_str(",\n");
+        }
+        body.push_str("      {\n");
+        body.push_str(&format!(
+            "        \"name\": \"{}\",\n",
+            json_escape(&run.name)
+        ));
+        body.push_str(&format!(
+            "        \"source_ref\": \"{}\",\n",
+            json_escape(&run.source_ref)
+        ));
+        body.push_str(&format!(
+            "        \"canonical_gap_id\": \"{}\",\n",
+            json_escape(&run.canonical_gap_id)
+        ));
+        body.push_str(&format!(
+            "        \"packet_id\": \"{}\",\n",
+            json_escape(&run.packet_id)
+        ));
+        body.push_str(&format!(
+            "        \"repair_kind\": \"{}\",\n",
+            json_escape(&run.repair_kind)
+        ));
+        body.push_str(&format!(
+            "        \"target_test_or_observer_shape\": \"{}\",\n",
+            json_escape(&run.target_test_or_observer_shape)
+        ));
+        body.push_str(&format!(
+            "        \"verify_command\": \"{}\",\n",
+            json_escape(&run.verify_command)
+        ));
+        body.push_str(&format!(
+            "        \"verify_result\": \"{}\",\n",
+            json_escape(&run.verify_result)
+        ));
+        body.push_str(&format!(
+            "        \"receipt_command\": \"{}\",\n",
+            json_escape(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "        \"receipt_path\": {},\n",
+            json_optional_string(run.receipt_path.as_deref())
+        ));
+        body.push_str(&format!(
+            "        \"receipt_state\": \"{}\",\n",
+            json_escape(&run.receipt_state)
+        ));
+        body.push_str(&format!(
+            "        \"actor_kind\": \"{}\",\n",
+            json_escape(&run.actor_kind)
+        ));
+        body.push_str(&format!(
+            "        \"before_gap_state\": \"{}\",\n",
+            json_escape(&run.before_gap_state)
+        ));
+        body.push_str(&format!(
+            "        \"after_gap_state\": \"{}\",\n",
+            json_escape(&run.after_gap_state)
+        ));
+        body.push_str(&format!(
+            "        \"outcome\": \"{}\",\n",
+            json_escape(&run.outcome)
+        ));
+        body.push_str(&format!(
+            "        \"attempted_repair\": \"{}\",\n",
+            json_escape(&run.attempted_repair)
+        ));
+        body.push_str(&format!(
+            "        \"evidence_movement\": \"{}\",\n",
+            json_escape(&run.evidence_movement)
+        ));
+        body.push_str(&format!(
+            "        \"operator_note\": \"{}\",\n",
+            json_escape(&run.operator_note)
+        ));
+        body.push_str("        \"must_not_change\": [");
+        write_json_string_array(&mut body, &run.must_not_change);
+        body.push_str("],\n");
+        body.push_str("        \"raw_evidence_refs\": [");
+        write_json_string_array(&mut body, &run.raw_evidence_refs);
+        body.push_str("],\n");
+        body.push_str(&format!(
+            "        \"missing_receipt_reason\": {},\n",
+            json_optional_string(run.missing_receipt_reason.as_deref())
+        ));
         body.push_str(&format!(
             "        \"reason\": \"{}\",\n",
             json_escape(&run.reason)
@@ -52680,8 +53318,8 @@ mod tests {
         DogfoodFindingAlignmentScenario, DogfoodFirstActionRun, DogfoodFirstPrRun,
         DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
         DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun, DogfoodPreviewProjectionRuns,
-        DogfoodReportInputs, DogfoodReportPacketIndexRun, DogfoodRun,
-        DogfoodSurfaceProjectionAlignmentScenario,
+        DogfoodRealRepairAttemptScenario, DogfoodReportInputs, DogfoodReportPacketIndexRun,
+        DogfoodRun, DogfoodSurfaceProjectionAlignmentScenario,
         EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
         EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
         EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
@@ -52690,27 +53328,28 @@ mod tests {
         GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
         Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
         LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink, PrTriageCheck,
-        PrTriageFinding, PrTriagePullRequest, REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS,
-        REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord, RepoBadgeArtifactOptions,
-        RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
-        ReportIndexCampaign, ReportIndexEntry, ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH,
-        SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
-        StaticLanguageMatcher, TestOracleClass, WorktreeDoctorFinding, WorktreeDoctorSeverity,
-        actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
-        actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
-        badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
-        badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-        badge_artifacts_summary_markdown, badge_basis_canonical_projection,
-        badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-        badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
-        badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
-        build_no_panic_allowlist_proposals, build_repo_exposure_latency_report,
-        build_targeted_test_outcome_report, campaign_source_truth_violations_for_root,
-        check_allow_attributes, check_badge_diff_policy_with_context, check_doc_artifacts,
-        check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
-        check_network_policy, check_no_panic_family, check_process_policy, check_static_language,
-        check_support_tiers, check_workflows, ci_full_evidence_gates, cockpit_json,
-        cockpit_markdown, collect_panic_findings, collect_semantic_panic_findings, command_catalog,
+        PrTriageFinding, PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
+        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord,
+        RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
+        RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
+        ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
+        SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher, TestOracleClass,
+        WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
+        actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
+        actionable_gap_outcomes_report_impl, badge_artifact_command_args,
+        badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
+        badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
+        badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
+        badge_basis_needs_repo_badge_plus_job, badge_basis_report_json,
+        badge_basis_report_markdown, badge_basis_seam_native_counts, badge_diff_policy_violations,
+        badge_native_audit_snapshot, build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
+        build_repo_exposure_latency_report, build_targeted_test_outcome_report,
+        campaign_source_truth_violations_for_root, check_allow_attributes,
+        check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+        check_executable_files, check_file_policy, check_local_context, check_network_policy,
+        check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
+        check_workflows, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+        collect_panic_findings, collect_semantic_panic_findings, command_catalog,
         command_catalog_violations, commands_report_json, commands_report_markdown,
         critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
         dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
@@ -52722,6 +53361,7 @@ mod tests {
         dogfood_language_preview_run, dogfood_language_preview_scenarios,
         dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
         dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+        dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios,
         dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
         dogfood_report_packet_index_scenarios, dogfood_surface_projection_alignment_run,
         dogfood_surface_projection_alignment_scenarios, evaluate_semantic_no_panic_policy,
@@ -60522,6 +61162,35 @@ fn exact_owner_call_has_external_expected_value() {
             reason: "single receipt-backed canonical gap projection alignment".to_string(),
             errors: Vec::new(),
         };
+        let real_repair_attempt_run = super::DogfoodRealRepairAttemptRun {
+            name: "repair_route_quality_metrics_improved".to_string(),
+            source_ref: "EffortlessMetrics/ripr-swarm#415".to_string(),
+            canonical_gap_id: "gap:repair-route-quality-metrics-missing".to_string(),
+            packet_id: "repair-route-quality-metrics-001".to_string(),
+            repair_kind: "add_repair_route_quality_metrics".to_string(),
+            target_test_or_observer_shape: "readiness route-quality metric assertions".to_string(),
+            verify_command: "cargo xtask check-pr".to_string(),
+            verify_result: "pass".to_string(),
+            receipt_command: "cargo xtask ripr-swarm readiness".to_string(),
+            receipt_path: Some("target/ripr/reports/swarm-readiness.json".to_string()),
+            receipt_state: "receipt_movement_improved".to_string(),
+            actor_kind: "codex".to_string(),
+            before_gap_state: "actionable".to_string(),
+            after_gap_state: "actionable".to_string(),
+            outcome: "evidence_improved".to_string(),
+            attempted_repair: "Added repair-route quality report metrics.".to_string(),
+            evidence_movement: "Readiness can now show repair_kind success-rate evidence."
+                .to_string(),
+            operator_note: "Route-quality proof stayed advisory.".to_string(),
+            must_not_change: vec![
+                "public badge semantics".to_string(),
+                "CI gate defaults".to_string(),
+            ],
+            raw_evidence_refs: vec!["metrics/capabilities.toml".to_string()],
+            missing_receipt_reason: None,
+            reason: "real merged repair-loop PR improved route-quality evidence".to_string(),
+            errors: Vec::new(),
+        };
         let pr_inline_comment_run = DogfoodPrInlineCommentRun {
             name: "publishable_changed_line".to_string(),
             actual_dir: Path::new(
@@ -60571,6 +61240,7 @@ fn exact_owner_call_has_external_expected_value() {
         let editor_first_pr_bridge_runs = [editor_first_pr_bridge_run];
         let finding_alignment_runs = [finding_alignment_run];
         let surface_projection_alignment_runs = [surface_projection_alignment_run];
+        let real_repair_attempt_runs = [real_repair_attempt_run];
         let preview_projection_runs = DogfoodPreviewProjectionRuns {
             generated_ci_cockpit: &generated_ci_runs,
             language_preview: &language_preview_runs,
@@ -60594,6 +61264,7 @@ fn exact_owner_call_has_external_expected_value() {
             preview_projection_runs: &preview_projection_runs,
             finding_alignment_runs: &finding_alignment_runs,
             surface_projection_alignment_runs: &surface_projection_alignment_runs,
+            real_repair_attempt_runs: &real_repair_attempt_runs,
             pr_inline_comment_runs: &markdown_pr_inline_comment_runs,
         };
         let empty_runs = [];
@@ -60612,6 +61283,7 @@ fn exact_owner_call_has_external_expected_value() {
             preview_projection_runs: &preview_projection_runs,
             finding_alignment_runs: &finding_alignment_runs,
             surface_projection_alignment_runs: &surface_projection_alignment_runs,
+            real_repair_attempt_runs: &real_repair_attempt_runs,
             pr_inline_comment_runs: &empty_pr_inline_comment_runs,
         };
         let markdown = dogfood_report_markdown(&markdown_inputs);
@@ -60629,6 +61301,7 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(markdown.contains("Editor First-PR Bridge Receipts"));
         assert!(markdown.contains("Finding Alignment Receipts"));
         assert!(markdown.contains("Surface Projection Alignment Receipts"));
+        assert!(markdown.contains("Real Repair Attempt Receipts"));
         assert!(markdown.contains("PR Inline Comment Publisher Receipts"));
         assert!(markdown.contains("Gate Adoption Receipts"));
         assert!(markdown.contains("Default CI blocking: no"));
@@ -60649,6 +61322,8 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(json.contains("\"editor_first_pr_bridge\""));
         assert!(json.contains("\"finding_alignment\""));
         assert!(json.contains("\"surface_projection_alignment\""));
+        assert!(json.contains("\"real_repair_attempts\""));
+        assert!(json.contains("\"repair_route_quality_metrics_improved\""));
         let value: Value =
             serde_json::from_str(&json).map_err(|err| format!("dogfood JSON invalid: {err}"))?;
         let editor_gap_cockpit = value
@@ -60787,6 +61462,34 @@ fn exact_owner_call_has_external_expected_value() {
         );
         assert_eq!(
             surface_case.get("outcome").and_then(Value::as_str),
+            Some("evidence_improved")
+        );
+        let real_attempts = value
+            .get("real_repair_attempts")
+            .ok_or_else(|| "real_repair_attempts section missing".to_string())?;
+        assert_eq!(
+            real_attempts.get("receipt_dir").and_then(Value::as_str),
+            Some("fixtures/real-repair-attempts")
+        );
+        let real_attempt_summary = real_attempts
+            .get("summary")
+            .ok_or_else(|| "real_repair_attempts summary missing".to_string())?;
+        assert_eq!(
+            real_attempt_summary
+                .get("attempted")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        let real_attempt_cases = real_attempts
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "real_repair_attempts cases missing".to_string())?;
+        assert_eq!(real_attempt_cases.len(), 1);
+        let real_attempt_case = real_attempt_cases
+            .first()
+            .ok_or_else(|| "real_repair_attempts case missing".to_string())?;
+        assert_eq!(
+            real_attempt_case.get("outcome").and_then(Value::as_str),
             Some("evidence_improved")
         );
         assert!(json.contains("\"pr_inline_comment_publisher\""));
@@ -61211,6 +61914,119 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(report.contains("advisory_consumers must include lsp"));
         assert!(report.contains("advisory_consumers must include pr_comment"));
         assert!(report.contains("advisory_consumers must include ci"));
+    }
+
+    #[test]
+    fn dogfood_real_repair_attempt_receipts_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let scenarios = dogfood_real_repair_attempt_scenarios();
+            for required in REAL_REPAIR_ATTEMPTS_REQUIRED_CASES {
+                assert!(
+                    scenarios.iter().any(|scenario| {
+                        scenario.name == required.0 && scenario.outcome == required.1
+                    }),
+                    "{} real repair attempt should be checked as {}",
+                    required.0,
+                    required.1
+                );
+            }
+            assert!(
+                scenarios.len() >= 3,
+                "real repair attempts should include multiple attempts"
+            );
+            assert!(
+                scenarios
+                    .iter()
+                    .any(|scenario| scenario.outcome == "evidence_unchanged"),
+                "real repair attempts should include an unchanged non-success"
+            );
+            assert!(
+                scenarios
+                    .iter()
+                    .any(|scenario| scenario.outcome == "attempted_no_receipt"),
+                "real repair attempts should include a named missing-receipt case"
+            );
+
+            for scenario in scenarios {
+                let run = dogfood_real_repair_attempt_run(&scenario);
+                assert!(
+                    run.errors.is_empty(),
+                    "{} real repair attempt receipt should validate: {:?}",
+                    run.name,
+                    run.errors
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    fn valid_real_repair_attempt_scenario() -> DogfoodRealRepairAttemptScenario {
+        DogfoodRealRepairAttemptScenario {
+            name: "repair_route_quality_metrics_improved".to_string(),
+            source_ref: "EffortlessMetrics/ripr-swarm#415".to_string(),
+            canonical_gap_id: "gap:repair-route-quality-metrics-missing".to_string(),
+            packet_id: "repair-route-quality-metrics-001".to_string(),
+            repair_kind: "add_repair_route_quality_metrics".to_string(),
+            target_test_or_observer_shape: "readiness route-quality metric assertions".to_string(),
+            verify_command: "cargo xtask check-pr".to_string(),
+            verify_result: "pass".to_string(),
+            receipt_command: "cargo xtask ripr-swarm readiness".to_string(),
+            receipt_path: Some("target/ripr/reports/swarm-readiness.json".to_string()),
+            receipt_state: "receipt_movement_improved".to_string(),
+            actor_kind: "codex".to_string(),
+            before_gap_state: "actionable".to_string(),
+            after_gap_state: "actionable".to_string(),
+            outcome: "evidence_improved".to_string(),
+            attempted_repair: "Added repair-route quality report metrics.".to_string(),
+            evidence_movement: "Readiness can now show repair_kind success-rate evidence."
+                .to_string(),
+            operator_note: "Route-quality proof stayed advisory.".to_string(),
+            must_not_change: vec![
+                "public badge semantics".to_string(),
+                "CI gate defaults".to_string(),
+            ],
+            raw_evidence_refs: vec!["metrics/capabilities.toml".to_string()],
+            missing_receipt_reason: None,
+            reason: "real merged repair-loop PR improved route-quality evidence".to_string(),
+        }
+    }
+
+    #[test]
+    fn dogfood_real_repair_attempt_reports_contract_drift() {
+        let mut scenario = valid_real_repair_attempt_scenario();
+        scenario.name.clear();
+        scenario.source_ref = "unknown".to_string();
+        scenario.canonical_gap_id = "repair-route-quality-metrics-missing".to_string();
+        scenario.verify_result = "maybe".to_string();
+        scenario.receipt_command = scenario.verify_command.clone();
+        scenario.receipt_path = None;
+        scenario.outcome = "evidence_improved".to_string();
+        scenario.must_not_change.clear();
+        scenario.raw_evidence_refs.clear();
+
+        let report = dogfood_real_repair_attempt_run(&scenario).errors.join("\n");
+
+        assert!(report.contains("case id must be present"));
+        assert!(report.contains("source_ref must name the PR"));
+        assert!(report.contains("canonical_gap_id must use gap: identity"));
+        assert!(report.contains("verify_result must be pass"));
+        assert!(report.contains("receipt_path must be present"));
+        assert!(report.contains("receipt_command must stay distinct"));
+        assert!(report.contains("must_not_change must name bounded edit constraints"));
+        assert!(report.contains("raw_evidence_refs must keep lineage"));
+
+        let mut missing_receipt = valid_real_repair_attempt_scenario();
+        missing_receipt.outcome = "attempted_no_receipt".to_string();
+        missing_receipt.receipt_path = None;
+        missing_receipt.missing_receipt_reason = None;
+
+        let missing_report = dogfood_real_repair_attempt_run(&missing_receipt)
+            .errors
+            .join("\n");
+        assert!(
+            missing_report.contains("attempted_no_receipt must include missing_receipt_reason")
+        );
     }
 
     #[test]

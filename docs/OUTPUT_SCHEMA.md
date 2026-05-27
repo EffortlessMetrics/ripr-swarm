@@ -9929,6 +9929,7 @@ fixtures/boundary_gap/expected/report-packet-index/<case>/index.json
 fixtures/boundary_gap/expected/report-packet-index/<case>/index.md
 fixtures/finding-alignment-dogfood/corpus.json
 fixtures/surface-projection-alignment/corpus.json
+fixtures/real-repair-attempts/corpus.json
 ```
 
 The report is advisory. It runs `ripr check --mode fast` against stable fixture
@@ -9965,6 +9966,11 @@ gap across swarm-attempt-ledger and swarm-readiness so `canonical_gap_id`,
 `packet_id`, `repair_kind`, verify command, receipt command/state, outcome, and
 `top_next_action` stay aligned while badge, LSP, PR, and CI remain advisory
 consumers instead of independent ranking or gate authorities.
+The checked real repair attempt receipts are read from
+`fixtures/real-repair-attempts/` and record several repo-local Lane 1 repair
+attempts, including improved/resolved movement and unchanged or missing-receipt
+non-success cases, so failed or incomplete attempts remain visible instead of
+being hidden from the repair queue.
 The calibrated-gate dogfood case expects a non-zero evaluator exit only for the
 explicit blocking mode and treats that as healthy when the written decision
 report has the expected `blocked` status and count.
@@ -10206,6 +10212,45 @@ JSON shape:
         "improved_packets": 1,
         "advisory_consumers": ["badge", "lsp", "pr_comment", "ci"],
         "reason": "single receipt-backed canonical gap projection alignment",
+        "errors": []
+      }
+    ]
+  },
+  "real_repair_attempts": {
+    "default_ci_blocking": false,
+    "receipt_dir": "fixtures/real-repair-attempts",
+    "summary": {
+      "attempted": 5,
+      "improved": 2,
+      "unchanged": 1,
+      "regressed": 0,
+      "resolved": 1,
+      "attempted_no_receipt": 1
+    },
+    "cases": [
+      {
+        "name": "repair_route_quality_metrics_improved",
+        "source_ref": "EffortlessMetrics/ripr-swarm#415",
+        "canonical_gap_id": "gap:repair-route-quality-metrics-missing",
+        "packet_id": "repair-route-quality-metrics-001",
+        "repair_kind": "add_repair_route_quality_metrics",
+        "target_test_or_observer_shape": "readiness and attempt-ledger report assertions over repair_kind attempted/improved/unchanged/regressed counts",
+        "verify_command": "cargo xtask check-pr",
+        "verify_result": "pass",
+        "receipt_command": "cargo xtask ripr-swarm readiness",
+        "receipt_path": "target/ripr/reports/swarm-readiness.json",
+        "receipt_state": "receipt_movement_improved",
+        "actor_kind": "codex",
+        "before_gap_state": "actionable",
+        "after_gap_state": "actionable",
+        "outcome": "evidence_improved",
+        "attempted_repair": "Added repair-route quality rollups and top failing/missing evidence route fields to attempt-ledger/readiness outputs.",
+        "evidence_movement": "Readiness can now show repair_kind success-rate evidence instead of only packet counts.",
+        "operator_note": "The route-quality attempt improved analyzer-backlog signal without changing badge, LSP, PR, or CI authority.",
+        "must_not_change": ["public badge semantics", "CI gate defaults", "autonomous repair behavior"],
+        "raw_evidence_refs": ["metrics/capabilities.toml:ripr_swarm_repair_loop"],
+        "missing_receipt_reason": null,
+        "reason": "A real merged repair-loop PR converted attempt outcomes into route-quality evidence.",
         "errors": []
       }
     ]

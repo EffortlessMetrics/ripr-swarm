@@ -343,6 +343,17 @@ command/state, outcome, and `top_next_action`. Badge, LSP, PR, and CI remain
 thin advisory consumers of that canonical state; the dogfood receipt must not
 change their rendering, ranking, or gate authority.
 
+Dogfood receipts must also record multiple real repair-loop attempts from
+repo-local PR or handoff evidence. The set must include at least one improved
+or resolved case and at least one non-success case such as unchanged evidence
+or a named missing receipt. Each case records the packet identity, canonical
+gap identity, repair kind, target test or observer shape, verify command,
+verify result, receipt command/path/state, before/after gap state, outcome,
+must-not-change boundaries, raw evidence references, and an operator note.
+These receipts are evidence for repair routing quality, not proof that RIPR
+may edit code, run providers, execute mutation testing, or change downstream
+surface authority.
+
 `attempt --dry-run` prints the bounded packet context and the commands a human
 or external agent would run. It does not edit files, run tests, call providers,
 or create receipts.
