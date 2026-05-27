@@ -3984,3 +3984,48 @@ metrics = [
   "source_truth_stable_claims_without_proof",
   "source_truth_policy_exceptions_missing_review",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0061"
+name = "Lane 1 canonical actionability contract"
+spec = "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md"
+tests = [
+  "xtask::tests::lane1_evidence_audit_requires_structured_repair_route_for_actionable_items",
+  "xtask::tests::lane1_actionable_gap_packets_emit_agent_safe_work_items",
+  "xtask::tests::lane1_actionable_gap_packets_mark_public_projection_ready_with_receipt",
+  "xtask::tests::lane1_actionable_gap_packets_require_canonical_assertion_for_public_projection",
+  "xtask::tests::lane1_actionable_gap_packets_keep_observed_gaps_out_of_public_projection",
+  "xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context",
+  "xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_actionable_packet_without_identity",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_missing_repair_guidance",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_missing_receipt_command_or_path",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_missing_verify_command",
+]
+fixtures = [
+  "fixtures/swarm-plan-packet-corpus",
+  "fixtures/editor_actionable_gap_queue",
+]
+code = [
+  "crates/ripr/src/output/evidence_record.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+  "xtask/src/main.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md",
+  "docs/specs/README.md",
+  "docs/CAPABILITY_MATRIX.md",
+  "metrics/capabilities.toml",
+  ".ripr/traceability.toml",
+]
+metrics = [
+  "finding_alignment_actionable_items_total",
+  "finding_alignment_static_limitation_total",
+  "finding_alignment_canonical_items_without_repair_route",
+  "finding_alignment_canonical_items_without_verify_command",
+  "lane1_actionable_gap_packets",
+  "swarm_ready_packets",
+  "swarm_missing_verify_command",
+  "swarm_missing_receipt_command",
+  "swarm_static_limitation_packets",
+]
