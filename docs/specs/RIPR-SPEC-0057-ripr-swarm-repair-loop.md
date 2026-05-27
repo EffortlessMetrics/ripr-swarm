@@ -330,6 +330,11 @@ packet. These actions are advisory coordination hints; they must not execute
 repairs, consume raw findings as work, change badge semantics, or hide blocked
 or uncertain evidence.
 
+Readiness must also expose `top_next_action` as a stable projection of
+`next_actions[0]`. Downstream surfaces may show that object directly, but they
+must not treat it as an independent ranking source or reinterpret raw findings
+to produce their own top action.
+
 `attempt --dry-run` prints the bounded packet context and the commands a human
 or external agent would run. It does not edit files, run tests, call providers,
 or create receipts.
