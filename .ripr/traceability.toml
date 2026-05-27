@@ -3796,10 +3796,12 @@ tests = [
   "xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context",
   "xtask::tests::ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest",
   "xtask::tests::ripr_swarm_readiness_consumes_attempt_ledger_counts",
+  "xtask::tests::dogfood_surface_projection_alignment_receipts_are_checked",
 ]
 fixtures = [
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/actionable-gap-outcomes-corpus",
+  "fixtures/surface-projection-alignment",
 ]
 code = [
   "xtask/src/command.rs",

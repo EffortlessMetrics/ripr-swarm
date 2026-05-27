@@ -843,6 +843,46 @@ struct DogfoodFindingAlignmentRun {
     errors: Vec<String>,
 }
 
+#[derive(Debug)]
+struct DogfoodSurfaceProjectionAlignmentScenario {
+    name: String,
+    canonical_gap_id: String,
+    packet_id: String,
+    evidence_class: String,
+    repair_kind: String,
+    verify_command: String,
+    receipt_command: String,
+    receipt_state: String,
+    outcome: String,
+    expected_top_next_action_kind: String,
+    advisory_consumers: Vec<String>,
+    must_not_change: Vec<String>,
+    swarm_plan: Value,
+    actionable_gap_outcomes: Value,
+    attempt_ledger: Value,
+    reason: String,
+}
+
+#[derive(Debug)]
+struct DogfoodSurfaceProjectionAlignmentRun {
+    name: String,
+    canonical_gap_id: String,
+    packet_id: String,
+    repair_kind: String,
+    verify_command: String,
+    receipt_command: String,
+    receipt_state: String,
+    outcome: String,
+    top_next_action_kind: String,
+    top_next_action_command: Option<String>,
+    readiness_status: String,
+    attempted_packets: usize,
+    improved_packets: usize,
+    advisory_consumers: Vec<String>,
+    reason: String,
+    errors: Vec<String>,
+}
+
 struct DogfoodPreviewProjectionRuns<'a> {
     generated_ci_cockpit: &'a [DogfoodGeneratedCiCockpitRun],
     language_preview: &'a [DogfoodLanguagePreviewRun],
@@ -859,6 +899,7 @@ struct DogfoodReportInputs<'a> {
     report_packet_index_runs: &'a [DogfoodReportPacketIndexRun],
     preview_projection_runs: &'a DogfoodPreviewProjectionRuns<'a>,
     finding_alignment_runs: &'a [DogfoodFindingAlignmentRun],
+    surface_projection_alignment_runs: &'a [DogfoodSurfaceProjectionAlignmentRun],
     pr_inline_comment_runs: &'a [DogfoodPrInlineCommentRun],
 }
 
@@ -5214,6 +5255,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
             )
         })
@@ -7525,6 +7567,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_first_successful_pr_fixture_corpus(&mut violations)?;
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
     validate_gap_decision_ledger_fixture_corpus(&mut violations)?;
+    validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
     validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
     validate_pr_review_front_panel_fixture_corpus(&mut violations)?;
@@ -7663,6 +7706,8 @@ const EVIDENCE_QUALITY_BENCHMARK_REQUIRED_CONFIG_POLICY_CASES: &[&str] = &[
 ];
 
 const FINDING_ALIGNMENT_DOGFOOD_CORPUS: &str = "fixtures/finding-alignment-dogfood/corpus.json";
+const SURFACE_PROJECTION_ALIGNMENT_CORPUS: &str =
+    "fixtures/surface-projection-alignment/corpus.json";
 
 const FINDING_ALIGNMENT_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
     ("presentation_text_actionable_output_observer", "actionable"),
@@ -7679,6 +7724,11 @@ const FINDING_ALIGNMENT_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
     ),
     ("config_policy_flow_unknown_limitation", "static_limitation"),
 ];
+
+const SURFACE_PROJECTION_ALIGNMENT_REQUIRED_CASES: &[(&str, &str)] = &[(
+    "receipt_improved_top_next_action_alignment",
+    "evidence_improved",
+)];
 
 const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
 
@@ -8587,6 +8637,71 @@ fn validate_finding_alignment_dogfood_fixture_corpus_at(
             )),
             None => violations.push(format!(
                 "finding alignment dogfood corpus is missing case {case_id}"
+            )),
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_surface_projection_alignment_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/surface-projection-alignment");
+    let corpus = root.join("corpus.json");
+    if !corpus.exists() {
+        violations.push(format!(
+            "surface projection alignment fixture corpus is missing {}",
+            normalize_path(&corpus)
+        ));
+    }
+    validate_surface_projection_alignment_fixture_corpus_at(
+        Path::new(SURFACE_PROJECTION_ALIGNMENT_CORPUS),
+        violations,
+    )
+}
+
+fn validate_surface_projection_alignment_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "surface projection alignment corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let scenarios = dogfood_surface_projection_alignment_scenarios();
+    let mut seen = BTreeMap::new();
+    for scenario in &scenarios {
+        if seen
+            .insert(scenario.name.clone(), scenario.outcome.clone())
+            .is_some()
+        {
+            violations.push(format!(
+                "surface projection alignment case {} is duplicated",
+                scenario.name
+            ));
+        }
+        let run = dogfood_surface_projection_alignment_run(scenario);
+        for error in run.errors {
+            violations.push(format!(
+                "surface projection alignment case {}: {error}",
+                scenario.name
+            ));
+        }
+    }
+
+    for (case_id, outcome) in SURFACE_PROJECTION_ALIGNMENT_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == outcome => {}
+            Some(actual) => violations.push(format!(
+                "surface projection alignment case {case_id} must have outcome {outcome}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "surface projection alignment corpus is missing case {case_id}"
             )),
         }
     }
@@ -34560,6 +34675,10 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
         .into_iter()
         .map(|scenario| dogfood_finding_alignment_run(&scenario))
         .collect::<Vec<_>>();
+    let surface_projection_alignment_runs = dogfood_surface_projection_alignment_scenarios()
+        .into_iter()
+        .map(|scenario| dogfood_surface_projection_alignment_run(&scenario))
+        .collect::<Vec<_>>();
     let preview_projection_runs = DogfoodPreviewProjectionRuns {
         generated_ci_cockpit: &generated_ci_cockpit_runs,
         language_preview: &language_preview_runs,
@@ -34579,6 +34698,7 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
         report_packet_index_runs: &report_packet_index_runs,
         preview_projection_runs: &preview_projection_runs,
         finding_alignment_runs: &finding_alignment_runs,
+        surface_projection_alignment_runs: &surface_projection_alignment_runs,
         pr_inline_comment_runs: &pr_inline_comment_runs,
     };
     write_report("dogfood.md", &dogfood_report_markdown(&report_inputs))?;
@@ -37257,6 +37377,349 @@ fn dogfood_finding_alignment_run(
     }
 }
 
+fn dogfood_surface_projection_alignment_scenarios() -> Vec<DogfoodSurfaceProjectionAlignmentScenario>
+{
+    let corpus_path = Path::new(SURFACE_PROJECTION_ALIGNMENT_CORPUS);
+    let fallback = |reason: String| {
+        vec![DogfoodSurfaceProjectionAlignmentScenario {
+            name: "corpus".to_string(),
+            canonical_gap_id: "unknown".to_string(),
+            packet_id: "unknown".to_string(),
+            evidence_class: "unknown".to_string(),
+            repair_kind: "unknown".to_string(),
+            verify_command: "unknown".to_string(),
+            receipt_command: "unknown".to_string(),
+            receipt_state: "unknown".to_string(),
+            outcome: "unknown".to_string(),
+            expected_top_next_action_kind: "unknown".to_string(),
+            advisory_consumers: Vec::new(),
+            must_not_change: Vec::new(),
+            swarm_plan: Value::Null,
+            actionable_gap_outcomes: Value::Null,
+            attempt_ledger: Value::Null,
+            reason,
+        }]
+    };
+
+    let corpus = match read_json_value(corpus_path) {
+        Ok(value) => value,
+        Err(err) => return fallback(err),
+    };
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        return fallback(
+            "surface projection alignment corpus schema_version must be 0.1".to_string(),
+        );
+    }
+    if json_string_field(&corpus, "kind").as_deref() != Some("surface_projection_alignment_corpus")
+    {
+        return fallback(
+            "surface projection alignment corpus kind must be surface_projection_alignment_corpus"
+                .to_string(),
+        );
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0057") {
+        return fallback(
+            "surface projection alignment corpus spec must be RIPR-SPEC-0057".to_string(),
+        );
+    }
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        return fallback("surface projection alignment corpus is missing cases array".to_string());
+    };
+
+    cases
+        .iter()
+        .map(|case| {
+            let expected = case.get("expected").unwrap_or(&Value::Null);
+            let artifacts = case.get("artifacts").unwrap_or(&Value::Null);
+            DogfoodSurfaceProjectionAlignmentScenario {
+                name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
+                canonical_gap_id: json_string_field(case, "canonical_gap_id")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                packet_id: json_string_field(case, "packet_id")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                evidence_class: json_string_field(case, "evidence_class")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                repair_kind: json_string_field(case, "repair_kind")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                verify_command: json_string_field(case, "verify_command")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                receipt_command: json_string_field(case, "receipt_command")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                receipt_state: json_string_field(expected, "receipt_state")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                outcome: json_string_field(expected, "outcome")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                expected_top_next_action_kind: json_string_field(expected, "top_next_action_kind")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                advisory_consumers: json_string_array_field(case, "advisory_consumers"),
+                must_not_change: json_string_array_field(case, "must_not_change"),
+                swarm_plan: artifacts.get("swarm_plan").cloned().unwrap_or(Value::Null),
+                actionable_gap_outcomes: artifacts
+                    .get("actionable_gap_outcomes")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                attempt_ledger: artifacts
+                    .get("swarm_attempt_ledger")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                reason: json_string_field(case, "reason").unwrap_or_else(|| {
+                    "surface projection alignment corpus case did not document a reason".to_string()
+                }),
+            }
+        })
+        .collect()
+}
+
+fn dogfood_surface_projection_alignment_run(
+    scenario: &DogfoodSurfaceProjectionAlignmentScenario,
+) -> DogfoodSurfaceProjectionAlignmentRun {
+    let mut errors = Vec::new();
+    if scenario.name.trim().is_empty() || scenario.name == "unknown" {
+        errors.push("case id must be present".to_string());
+    }
+    if scenario.canonical_gap_id.trim().is_empty() || scenario.canonical_gap_id == "unknown" {
+        errors.push("canonical_gap_id must be present".to_string());
+    }
+    if scenario.packet_id.trim().is_empty() || scenario.packet_id == "unknown" {
+        errors.push("packet_id must be present".to_string());
+    }
+    if !matches!(
+        scenario.evidence_class.as_str(),
+        "predicate_boundary" | "presentation_text" | "config_or_policy_constant" | "call_presence"
+    ) {
+        errors.push(format!(
+            "unsupported evidence class for surface projection alignment: {}",
+            scenario.evidence_class
+        ));
+    }
+    if matches!(scenario.repair_kind.as_str(), "" | "unknown" | "no_action") {
+        errors.push("repair_kind must name a bounded repair route".to_string());
+    }
+    if finding_alignment_verify_command_is_missing(&scenario.verify_command) {
+        errors.push("verify_command must be present".to_string());
+    }
+    if finding_alignment_verify_command_is_missing(&scenario.receipt_command) {
+        errors.push("receipt_command must be present".to_string());
+    }
+    if scenario.must_not_change.is_empty() {
+        errors.push("must_not_change constraints must not be empty".to_string());
+    }
+    for consumer in ["badge", "lsp", "pr_comment", "ci"] {
+        if !scenario
+            .advisory_consumers
+            .iter()
+            .any(|actual| actual == consumer)
+        {
+            errors.push(format!(
+                "advisory_consumers must include {consumer} without granting it ranking or gate authority"
+            ));
+        }
+    }
+    if !scenario.swarm_plan.is_object() {
+        errors.push("artifacts.swarm_plan must be an object".to_string());
+    }
+    if !scenario.actionable_gap_outcomes.is_object() {
+        errors.push("artifacts.actionable_gap_outcomes must be an object".to_string());
+    }
+    if !scenario.attempt_ledger.is_object() {
+        errors.push("artifacts.swarm_attempt_ledger must be an object".to_string());
+    }
+
+    let ledger_attempt = audit_array(&scenario.attempt_ledger, &["latest_attempts"])
+        .iter()
+        .find(|attempt| {
+            audit_non_empty_string(attempt, &["canonical_gap_id"]).as_deref()
+                == Some(scenario.canonical_gap_id.as_str())
+        });
+    match ledger_attempt {
+        Some(attempt) => {
+            surface_projection_expect_string(
+                &mut errors,
+                attempt,
+                &["packet_id"],
+                &scenario.packet_id,
+                "attempt ledger packet_id",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                attempt,
+                &["repair_kind"],
+                &scenario.repair_kind,
+                "attempt ledger repair_kind",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                attempt,
+                &["verify_command"],
+                &scenario.verify_command,
+                "attempt ledger verify_command",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                attempt,
+                &["receipt_command"],
+                &scenario.receipt_command,
+                "attempt ledger receipt_command",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                attempt,
+                &["receipt_state"],
+                &scenario.receipt_state,
+                "attempt ledger receipt_state",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                attempt,
+                &["outcome"],
+                &scenario.outcome,
+                "attempt ledger outcome",
+            );
+        }
+        None => errors.push(format!(
+            "attempt ledger latest_attempts must include {}",
+            scenario.canonical_gap_id
+        )),
+    }
+
+    let readiness_report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "fixtures/surface-projection-alignment/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&scenario.swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "fixtures/surface-projection-alignment/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&scenario.actionable_gap_outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "fixtures/surface-projection-alignment/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&scenario.attempt_ledger),
+        },
+    );
+    let readiness_json = ripr_swarm_readiness_json(&readiness_report)
+        .and_then(|json| serde_json::from_str::<Value>(&json).map_err(|err| err.to_string()));
+    let mut top_next_action_kind = "missing".to_string();
+    let mut top_next_action_command = None;
+    let mut readiness_status = readiness_report.status.clone();
+    let attempted_packets = readiness_report.summary.attempted_packets;
+    let improved_packets = readiness_report.summary.improved_packets;
+
+    match readiness_json {
+        Ok(value) => {
+            readiness_status = json_string_field(&value, "status")
+                .unwrap_or_else(|| readiness_report.status.clone());
+            let top = value.get("top_next_action").unwrap_or(&Value::Null);
+            top_next_action_kind =
+                json_string_field(top, "kind").unwrap_or_else(|| "missing".to_string());
+            top_next_action_command = json_string_field(top, "command");
+            if value
+                .get("next_actions")
+                .and_then(Value::as_array)
+                .and_then(|actions| actions.first())
+                != Some(top)
+            {
+                errors.push(
+                    "readiness top_next_action must remain a projection of next_actions[0]"
+                        .to_string(),
+                );
+            }
+            surface_projection_expect_string(
+                &mut errors,
+                top,
+                &["kind"],
+                &scenario.expected_top_next_action_kind,
+                "readiness top_next_action.kind",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                top,
+                &["packet_id"],
+                &scenario.packet_id,
+                "readiness top_next_action.packet_id",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                top,
+                &["canonical_gap_id"],
+                &scenario.canonical_gap_id,
+                "readiness top_next_action.canonical_gap_id",
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                top,
+                &["repair_kind"],
+                &scenario.repair_kind,
+                "readiness top_next_action.repair_kind",
+            );
+            let expected_attempt_command = format!(
+                "cargo xtask ripr-swarm attempt --packet {} --dry-run",
+                scenario.packet_id
+            );
+            surface_projection_expect_string(
+                &mut errors,
+                top,
+                &["command"],
+                &expected_attempt_command,
+                "readiness top_next_action.command",
+            );
+            if !json_string_array_field(&value, "must_not_infer")
+                .iter()
+                .any(|item| item.contains("not a separate ranking source"))
+            {
+                errors.push(
+                    "readiness must_not_infer must deny separate ranking authority".to_string(),
+                );
+            }
+        }
+        Err(err) => errors.push(format!("failed to render readiness projection: {err}")),
+    }
+
+    if readiness_report.summary.attempted_packets == 0 {
+        errors.push("readiness summary must preserve attempted packet count".to_string());
+    }
+    if scenario.outcome == "evidence_improved" && readiness_report.summary.improved_packets == 0 {
+        errors.push("readiness summary must preserve improved packet count".to_string());
+    }
+
+    DogfoodSurfaceProjectionAlignmentRun {
+        name: scenario.name.clone(),
+        canonical_gap_id: scenario.canonical_gap_id.clone(),
+        packet_id: scenario.packet_id.clone(),
+        repair_kind: scenario.repair_kind.clone(),
+        verify_command: scenario.verify_command.clone(),
+        receipt_command: scenario.receipt_command.clone(),
+        receipt_state: scenario.receipt_state.clone(),
+        outcome: scenario.outcome.clone(),
+        top_next_action_kind,
+        top_next_action_command,
+        readiness_status,
+        attempted_packets,
+        improved_packets,
+        advisory_consumers: scenario.advisory_consumers.clone(),
+        reason: scenario.reason.clone(),
+        errors,
+    }
+}
+
+fn surface_projection_expect_string(
+    errors: &mut Vec<String>,
+    value: &Value,
+    path: &[&str],
+    expected: &str,
+    label: &str,
+) {
+    let actual = audit_non_empty_string(value, path).unwrap_or_else(|| "missing".to_string());
+    if actual != expected {
+        errors.push(format!("{label} must be {expected}, got {actual}"));
+    }
+}
+
 fn finding_alignment_verify_command_is_missing(value: &str) -> bool {
     value.trim().is_empty() || value == "unknown" || value == "none"
 }
@@ -37629,6 +38092,7 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
     let report_packet_index_runs = inputs.report_packet_index_runs;
     let preview_projection_runs = inputs.preview_projection_runs;
     let finding_alignment_runs = inputs.finding_alignment_runs;
+    let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
 
     if runs.iter().any(|run| !run.errors.is_empty())
@@ -37656,6 +38120,9 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
             .iter()
             .any(|run| !run.errors.is_empty())
         || finding_alignment_runs
+            .iter()
+            .any(|run| !run.errors.is_empty())
+        || surface_projection_alignment_runs
             .iter()
             .any(|run| !run.errors.is_empty())
         || pr_inline_comment_runs
@@ -37702,6 +38169,7 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     let report_packet_index_runs = inputs.report_packet_index_runs;
     let preview_projection_runs = inputs.preview_projection_runs;
     let finding_alignment_runs = inputs.finding_alignment_runs;
+    let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
     let mut body = format!(
@@ -38549,6 +39017,81 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
             body.push('\n');
         }
     }
+    body.push_str("## Surface Projection Alignment Receipts\n\n");
+    body.push_str("These receipts validate that one receipt-backed canonical gap preserves identity, repair route, verify command, receipt command/state, and readiness `top_next_action` across swarm-attempt-ledger and swarm-readiness projections. Badge, LSP, PR, and CI remain advisory consumers of the canonical report state; this dogfood proof does not change their rendering, ranking, gate authority, source edits, generated tests, provider calls, or mutation execution.\n\n");
+    body.push_str("- Default CI blocking: no\n");
+    body.push_str("- Receipt input: `fixtures/surface-projection-alignment/corpus.json`\n\n");
+    body.push_str("| Case | Gap ID | Packet | Repair | Outcome | Top next action | Attempted | Improved | Advisory consumers |\n");
+    body.push_str("| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |\n");
+    for run in surface_projection_alignment_runs {
+        body.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} | {} | `{}` |\n",
+            markdown_cell(&run.name),
+            markdown_cell(&run.canonical_gap_id),
+            markdown_cell(&run.packet_id),
+            markdown_cell(&run.repair_kind),
+            markdown_cell(&run.outcome),
+            markdown_cell(&run.top_next_action_kind),
+            run.attempted_packets,
+            run.improved_packets,
+            markdown_cell(&run.advisory_consumers.join(", "))
+        ));
+    }
+    body.push('\n');
+    for run in surface_projection_alignment_runs {
+        body.push_str(&format!(
+            "### Surface Projection Alignment `{}`\n\n",
+            run.name
+        ));
+        body.push_str(&format!(
+            "- Canonical gap ID: `{}`\n",
+            markdown_cell(&run.canonical_gap_id)
+        ));
+        body.push_str(&format!(
+            "- Packet ID: `{}`\n",
+            markdown_cell(&run.packet_id)
+        ));
+        body.push_str(&format!(
+            "- Repair kind: `{}`\n",
+            markdown_cell(&run.repair_kind)
+        ));
+        body.push_str(&format!(
+            "- Verify command: `{}`\n",
+            markdown_cell(&run.verify_command)
+        ));
+        body.push_str(&format!(
+            "- Receipt command: `{}`\n",
+            markdown_cell(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "- Receipt state: `{}`\n",
+            markdown_cell(&run.receipt_state)
+        ));
+        body.push_str(&format!("- Outcome: `{}`\n", markdown_cell(&run.outcome)));
+        body.push_str(&format!(
+            "- Readiness status: `{}`\n",
+            markdown_cell(&run.readiness_status)
+        ));
+        body.push_str(&format!(
+            "- Top next action: `{}` via `{}`\n",
+            markdown_cell(&run.top_next_action_kind),
+            markdown_cell(run.top_next_action_command.as_deref().unwrap_or("none"))
+        ));
+        body.push_str(&format!(
+            "- Advisory consumers: `{}`\n",
+            markdown_cell(&run.advisory_consumers.join(", "))
+        ));
+        body.push_str(&format!("- Reason: {}\n", markdown_cell(&run.reason)));
+        if run.errors.is_empty() {
+            body.push_str("- Errors: none\n\n");
+        } else {
+            body.push_str("- Errors:\n");
+            for error in &run.errors {
+                body.push_str(&format!("  - `{}`\n", markdown_cell(error)));
+            }
+            body.push('\n');
+        }
+    }
     body.push_str("## PR Inline Comment Publisher Receipts\n\n");
     body.push_str("These receipts validate checked `comment-publish-plan.{json,md}` fixture outputs for the documented Campaign 26 inline-comment publisher routes. They verify opt-in modes, safe publish flags, summary-only exclusion, cap behavior, dedupe/upsert, stale-existing cleanup planning, fork or token blockers, missing-input blockers, and advisory limits without posting real PR comments.\n\n");
     body.push_str("- Default CI blocking: no\n");
@@ -38732,6 +39275,7 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
     let report_packet_index_runs = inputs.report_packet_index_runs;
     let preview_projection_runs = inputs.preview_projection_runs;
     let finding_alignment_runs = inputs.finding_alignment_runs;
+    let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
     let mut body = format!(
@@ -39592,6 +40136,79 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         ));
         body.push_str("        \"must_not_claim\": [");
         write_json_string_array(&mut body, &run.must_not_claim);
+        body.push_str("],\n");
+        body.push_str(&format!(
+            "        \"reason\": \"{}\",\n",
+            json_escape(&run.reason)
+        ));
+        body.push_str("        \"errors\": [");
+        write_json_string_array(&mut body, &run.errors);
+        body.push_str("]\n      }");
+    }
+    body.push_str("\n    ]\n  },\n  \"surface_projection_alignment\": {\n");
+    body.push_str("    \"default_ci_blocking\": false,\n");
+    body.push_str(
+        "    \"receipt_dir\": \"fixtures/surface-projection-alignment\",\n    \"cases\": [\n",
+    );
+    for (index, run) in surface_projection_alignment_runs.iter().enumerate() {
+        if index > 0 {
+            body.push_str(",\n");
+        }
+        body.push_str("      {\n");
+        body.push_str(&format!(
+            "        \"name\": \"{}\",\n",
+            json_escape(&run.name)
+        ));
+        body.push_str(&format!(
+            "        \"canonical_gap_id\": \"{}\",\n",
+            json_escape(&run.canonical_gap_id)
+        ));
+        body.push_str(&format!(
+            "        \"packet_id\": \"{}\",\n",
+            json_escape(&run.packet_id)
+        ));
+        body.push_str(&format!(
+            "        \"repair_kind\": \"{}\",\n",
+            json_escape(&run.repair_kind)
+        ));
+        body.push_str(&format!(
+            "        \"verify_command\": \"{}\",\n",
+            json_escape(&run.verify_command)
+        ));
+        body.push_str(&format!(
+            "        \"receipt_command\": \"{}\",\n",
+            json_escape(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "        \"receipt_state\": \"{}\",\n",
+            json_escape(&run.receipt_state)
+        ));
+        body.push_str(&format!(
+            "        \"outcome\": \"{}\",\n",
+            json_escape(&run.outcome)
+        ));
+        body.push_str(&format!(
+            "        \"readiness_status\": \"{}\",\n",
+            json_escape(&run.readiness_status)
+        ));
+        body.push_str(&format!(
+            "        \"top_next_action_kind\": \"{}\",\n",
+            json_escape(&run.top_next_action_kind)
+        ));
+        body.push_str(&format!(
+            "        \"top_next_action_command\": {},\n",
+            json_optional_string(run.top_next_action_command.as_deref())
+        ));
+        body.push_str(&format!(
+            "        \"attempted_packets\": {},\n",
+            run.attempted_packets
+        ));
+        body.push_str(&format!(
+            "        \"improved_packets\": {},\n",
+            run.improved_packets
+        ));
+        body.push_str("        \"advisory_consumers\": [");
+        write_json_string_array(&mut body, &run.advisory_consumers);
         body.push_str("],\n");
         body.push_str(&format!(
             "        \"reason\": \"{}\",\n",
@@ -52064,6 +52681,7 @@ mod tests {
         DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
         DogfoodLanguagePreviewRun, DogfoodPrInlineCommentRun, DogfoodPreviewProjectionRuns,
         DogfoodReportInputs, DogfoodReportPacketIndexRun, DogfoodRun,
+        DogfoodSurfaceProjectionAlignmentScenario,
         EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
         EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
         EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
@@ -52105,7 +52723,8 @@ mod tests {
         dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
         dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
         dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
-        dogfood_report_packet_index_scenarios, evaluate_semantic_no_panic_policy,
+        dogfood_report_packet_index_scenarios, dogfood_surface_projection_alignment_run,
+        dogfood_surface_projection_alignment_scenarios, evaluate_semantic_no_panic_policy,
         evidence_health_args, evidence_quality_scorecard_audit_regeneration_failure_audit,
         evidence_quality_scorecard_from_values, evidence_quality_scorecard_json,
         evidence_quality_scorecard_markdown, evidence_quality_trend_from_values,
@@ -59877,6 +60496,32 @@ fn exact_owner_call_has_external_expected_value() {
             reason: "actionable config-policy alignment receipt".to_string(),
             errors: Vec::new(),
         };
+        let surface_projection_alignment_run = super::DogfoodSurfaceProjectionAlignmentRun {
+            name: "receipt_improved_top_next_action_alignment".to_string(),
+            canonical_gap_id: "gap:boundary-discriminator-004".to_string(),
+            packet_id: "boundary-discriminator-004".to_string(),
+            repair_kind: "add_boundary_assertion".to_string(),
+            verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
+            receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            receipt_state: "receipt_movement_improved".to_string(),
+            outcome: "evidence_improved".to_string(),
+            top_next_action_kind: "attempt_ready_packet".to_string(),
+            top_next_action_command: Some(
+                "cargo xtask ripr-swarm attempt --packet boundary-discriminator-004 --dry-run"
+                    .to_string(),
+            ),
+            readiness_status: "advisory".to_string(),
+            attempted_packets: 1,
+            improved_packets: 1,
+            advisory_consumers: vec![
+                "badge".to_string(),
+                "lsp".to_string(),
+                "pr_comment".to_string(),
+                "ci".to_string(),
+            ],
+            reason: "single receipt-backed canonical gap projection alignment".to_string(),
+            errors: Vec::new(),
+        };
         let pr_inline_comment_run = DogfoodPrInlineCommentRun {
             name: "publishable_changed_line".to_string(),
             actual_dir: Path::new(
@@ -59925,6 +60570,7 @@ fn exact_owner_call_has_external_expected_value() {
         let editor_gap_cockpit_runs = [editor_gap_cockpit_run];
         let editor_first_pr_bridge_runs = [editor_first_pr_bridge_run];
         let finding_alignment_runs = [finding_alignment_run];
+        let surface_projection_alignment_runs = [surface_projection_alignment_run];
         let preview_projection_runs = DogfoodPreviewProjectionRuns {
             generated_ci_cockpit: &generated_ci_runs,
             language_preview: &language_preview_runs,
@@ -59947,6 +60593,7 @@ fn exact_owner_call_has_external_expected_value() {
             report_packet_index_runs: &markdown_report_packet_index_runs,
             preview_projection_runs: &preview_projection_runs,
             finding_alignment_runs: &finding_alignment_runs,
+            surface_projection_alignment_runs: &surface_projection_alignment_runs,
             pr_inline_comment_runs: &markdown_pr_inline_comment_runs,
         };
         let empty_runs = [];
@@ -59964,6 +60611,7 @@ fn exact_owner_call_has_external_expected_value() {
             report_packet_index_runs: &empty_report_packet_index_runs,
             preview_projection_runs: &preview_projection_runs,
             finding_alignment_runs: &finding_alignment_runs,
+            surface_projection_alignment_runs: &surface_projection_alignment_runs,
             pr_inline_comment_runs: &empty_pr_inline_comment_runs,
         };
         let markdown = dogfood_report_markdown(&markdown_inputs);
@@ -59980,6 +60628,7 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(markdown.contains("Editor Gap Cockpit Receipts"));
         assert!(markdown.contains("Editor First-PR Bridge Receipts"));
         assert!(markdown.contains("Finding Alignment Receipts"));
+        assert!(markdown.contains("Surface Projection Alignment Receipts"));
         assert!(markdown.contains("PR Inline Comment Publisher Receipts"));
         assert!(markdown.contains("Gate Adoption Receipts"));
         assert!(markdown.contains("Default CI blocking: no"));
@@ -59999,6 +60648,7 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(json.contains("\"language_preview\""));
         assert!(json.contains("\"editor_first_pr_bridge\""));
         assert!(json.contains("\"finding_alignment\""));
+        assert!(json.contains("\"surface_projection_alignment\""));
         let value: Value =
             serde_json::from_str(&json).map_err(|err| format!("dogfood JSON invalid: {err}"))?;
         let editor_gap_cockpit = value
@@ -60111,6 +60761,33 @@ fn exact_owner_call_has_external_expected_value() {
                 .and_then(|case| case.get("user_outcome"))
                 .and_then(Value::as_str),
             Some("actionable_gap")
+        );
+        let surface_projection = value
+            .get("surface_projection_alignment")
+            .ok_or_else(|| "surface_projection_alignment section missing".to_string())?;
+        assert_eq!(
+            surface_projection
+                .get("receipt_dir")
+                .and_then(Value::as_str),
+            Some("fixtures/surface-projection-alignment")
+        );
+        let surface_cases = surface_projection
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "surface_projection_alignment cases missing".to_string())?;
+        assert_eq!(surface_cases.len(), 1);
+        let surface_case = surface_cases
+            .first()
+            .ok_or_else(|| "surface_projection_alignment case missing".to_string())?;
+        assert_eq!(
+            surface_case
+                .get("top_next_action_kind")
+                .and_then(Value::as_str),
+            Some("attempt_ready_packet")
+        );
+        assert_eq!(
+            surface_case.get("outcome").and_then(Value::as_str),
+            Some("evidence_improved")
         );
         assert!(json.contains("\"pr_inline_comment_publisher\""));
         Ok(())
@@ -60364,6 +61041,176 @@ fn exact_owner_call_has_external_expected_value() {
             assert!(report.contains("canonical_items_total must be non-zero"));
             assert!(report.contains("unsupported gap_state `mystery`"));
         });
+    }
+
+    #[test]
+    fn dogfood_surface_projection_alignment_receipts_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let scenarios = dogfood_surface_projection_alignment_scenarios();
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == "receipt_improved_top_next_action_alignment"
+                        && scenario.outcome == "evidence_improved"
+                }),
+                "surface projection alignment dogfood receipt should pin improved receipt case"
+            );
+
+            for scenario in scenarios {
+                let run = dogfood_surface_projection_alignment_run(&scenario);
+                assert!(
+                    run.errors.is_empty(),
+                    "{} surface projection alignment receipt should validate: {:?}",
+                    run.name,
+                    run.errors
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    fn valid_surface_projection_alignment_scenario() -> DogfoodSurfaceProjectionAlignmentScenario {
+        let canonical_gap_id = "gap:boundary-discriminator-004";
+        let packet_id = "boundary-discriminator-004";
+        let repair_kind = "add_boundary_assertion";
+        let verify_command = "cargo test -p ripr-swarm boundary_discriminator_004";
+        let receipt_command = "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004";
+        let attempt = serde_json::json!({
+            "packet_id": packet_id,
+            "canonical_gap_id": canonical_gap_id,
+            "attempt_id": "attempt:boundary-discriminator-004:evidence-improved",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": repair_kind,
+            "actor_kind": "human",
+            "receipt_path": "target/ripr/receipts/boundary-discriminator-004.json",
+            "verify_command": verify_command,
+            "receipt_command": receipt_command,
+            "before_gap_state": "actionable",
+            "after_gap_state": "actionable",
+            "outcome": "evidence_improved",
+            "timestamp": "2026-05-27T20:00:00Z",
+            "receipt_state": "receipt_movement_improved",
+            "movement_source": "agent_receipt",
+            "reason": "receipt-backed dogfood attempt improved evidence"
+        });
+        DogfoodSurfaceProjectionAlignmentScenario {
+            name: "receipt_improved_top_next_action_alignment".to_string(),
+            canonical_gap_id: canonical_gap_id.to_string(),
+            packet_id: packet_id.to_string(),
+            evidence_class: "predicate_boundary".to_string(),
+            repair_kind: repair_kind.to_string(),
+            verify_command: verify_command.to_string(),
+            receipt_command: receipt_command.to_string(),
+            receipt_state: "receipt_movement_improved".to_string(),
+            outcome: "evidence_improved".to_string(),
+            expected_top_next_action_kind: "attempt_ready_packet".to_string(),
+            advisory_consumers: vec![
+                "badge".to_string(),
+                "lsp".to_string(),
+                "pr_comment".to_string(),
+                "ci".to_string(),
+            ],
+            must_not_change: vec![
+                "production behavior".to_string(),
+                "public API".to_string(),
+                "snapshot format".to_string(),
+            ],
+            swarm_plan: serde_json::json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "report": "swarm-plan",
+                "source_summary": {
+                    "actionable_gaps": 1,
+                    "public_projection_eligible_packets": 1
+                },
+                "summary": {
+                    "swarm_ready_packets": 1,
+                    "blocked_packets": 0,
+                    "missing_verify_command": 0,
+                    "missing_receipt_command": 0,
+                    "static_limitation_packets": 0,
+                    "high_confidence_packets": 1
+                },
+                "top_ready_packets": [
+                    {
+                        "packet_id": packet_id,
+                        "canonical_gap_id": canonical_gap_id,
+                        "evidence_class": "predicate_boundary",
+                        "repair_kind": repair_kind,
+                        "swarm_state": "queued"
+                    }
+                ],
+                "top_blocked_packets": []
+            }),
+            actionable_gap_outcomes: serde_json::json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "report": "actionable-gap-outcomes",
+                "summary": {
+                    "outcomes_total": 1,
+                    "not_attempted": 0,
+                    "evidence_improved": 1,
+                    "evidence_unchanged": 0,
+                    "evidence_regressed": 0,
+                    "resolved": 0,
+                    "orphaned_receipts": 0
+                }
+            }),
+            attempt_ledger: serde_json::json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "report": "swarm-attempt-ledger",
+                "summary": {
+                    "attempts_total": 1,
+                    "canonical_gaps_total": 1,
+                    "not_attempted": 0,
+                    "attempted_no_receipt": 0,
+                    "receipt_present": 0,
+                    "evidence_improved": 1,
+                    "evidence_unchanged": 0,
+                    "evidence_regressed": 0,
+                    "resolved": 0,
+                    "unknown": 0,
+                    "orphaned_receipts": 0
+                },
+                "repair_route_quality": [
+                    {
+                        "repair_kind": repair_kind,
+                        "repair_kind_attempted": 1,
+                        "repair_kind_improved": 1,
+                        "repair_kind_unchanged": 0,
+                        "repair_kind_regressed": 0,
+                        "repair_kind_resolved": 0,
+                        "repair_kind_attempted_no_receipt": 0,
+                        "repair_kind_receipt_present": 0,
+                        "repair_kind_unknown": 0,
+                        "repair_kind_success_rate": 1.0
+                    }
+                ],
+                "top_missing_evidence_fields": [],
+                "latest_attempts": [attempt.clone()],
+                "attempts": [attempt],
+                "orphaned_receipts": []
+            }),
+            reason: "single receipt-backed canonical gap projection alignment".to_string(),
+        }
+    }
+
+    #[test]
+    fn dogfood_surface_projection_alignment_reports_identity_drift() {
+        let mut scenario = valid_surface_projection_alignment_scenario();
+        scenario.packet_id = "wrong-packet".to_string();
+        scenario.advisory_consumers = vec!["badge".to_string()];
+
+        let report = dogfood_surface_projection_alignment_run(&scenario)
+            .errors
+            .join("\n");
+
+        assert!(report.contains("attempt ledger packet_id must be wrong-packet"));
+        assert!(report.contains("readiness top_next_action.packet_id must be wrong-packet"));
+        assert!(report.contains("advisory_consumers must include lsp"));
+        assert!(report.contains("advisory_consumers must include pr_comment"));
+        assert!(report.contains("advisory_consumers must include ci"));
     }
 
     #[test]

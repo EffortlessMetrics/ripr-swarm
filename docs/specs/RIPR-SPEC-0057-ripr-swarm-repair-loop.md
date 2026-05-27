@@ -335,6 +335,14 @@ Readiness must also expose `top_next_action` as a stable projection of
 must not treat it as an independent ranking source or reinterpret raw findings
 to produce their own top action.
 
+Dogfood receipts must include at least one surface-projection alignment case
+that starts from a single canonical repair packet and receipt-backed attempt,
+then proves the attempt ledger and readiness projection preserve the same
+`canonical_gap_id`, `packet_id`, `repair_kind`, verify command, receipt
+command/state, outcome, and `top_next_action`. Badge, LSP, PR, and CI remain
+thin advisory consumers of that canonical state; the dogfood receipt must not
+change their rendering, ranking, or gate authority.
+
 `attempt --dry-run` prints the bounded packet context and the commands a human
 or external agent would run. It does not edit files, run tests, call providers,
 or create receipts.

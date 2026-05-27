@@ -9928,6 +9928,7 @@ fixtures/boundary_gap/expected/pr-review-front-panel/<case>/pr-review-front-pane
 fixtures/boundary_gap/expected/report-packet-index/<case>/index.json
 fixtures/boundary_gap/expected/report-packet-index/<case>/index.md
 fixtures/finding-alignment-dogfood/corpus.json
+fixtures/surface-projection-alignment/corpus.json
 ```
 
 The report is advisory. It runs `ripr check --mode fast` against stable fixture
@@ -9958,6 +9959,12 @@ canonical items are the countable unit, canonical gap identities and raw
 finding summaries are explicit, actionable items have repair and verification
 routes, static limitations name analyzer repair routes, and runtime-confidence
 static-only class examples stay calibration work rather than user test debt.
+The checked surface-projection alignment receipts are read from
+`fixtures/surface-projection-alignment/` and pin one receipt-backed canonical
+gap across swarm-attempt-ledger and swarm-readiness so `canonical_gap_id`,
+`packet_id`, `repair_kind`, verify command, receipt command/state, outcome, and
+`top_next_action` stay aligned while badge, LSP, PR, and CI remain advisory
+consumers instead of independent ranking or gate authorities.
 The calibrated-gate dogfood case expects a non-zero evaluator exit only for the
 explicit blocking mode and treats that as healthy when the written decision
 report has the expected `blocked` status and count.
@@ -10175,6 +10182,30 @@ JSON shape:
           "Do not recommend mutation testing before output-observer work."
         ],
         "reason": "A rendered config or policy label with no supported observer should become one actionable output-observer item.",
+        "errors": []
+      }
+    ]
+  },
+  "surface_projection_alignment": {
+    "default_ci_blocking": false,
+    "receipt_dir": "fixtures/surface-projection-alignment",
+    "cases": [
+      {
+        "name": "receipt_improved_top_next_action_alignment",
+        "canonical_gap_id": "gap:boundary-discriminator-004",
+        "packet_id": "boundary-discriminator-004",
+        "repair_kind": "add_boundary_assertion",
+        "verify_command": "cargo test -p ripr-swarm boundary_discriminator_004",
+        "receipt_command": "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004",
+        "receipt_state": "receipt_movement_improved",
+        "outcome": "evidence_improved",
+        "readiness_status": "advisory",
+        "top_next_action_kind": "attempt_ready_packet",
+        "top_next_action_command": "cargo xtask ripr-swarm attempt --packet boundary-discriminator-004 --dry-run",
+        "attempted_packets": 1,
+        "improved_packets": 1,
+        "advisory_consumers": ["badge", "lsp", "pr_comment", "ci"],
+        "reason": "single receipt-backed canonical gap projection alignment",
         "errors": []
       }
     ]
