@@ -508,6 +508,8 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    type TestCommand = (String, Vec<String>, Vec<(String, String)>);
+
     #[test]
     fn run_reports_success_and_failure_status() -> Result<(), String> {
         let status = run("rustc", &["--version"])?;
@@ -662,11 +664,15 @@ mod tests {
 
     #[test]
     fn capture_output_with_timeout_reports_timed_out_process() -> Result<(), String> {
-        let (program, args) = long_running_command();
+        let (program, args, envs) = long_running_command()?;
+        let env_refs = envs
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect::<Vec<_>>();
         let output = capture_output_with_timeout(
-            program,
+            &program,
             &args,
-            &[],
+            &env_refs,
             Duration::from_millis(100),
             "long-running command",
         )?;
@@ -680,16 +686,41 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn long_running_command() -> (&'static str, Vec<String>) {
-        ("sh", vec!["-c".to_string(), "sleep 30".to_string()])
+    fn long_running_command() -> Result<TestCommand, String> {
+        Ok((
+            "sh".to_string(),
+            vec!["-c".to_string(), "sleep 30".to_string()],
+            Vec::new(),
+        ))
     }
 
     #[cfg(windows)]
-    fn long_running_command() -> (&'static str, Vec<String>) {
-        (
-            "cmd",
-            vec!["/C".to_string(), "ping -n 30 127.0.0.1 >NUL".to_string()],
-        )
+    fn long_running_command() -> Result<TestCommand, String> {
+        let current_exe =
+            std::env::current_exe().map_err(|err| format!("locate current test binary: {err}"))?;
+        Ok((
+            current_exe.to_string_lossy().into_owned(),
+            vec![
+                "--exact".to_string(),
+                "run::tests::long_running_command_helper".to_string(),
+                "--nocapture".to_string(),
+            ],
+            vec![(
+                "RIPR_XTASK_LONG_RUNNING_HELPER".to_string(),
+                "1".to_string(),
+            )],
+        ))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn long_running_command_helper() -> Result<(), String> {
+        if std::env::var_os("RIPR_XTASK_LONG_RUNNING_HELPER").is_none() {
+            return Ok(());
+        }
+
+        thread::sleep(Duration::from_secs(30));
+        Ok(())
     }
 
     #[cfg(unix)]
