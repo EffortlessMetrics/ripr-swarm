@@ -21581,7 +21581,7 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
 }
 
 fn ripr_swarm_plan_has_repair_route(packet: &Value) -> bool {
-    let structured_route = audit_get(packet, &["repair_route"]).is_some_and(|route| {
+    audit_get(packet, &["repair_route"]).is_some_and(|route| {
         route.is_object()
             && ripr_swarm_plan_non_missing_field(route, "repair_kind")
             && ripr_swarm_plan_non_missing_field(route, "target_test_type")
@@ -21589,16 +21589,7 @@ fn ripr_swarm_plan_has_repair_route(packet: &Value) -> bool {
                 route,
                 &["assertion_shape", "suggested_assertion"],
             )
-    });
-    structured_route
-        || (audit_non_empty_string(packet, &["repair_route_source"]).as_deref()
-            == Some("canonical_item.repair_route")
-            && ripr_swarm_plan_non_missing_field(packet, "repair_kind")
-            && ripr_swarm_plan_non_missing_field(packet, "target_test_type")
-            && ripr_swarm_plan_non_missing_any_field(
-                packet,
-                &["assertion_shape", "suggested_assertion"],
-            ))
+    })
 }
 
 fn ripr_swarm_plan_requires_operator_judgment(
@@ -21614,9 +21605,24 @@ fn ripr_swarm_plan_requires_operator_judgment(
 }
 
 fn ripr_swarm_plan_related_context_present(packet: &Value) -> bool {
-    ripr_swarm_plan_value_present(audit_get(packet, &["related_test_or_observer"]))
-        || audit_non_empty_string(packet, &["candidate_value_or_observer"])
-            .is_some_and(|field| !ripr_swarm_plan_field_missing(&field))
+    audit_get(packet, &["related_test_or_observer"])
+        .and_then(ripr_swarm_plan_related_target_file)
+        .is_some()
+        || audit_get(packet, &["candidate_value_or_observer"])
+            .and_then(ripr_swarm_plan_related_target_file)
+            .is_some()
+}
+
+fn ripr_swarm_plan_related_target_file(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => ripr_swarm_attempt_related_target_file(value),
+        Value::Object(object) => object
+            .get("file")
+            .and_then(Value::as_str)
+            .and_then(ripr_swarm_attempt_workspace_relative_file_token),
+        Value::Array(values) => values.iter().find_map(ripr_swarm_plan_related_target_file),
+        Value::Null | Value::Bool(_) | Value::Number(_) => None,
+    }
 }
 
 fn ripr_swarm_plan_non_missing_field(value: &Value, field: &str) -> bool {
@@ -21628,16 +21634,6 @@ fn ripr_swarm_plan_non_missing_any_field(value: &Value, fields: &[&str]) -> bool
     fields
         .iter()
         .any(|field| ripr_swarm_plan_non_missing_field(value, field))
-}
-
-fn ripr_swarm_plan_value_present(value: Option<&Value>) -> bool {
-    match value {
-        Some(Value::String(value)) => !ripr_swarm_plan_field_missing(value),
-        Some(Value::Array(values)) => !values.is_empty(),
-        Some(Value::Object(values)) => !values.is_empty(),
-        Some(Value::Null) | None => false,
-        Some(_) => true,
-    }
 }
 
 fn ripr_swarm_plan_field_missing(value: &str) -> bool {
@@ -72090,6 +72086,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_boundary_assertion",
                     "target_test_type": "boundary_discriminator",
                     "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                    },
                     "repair_route_source": "canonical_item.repair_route",
                     "verify_command": "cargo xtask evidence-quality-scorecard",
                     "receipt_command_or_path": "cargo xtask receipts check",
@@ -72110,6 +72111,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_boundary_assertion",
                     "target_test_type": "boundary_discriminator",
                     "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                    },
                     "repair_route_source": "canonical_item.repair_route",
                     "verify_command": "cargo xtask evidence-quality-scorecard",
                     "receipt_command_or_path": "cargo xtask receipts check",
@@ -72129,6 +72135,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_exact_error_variant",
                     "target_test_type": "error_variant",
                     "assertion_shape": "matches!(..., Err(Error::Missing))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant",
+                        "assertion_shape": "matches!(..., Err(Error::Missing))"
+                    },
                     "repair_route_source": "canonical_item.repair_route",
                     "verify_command": "cargo test parser_missing",
                     "related_test_or_observer": {"file": "tests/parser.rs", "name": "missing"},
@@ -72146,6 +72157,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_side_effect_observer",
                     "target_test_type": "side_effect_observer",
                     "assertion_shape": "assert event emitted",
+                    "repair_route": {
+                        "repair_kind": "add_side_effect_observer",
+                        "target_test_type": "side_effect_observer",
+                        "assertion_shape": "assert event emitted"
+                    },
                     "repair_route_source": "canonical_item.repair_route",
                     "receipt_command_or_path": "cargo xtask receipts check",
                     "related_test_or_observer": {"file": "tests/events.rs", "name": "event"},
@@ -72163,6 +72179,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "inspect_visibility",
                     "target_test_type": "output_observer",
                     "assertion_shape": "trace config label",
+                    "repair_route": {
+                        "repair_kind": "inspect_visibility",
+                        "target_test_type": "output_observer",
+                        "assertion_shape": "trace config label"
+                    },
                     "repair_route_source": "canonical_item.repair_route",
                     "verify_command": "cargo xtask evidence-quality-scorecard",
                     "receipt_command_or_path": "cargo xtask receipts check",
@@ -72299,6 +72320,11 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_boundary_assertion",
                     "target_test_type": "boundary_discriminator",
                     "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                    },
                     "repair_route_source": "canonical_item.repair_route",
                     "related_test_or_observer": {
                         "file": "tests/pricing.rs",
@@ -73100,14 +73126,20 @@ covered_by = ["cargo xtask check-file-policy"]
             &actionable_gaps,
             "packet:candidate-prose",
         )?;
-        assert_eq!(attempt.swarm_state, "queued");
+        assert_eq!(attempt.swarm_state, "blocked_by_missing_context");
         assert_eq!(
             ripr_swarm_attempt_allowed_file_line(&attempt),
-            "No typed edit target is available; do not edit files until the packet is regenerated"
+            "No file edits are authorized while swarm_state is `blocked_by_missing_context`"
+        );
+        assert!(
+            attempt
+                .expected_evidence_movement
+                .contains("missing_related_test_or_observer")
         );
 
         let markdown = ripr_swarm_attempt_dry_run_markdown(&attempt);
-        assert!(markdown.contains("No typed edit target is available"));
+        assert!(markdown.contains("blocked_by_missing_context"));
+        assert!(markdown.contains("missing_related_test_or_observer"));
         assert!(!markdown.contains("input that hits the boundary branch (bounded repair target)"));
         Ok(())
     }
@@ -73285,6 +73317,53 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn ripr_swarm_plan_blocks_candidate_prose_without_typed_target() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:candidate-prose",
+                    "evidence_class": "call_presence",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_call_observer",
+                    "target_test_type": "call_presence_observer",
+                    "assertion_shape": "// assert that helper called the expected target",
+                    "repair_route": {
+                        "repair_kind": "add_call_observer",
+                        "target_test_type": "call_presence_observer",
+                        "assertion_shape": "// assert that helper called the expected target"
+                    },
+                    "verify_command": "cargo test helper_call",
+                    "receipt_command": "cargo xtask receipts check",
+                    "candidate_value_or_observer": "input that reaches call helper()",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "related_test_or_observer")
+        );
+    }
+
+    #[test]
     fn ripr_swarm_plan_blocks_missing_raw_evidence_refs() {
         let actionable_gaps = serde_json::json!({
             "summary": {"actionable_gaps": 1},
@@ -73352,6 +73431,49 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_route")
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_unserialized_repair_route_hints() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:route-source-only",
+                    "evidence_class": "call_presence",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_call_observer",
+                    "target_test_type": "call_presence_observer",
+                    "assertion_shape": "// assert that helper called the expected target",
+                    "repair_route_source": "canonical_item.repair_route",
+                    "verify_command": "cargo test helper_call",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": "tests/lib.rs::helper_call",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
                 }
