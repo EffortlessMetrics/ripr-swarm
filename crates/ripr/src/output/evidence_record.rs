@@ -11,7 +11,7 @@ use crate::agent::loop_commands::{
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::CanonicalGapIdentity;
 use crate::analysis::seams::{SeamGripClass, SeamKind};
-use crate::analysis::test_grip_evidence::oracle_semantics_for;
+use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
     AssertionShape, CandidateValue, RecommendedTest, assertion_shape_for_entry,
@@ -871,14 +871,25 @@ fn oracle_semantics_record(
 
 fn static_limitations_for(entry: &ClassifiedSeam) -> Vec<EvidenceRecordStaticLimitation> {
     let mut limitations = Vec::new();
-    push_stage_limitation(&mut limitations, "reach", &entry.evidence.reach);
-    push_stage_limitation(&mut limitations, "activate", &entry.evidence.activate);
-    push_stage_limitation(&mut limitations, "propagate", &entry.evidence.propagate);
-    push_stage_limitation(&mut limitations, "observe", &entry.evidence.observe);
+    push_stage_limitation(&mut limitations, "reach", &entry.evidence.reach, entry);
+    push_stage_limitation(
+        &mut limitations,
+        "activate",
+        &entry.evidence.activate,
+        entry,
+    );
+    push_stage_limitation(
+        &mut limitations,
+        "propagate",
+        &entry.evidence.propagate,
+        entry,
+    );
+    push_stage_limitation(&mut limitations, "observe", &entry.evidence.observe, entry);
     push_stage_limitation(
         &mut limitations,
         "discriminate",
         &entry.evidence.discriminate,
+        entry,
     );
 
     if matches!(entry.class, SeamGripClass::Opaque) {
@@ -901,6 +912,7 @@ fn push_stage_limitation(
     limitations: &mut Vec<EvidenceRecordStaticLimitation>,
     stage: &str,
     evidence: &StageEvidence,
+    entry: &ClassifiedSeam,
 ) {
     if matches!(evidence.state, StageState::Unknown | StageState::Opaque) {
         let state = evidence.state.as_str();
@@ -910,7 +922,7 @@ fn push_stage_limitation(
             state: state.to_string(),
             reason: evidence.summary.clone(),
             category: category.to_string(),
-            repair_route: static_limitation_repair_route(category).to_string(),
+            repair_route: static_limitation_repair_route_for_entry(category, entry).to_string(),
         });
     }
 }
@@ -988,6 +1000,27 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
         "static_limitation_unclassified" => "analysis/static-limitation-taxonomy",
         _ => "analysis/static-limitation-taxonomy",
     }
+}
+
+fn static_limitation_repair_route_for_entry(
+    category: &str,
+    entry: &ClassifiedSeam,
+) -> &'static str {
+    if category == "activation_owner_call_absent" && owner_call_absence_is_affinity_only(entry) {
+        "analysis/related-test-affinity-owner-call-tracing"
+    } else {
+        static_limitation_repair_route(category)
+    }
+}
+
+fn owner_call_absence_is_affinity_only(entry: &ClassifiedSeam) -> bool {
+    !entry.evidence.related_tests.is_empty()
+        && entry.evidence.related_tests.iter().all(|test| {
+            !matches!(
+                test.relation_reason,
+                RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+            )
+        })
 }
 
 fn stage_json(stage: &EvidenceRecordStage) -> Value {
@@ -1538,6 +1571,68 @@ mod tests {
                 .unwrap_or_default()
                 .contains("Add or strengthen")
         );
+    }
+
+    #[test]
+    fn evidence_record_routes_affinity_only_owner_call_absence_to_related_test_tracing() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.activate = stage(
+            StageState::Unknown,
+            "No direct owner call observed for value-insensitive seam `return false`",
+        );
+        entry.evidence.related_tests[0].relation_reason = RelationReason::SameTestFile;
+        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
+        entry.evidence.observed_values.clear();
+        entry.evidence.missing_discriminators.clear();
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        assert_eq!(json["actionability"]["class"], "static_limitation");
+        assert_eq!(json["canonical_item"]["canonical_item_kind"], "limitation");
+        assert_eq!(json["canonical_item"]["gap_state"], "static_limitation");
+        assert_eq!(json["canonical_item"]["repair_route"], Value::Null);
+        assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(json["recommendation"]["verify_command"], Value::Null);
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            "activation_owner_call_absent"
+        );
+        assert_eq!(
+            json["static_limitations"][0]["repair_route"],
+            "analysis/related-test-affinity-owner-call-tracing"
+        );
+        assert_eq!(
+            json["canonical_item"]["static_limitations"][0]["repair_route"],
+            "analysis/related-test-affinity-owner-call-tracing"
+        );
+    }
+
+    #[test]
+    fn evidence_record_keeps_owner_call_absence_triage_route_when_owner_call_relation_exists() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.activate = stage(
+            StageState::Unknown,
+            "No direct owner call observed for value-insensitive seam `return false`",
+        );
+        entry.evidence.related_tests[0].relation_reason = RelationReason::DirectOwnerCall;
+        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::High;
+        entry.evidence.observed_values.clear();
+        entry.evidence.missing_discriminators.clear();
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        assert_eq!(json["actionability"]["class"], "static_limitation");
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            "activation_owner_call_absent"
+        );
+        assert_eq!(
+            json["static_limitations"][0]["repair_route"],
+            "analysis/owner-call-absence-triage"
+        );
+        assert_eq!(json["canonical_item"]["repair_route"], Value::Null);
     }
 
     #[test]
