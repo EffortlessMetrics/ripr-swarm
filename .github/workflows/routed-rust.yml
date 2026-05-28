@@ -291,7 +291,7 @@ jobs:
     name: Ripr Rust Small on GitHub Hosted
     needs: route
     if: needs.route.outputs.router_target == 'github'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
