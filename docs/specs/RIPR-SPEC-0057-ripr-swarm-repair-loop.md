@@ -298,6 +298,12 @@ highlighted, but previous failed, unchanged, or regressed attempts remain
 visible. A receipt that does not match any current canonical gap packet is
 reported as an orphaned receipt; it remains audit evidence and does not create
 a new actionable gap.
+Synthetic `not_attempted` rows are current queue placeholders, not durable
+repair attempts. They are preserved only while their packet or canonical gap
+remains present in the current swarm plan, or when receipt/verification evidence
+makes the row audit evidence. Stale synthetic `not_attempted` placeholders must
+not inflate route-quality or missing-evidence-field counts after the packet
+queue changes.
 
 The attempt ledger must preserve typed route context for each attempt when it
 is available: `evidence_class`, `source_file`, `repair_kind`,
@@ -522,6 +528,10 @@ Current implementation coverage:
   repair-ready;
 - `xtask::tests::ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest`
   pins durable attempt history and latest-attempt selection;
+- `xtask::tests::ripr_swarm_attempt_ledger_drops_stale_synthetic_not_attempted_rows`
+  pins cleanup of retired queue placeholders;
+- `xtask::tests::ripr_swarm_attempt_ledger_preserves_current_plan_not_attempted_rows`
+  pins carry-forward of current queue placeholders;
 - `xtask::tests::ripr_swarm_attempt_ledger_summarizes_repair_route_quality`
   pins typed route context, per-`repair_kind` route-quality metrics, top
   failing routes, and missing evidence fields;

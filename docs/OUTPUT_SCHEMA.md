@@ -2771,11 +2771,12 @@ target/ripr/reports/swarm-attempt-ledger.md
 The command reads `target/ripr/reports/swarm-plan.json`,
 `target/ripr/reports/actionable-gap-outcomes.json`, and any existing
 `target/ripr/reports/swarm-attempt-ledger.json` by default. It preserves prior
-attempt entries by `attempt_id`, adds the current outcome join, and highlights
-the latest attempt per `canonical_gap_id`. It does not execute repairs, edit
-files, run tests, create receipts, call providers, run mutation testing, change
-PR/CI rendering, change editor/LSP behavior, change gates, or change public
-badges.
+durable attempt entries by `attempt_id`, drops stale synthetic `not_attempted`
+placeholders when their packet is no longer present in the current swarm plan,
+adds the current outcome join, and highlights the latest attempt per
+`canonical_gap_id`. It does not execute repairs, edit files, run tests, create
+receipts, call providers, run mutation testing, change PR/CI rendering, change
+editor/LSP behavior, change gates, or change public badges.
 The Markdown sibling includes a `Runtime Status` table with the same
 completeness fields as JSON before listing ledger inputs.
 
@@ -2936,12 +2937,16 @@ completeness fields as JSON before listing ledger inputs.
 }
 ```
 
-`attempts[]` is durable history. `latest_attempts[]` is the current routing
-view, one entry per canonical gap, and is the source readiness uses for
+`attempts[]` is durable history plus current-plan queue placeholders.
+`latest_attempts[]` is the current routing view, one entry per canonical gap,
+and is the source readiness uses for
 attempt/improved/unchanged/regressed/resolved counts. The ledger preserves
-`not_attempted`, `attempted_no_receipt`, `receipt_present`,
-`evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
-and `unknown` outcomes. Missing outcome inputs make the ledger
+`attempted_no_receipt`, `receipt_present`, `evidence_improved`,
+`evidence_unchanged`, `evidence_regressed`, `resolved`, and `unknown` outcomes.
+It preserves `not_attempted` rows only when they remain tied to the current
+swarm plan or carry durable receipt/verification evidence; stale synthetic
+`not_attempted` placeholders are dropped so retired packets do not create
+route-quality or missing-field noise. Missing outcome inputs make the ledger
 `limited_incomplete_input`; readable-but-limited outcome inputs keep their
 limited `runtime_status` instead of becoming a clean full ledger. Missing
 swarm-plan input is consumable but explicitly limited because packet ids may be
