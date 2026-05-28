@@ -2923,12 +2923,17 @@ If `swarm-plan.json` is missing or malformed, the report is `blocked` with a
 bounded input limitation. If `actionable-gap-outcomes.json` or
 `swarm-attempt-ledger.json` is missing, the report records the limitation and
 routes the operator to regenerate the missing artifact; missing outcomes or
-ledger inputs do not imply failed attempts.
+ledger inputs do not imply failed attempts. They do make readiness
+non-consumable for downstream attempt/outcome claims until the missing artifact
+is regenerated.
 
 Swarm plan and readiness reports include `run_status` and `runtime_status`.
 Readiness preserves a limited swarm-plan input, and reports missing or malformed
 required plan input as `limited_incomplete_input` instead of turning absent
-packets into a clean zero-ready state.
+packets into a clean zero-ready state. Missing outcomes or attempt ledger inputs
+also report `limited_incomplete_input` with `downstream_consumable = false`
+because the repair queue can still be inspected, but attempt history and outcome
+quality are incomplete.
 
 Readiness forwards attempt-ledger `repair_route_quality[]`,
 `top_failing_repair_routes[]`, and `top_missing_evidence_fields[]` so the next

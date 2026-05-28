@@ -23404,7 +23404,7 @@ fn ripr_swarm_readiness_runtime_status(
             Some(&actionable_gap_outcomes.path),
             "actionable_gap_outcomes_input_unavailable",
             "run cargo xtask actionable-gap-outcomes before claiming attempt outcomes",
-            true,
+            false,
         );
     }
     if attempt_ledger.value.is_none() {
@@ -23414,7 +23414,7 @@ fn ripr_swarm_readiness_runtime_status(
             Some(&attempt_ledger.path),
             "swarm_attempt_ledger_input_unavailable",
             "run cargo xtask ripr-swarm attempt-ledger before claiming durable attempt history",
-            true,
+            false,
         );
     }
     lane1_runtime_status_full()
@@ -75761,6 +75761,128 @@ covered_by = ["cargo xtask check-file-policy"]
             value["next_actions"][1]["kind"],
             serde_json::Value::from("reconcile_orphaned_receipts")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_marks_missing_outcomes_nonconsumable() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "swarm_ready_packets": 1
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "summary": {
+                "attempts_total": 0
+            }
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read actionable gap outcomes".to_string()),
+                value: None,
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(
+            value["runtime_status"]["limitation_category"],
+            "actionable_gap_outcomes_input_unavailable"
+        );
+        assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+        assert_eq!(
+            value["runtime_status"]["repair_route"],
+            "run cargo xtask actionable-gap-outcomes before claiming attempt outcomes"
+        );
+        assert!(value["next_actions"].as_array().is_some_and(|actions| {
+            actions
+                .iter()
+                .any(|action| action["kind"] == "refresh_outcome_report")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_marks_missing_attempt_ledger_nonconsumable() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "swarm_ready_packets": 1
+            }
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "summary": {
+                "outcomes_total": 0
+            }
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read attempt ledger".to_string()),
+                value: None,
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(
+            value["runtime_status"]["limitation_category"],
+            "swarm_attempt_ledger_input_unavailable"
+        );
+        assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+        assert_eq!(
+            value["runtime_status"]["repair_route"],
+            "run cargo xtask ripr-swarm attempt-ledger before claiming durable attempt history"
+        );
+        assert!(value["next_actions"].as_array().is_some_and(|actions| {
+            actions
+                .iter()
+                .any(|action| action["kind"] == "refresh_attempt_ledger")
+        }));
         Ok(())
     }
 
