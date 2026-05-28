@@ -18941,6 +18941,54 @@ fn lane1_runtime_status_json(status: &Lane1RuntimeStatus) -> Value {
     })
 }
 
+fn lane1_runtime_status_push_markdown(out: &mut String, runtime_status: &Lane1RuntimeStatus) {
+    out.push_str("## Runtime Status\n\n");
+    out.push_str("| Field | Value |\n");
+    out.push_str("| --- | --- |\n");
+    out.push_str(&format!(
+        "| State | `{}` |\n",
+        audit_markdown_cell(&runtime_status.state)
+    ));
+    out.push_str(&format!(
+        "| Phase | `{}` |\n",
+        audit_markdown_cell(runtime_status.phase.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Duration ms | `{}` |\n",
+        runtime_status
+            .duration_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    ));
+    out.push_str(&format!(
+        "| Limit ms | `{}` |\n",
+        runtime_status
+            .limit_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    ));
+    out.push_str(&format!(
+        "| Input kind | `{}` |\n",
+        audit_markdown_cell(runtime_status.input_kind.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Input path | `{}` |\n",
+        audit_markdown_cell(runtime_status.input_path.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Limitation category | `{}` |\n",
+        audit_markdown_cell(runtime_status.limitation_category.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Repair route | {} |\n",
+        audit_markdown_cell(runtime_status.repair_route.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Downstream consumable | `{}` |\n\n",
+        runtime_status.downstream_consumable
+    ));
+}
+
 fn lane1_runtime_input_path(limitation: &Lane1EvidenceAuditRunLimitation) -> Option<String> {
     if limitation.category == "lane1_repo_exposure_large_cache_preflight_skip" {
         Some(limitation.input.clone())
@@ -22381,6 +22429,7 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
     out.push_str(
         "Advisory dry-run plan over actionable canonical gap packets. Raw findings remain supporting evidence only.\n\n",
     );
+    lane1_runtime_status_push_markdown(&mut out, &report.runtime_status);
     out.push_str("## Input\n\n");
     out.push_str("| Field | Value |\n");
     out.push_str("| --- | --- |\n");
@@ -24254,6 +24303,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
     out.push_str(
         "Advisory roll-up over swarm-plan and actionable-gap-outcome artifacts. It does not execute repairs or consume raw findings as work.\n\n",
     );
+    lane1_runtime_status_push_markdown(&mut out, &report.runtime_status);
     out.push_str("## Inputs\n\n");
     out.push_str("| Input | State | Path | Limitation |\n");
     out.push_str("| --- | --- | --- | --- |\n");
@@ -76316,6 +76366,17 @@ covered_by = ["cargo xtask check-file-policy"]
             "run cargo xtask actionable-gap-outcomes before building the attempt ledger"
         );
         assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+        let markdown = ripr_swarm_readiness_markdown(&report);
+        assert!(markdown.contains("## Runtime Status"));
+        assert!(markdown.contains("| State | `limited_incomplete_input` |"));
+        assert!(markdown.contains("| Phase | `swarm_attempt_ledger_input` |"));
+        assert!(
+            markdown.contains("| Input path | `target/ripr/reports/swarm-attempt-ledger.json` |")
+        );
+        assert!(markdown.contains(
+            "| Repair route | run cargo xtask actionable-gap-outcomes before building the attempt ledger |"
+        ));
+        assert!(markdown.contains("| Downstream consumable | `false` |"));
         assert_eq!(
             value["top_next_action"]["kind"],
             "resolve_limited_runtime_status"
@@ -77289,6 +77350,10 @@ covered_by = ["cargo xtask check-file-policy"]
 
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].canonical_gap_id, "gap:suggested-assertion");
+        let markdown = ripr_swarm_plan_markdown(&report);
+        assert!(markdown.contains("## Runtime Status"));
+        assert!(markdown.contains("| State | `full` |"));
+        assert!(markdown.contains("| Downstream consumable | `true` |"));
     }
 
     #[test]
