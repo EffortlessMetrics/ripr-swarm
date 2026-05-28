@@ -520,6 +520,13 @@ implementation surfaces are:
 - `docs/RIPR_SWARM_HUMAN_WORKFLOW.md` (implemented);
 - existing `actionable-gaps` and `actionable-gap-outcomes` artifacts.
 
+Attempt-ledger and readiness reports must preserve limited upstream runtime
+state. A readable-but-limited `actionable-gap-outcomes` artifact must not become
+a `full` attempt ledger, and a readable-but-limited attempt ledger must not
+become a `full` readiness report. The downstream report keeps the upstream
+repair route and input path so the operator can repair the limiting artifact
+instead of trusting incomplete attempt/outcome evidence.
+
 No provider SDK, mutation executor, generated-test writer, PR/CI renderer,
 LSP/editor feature, gate policy, or public badge change belongs to this spec.
 
