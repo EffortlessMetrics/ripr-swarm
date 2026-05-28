@@ -284,7 +284,7 @@ This spec does not authorize:
 
 ## Test Mapping
 
-Existing proof is split across linked specs:
+Existing proof is split across linked specs and fixtures:
 
 - evidence-record canonical item fields and static limitations;
 - Lane 1 evidence-quality audit counts and actionable-gap packet projection;
@@ -293,9 +293,24 @@ Existing proof is split across linked specs:
   limitation packets;
 - editor actionable gap queue fail-closed validation.
 
-The next implementation PR should add false-actionable fixtures for unresolved
-activation boundary operands and prove that unsafe cases downgrade to named
-limitations while parameter/literal boundaries remain actionable.
+Implemented false-actionable proof covers unresolved activation boundary
+operands:
+
+- `crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_iterator_local_then_activation_is_static_limitation`
+  keeps `idx >= offset` style iterator-local operands as named limitations and
+  suppresses exact candidate values;
+- `crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_computed_local_then_activation_stays_static_limitation`
+  keeps computed locals as named limitations and suppresses exact candidate
+  values;
+- `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_keeps_unresolved_boundary_operands_as_named_limitation`
+  maps iterator-derived unresolved boundary operands to
+  `analysis/iterator-boundary-operand-resolution`;
+- `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_routes_computed_boundary_operands_to_local_computed_limitation`
+  maps local/computed unresolved boundary operands to
+  `analysis/local-computed-boundary-operand-resolution`;
+- `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_carries_identity_path_guidance_and_calibration_placeholder`
+  preserves the normal parameter/literal boundary path as actionable with
+  `repair_kind = add_boundary_assertion`.
 
 ## Implementation Mapping
 
