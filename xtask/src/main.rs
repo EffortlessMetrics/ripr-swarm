@@ -22654,6 +22654,8 @@ fn ripr_swarm_attempt_ledger_entries_from_outcomes(
     plan_packets: &BTreeMap<String, Value>,
 ) -> Vec<RiprSwarmAttemptLedgerEntry> {
     let receipt_path = audit_non_empty_string(outcomes, &["inputs", "agent_receipt"]);
+    let targeted_test_outcome_path =
+        audit_non_empty_string(outcomes, &["inputs", "targeted_test_outcome"]);
     audit_array(outcomes, &["outcomes"])
         .iter()
         .map(|outcome| {
@@ -22662,6 +22664,7 @@ fn ripr_swarm_attempt_ledger_entries_from_outcomes(
                 outcome,
                 plan_packets,
                 receipt_path.as_deref(),
+                targeted_test_outcome_path.as_deref(),
             )
         })
         .collect()
@@ -22672,6 +22675,7 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
     outcome: &Value,
     plan_packets: &BTreeMap<String, Value>,
     receipt_path: Option<&str>,
+    targeted_test_outcome_path: Option<&str>,
 ) -> RiprSwarmAttemptLedgerEntry {
     let canonical_gap_id = audit_non_empty_string(outcome, &["canonical_gap_id"])
         .unwrap_or_else(|| "canonical_gap_id_unknown".to_string());
@@ -22687,7 +22691,7 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
     let receipt_state = audit_non_empty_string(outcome, &["receipt_state"])
         .unwrap_or_else(|| RECEIPT_NOT_APPLICABLE.to_string());
     let movement_source = audit_non_empty_string(outcome, &["movement_source"]);
-    let receipt_path =
+    let entry_receipt_path =
         if ripr_swarm_attempt_ledger_receipt_path_applies(&receipt_state, &outcome_state) {
             receipt_path.map(str::to_string)
         } else {
@@ -22718,6 +22722,13 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
         &receipt_state,
         &outcome_state,
     );
+    let outcome_timestamp = audit_non_empty_string(outcome, &["timestamp"]);
+    let attempt_instance = ripr_swarm_attempt_ledger_attempt_instance(
+        outcome_timestamp.as_deref(),
+        entry_receipt_path.as_deref(),
+        movement_source.as_deref(),
+        targeted_test_outcome_path,
+    );
 
     RiprSwarmAttemptLedgerEntry {
         packet_id,
@@ -22728,6 +22739,7 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
             &receipt_state,
             movement_source.as_deref(),
             audit_non_empty_string(outcome, &["seam_id"]).as_deref(),
+            attempt_instance.as_deref(),
         ),
         evidence_class,
         source_file,
@@ -22735,14 +22747,13 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
         target_test_type,
         assertion_shape,
         actor_kind,
-        receipt_path,
+        receipt_path: entry_receipt_path,
         verify_command,
         receipt_command,
         before_gap_state: audit_non_empty_string(outcome, &["before"]),
         after_gap_state: audit_non_empty_string(outcome, &["after"]),
         outcome: outcome_state,
-        timestamp: audit_non_empty_string(outcome, &["timestamp"])
-            .or_else(|| Some(generated_at.to_string())),
+        timestamp: outcome_timestamp.or_else(|| Some(generated_at.to_string())),
         receipt_state,
         movement_source,
         reason: audit_non_empty_string(outcome, &["reason"])
@@ -22786,17 +22797,41 @@ fn ripr_swarm_attempt_ledger_attempt_id(
     receipt_state: &str,
     movement_source: Option<&str>,
     seam_id: Option<&str>,
+    attempt_instance: Option<&str>,
 ) -> String {
     let source = movement_source.unwrap_or("no_movement_source");
     let seam = seam_id.unwrap_or("no_seam");
-    format!(
+    let base = format!(
         "attempt:{}:{}:{}:{}:{}",
         audit_slug(canonical_gap_id),
         audit_slug(outcome_state),
         audit_slug(receipt_state),
         audit_slug(source),
         audit_slug(seam)
-    )
+    );
+    if let Some(instance) = attempt_instance {
+        format!("{base}:{}", audit_slug(instance))
+    } else {
+        base
+    }
+}
+
+fn ripr_swarm_attempt_ledger_attempt_instance(
+    outcome_timestamp: Option<&str>,
+    receipt_path: Option<&str>,
+    movement_source: Option<&str>,
+    targeted_test_outcome_path: Option<&str>,
+) -> Option<String> {
+    if let Some(timestamp) = outcome_timestamp {
+        return Some(format!("timestamp:{timestamp}"));
+    }
+    if let Some(path) = receipt_path {
+        return Some(format!("receipt_path:{path}"));
+    }
+    if movement_source == Some("targeted_test_outcome") {
+        return targeted_test_outcome_path.map(|path| format!("targeted_test_outcome_path:{path}"));
+    }
+    None
 }
 
 fn audit_slug(value: &str) -> String {
@@ -77813,12 +77848,121 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(value["summary"]["orphaned_receipts"], 1);
         assert_eq!(
             value["latest_attempts"][0]["attempt_id"],
-            "attempt:gap-seam-a:evidence-improved:receipt-movement-improved:agent-receipt:seam-a"
+            "attempt:gap-seam-a:evidence-improved:receipt-movement-improved:agent-receipt:seam-a:receipt-path-target-ripr-reports-agent-receipt-json"
         );
         let markdown = ripr_swarm_attempt_ledger_markdown(&report);
         assert!(markdown.contains("# RIPR Swarm Attempt Ledger"));
         assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
         assert!(markdown.contains("evidence_improved"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_preserves_repeated_same_state_attempts() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "top_ready_packets": [
+                {
+                    "packet_id": "packet-boundary-001",
+                    "canonical_gap_id": "gap:seam-a",
+                    "evidence_class": "predicate_boundary",
+                    "source_file": "src/pricing.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                    "verify_command": "cargo test -p ripr seam_a",
+                    "receipt_command": "cargo xtask receipts write --packet packet-boundary-001"
+                }
+            ]
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "inputs": {
+                "agent_receipt": "target/ripr/reports/agent-receipt-new.json"
+            },
+            "outcomes": [
+                {
+                    "canonical_gap_id": "gap:seam-a",
+                    "receipt_state": "receipt_movement_unchanged",
+                    "outcome_state": "evidence_unchanged",
+                    "seam_id": "seam-a",
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped",
+                    "movement_source": "agent_receipt",
+                    "timestamp": "unix_ms:2"
+                }
+            ]
+        });
+        let prior_ledger = serde_json::json!({
+            "schema_version": "0.1",
+            "report": "swarm-attempt-ledger",
+            "attempts": [
+                {
+                    "packet_id": "packet-boundary-001",
+                    "canonical_gap_id": "gap:seam-a",
+                    "attempt_id": "attempt:gap-seam-a:evidence-unchanged:receipt-movement-unchanged:agent-receipt:seam-a",
+                    "actor_kind": "agent",
+                    "receipt_path": "target/ripr/reports/agent-receipt-old.json",
+                    "verify_command": "cargo test -p ripr seam_a",
+                    "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                    "before_gap_state": "weakly_gripped",
+                    "after_gap_state": "weakly_gripped",
+                    "outcome": "evidence_unchanged",
+                    "timestamp": "unix_ms:1",
+                    "receipt_state": "receipt_movement_unchanged",
+                    "movement_source": "agent_receipt",
+                    "reason": "prior unchanged attempt"
+                }
+            ]
+        });
+
+        let report = ripr_swarm_attempt_ledger_from_values(
+            "unix_ms:3".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&prior_ledger),
+            },
+        );
+
+        assert_eq!(
+            report.attempts.len(),
+            2,
+            "same-state repeated attempts with distinct timestamps must not collapse"
+        );
+        assert_eq!(report.latest_attempts.len(), 1);
+        assert_eq!(report.latest_attempts[0].outcome, "evidence_unchanged");
+        assert_eq!(
+            report.latest_attempts[0].attempt_id,
+            "attempt:gap-seam-a:evidence-unchanged:receipt-movement-unchanged:agent-receipt:seam-a:timestamp-unix-ms-2"
+        );
+        assert!(
+            report.attempts.iter().any(|attempt| attempt.attempt_id.as_str()
+                == "attempt:gap-seam-a:evidence-unchanged:receipt-movement-unchanged:agent-receipt:seam-a"),
+            "prior same-state attempt remains visible"
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["attempts_total"], 2);
+        assert_eq!(value["summary"]["evidence_unchanged"], 1);
         Ok(())
     }
 
