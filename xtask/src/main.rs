@@ -8966,7 +8966,6 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
     let scenarios = dogfood_user_surface_projection_scenarios();
     let mut seen_names = BTreeSet::new();
     let mut seen_surfaces = BTreeSet::new();
-    let mut seen_run_statuses = BTreeSet::new();
     let mut canonical_gap_id: Option<String> = None;
     let mut packet_id: Option<String> = None;
     let mut repair_kind: Option<String> = None;
@@ -8980,7 +8979,6 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
             ));
         }
         seen_surfaces.insert(scenario.surface.clone());
-        seen_run_statuses.insert(scenario.run_status.clone());
         for error in dogfood_user_surface_projection_run(scenario).errors {
             violations.push(format!(
                 "user surface projection alignment case {}: {error}",
@@ -9024,15 +9022,27 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
             ));
         }
     }
-    for required in USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES {
-        if !seen_run_statuses.contains(*required) {
-            violations.push(format!(
-                "user surface projection alignment corpus is missing run_status {required}"
-            ));
-        }
-    }
+    violations.extend(user_surface_projection_required_run_status_violations(
+        &scenarios,
+    ));
 
     Ok(())
+}
+
+fn user_surface_projection_required_run_status_violations(
+    scenarios: &[DogfoodUserSurfaceProjectionScenario],
+) -> Vec<String> {
+    let seen_run_statuses = scenarios
+        .iter()
+        .map(|scenario| scenario.run_status.as_str())
+        .collect::<BTreeSet<_>>();
+    USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES
+        .iter()
+        .filter(|required| !seen_run_statuses.contains(**required))
+        .map(|required| {
+            format!("user surface projection alignment corpus is missing run_status {required}")
+        })
+        .collect()
 }
 
 fn validate_swarm_plan_packet_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
@@ -54657,6 +54667,7 @@ mod tests {
         targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
         test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
         test_oracle_tests_in_text, unknown_command_message,
+        user_surface_projection_required_run_status_violations,
         validate_actionable_gap_outcomes_fixture_case,
         validate_actionable_gap_outcomes_fixture_corpus, validate_local_context_allowlist,
         validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
@@ -63312,6 +63323,16 @@ fn exact_owner_call_has_external_expected_value() {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn dogfood_user_surface_projection_alignment_requires_limited_and_stale_statuses() {
+        let scenarios = vec![valid_user_surface_projection_scenario()];
+        let report = user_surface_projection_required_run_status_violations(&scenarios).join("\n");
+
+        assert!(!report.contains("run_status full"));
+        assert!(report.contains("run_status limited_large_cache_skip"));
+        assert!(report.contains("run_status limited_stale_input"));
     }
 
     fn valid_user_surface_projection_scenario() -> DogfoodUserSurfaceProjectionScenario {
