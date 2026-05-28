@@ -21144,6 +21144,7 @@ struct RiprSwarmPlanPacket {
     raw_findings_count: usize,
     static_limitations_count: usize,
     public_projection_eligible: bool,
+    projection_exclusion_reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22016,6 +22017,13 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     let must_not_change_count = audit_array(packet, &["must_not_change"]).len();
     let public_projection_eligible =
         audit_bool(packet, &["public_projection_eligible"]).unwrap_or(false);
+    let projection_exclusion_reasons = audit_array(packet, &["projection_exclusion_reasons"])
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
     let requires_operator_judgment = ripr_swarm_plan_requires_operator_judgment(
         &evidence_class,
         &repair_kind,
@@ -22072,7 +22080,7 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
                 .map(|field| format!("missing_{field}")),
         );
         "blocked_by_missing_context".to_string()
-    } else if !public_projection_eligible {
+    } else if !public_projection_eligible || !projection_exclusion_reasons.is_empty() {
         blocked_reasons.push("public_projection_excluded".to_string());
         "blocked_by_public_projection_exclusion".to_string()
     } else if requires_operator_judgment {
@@ -22148,6 +22156,7 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
         raw_findings_count,
         static_limitations_count,
         public_projection_eligible,
+        projection_exclusion_reasons,
     }
 }
 
@@ -22428,6 +22437,7 @@ fn ripr_swarm_plan_packets_json(packets: &[RiprSwarmPlanPacket]) -> Vec<Value> {
                 "raw_findings_supporting_only": true,
                 "static_limitations_count": packet.static_limitations_count,
                 "public_projection_eligible": packet.public_projection_eligible,
+                "projection_exclusion_reasons": packet.projection_exclusion_reasons,
             })
         })
         .collect()
@@ -77538,6 +77548,73 @@ covered_by = ["cargo xtask check-file-policy"]
                 .missing_context
                 .iter()
                 .any(|field| field == "repair_route")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_explicit_projection_exclusion_reasons() -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:contradictory-projection",
+                    "evidence_class": "error_path",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant_observer",
+                        "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                    },
+                    "verify_command": "cargo test exact_error_variant",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": {
+                        "file": "tests/error.rs",
+                        "name": "exact_error_variant"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true,
+                    "projection_exclusion_reasons": ["suppressed_by_public_projection_policy"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        assert!(ready.is_empty());
+
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(
+            blocked[0].swarm_state,
+            "blocked_by_public_projection_exclusion"
+        );
+        assert_eq!(
+            blocked[0].projection_exclusion_reasons,
+            vec!["suppressed_by_public_projection_policy"]
+        );
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["public_projection_excluded_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["top_blocked_packets"][0]["projection_exclusion_reasons"][0],
+            "suppressed_by_public_projection_policy"
         );
         Ok(())
     }

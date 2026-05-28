@@ -2538,7 +2538,8 @@ completeness fields as JSON before listing plan inputs.
       "raw_findings_count": 2,
       "raw_findings_supporting_only": true,
       "static_limitations_count": 0,
-      "public_projection_eligible": true
+      "public_projection_eligible": true,
+      "projection_exclusion_reasons": []
     }
   ],
   "top_blocked_packets": [],
@@ -2562,7 +2563,9 @@ repair-shape strings remain supporting context only; they do not authorize file
 edits or swarm-ready ranking by themselves. Packets missing required typed
 context use `blocked_by_missing_context`. Packets with static limitations use
 `blocked_by_static_limitation`. Packets excluded from the public actionable
-projection use `blocked_by_public_projection_exclusion`. Static-only
+projection use `blocked_by_public_projection_exclusion`; a non-empty
+`projection_exclusion_reasons[]` array is blocking even if a stale producer also
+sets `public_projection_eligible = true`. Static-only
 predicate-boundary assertion packets use `blocked_by_operator_judgment`; they
 remain visible but are not default
 swarm-ready until upstream evidence is fixture-backed, calibrated, or explicitly
