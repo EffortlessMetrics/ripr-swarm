@@ -23305,6 +23305,7 @@ fn ripr_swarm_attempt_ledger_markdown(report: &RiprSwarmAttemptLedgerReport) -> 
         report.runtime_status.state
     ));
     out.push_str("Durable advisory ledger over swarm packets, receipts, and evidence movement. It does not execute repairs or create receipts.\n\n");
+    lane1_runtime_status_push_markdown(&mut out, &report.runtime_status);
     out.push_str("## Inputs\n\n");
     out.push_str("| Input | State | Path | Limitation |\n");
     out.push_str("| --- | --- | --- | --- |\n");
@@ -29067,6 +29068,7 @@ fn evidence_quality_scorecard_markdown(report: &EvidenceQualityScorecardReport) 
     ));
     out.push_str("This repo-local scorecard summarizes Lane 1 evidence quality from existing evidence artifacts. It does not change analyzer behavior, gate policy, PR or CI projection, editor output, source files, generated tests, provider calls, or runtime execution.\n\n");
 
+    lane1_runtime_status_push_markdown(&mut out, &report.runtime_status);
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n");
     out.push_str("| --- | ---: |\n");
@@ -30715,6 +30717,7 @@ fn evidence_quality_trend_markdown(report: &EvidenceQualityTrendReport) -> Strin
     ));
     out.push_str("This repo-local trend compares existing Lane 1 scorecard or audit snapshots. It does not change analyzer behavior, gate policy, PR or CI projection, editor output, source files, generated tests, provider calls, score definitions, or runtime execution.\n\n");
 
+    lane1_runtime_status_push_markdown(&mut out, &report.runtime_status);
     out.push_str("## Movement Since Prior Refresh\n\n");
     out.push_str("This front section reports scorecard movement for actionable counts. Receipt-linked resolved, improved, unchanged, missing-receipt, and orphaned-receipt movement belongs to `cargo xtask actionable-gap-outcomes`; this trend report does not infer those states from scorecard deltas.\n\n");
     out.push_str("| Metric | Value |\n");
@@ -78427,6 +78430,9 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(value["latest_attempts"][0]["verify_result"], "pass");
         let markdown = ripr_swarm_attempt_ledger_markdown(&report);
         assert!(markdown.contains("# RIPR Swarm Attempt Ledger"));
+        assert!(markdown.contains("## Runtime Status"));
+        assert!(markdown.contains("| State | `full` |"));
+        assert!(markdown.contains("| Downstream consumable | `true` |"));
         assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
         assert!(markdown.contains("evidence_improved"));
         assert!(markdown.contains("| Verify result |"));
@@ -80893,6 +80899,9 @@ covered_by = ["cargo xtask check-file-policy"]
                 "scorecard Markdown missing {needle}"
             );
         }
+        assert!(markdown.contains("## Runtime Status"));
+        assert!(markdown.contains("| State | `full` |"));
+        assert!(markdown.contains("| Downstream consumable | `true` |"));
         Ok(())
     }
 
@@ -81493,6 +81502,10 @@ covered_by = ["cargo xtask check-file-policy"]
         }));
 
         let markdown = evidence_quality_trend_markdown(&report);
+        assert!(markdown.contains("## Runtime Status"));
+        assert!(markdown.contains("| State | `limited_incomplete_input` |"));
+        assert!(markdown.contains("| Limitation category | `current_scorecard_limited` |"));
+        assert!(markdown.contains("| Downstream consumable | `false` |"));
         assert!(markdown.contains("current_scorecard_limited"));
         assert!(markdown.contains("cannot claim improvement or regression"));
         Ok(())
