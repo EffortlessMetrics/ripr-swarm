@@ -2469,6 +2469,8 @@ repair target in `related_test_or_observer` or `candidate_value_or_observer`.
 If the actionable-gaps input is missing or malformed, the command still writes
 a bounded blocked report with the input path, input state, and limitation text.
 It does not silently drop the plan or infer work from stale Markdown.
+The Markdown sibling includes a `Runtime Status` table with the same
+completeness fields as JSON before listing plan inputs.
 
 ```json
 {
@@ -2989,7 +2991,9 @@ incomplete. If outcomes are present while the attempt ledger is missing,
 readiness may display those outcome counts as advisory context, but the report
 remains non-consumable until durable attempt history is available.
 The Markdown input table mirrors the JSON `inputs` object and includes swarm
-plan, actionable-gap outcomes, and attempt-ledger rows.
+plan, actionable-gap outcomes, and attempt-ledger rows. The Markdown sibling
+also includes a `Runtime Status` table with the same completeness fields as JSON
+before listing those inputs.
 
 Readiness recomputes attempt/outcome summary counts, repair-route quality, and
 missing-evidence-field counts from durable attempt-ledger `attempts[]` when
