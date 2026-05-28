@@ -240,6 +240,11 @@ static limitation category/count/repair route when present, and next repair
 route. Static-dominated rows must use the dominant named limitation repair route
 as `next_repair` so the queue points at a concrete analyzer slice instead of a
 generic static-limitation taxonomy bucket.
+Static limitation repair routes may be relation-contextual when the evidence
+record carries enough context; for example, `activation_owner_call_absent` with
+only affinity-based related tests should route to
+`analysis/related-test-affinity-owner-call-tracing` instead of generic owner-call
+absence triage.
 
 Given a static-unknown or limitation-shaped canonical item, a limitation is
 named only when it carries a non-generic category and repair route. Generic

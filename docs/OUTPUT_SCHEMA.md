@@ -1685,7 +1685,9 @@ Field contract:
 - `activation_owner_call_absent` routes to
   `analysis/owner-call-absence-triage`; it means static analysis found related
   context but no direct owner call, so it remains a named limitation rather than
-  user-facing test repair debt.
+  user-facing test repair debt. When the related-test evidence is affinity-only
+  and has no direct or helper owner-call relation, the route is refined to
+  `analysis/related-test-affinity-owner-call-tracing`.
 - `evidence_quality.calibration_availability_counts` - counts keyed by
   `evidence_record.calibration.availability`. These are placeholder coverage
   labels from the static record and do not imply runtime execution.
