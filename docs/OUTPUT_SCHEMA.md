@@ -2560,8 +2560,10 @@ target. Candidate prose, `repair_route_source` hints, and top-level
 repair-shape strings remain supporting context only; they do not authorize file
 edits or swarm-ready ranking by themselves. Packets missing required typed
 context use `blocked_by_missing_context`. Packets with static limitations use
-`blocked_by_static_limitation`. Static-only predicate-boundary assertion packets
-use `blocked_by_operator_judgment`; they remain visible but are not default
+`blocked_by_static_limitation`. Packets excluded from the public actionable
+projection use `blocked_by_public_projection_exclusion`. Static-only
+predicate-boundary assertion packets use `blocked_by_operator_judgment`; they
+remain visible but are not default
 swarm-ready until upstream evidence is fixture-backed, calibrated, or explicitly
 operator-selected. Ranking is advisory and never redefines actionability; it
 starts from the canonical packet state already emitted by Lane 1.
@@ -2609,8 +2611,8 @@ static_limitations_count
 `queued` packets show the expected canonical-gap delta if receipt-backed
 evidence movement resolves or improves the item. Blocked packets remain visible
 with their `blocked_by_missing_context` or `blocked_by_static_limitation` state
-or `blocked_by_operator_judgment` state and are not promoted to repair-ready
-work.
+or `blocked_by_public_projection_exclusion` or `blocked_by_operator_judgment`
+state and are not promoted to repair-ready work.
 
 ## Actionable Gap Outcomes
 

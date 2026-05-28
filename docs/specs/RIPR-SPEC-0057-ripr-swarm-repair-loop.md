@@ -203,6 +203,7 @@ Each packet has one swarm state.
 | `failed_to_apply` | The repair could not be applied within packet boundaries. | Record failure and keep packet visible. |
 | `blocked_by_missing_context` | Required packet fields, related test, verify command, receipt command, or safe path context are missing. | Regenerate upstream artifacts or improve Lane 1 packet fields. |
 | `blocked_by_static_limitation` | The packet or class carries a named static limitation that prevents a safe repair attempt. | Close analyzer limitation or inspect manually. |
+| `blocked_by_public_projection_exclusion` | The upstream actionable-gap projection marked the packet ineligible for public repair routing, such as suppressed, intentional, or otherwise excluded guidance. | Inspect `projection_exclusion_reasons[]` and repair the upstream actionability classification before attempting the packet. |
 | `blocked_by_operator_judgment` | The packet has typed context but current confidence is too weak for a default swarm attempt, such as a static-only predicate boundary. | Inspect manually, add stronger upstream evidence, or route to a human-selected repair. |
 
 State transitions are receipt-backed when an attempt reaches verification. A
@@ -425,6 +426,11 @@ create a repair attempt. Raw findings remain supporting evidence only.
 Given a static-limitation packet such as an opaque helper or unsupported
 observer topology, `ripr-swarm` must report `blocked_by_static_limitation`
 rather than enqueueing it as repair-ready.
+
+Given a packet whose `public_projection_eligible` value is false, `ripr-swarm`
+must report `blocked_by_public_projection_exclusion` rather than enqueueing it
+as repair-ready, even when the packet otherwise has typed target, verify,
+receipt, confidence, and boundary fields.
 
 Given a static-only predicate-boundary assertion packet, `ripr-swarm` must
 report `blocked_by_operator_judgment` rather than enqueueing it as
