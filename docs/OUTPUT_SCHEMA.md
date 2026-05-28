@@ -2757,6 +2757,8 @@ the latest attempt per `canonical_gap_id`. It does not execute repairs, edit
 files, run tests, create receipts, call providers, run mutation testing, change
 PR/CI rendering, change editor/LSP behavior, change gates, or change public
 badges.
+The Markdown sibling includes a `Runtime Status` table with the same
+completeness fields as JSON before listing ledger inputs.
 
 ```json
 {
@@ -3207,6 +3209,8 @@ the audit first only when that required input is absent. It also reads
 when they are already available. The report is advisory and does not change
 analyzer behavior, gate policy, PR/CI projection, editor output, source files,
 generated tests, provider calls, or runtime execution.
+The Markdown sibling includes a `Runtime Status` table with the same
+completeness fields as JSON before listing scorecard summary metrics.
 
 If the scorecard cannot regenerate a missing Lane 1 audit, it still writes a
 bounded diagnostic scorecard instead of silently dropping the report. That
@@ -3554,6 +3558,8 @@ Operators may also pass `--current <path>` and `--previous <path>`. Missing
 history is reported explicitly as `unknown`; the command does not change
 analyzer behavior, gate policy, PR/CI projection, editor output, source files,
 generated tests, provider calls, score definitions, or runtime execution.
+The Markdown sibling includes a `Runtime Status` table with the same
+completeness fields as JSON before listing trend movement.
 
 If an explicit `--previous <path>` artifact is missing or malformed, the command
 still writes bounded trend JSON/Markdown with `summary.status = "unknown"`,
