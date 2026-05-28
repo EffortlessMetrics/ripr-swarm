@@ -1499,6 +1499,45 @@ mod tests {
     }
 
     #[test]
+    fn evidence_record_keeps_unresolved_boundary_operands_as_named_limitation() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.activate = stage(
+            StageState::Unknown,
+            "Boundary activation operands are local, iterator-derived, or computed for seam `idx >= offset`; add analyzer support for local/iterator operand resolution before emitting an actionable repair packet",
+        );
+        entry.evidence.observed_values.clear();
+        entry.evidence.missing_discriminators.clear();
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        assert_eq!(json["actionability"]["class"], "static_limitation");
+        assert_eq!(json["canonical_item"]["canonical_item_kind"], "limitation");
+        assert_eq!(json["canonical_item"]["gap_state"], "static_limitation");
+        assert_eq!(json["canonical_item"]["repair_route"], Value::Null);
+        assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(json["observed_values"].as_array().map(Vec::len), Some(0));
+        assert_eq!(
+            json["missing_discriminators"].as_array().map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(
+            json["canonical_item"]["static_limitations"][0]["category"],
+            "activation_boundary_input_unresolved"
+        );
+        assert_eq!(
+            json["canonical_item"]["static_limitations"][0]["repair_route"],
+            "analysis/local-iterator-boundary-operand-resolution"
+        );
+        assert!(
+            !json["canonical_item"]["recommended_repair"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Add or strengthen")
+        );
+    }
+
+    #[test]
     fn evidence_record_marks_opaque_seams_as_static_limitation_work() {
         let record = evidence_record_for(
             &sample_classified(StageState::Opaque, SeamGripClass::Opaque),
