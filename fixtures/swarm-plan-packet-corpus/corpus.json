@@ -247,6 +247,69 @@
       ]
     },
     {
+      "id": "public_projection_excluded_packet",
+      "description": "Complete packet marked ineligible by the public actionable projection stays blocked and cannot become swarm-ready.",
+      "packet": {
+        "canonical_gap_id": "gap:suppressed-repair",
+        "evidence_class": "error_path",
+        "gap_state": "actionable",
+        "actionability": "suppressed_by_policy",
+        "source_file": "src/parser.rs",
+        "repair_kind": "add_exact_error_variant",
+        "target_test_type": "error_variant",
+        "assertion_shape": "matches!(parse(input), Err(Error::Suppressed))",
+        "repair_route": {
+          "repair_kind": "add_exact_error_variant",
+          "target_test_type": "error_variant",
+          "assertion_shape": "matches!(parse(input), Err(Error::Suppressed))"
+        },
+        "verify_command": "cargo test -p ripr parser_suppressed",
+        "receipt_command": "cargo xtask receipts check",
+        "related_test_or_observer": {
+          "file": "tests/parser.rs",
+          "name": "parser_suppressed"
+        },
+        "confidence_basis": "fixture_backed",
+        "must_not_change": [
+          "Do not edit parser production code by default."
+        ],
+        "raw_findings": [
+          {
+            "file": "src/parser.rs",
+            "line": 28,
+            "kind": "weakly_exposed"
+          }
+        ],
+        "static_limitations": [],
+        "public_projection_eligible": false,
+        "projection_exclusion_reasons": [
+          "suppressed"
+        ]
+      },
+      "expected": {
+        "swarm_state": "blocked_by_public_projection_exclusion",
+        "swarm_ready": false,
+        "high_confidence": false,
+        "missing_context": [],
+        "blocked_reasons": [
+          "public_projection_excluded"
+        ],
+        "summary": {
+          "swarm_ready_packets": 0,
+          "blocked_packets": 1,
+          "missing_verify_command": 0,
+          "missing_receipt_command": 0,
+          "missing_must_not_change": 0,
+          "static_limitation_packets": 0,
+          "high_confidence_packets": 0
+        }
+      },
+      "must_not_claim": [
+        "Do not route public-projection-excluded packets as swarm-ready.",
+        "Do not override projection_exclusion_reasons in the swarm plan."
+      ]
+    },
+    {
       "id": "blocked_static_limitation_packet",
       "description": "Static limitation packet stays blocked even when repair, verify, and receipt fields exist.",
       "packet": {

@@ -7869,6 +7869,10 @@ const SWARM_PLAN_PACKET_REQUIRED_CASES: &[(&str, &str)] = &[
     ("exact_error_variant_packet", "queued"),
     ("output_observer_packet", "queued"),
     (
+        "public_projection_excluded_packet",
+        "blocked_by_public_projection_exclusion",
+    ),
+    (
         "static_only_predicate_boundary_packet",
         "blocked_by_operator_judgment",
     ),
@@ -22065,6 +22069,9 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
                 .map(|field| format!("missing_{field}")),
         );
         "blocked_by_missing_context".to_string()
+    } else if !public_projection_eligible {
+        blocked_reasons.push("public_projection_excluded".to_string());
+        "blocked_by_public_projection_exclusion".to_string()
     } else if requires_operator_judgment {
         blocked_reasons
             .push("static_only_predicate_boundary_requires_operator_judgment".to_string());
@@ -75837,6 +75844,90 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             value["summary"]["missing_receipt_command"],
             serde_json::Value::from(1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_public_projection_excluded_packets() -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "summary": {
+                "raw_signals": 1,
+                "canonical_items": 1,
+                "actionable_gaps": 1
+            },
+            "packets": [
+                {
+                    "packet_id": "packet:suppressed-but-complete",
+                    "canonical_gap_id": "gap:suppressed-but-complete",
+                    "evidence_class": "error_path",
+                    "gap_state": "actionable",
+                    "actionability": "suppressed_by_policy",
+                    "source_file": "src/parser.rs",
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant",
+                    "assertion_shape": "matches!(..., Err(Error::Missing))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant",
+                        "assertion_shape": "matches!(..., Err(Error::Missing))"
+                    },
+                    "repair_route_source": "canonical_item.repair_route",
+                    "verify_command": "cargo test parser_missing",
+                    "receipt_command_or_path": "cargo xtask receipts check",
+                    "related_test_or_observer": {
+                        "file": "tests/parser.rs",
+                        "name": "missing"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [
+                        {"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}
+                    ],
+                    "static_limitations": [],
+                    "public_projection_eligible": false,
+                    "projection_exclusion_reasons": ["suppressed"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+        assert_eq!(
+            value["summary"]["swarm_ready_packets"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            value["summary"]["blocked_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["top_blocked_packets"][0]["swarm_state"],
+            "blocked_by_public_projection_exclusion"
+        );
+        assert!(
+            value["top_blocked_packets"][0]["blocked_reasons"]
+                .as_array()
+                .is_some_and(|reasons| {
+                    reasons
+                        .iter()
+                        .any(|reason| reason == "public_projection_excluded")
+                })
+        );
+        assert!(
+            value["top_ready_packets"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
         );
         Ok(())
     }
