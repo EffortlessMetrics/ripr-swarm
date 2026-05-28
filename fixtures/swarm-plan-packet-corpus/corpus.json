@@ -375,6 +375,73 @@
       ]
     },
     {
+      "id": "activation_boundary_input_unresolved_packet",
+      "description": "Unresolved local or iterator-derived activation-boundary operands stay blocked as a named limitation even if stale boundary repair fields are present.",
+      "packet": {
+        "canonical_gap_id": "gap:activation-boundary-input-unresolved",
+        "evidence_class": "predicate_boundary",
+        "gap_state": "static_limitation",
+        "actionability": "static_limitation",
+        "source_file": "src/window.rs",
+        "repair_kind": "add_boundary_assertion",
+        "target_test_type": "boundary_discriminator",
+        "assertion_shape": "assert_eq!(window[idx], expected)",
+        "repair_route": {
+          "repair_kind": "add_boundary_assertion",
+          "target_test_type": "boundary_discriminator",
+          "assertion_shape": "assert_eq!(window[idx], expected)"
+        },
+        "verify_command": "cargo test -p ripr activation_boundary_input_unresolved",
+        "receipt_command": "cargo xtask receipts check",
+        "related_test_or_observer": {
+          "file": "tests/window.rs",
+          "name": "activation_boundary_input_unresolved"
+        },
+        "confidence_basis": "limitation_fixture",
+        "must_not_change": [
+          "Do not edit production iterator or boundary behavior."
+        ],
+        "raw_findings": [
+          {
+            "file": "src/window.rs",
+            "line": 44,
+            "kind": "static_unknown"
+          }
+        ],
+        "static_limitations": [
+          {
+            "category": "activation_boundary_input_unresolved",
+            "repair_route": "analysis/local-iterator-boundary-operand-resolution"
+          }
+        ],
+        "public_projection_eligible": true
+      },
+      "expected": {
+        "swarm_state": "blocked_by_static_limitation",
+        "swarm_ready": false,
+        "high_confidence": false,
+        "missing_context": [
+          "actionable_gap_state"
+        ],
+        "blocked_reasons": [
+          "static_limitation_present"
+        ],
+        "summary": {
+          "swarm_ready_packets": 0,
+          "blocked_packets": 1,
+          "missing_verify_command": 0,
+          "missing_receipt_command": 0,
+          "missing_must_not_change": 0,
+          "static_limitation_packets": 1,
+          "high_confidence_packets": 0
+        }
+      },
+      "must_not_claim": [
+        "Do not route unresolved iterator or local boundary operands as swarm-ready.",
+        "Do not infer exact candidate boundary values from unresolved activation inputs."
+      ]
+    },
+    {
       "id": "missing_verify_command_packet",
       "description": "Packet without verify route is blocked and not high confidence.",
       "packet": {

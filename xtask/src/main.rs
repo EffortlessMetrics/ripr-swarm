@@ -7883,6 +7883,10 @@ const SWARM_PLAN_PACKET_REQUIRED_CASES: &[(&str, &str)] = &[
         "blocked_by_static_limitation",
     ),
     (
+        "activation_boundary_input_unresolved_packet",
+        "blocked_by_static_limitation",
+    ),
+    (
         "missing_verify_command_packet",
         "blocked_by_missing_context",
     ),
