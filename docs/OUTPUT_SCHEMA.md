@@ -2332,6 +2332,9 @@ The packet artifact is advisory and derives from the Lane 1 audit's
 `evidence_record.canonical_item` projection. It does not change public badge
 semantics, PR/CI rendering, gate policy, provider calls, generated tests, or
 mutation execution.
+The Markdown sibling includes a `Runtime Status` table with the same
+completeness fields as JSON so human readers can see whether packet counts are
+full or limited before acting on them.
 
 ```json
 {

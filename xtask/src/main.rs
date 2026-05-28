@@ -20812,6 +20812,51 @@ fn lane1_actionable_gap_packets_markdown(report: &Lane1EvidenceAuditReport) -> S
     out.push_str(&format!("Run status: `{}`\n\n", runtime_status.state));
     out.push_str("Advisory Lane 1 packets derived from `evidence_record.canonical_item`.\n\n");
     out.push_str("Raw findings remain supporting evidence; packets are bounded work items for humans and agents.\n\n");
+    out.push_str("## Runtime Status\n\n");
+    out.push_str("| Field | Value |\n");
+    out.push_str("| --- | --- |\n");
+    out.push_str(&format!(
+        "| State | `{}` |\n",
+        audit_markdown_cell(&runtime_status.state)
+    ));
+    out.push_str(&format!(
+        "| Phase | `{}` |\n",
+        audit_markdown_cell(runtime_status.phase.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Duration ms | `{}` |\n",
+        runtime_status
+            .duration_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    ));
+    out.push_str(&format!(
+        "| Limit ms | `{}` |\n",
+        runtime_status
+            .limit_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    ));
+    out.push_str(&format!(
+        "| Input kind | `{}` |\n",
+        audit_markdown_cell(runtime_status.input_kind.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Input path | `{}` |\n",
+        audit_markdown_cell(runtime_status.input_path.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Limitation category | `{}` |\n",
+        audit_markdown_cell(runtime_status.limitation_category.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Repair route | {} |\n",
+        audit_markdown_cell(runtime_status.repair_route.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| Downstream consumable | `{}` |\n\n",
+        runtime_status.downstream_consumable
+    ));
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n");
     out.push_str("| --- | ---: |\n");
@@ -72998,6 +73043,13 @@ covered_by = ["cargo xtask check-file-policy"]
         let packets: Value = serde_json::from_str(&packets_json).map_err(|err| err.to_string())?;
         assert_eq!(packets["run_status"], "limited_incomplete_input");
         assert_eq!(packets["summary"]["actionable_gaps"], 0);
+        let packets_markdown = lane1_actionable_gap_packets_markdown(&report);
+        assert!(packets_markdown.contains("## Runtime Status"));
+        assert!(packets_markdown.contains("| State | `limited_incomplete_input` |"));
+        assert!(
+            packets_markdown.contains("| Limitation category | `lane1_repo_exposure_incomplete` |")
+        );
+        assert!(packets_markdown.contains("| Downstream consumable | `false` |"));
 
         let markdown = lane1_evidence_audit_markdown(&report);
         assert!(markdown.contains("Run Limitations"));
