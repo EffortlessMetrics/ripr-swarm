@@ -38953,6 +38953,9 @@ fn dogfood_user_surface_projection_run(
     if scenario.verify_command == scenario.receipt_command {
         errors.push("receipt_command must stay distinct from verify_command".to_string());
     }
+    errors.extend(dogfood_user_surface_projection_runtime_state_errors(
+        scenario,
+    ));
 
     DogfoodUserSurfaceProjectionRun {
         name: scenario.name.clone(),
@@ -38979,6 +38982,51 @@ fn dogfood_user_surface_projection_run(
         reason: scenario.reason.clone(),
         errors,
     }
+}
+
+fn dogfood_user_surface_projection_runtime_state_errors(
+    scenario: &DogfoodUserSurfaceProjectionScenario,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let headline = scenario.headline.to_ascii_lowercase();
+    if scenario.run_status == "full" {
+        if scenario.top_next_action_kind != "attempt_ready_packet" {
+            errors.push(format!(
+                "full run_status must route attempt_ready_packet, got {}",
+                scenario.top_next_action_kind
+            ));
+        }
+    } else if scenario.run_status.starts_with("limited_") {
+        if scenario.top_next_action_kind != "resolve_limited_runtime_status" {
+            errors.push(format!(
+                "{} must route resolve_limited_runtime_status, got {}",
+                scenario.run_status, scenario.top_next_action_kind
+            ));
+        }
+        if scenario.run_status == "limited_stale_input" {
+            if !headline.contains("stale") {
+                errors
+                    .push("limited_stale_input headline must make stale state visible".to_string());
+            }
+        } else if !headline.contains("limited") {
+            errors.push(format!(
+                "{} headline must make limited state visible",
+                scenario.run_status
+            ));
+        }
+        let actionable_count_headline = format!("{} actionable", scenario.actionable_count);
+        if headline.contains(&actionable_count_headline) {
+            errors.push(
+                "limited or stale run_status must not headline an actionable count".to_string(),
+            );
+        }
+    } else {
+        errors.push(format!(
+            "run_status must be full or a named limited_* state, got {}",
+            scenario.run_status
+        ));
+    }
+    errors
 }
 
 fn dogfood_surface_projection_alignment_scenarios() -> Vec<DogfoodSurfaceProjectionAlignmentScenario>
@@ -63572,6 +63620,7 @@ fn exact_owner_call_has_external_expected_value() {
         let mut scenario = valid_user_surface_projection_scenario();
         scenario.name.clear();
         scenario.surface = "raw_dashboard".to_string();
+        scenario.run_status = "limited_stale_input".to_string();
         scenario.projection_basis = "raw_findings".to_string();
         scenario.canonical_gap_id = "boundary-discriminator-004".to_string();
         scenario.raw_findings_total = scenario.actionable_count;
@@ -63601,6 +63650,11 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(report.contains("surface must make limited state visible"));
         assert!(report.contains("surface must make stale state visible"));
         assert!(report.contains("receipt_command must stay distinct from verify_command"));
+        assert!(report.contains("limited_stale_input must route resolve_limited_runtime_status"));
+        assert!(report.contains("limited_stale_input headline must make stale state visible"));
+        assert!(
+            report.contains("limited or stale run_status must not headline an actionable count")
+        );
     }
 
     #[test]
