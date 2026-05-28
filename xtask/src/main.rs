@@ -22541,25 +22541,42 @@ fn ripr_swarm_attempt_ledger_runtime_status(
             false,
         );
     }
+    let mut limited_inputs = Vec::new();
+    if let Some(outcomes) = actionable_gap_outcomes.value
+        && let Some(status) = lane1_runtime_status_from_report_value(outcomes)
+        && status.state != "full"
+    {
+        limited_inputs.push(lane1_runtime_status_with_input_path(
+            status,
+            "actionable_gap_outcomes_input",
+            &actionable_gap_outcomes.path,
+        ));
+    }
     if let Some(plan) = swarm_plan.value {
         if let Some(status) = lane1_runtime_status_from_report_value(plan)
             && status.state != "full"
         {
-            return lane1_runtime_status_with_input_path(
+            limited_inputs.push(lane1_runtime_status_with_input_path(
                 status,
                 "swarm_plan_input",
                 &swarm_plan.path,
-            );
+            ));
         }
     } else {
-        return lane1_runtime_status_limited_input(
+        limited_inputs.push(lane1_runtime_status_limited_input(
             "swarm_plan_input",
             "swarm-plan",
             Some(&swarm_plan.path),
             "swarm_plan_input_unavailable",
             "run cargo xtask ripr-swarm plan before building a packet-complete attempt ledger",
             true,
-        );
+        ));
+    }
+    if let Some(status) = limited_inputs
+        .into_iter()
+        .min_by_key(|status| lane1_runtime_status_priority(&status.state))
+    {
+        return status;
     }
     lane1_runtime_status_full()
 }
@@ -23377,46 +23394,77 @@ fn ripr_swarm_readiness_runtime_status(
     actionable_gap_outcomes: &RiprSwarmReadinessInput<'_>,
     attempt_ledger: &RiprSwarmReadinessInput<'_>,
 ) -> Lane1RuntimeStatus {
+    let mut limited_inputs = Vec::new();
     if let Some(plan) = swarm_plan.value {
         if let Some(status) = lane1_runtime_status_from_report_value(plan)
             && status.state != "full"
         {
-            return lane1_runtime_status_with_input_path(
+            limited_inputs.push(lane1_runtime_status_with_input_path(
                 status,
                 "swarm_plan_input",
                 &swarm_plan.path,
-            );
+            ));
         }
     } else {
-        return lane1_runtime_status_limited_input(
+        limited_inputs.push(lane1_runtime_status_limited_input(
             "swarm_plan_input",
             "swarm-plan",
             Some(&swarm_plan.path),
             "swarm_plan_input_unavailable",
             "run cargo xtask ripr-swarm plan before readiness",
             false,
-        );
+        ));
     }
-    if actionable_gap_outcomes.value.is_none() {
-        return lane1_runtime_status_limited_input(
+
+    if let Some(outcomes) = actionable_gap_outcomes.value {
+        if let Some(status) = lane1_runtime_status_from_report_value(outcomes)
+            && status.state != "full"
+        {
+            limited_inputs.push(lane1_runtime_status_with_input_path(
+                status,
+                "actionable_gap_outcomes_input",
+                &actionable_gap_outcomes.path,
+            ));
+        }
+    } else {
+        limited_inputs.push(lane1_runtime_status_limited_input(
             "actionable_gap_outcomes_input",
             "actionable-gap-outcomes",
             Some(&actionable_gap_outcomes.path),
             "actionable_gap_outcomes_input_unavailable",
             "run cargo xtask actionable-gap-outcomes before claiming attempt outcomes",
             false,
-        );
+        ));
     }
-    if attempt_ledger.value.is_none() {
-        return lane1_runtime_status_limited_input(
+
+    if let Some(ledger) = attempt_ledger.value {
+        if let Some(status) = lane1_runtime_status_from_report_value(ledger)
+            && status.state != "full"
+        {
+            limited_inputs.push(lane1_runtime_status_with_input_path(
+                status,
+                "swarm_attempt_ledger_input",
+                &attempt_ledger.path,
+            ));
+        }
+    } else {
+        limited_inputs.push(lane1_runtime_status_limited_input(
             "swarm_attempt_ledger_input",
             "swarm-attempt-ledger",
             Some(&attempt_ledger.path),
             "swarm_attempt_ledger_input_unavailable",
             "run cargo xtask ripr-swarm attempt-ledger before claiming durable attempt history",
             false,
-        );
+        ));
     }
+
+    if let Some(status) = limited_inputs
+        .into_iter()
+        .min_by_key(|status| lane1_runtime_status_priority(&status.state))
+    {
+        return status;
+    }
+
     lane1_runtime_status_full()
 }
 
@@ -75765,6 +75813,100 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn ripr_swarm_readiness_preserves_limited_attempt_ledger_runtime_status() -> Result<(), String>
+    {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "swarm_ready_packets": 1
+            }
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "outcomes_total": 1,
+                "not_attempted": 1,
+                "evidence_improved": 0,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "run_status": "limited_incomplete_input",
+            "runtime_status": {
+                "state": "limited_incomplete_input",
+                "phase": null,
+                "input_kind": "swarm-attempt-ledger",
+                "input_path": null,
+                "limitation_category": "actionable_gap_outcomes_input_unavailable",
+                "repair_route": "run cargo xtask actionable-gap-outcomes before building the attempt ledger",
+                "downstream_consumable": false
+            },
+            "summary": {
+                "attempts_total": 0,
+                "not_attempted": 0,
+                "evidence_improved": 0,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "orphaned_receipts": 0
+            }
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(
+            value["runtime_status"]["phase"],
+            "swarm_attempt_ledger_input"
+        );
+        assert_eq!(
+            value["runtime_status"]["input_path"],
+            "target/ripr/reports/swarm-attempt-ledger.json"
+        );
+        assert_eq!(
+            value["runtime_status"]["repair_route"],
+            "run cargo xtask actionable-gap-outcomes before building the attempt ledger"
+        );
+        assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_readiness_marks_missing_outcomes_nonconsumable() -> Result<(), String> {
         let swarm_plan = serde_json::json!({
             "report": "swarm-plan",
@@ -77677,6 +77819,80 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("# RIPR Swarm Attempt Ledger"));
         assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
         assert!(markdown.contains("evidence_improved"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_preserves_limited_outcome_runtime_status() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "run_status": "limited_timeout",
+            "runtime_status": {
+                "state": "limited_timeout",
+                "phase": null,
+                "duration_ms": 30000,
+                "limit_ms": 30000,
+                "input_kind": "actionable-gap-outcomes",
+                "input_path": null,
+                "limitation_category": "lane1_repo_exposure_timeout",
+                "repair_route": "rerun cargo xtask actionable-gap-outcomes with a larger budget",
+                "downstream_consumable": false
+            },
+            "outcomes": []
+        });
+
+        let report = ripr_swarm_attempt_ledger_from_values(
+            "unix_ms:12".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("no prior ledger".to_string()),
+                value: None,
+            },
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(value["run_status"], "limited_timeout");
+        assert_eq!(
+            value["runtime_status"]["phase"],
+            "actionable_gap_outcomes_input"
+        );
+        assert_eq!(
+            value["runtime_status"]["input_path"],
+            "target/ripr/reports/actionable-gap-outcomes.json"
+        );
+        assert_eq!(
+            value["runtime_status"]["repair_route"],
+            "rerun cargo xtask actionable-gap-outcomes with a larger budget"
+        );
+        assert_eq!(value["runtime_status"]["downstream_consumable"], false);
         Ok(())
     }
 

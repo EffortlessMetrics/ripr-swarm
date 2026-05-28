@@ -2889,8 +2889,10 @@ attempt/improved/unchanged/regressed/resolved counts. The ledger preserves
 `not_attempted`, `attempted_no_receipt`, `receipt_present`,
 `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
 and `unknown` outcomes. Missing outcome inputs make the ledger
-`limited_incomplete_input`; missing swarm-plan input is consumable but
-explicitly limited because packet ids may be less complete.
+`limited_incomplete_input`; readable-but-limited outcome inputs keep their
+limited `runtime_status` instead of becoming a clean full ledger. Missing
+swarm-plan input is consumable but explicitly limited because packet ids may be
+less complete.
 
 `repair_route_quality[]` is grouped from latest attempts by `repair_kind` and
 reports attempted, improved, unchanged, regressed, resolved, no-receipt,
@@ -2927,15 +2929,16 @@ ledger inputs do not imply failed attempts. They do make readiness
 non-consumable for downstream attempt/outcome claims until the missing artifact
 is regenerated.
 
-Swarm plan and readiness reports include `run_status` and `runtime_status`.
-Readiness preserves a limited swarm-plan input, and reports missing or malformed
-required plan input as `limited_incomplete_input` instead of turning absent
-packets into a clean zero-ready state. Missing outcomes or attempt ledger inputs
-also report `limited_incomplete_input` with `downstream_consumable = false`
-because the repair queue can still be inspected, but attempt history and outcome
-quality are incomplete. If outcomes are present while the attempt ledger is
-missing, readiness may display those outcome counts as advisory context, but the
-report remains non-consumable until durable attempt history is available.
+Swarm plan, attempt-ledger, and readiness reports include `run_status` and
+`runtime_status`. Readiness preserves limited swarm-plan, actionable-gap
+outcome, and attempt-ledger inputs, and reports missing or malformed required
+plan input as `limited_incomplete_input` instead of turning absent packets into a
+clean zero-ready state. Missing outcomes or attempt ledger inputs also report
+`limited_incomplete_input` with `downstream_consumable = false` because the
+repair queue can still be inspected, but attempt history and outcome quality are
+incomplete. If outcomes are present while the attempt ledger is missing,
+readiness may display those outcome counts as advisory context, but the report
+remains non-consumable until durable attempt history is available.
 
 Readiness forwards attempt-ledger `repair_route_quality[]`,
 `top_failing_repair_routes[]`, and `top_missing_evidence_fields[]` so the next
