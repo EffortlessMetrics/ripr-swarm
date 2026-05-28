@@ -567,6 +567,7 @@ Future reports should expose:
 
 - `swarm_ready_packets`;
 - `swarm_blocked_packets`;
+- `swarm_public_projection_excluded_packets`;
 - `swarm_missing_verify_command`;
 - `swarm_missing_verify_result`;
 - `swarm_missing_receipt_command`;

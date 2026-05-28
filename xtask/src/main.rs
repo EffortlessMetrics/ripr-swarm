@@ -21268,6 +21268,7 @@ struct RiprSwarmReadinessSummary {
     public_projection_eligible_packets: usize,
     swarm_ready_packets: usize,
     blocked_packets: usize,
+    public_projection_excluded_packets: usize,
     missing_verify_command: usize,
     missing_verify_result: usize,
     missing_receipt_command: usize,
@@ -22363,6 +22364,11 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
         "packets_total": report.packets.len(),
         "swarm_ready_packets": ready,
         "blocked_packets": report.packets.len().saturating_sub(ready),
+        "public_projection_excluded_packets": report
+            .packets
+            .iter()
+            .filter(|packet| packet.swarm_state == "blocked_by_public_projection_exclusion")
+            .count(),
         "missing_verify_command": missing_verify,
         "missing_receipt_command": missing_receipt,
         "missing_repair_route": report
@@ -23670,6 +23676,9 @@ fn ripr_swarm_readiness_summary(
             audit_usize(plan, &["summary", "swarm_ready_packets"]).unwrap_or_default();
         summary.blocked_packets =
             audit_usize(plan, &["summary", "blocked_packets"]).unwrap_or_default();
+        summary.public_projection_excluded_packets =
+            audit_usize(plan, &["summary", "public_projection_excluded_packets"])
+                .unwrap_or_default();
         summary.missing_verify_command =
             audit_usize(plan, &["summary", "missing_verify_command"]).unwrap_or_default();
         summary.missing_receipt_command =
@@ -23813,6 +23822,7 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
         "public_projection_eligible_packets": summary.public_projection_eligible_packets,
         "swarm_ready_packets": summary.swarm_ready_packets,
         "blocked_packets": summary.blocked_packets,
+        "public_projection_excluded_packets": summary.public_projection_excluded_packets,
         "missing_verify_command": summary.missing_verify_command,
         "missing_verify_result": summary.missing_verify_result,
         "missing_receipt_command": summary.missing_receipt_command,
@@ -24054,6 +24064,20 @@ fn ripr_swarm_readiness_next_actions(
             reason: format!(
                 "{} packet(s) are missing verify commands; improve canonical item verify routing before ranking them as repair-ready",
                 summary.missing_verify_command
+            ),
+        });
+    }
+    if summary.public_projection_excluded_packets > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "inspect_public_projection_exclusions".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are excluded from public projection; inspect projection_exclusion_reasons before attempting swarm work",
+                summary.public_projection_excluded_packets
             ),
         });
     }
@@ -24346,6 +24370,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "public_projection_eligible_packets",
         "swarm_ready_packets",
         "blocked_packets",
+        "public_projection_excluded_packets",
         "missing_verify_command",
         "missing_receipt_command",
         "static_limitation_packets",
@@ -76036,6 +76061,7 @@ covered_by = ["cargo xtask check-file-policy"]
             "summary": {
                 "swarm_ready_packets": 10,
                 "blocked_packets": 15,
+                "public_projection_excluded_packets": 0,
                 "missing_verify_command": 0,
                 "missing_receipt_command": 0,
                 "static_limitation_packets": 2,
@@ -76113,6 +76139,10 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(10)
         );
         assert_eq!(
+            value["summary"]["public_projection_excluded_packets"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
             value["summary"]["attempted_packets"],
             serde_json::Value::from(3)
         );
@@ -76168,6 +76198,7 @@ covered_by = ["cargo xtask check-file-policy"]
             "summary": {
                 "swarm_ready_packets": 0,
                 "blocked_packets": 25,
+                "public_projection_excluded_packets": 0,
                 "missing_verify_command": 0,
                 "missing_receipt_command": 0,
                 "static_limitation_packets": 0,
@@ -76249,6 +76280,102 @@ covered_by = ["cargo xtask check-file-policy"]
                 .as_str()
                 .unwrap_or_default()
                 .contains("require operator judgment")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_routes_public_projection_exclusions() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "source_summary": {
+                "actionable_gaps": 25,
+                "public_projection_eligible_packets": 24
+            },
+            "summary": {
+                "swarm_ready_packets": 0,
+                "blocked_packets": 1,
+                "public_projection_excluded_packets": 1,
+                "missing_verify_command": 0,
+                "missing_receipt_command": 0,
+                "static_limitation_packets": 0,
+                "high_confidence_packets": 0
+            },
+            "top_ready_packets": [],
+            "top_blocked_packets": [
+                {
+                    "packet_id": "gap:suppressed",
+                    "canonical_gap_id": "gap:suppressed",
+                    "evidence_class": "error_path",
+                    "repair_kind": "add_exact_error_variant",
+                    "swarm_state": "blocked_by_public_projection_exclusion",
+                    "blocked_reasons": [
+                        "public_projection_excluded"
+                    ]
+                }
+            ]
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "summary": {
+                "outcomes_total": 25,
+                "not_attempted": 25,
+                "evidence_improved": 0,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "summary": {
+                "attempts_total": 25,
+                "not_attempted": 25,
+                "evidence_improved": 0,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let json = ripr_swarm_readiness_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["public_projection_excluded_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["next_actions"][0]["kind"],
+            serde_json::Value::from("inspect_public_projection_exclusions")
+        );
+        assert!(
+            value["next_actions"][0]["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("projection_exclusion_reasons")
         );
         Ok(())
     }
