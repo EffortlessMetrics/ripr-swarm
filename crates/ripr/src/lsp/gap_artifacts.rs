@@ -784,8 +784,14 @@ fn actionable_packet_raw_evidence_ref_is_structured(value: &Value) -> bool {
 fn actionable_packet_guidance_is_missing(value: &str) -> bool {
     matches!(
         value.trim(),
-        "repair_route_unknown"
+        "" | "unknown"
+            | "none"
+            | "no_action"
+            | "repair_route_unknown"
             | "repair_kind_unknown"
+            | "receipt_command_unknown"
+            | "receipt_path_unknown"
+            | "confidence_basis_unknown"
             | "verify_command_unknown"
             | "target_test_type_unknown"
             | "target_test_shape_unknown"
@@ -1896,6 +1902,36 @@ mod tests {
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
             Err(GapArtifactRejection::MalformedArtifact(
                 "actionable packet must carry confidence_basis"
+            ))
+        );
+    }
+
+    #[test]
+    fn actionable_gaps_report_rejects_placeholder_guidance_fields() {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["confidence_basis"] = json!("unknown");
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry confidence_basis"
+            ))
+        );
+
+        artifact["packets"][0]["confidence_basis"] = json!("confidence_basis_unknown");
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry confidence_basis"
+            ))
+        );
+
+        artifact["packets"][0]["confidence_basis"] = json!("static_only");
+        artifact["packets"][0]["receipt_command"] = json!("receipt_command_unknown");
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry receipt_command"
             ))
         );
     }
