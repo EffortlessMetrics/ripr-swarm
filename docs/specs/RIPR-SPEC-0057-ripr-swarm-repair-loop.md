@@ -370,6 +370,12 @@ packet. These actions are advisory coordination hints; they must not execute
 repairs, consume raw findings as work, change badge semantics, or hide blocked
 or uncertain evidence.
 
+Readiness must also expose blocked packet states as a route table. Each
+reported blocked class must include a count, human-readable reason, next action
+kind, and repair route so `blocked_by_missing_context`,
+`blocked_by_static_limitation`, `blocked_by_public_projection_exclusion`, and
+`blocked_by_operator_judgment` do not appear only in raw packet JSON.
+
 Readiness must also expose `top_next_action` as a stable projection of
 `next_actions[0]`. Downstream surfaces may show that object directly, but they
 must not treat it as an independent ranking source or reinterpret raw findings
@@ -552,6 +558,9 @@ Current implementation coverage:
   pins readiness consumption of the attempt ledger and repair-route quality,
   plus forwarding of the swarm-plan static-limitation backlog into readiness
   output.
+- `xtask::tests::ripr_swarm_readiness_audits_blocked_state_routes`
+  pins blocked-state counts, reasons, next action kinds, repair routes, and
+  Markdown/JSON parity for readiness route auditing.
 
 Follow-up implementation PRs should add tests for:
 
@@ -600,6 +609,10 @@ Future reports should expose:
 
 - `swarm_ready_packets`;
 - `swarm_blocked_packets`;
+- `swarm_blocked_by_missing_context_packets`;
+- `swarm_blocked_by_static_limitation_packets`;
+- `swarm_blocked_by_public_projection_exclusion_packets`;
+- `swarm_blocked_by_operator_judgment_packets`;
 - `swarm_public_projection_excluded_packets`;
 - `swarm_missing_verify_command`;
 - `swarm_missing_verify_result`;

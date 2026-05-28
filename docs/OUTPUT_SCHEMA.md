@@ -2549,6 +2549,10 @@ repair-ready packet work.
     "packets_total": 25,
     "swarm_ready_packets": 10,
     "blocked_packets": 15,
+    "blocked_by_missing_context_packets": 12,
+    "blocked_by_static_limitation_packets": 2,
+    "blocked_by_public_projection_exclusion_packets": 0,
+    "blocked_by_operator_judgment_packets": 1,
     "public_projection_excluded_packets": 0,
     "missing_verify_command": 0,
     "missing_receipt_command": 0,
@@ -3127,6 +3131,10 @@ limits.
     "public_projection_eligible_packets": 25,
     "swarm_ready_packets": 10,
     "blocked_packets": 15,
+    "blocked_by_missing_context_packets": 12,
+    "blocked_by_static_limitation_packets": 2,
+    "blocked_by_public_projection_exclusion_packets": 0,
+    "blocked_by_operator_judgment_packets": 1,
     "public_projection_excluded_packets": 0,
     "missing_verify_command": 0,
     "missing_verify_result": 0,
@@ -3158,6 +3166,29 @@ limits.
       }
     ]
   },
+  "blocked_state_routes": [
+    {
+      "state": "blocked_by_missing_context",
+      "count": 12,
+      "reason": "required packet context is missing before the packet can be safely delegated",
+      "next_action_kind": "inspect_blocked_missing_context",
+      "repair_route": "cargo xtask lane1-evidence-audit"
+    },
+    {
+      "state": "blocked_by_static_limitation",
+      "count": 2,
+      "reason": "a named static limitation prevents a safe bounded repair route",
+      "next_action_kind": "route_static_limitations",
+      "repair_route": "cargo xtask lane1-evidence-audit"
+    },
+    {
+      "state": "blocked_by_operator_judgment",
+      "count": 1,
+      "reason": "typed context exists, but default swarm routing still requires operator judgment",
+      "next_action_kind": "route_operator_judgment_packets",
+      "repair_route": "cargo xtask ripr-swarm plan --top 10"
+    }
+  ],
   "repair_route_quality": [
     {
       "repair_kind": "add_boundary_assertion",
@@ -3278,6 +3309,9 @@ operator-judgment packets that are visible but not default swarm-ready. It does
 not execute the action or consume raw findings as work. `top_next_action` is
 the first item in that queue, duplicated as a stable object for badge, LSP, PR,
 CI, or other thin surfaces that should not implement their own ranking rules.
+`blocked_state_routes[]` gives every reported blocked packet state a count,
+reason, next action kind, and repair route so no blocked class is visible only
+through raw packet JSON.
 
 
 ## Evidence Quality Scorecard
