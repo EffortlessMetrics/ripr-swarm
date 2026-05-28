@@ -7907,18 +7907,18 @@ const ACTIONABLE_GAP_OUTCOMES_REQUIRED_CASES: &[(&str, &str, &str)] = &[
         RECEIPT_MOVEMENT_IMPROVED,
     ),
     (
-        "evidence_unchanged_from_targeted_outcome",
-        "evidence_unchanged",
+        "attempted_no_receipt_from_unchanged_targeted_outcome",
+        "attempted_no_receipt",
         RECEIPT_MISSING,
     ),
     (
-        "evidence_regressed_from_targeted_outcome",
-        "evidence_regressed",
+        "attempted_no_receipt_from_regressed_targeted_outcome",
+        "attempted_no_receipt",
         RECEIPT_MISSING,
     ),
     (
-        "resolved_from_removed_targeted_outcome",
-        "resolved",
+        "attempted_no_receipt_from_removed_targeted_outcome",
+        "attempted_no_receipt",
         RECEIPT_MISSING,
     ),
     (
@@ -24379,11 +24379,7 @@ fn actionable_gap_outcome_from_packet(
     };
     let movement = targeted_movement.or(receipt_movement);
     let outcome_state = match movement.as_ref() {
-        Some(movement)
-            if receipt.is_none()
-                && movement.source == "targeted_test_outcome"
-                && movement.outcome_state == "unknown" =>
-        {
+        Some(movement) if receipt.is_none() && movement.source == "targeted_test_outcome" => {
             "attempted_no_receipt".to_string()
         }
         Some(movement) => movement.outcome_state.clone(),
@@ -77785,8 +77781,8 @@ covered_by = ["cargo xtask check-file-policy"]
             states,
             vec![
                 ("gap:seam-a", "evidence_improved", RECEIPT_MOVEMENT_IMPROVED,),
-                ("gap:seam-b", "evidence_unchanged", RECEIPT_MISSING),
-                ("gap:seam-c", "resolved", RECEIPT_MISSING),
+                ("gap:seam-b", "attempted_no_receipt", RECEIPT_MISSING),
+                ("gap:seam-c", "attempted_no_receipt", RECEIPT_MISSING),
                 ("gap:seam-d", "not_attempted", RECEIPT_MISSING),
                 ("gap:seam-e", "attempted_no_receipt", RECEIPT_MISSING),
             ]
@@ -77797,19 +77793,19 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::from_str(&json).map_err(|err| err.to_string())?;
         assert_eq!(value["report"], "actionable-gap-outcomes");
         assert_eq!(value["summary"]["evidence_improved"], 1);
-        assert_eq!(value["summary"]["evidence_unchanged"], 1);
-        assert_eq!(value["summary"]["resolved"], 1);
+        assert_eq!(value["summary"]["evidence_unchanged"], 0);
+        assert_eq!(value["summary"]["resolved"], 0);
         assert_eq!(value["summary"]["not_attempted"], 1);
-        assert_eq!(value["summary"]["attempted_no_receipt"], 1);
+        assert_eq!(value["summary"]["attempted_no_receipt"], 3);
         assert_eq!(value["summary"]["receipts_present"], 1);
         assert_eq!(value["movement_front"]["current_actionable_count"], 5);
         assert_eq!(
             value["movement_front"]["receipt_linked_actionable_delta"],
-            -1
+            0
         );
-        assert_eq!(value["movement_front"]["resolved"], 1);
+        assert_eq!(value["movement_front"]["resolved"], 0);
         assert_eq!(value["movement_front"]["improved"], 1);
-        assert_eq!(value["movement_front"]["unchanged_after_attempt"], 1);
+        assert_eq!(value["movement_front"]["unchanged_after_attempt"], 0);
         assert_eq!(value["movement_front"]["missing_receipts"], 4);
         assert_eq!(
             value["movement_front"]["top_blocked_reason"],
@@ -77837,12 +77833,12 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("# Actionable Gap Outcomes"));
         assert!(markdown.contains("## Movement Since Prior Refresh"));
         assert!(markdown.contains("| Current actionable count | 5 |"));
-        assert!(markdown.contains("| Receipt-linked actionable delta | -1 |"));
-        assert!(markdown.contains("| Unchanged after attempt | 1 |"));
+        assert!(markdown.contains("| Receipt-linked actionable delta | 0 |"));
+        assert!(markdown.contains("| Unchanged after attempt | 0 |"));
         assert!(markdown.contains("| Missing receipts | 4 |"));
         assert!(markdown.contains("| Top blocked reason | missing_receipts |"));
         assert!(markdown.contains("gap:seam-c"));
-        assert!(markdown.contains("resolved"));
+        assert!(markdown.contains("attempted_no_receipt"));
         Ok(())
     }
 

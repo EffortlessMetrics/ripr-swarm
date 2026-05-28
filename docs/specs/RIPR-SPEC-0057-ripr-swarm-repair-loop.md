@@ -102,6 +102,9 @@ Before an attempt can claim improvement, typed evidence must show:
 - receipt presence or explicit receipt absence;
 - evidence movement state joined to the same canonical gap;
 - outcome state in `actionable-gap-outcomes`;
+- targeted-test movement without a matching receipt remains
+  `attempted_no_receipt` and cannot claim improvement, regression, unchanged
+  evidence, or resolution;
 - no production-code edit claim unless explicitly operator-authorized outside
   the default swarm contract.
 
