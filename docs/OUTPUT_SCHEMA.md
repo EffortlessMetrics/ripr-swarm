@@ -2710,6 +2710,10 @@ outcome is backed by a matching receipt or targeted-test outcome. The attempt
 instance prefers a receipt/targeted timestamp when available, then the matched
 receipt artifact path, then the targeted-test outcome artifact path; missing
 identity remains `null` for not-attempted packets.
+Targeted-test outcome movement without a matching receipt is classified as
+`attempted_no_receipt`; its movement fields remain visible for debugging, but it
+does not count as `evidence_improved`, `evidence_unchanged`,
+`evidence_regressed`, or `resolved` until receipt evidence is joined.
 `receipt_state` uses the canonical receipt lifecycle vocabulary:
 `receipt_missing`, `receipt_found`, `receipt_stale`,
 `receipt_gap_mismatch`, `receipt_movement_improved`,
