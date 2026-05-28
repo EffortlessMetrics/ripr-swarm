@@ -185,6 +185,12 @@ canonical state, does not reinterpret raw findings, does not headline raw
 finding totals, remains advisory by default, and can show limited or stale
 state instead of an incorrect count.
 
+For non-full runtime states, surface examples must fail closed: the first
+screen names the limited or stale state, routes the next action to
+`resolve_limited_runtime_status`, and must not headline an actionable count.
+For full runtime states with a ready packet, the top next action may be
+`attempt_ready_packet`.
+
 ## Acceptance Examples
 
 Given the public badge headline, a new reader can describe the count as
@@ -212,6 +218,10 @@ Validation should use existing guardrails plus focused evidence checks:
 - `cargo xtask actionable-gap-outcomes`
 - `cargo xtask badge-basis`
 - editor and swarm focused fixture/smoke checks for first-screen rendering
+- `xtask::tests::dogfood_user_surface_projection_alignment_reports_contract_drift`
+  pins fail-closed user-surface behavior for limited or stale runtime states so
+  the corpus cannot route stale evidence to an attempt-ready packet or headline
+  an actionable count.
 
 Future implementation PRs should add or update fixtures for the surface they
 change. Docs-only PRs satisfy this spec by passing spec-format and doc-index
