@@ -527,6 +527,12 @@ become a `full` readiness report. The downstream report keeps the upstream
 repair route and input path so the operator can repair the limiting artifact
 instead of trusting incomplete attempt/outcome evidence.
 
+Attempt history must not collapse repeated same-state attempts for the same
+canonical gap when distinct attempt-instance evidence is available. Generated
+`attempt_id` values include the outcome timestamp, receipt artifact path, or
+targeted-test-outcome artifact path when present so repeated unchanged,
+regressed, no-receipt, and improved attempts remain visible as durable history.
+
 No provider SDK, mutation executor, generated-test writer, PR/CI renderer,
 LSP/editor feature, gate policy, or public badge change belongs to this spec.
 

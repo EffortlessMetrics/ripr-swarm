@@ -2823,7 +2823,7 @@ badges.
     {
       "packet_id": "packet-boundary-001",
       "canonical_gap_id": "gap:abc",
-      "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc",
+      "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc:timestamp-unix-ms-1778240100000",
       "evidence_class": "predicate_boundary",
       "source_file": "src/pricing.rs",
       "repair_kind": "add_boundary_assertion",
@@ -2846,7 +2846,7 @@ badges.
     {
       "packet_id": "packet-boundary-001",
       "canonical_gap_id": "gap:abc",
-      "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc",
+      "attempt_id": "attempt:gap-abc:evidence-improved:receipt-movement-improved:agent-receipt:abc:timestamp-unix-ms-1778240100000",
       "evidence_class": "predicate_boundary",
       "source_file": "src/pricing.rs",
       "repair_kind": "add_boundary_assertion",
@@ -2893,6 +2893,12 @@ and `unknown` outcomes. Missing outcome inputs make the ledger
 limited `runtime_status` instead of becoming a clean full ledger. Missing
 swarm-plan input is consumable but explicitly limited because packet ids may be
 less complete.
+
+Generated `attempt_id` values include a stable attempt-instance suffix when the
+outcome carries one, preferring outcome `timestamp`, then receipt artifact path,
+then targeted-test-outcome artifact path. This keeps repeated same-state
+attempts visible without creating a new history row from a plain ledger rerun
+over the same artifacts.
 
 `repair_route_quality[]` is grouped from latest attempts by `repair_kind` and
 reports attempted, improved, unchanged, regressed, resolved, no-receipt,
