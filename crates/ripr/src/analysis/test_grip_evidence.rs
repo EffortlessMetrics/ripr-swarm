@@ -6288,6 +6288,50 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
     }
 
     #[test]
+    fn iterator_boundary_operand_route_only_matches_iterator_loop_bindings() {
+        for source in [
+            "for (idx, value) in values.iter().enumerate() {",
+            "for item in values.iter() {",
+            "for item in values.iter_mut() {",
+            "for item in values.into_iter() {",
+            "for key in values.keys() {",
+            "for value in values.values() {",
+            "if ready { for idx in values.iter() {",
+        ] {
+            let operand = if source.contains("idx") {
+                "idx"
+            } else if source.contains("key") {
+                "key"
+            } else if source.contains("value in") {
+                "value"
+            } else {
+                "item"
+            };
+            assert!(
+                loop_binds_operand_from_iterator(source, operand),
+                "iterator loop should bind {operand}: {source}"
+            );
+        }
+
+        for (source, operand) in [
+            ("let idx = offset + 1;", "idx"),
+            ("for idx in 0..values.len() {", "idx"),
+            ("for (idx, value) in values.iter().enumerate() {", "offset"),
+            ("perform idx boundary checks", "idx"),
+        ] {
+            assert!(
+                !loop_binds_operand_from_iterator(source, operand),
+                "non-iterator or unbound operand must not match: {source}"
+            );
+        }
+
+        assert!(is_boundary_operand_identifier("idx"));
+        assert!(is_boundary_operand_identifier("_idx2"));
+        assert!(!is_boundary_operand_identifier("idx + 1"));
+        assert!(!is_boundary_operand_identifier("100"));
+    }
+
+    #[test]
     fn given_same_file_const_when_owner_call_uses_identifier_then_observed_value_is_resolved()
     -> Result<(), String> {
         let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 \
