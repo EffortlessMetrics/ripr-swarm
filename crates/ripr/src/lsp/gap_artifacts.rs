@@ -464,7 +464,7 @@ fn validate_actionable_gaps(
                 &["must_not_change"],
                 "actionable packet must carry must_not_change",
             )?;
-            require_actionable_packet_array(
+            require_actionable_packet_raw_evidence_refs(
                 packet,
                 &["raw_evidence_refs"],
                 "actionable packet must carry raw_evidence_refs",
@@ -743,6 +743,42 @@ fn require_actionable_packet_array(
         .filter(|values| !values.is_empty())
         .map(|_| ())
         .ok_or(GapArtifactRejection::MalformedArtifact(message))
+}
+
+fn require_actionable_packet_raw_evidence_refs(
+    packet: &Value,
+    path: &[&str],
+    message: &'static str,
+) -> Result<(), GapArtifactRejection> {
+    let values = path_value(Some(packet), path)
+        .and_then(Value::as_array)
+        .filter(|values| !values.is_empty())
+        .ok_or(GapArtifactRejection::MalformedArtifact(message))?;
+    if values
+        .iter()
+        .all(actionable_packet_raw_evidence_ref_is_structured)
+    {
+        Ok(())
+    } else {
+        Err(GapArtifactRejection::MalformedArtifact(message))
+    }
+}
+
+fn actionable_packet_raw_evidence_ref_is_structured(value: &Value) -> bool {
+    let has_anchor = path_value(Some(value), &["file"])
+        .or_else(|| path_value(Some(value), &["path"]))
+        .or_else(|| path_value(Some(value), &["source_file"]))
+        .and_then(Value::as_str)
+        .and_then(non_empty)
+        .is_some();
+    let has_identity = path_value(Some(value), &["kind"])
+        .or_else(|| path_value(Some(value), &["source_id"]))
+        .or_else(|| path_value(Some(value), &["evidence_record_ref"]))
+        .or_else(|| path_value(Some(value), &["canonical_gap_id"]))
+        .and_then(Value::as_str)
+        .and_then(non_empty)
+        .is_some();
+    has_anchor && has_identity
 }
 
 fn actionable_packet_guidance_is_missing(value: &str) -> bool {
@@ -1808,6 +1844,27 @@ mod tests {
         let mut artifact = actionable_gaps_report();
         artifact["packets"][0]["raw_evidence_refs"] = json!([]);
 
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry raw_evidence_refs"
+            ))
+        );
+    }
+
+    #[test]
+    fn actionable_gaps_report_rejects_malformed_raw_evidence_refs() {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["raw_evidence_refs"] = json!([{}]);
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry raw_evidence_refs"
+            ))
+        );
+
+        artifact["packets"][0]["raw_evidence_refs"] = json!(["placeholder"]);
         assert_eq!(
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
             Err(GapArtifactRejection::MalformedArtifact(
