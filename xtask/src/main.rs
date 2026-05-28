@@ -22663,7 +22663,7 @@ fn ripr_swarm_attempt_ledger_from_values(
     let plan_packets = ripr_swarm_attempt_ledger_plan_packet_index(swarm_plan.value);
     let mut attempts = prior_ledger
         .value
-        .map(ripr_swarm_attempt_ledger_entries_from_value)
+        .map(|ledger| ripr_swarm_attempt_ledger_prior_entries_from_value(ledger, &plan_packets))
         .unwrap_or_default();
     if let Some(outcomes) = actionable_gap_outcomes.value {
         attempts.extend(ripr_swarm_attempt_ledger_entries_from_outcomes(
@@ -22831,6 +22831,40 @@ fn ripr_swarm_attempt_ledger_entries_from_value(
             })
         })
         .collect()
+}
+
+fn ripr_swarm_attempt_ledger_prior_entries_from_value(
+    ledger: &Value,
+    plan_packets: &BTreeMap<String, Value>,
+) -> Vec<RiprSwarmAttemptLedgerEntry> {
+    ripr_swarm_attempt_ledger_entries_from_value(ledger)
+        .into_iter()
+        .filter(|entry| ripr_swarm_attempt_ledger_should_preserve_prior_entry(entry, plan_packets))
+        .collect()
+}
+
+fn ripr_swarm_attempt_ledger_should_preserve_prior_entry(
+    entry: &RiprSwarmAttemptLedgerEntry,
+    plan_packets: &BTreeMap<String, Value>,
+) -> bool {
+    if entry.outcome != "not_attempted" {
+        return true;
+    }
+    if receipt_lifecycle_state_is_present(&entry.receipt_state) {
+        return true;
+    }
+    if entry.receipt_path.is_some() {
+        return true;
+    }
+    if entry
+        .verify_result
+        .as_deref()
+        .is_some_and(|result| !ripr_swarm_plan_field_missing(result))
+    {
+        return true;
+    }
+    plan_packets.contains_key(&entry.packet_id)
+        || plan_packets.contains_key(&entry.canonical_gap_id)
 }
 
 fn ripr_swarm_attempt_ledger_entries_from_outcomes(
@@ -79191,6 +79225,154 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
         assert!(markdown.contains("evidence_improved"));
         assert!(markdown.contains("| Verify result |"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_drops_stale_synthetic_not_attempted_rows() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "outcomes": []
+        });
+        let prior_ledger = serde_json::json!({
+            "schema_version": "0.1",
+            "report": "swarm-attempt-ledger",
+            "attempts": [
+                {
+                    "packet_id": "packet-stale-001",
+                    "canonical_gap_id": "gap:stale",
+                    "attempt_id": "attempt:stale:not-attempted",
+                    "actor_kind": "swarm",
+                    "verify_command": "verify_command_unknown",
+                    "outcome": "not_attempted",
+                    "timestamp": "unix_ms:1",
+                    "receipt_state": "receipt_not_applicable",
+                    "reason": "prior synthetic queue placeholder"
+                }
+            ]
+        });
+
+        let report = ripr_swarm_attempt_ledger_from_values(
+            "unix_ms:2".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&prior_ledger),
+            },
+        );
+
+        assert!(report.attempts.is_empty());
+        assert!(report.latest_attempts.is_empty());
+        assert!(report.repair_route_quality.is_empty());
+        assert!(report.top_missing_evidence_fields.is_empty());
+        let json = ripr_swarm_attempt_ledger_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["attempts_total"], 0);
+        assert_eq!(value["summary"]["not_attempted"], 0);
+        assert_eq!(
+            value["top_missing_evidence_fields"]
+                .as_array()
+                .map(Vec::len),
+            Some(0)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_preserves_current_plan_not_attempted_rows() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "top_ready_packets": [
+                {
+                    "packet_id": "packet-current-001",
+                    "canonical_gap_id": "gap:current",
+                    "repair_kind": "add_boundary_assertion",
+                    "verify_command": "cargo test -p ripr current_gap",
+                    "receipt_command": "cargo xtask receipts write --packet packet-current-001"
+                }
+            ]
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "outcomes": []
+        });
+        let prior_ledger = serde_json::json!({
+            "schema_version": "0.1",
+            "report": "swarm-attempt-ledger",
+            "attempts": [
+                {
+                    "packet_id": "packet-current-001",
+                    "canonical_gap_id": "gap:current",
+                    "attempt_id": "attempt:current:not-attempted",
+                    "repair_kind": "add_boundary_assertion",
+                    "actor_kind": "swarm",
+                    "verify_command": "cargo test -p ripr current_gap",
+                    "receipt_command": "cargo xtask receipts write --packet packet-current-001",
+                    "outcome": "not_attempted",
+                    "timestamp": "unix_ms:1",
+                    "receipt_state": "receipt_not_applicable",
+                    "reason": "current queue placeholder"
+                }
+            ]
+        });
+
+        let report = ripr_swarm_attempt_ledger_from_values(
+            "unix_ms:2".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&prior_ledger),
+            },
+        );
+
+        assert_eq!(report.attempts.len(), 1);
+        assert_eq!(report.latest_attempts.len(), 1);
+        assert_eq!(report.latest_attempts[0].packet_id, "packet-current-001");
+        assert_eq!(report.latest_attempts[0].outcome, "not_attempted");
+        let json = ripr_swarm_attempt_ledger_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["attempts_total"], 1);
+        assert_eq!(value["summary"]["not_attempted"], 1);
         Ok(())
     }
 
