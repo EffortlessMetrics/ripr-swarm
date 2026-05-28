@@ -22813,16 +22813,34 @@ fn ripr_swarm_attempt_ledger_latest_attempts(
     for attempt in attempts {
         let replace = latest
             .get(&attempt.canonical_gap_id)
-            .map(|current| {
-                attempt.timestamp.as_deref().unwrap_or("")
-                    >= current.timestamp.as_deref().unwrap_or("")
-            })
+            .map(|current| ripr_swarm_attempt_ledger_timestamp_is_newer_or_equal(attempt, current))
             .unwrap_or(true);
         if replace {
             latest.insert(attempt.canonical_gap_id.clone(), attempt.clone());
         }
     }
     latest.into_values().collect()
+}
+
+fn ripr_swarm_attempt_ledger_timestamp_is_newer_or_equal(
+    attempt: &RiprSwarmAttemptLedgerEntry,
+    current: &RiprSwarmAttemptLedgerEntry,
+) -> bool {
+    match (
+        ripr_swarm_attempt_ledger_unix_ms_timestamp(attempt.timestamp.as_deref()),
+        ripr_swarm_attempt_ledger_unix_ms_timestamp(current.timestamp.as_deref()),
+    ) {
+        (Some(attempt_ms), Some(current_ms)) => attempt_ms >= current_ms,
+        _ => {
+            attempt.timestamp.as_deref().unwrap_or("") >= current.timestamp.as_deref().unwrap_or("")
+        }
+    }
+}
+
+fn ripr_swarm_attempt_ledger_unix_ms_timestamp(timestamp: Option<&str>) -> Option<u128> {
+    timestamp?
+        .strip_prefix("unix_ms:")
+        .and_then(|millis| millis.parse::<u128>().ok())
 }
 
 fn ripr_swarm_attempt_ledger_summary(
@@ -77436,6 +77454,87 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("# RIPR Swarm Attempt Ledger"));
         assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
         assert!(markdown.contains("evidence_improved"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_orders_unix_ms_timestamps_numerically() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "outcomes": []
+        });
+        let prior_ledger = serde_json::json!({
+            "schema_version": "0.1",
+            "report": "swarm-attempt-ledger",
+            "attempts": [
+                {
+                    "packet_id": "packet-boundary-001",
+                    "canonical_gap_id": "gap:seam-a",
+                    "attempt_id": "attempt:older-improved",
+                    "actor_kind": "agent",
+                    "verify_command": "cargo test -p ripr seam_a",
+                    "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                    "outcome": "evidence_improved",
+                    "timestamp": "unix_ms:9",
+                    "receipt_state": "receipt_movement_improved"
+                },
+                {
+                    "packet_id": "packet-boundary-001",
+                    "canonical_gap_id": "gap:seam-a",
+                    "attempt_id": "attempt:newer-regressed",
+                    "actor_kind": "agent",
+                    "verify_command": "cargo test -p ripr seam_a",
+                    "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                    "outcome": "evidence_regressed",
+                    "timestamp": "unix_ms:10",
+                    "receipt_state": "receipt_movement_regressed"
+                }
+            ]
+        });
+
+        let report = ripr_swarm_attempt_ledger_from_values(
+            "unix_ms:11".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&prior_ledger),
+            },
+        );
+
+        assert_eq!(report.latest_attempts.len(), 1);
+        assert_eq!(
+            report.latest_attempts[0].attempt_id, "attempt:newer-regressed",
+            "unix_ms timestamps must sort numerically so unix_ms:10 outranks unix_ms:9"
+        );
+        assert_eq!(report.latest_attempts[0].outcome, "evidence_regressed");
+        let json = ripr_swarm_attempt_ledger_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["evidence_regressed"],
+            serde_json::Value::from(1)
+        );
         Ok(())
     }
 
