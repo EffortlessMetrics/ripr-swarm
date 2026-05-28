@@ -24037,8 +24037,9 @@ fn ripr_swarm_readiness_next_actions(
     runtime_status: &Lane1RuntimeStatus,
 ) -> Vec<RiprSwarmReadinessNextAction> {
     let mut actions = Vec::new();
-    if runtime_status.state != "full"
-        && !runtime_status.downstream_consumable
+    let runtime_not_downstream_consumable =
+        runtime_status.state != "full" && !runtime_status.downstream_consumable;
+    if runtime_not_downstream_consumable
         && swarm_plan_input.state == "read"
         && actionable_gap_outcomes_input.state == "read"
         && attempt_ledger_input.state == "read"
@@ -24252,7 +24253,9 @@ fn ripr_swarm_readiness_next_actions(
         if let Some(action) = ripr_swarm_readiness_operator_judgment_action(plan) {
             actions.push(action);
         }
-        actions.extend(ripr_swarm_readiness_ready_packet_actions(plan));
+        if !runtime_not_downstream_consumable {
+            actions.extend(ripr_swarm_readiness_ready_packet_actions(plan));
+        }
     }
     if actions.is_empty() {
         actions.push(RiprSwarmReadinessNextAction {
@@ -76655,7 +76658,15 @@ covered_by = ["cargo xtask check-file-policy"]
             },
             "summary": {
                 "swarm_ready_packets": 1
-            }
+            },
+            "top_ready_packets": [
+                {
+                    "packet_id": "ready-boundary-001",
+                    "canonical_gap_id": "gap:ready-boundary-001",
+                    "evidence_class": "boundary_discriminator",
+                    "repair_kind": "add_boundary_assertion"
+                }
+            ]
         });
         let outcomes = serde_json::json!({
             "report": "actionable-gap-outcomes",
@@ -76757,6 +76768,11 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(value["top_next_action"]["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("repair route: run cargo xtask actionable-gap-outcomes before building the attempt ledger")));
+        assert!(!value["next_actions"].as_array().is_some_and(|actions| {
+            actions
+                .iter()
+                .any(|action| action["kind"] == "attempt_ready_packet")
+        }));
         Ok(())
     }
 
