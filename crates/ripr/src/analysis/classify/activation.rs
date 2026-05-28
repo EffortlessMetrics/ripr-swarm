@@ -441,7 +441,7 @@ fn body_contains_wrapped_local_alias(
     parameter: &str,
 ) -> bool {
     body.lines().any(|line| {
-        let line = line.trim();
+        let line = code_line_before_comment(line);
         let prefix = format!("if let {wrapper}({operand}) = ");
         line.strip_prefix(&prefix)
             .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
@@ -451,7 +451,7 @@ fn body_contains_wrapped_local_alias(
 
 fn body_contains_match_parameter(body: &str, parameter: &str) -> bool {
     body.lines().any(|line| {
-        let line = line.trim();
+        let line = code_line_before_comment(line);
         if is_comment_line(line) {
             return false;
         }
@@ -464,9 +464,17 @@ fn body_contains_match_parameter(body: &str, parameter: &str) -> bool {
 fn body_contains_wrapper_pattern(body: &str, wrapper: &str, operand: &str) -> bool {
     let pattern = format!("{wrapper}({operand})");
     body.lines().any(|line| {
-        let line = line.trim();
+        let line = code_line_before_comment(line);
         !is_comment_line(line) && line.contains(&pattern)
     })
+}
+
+fn code_line_before_comment(line: &str) -> &str {
+    let line = line.trim();
+    let line = line.split_once("//").map_or(line, |(code, _comment)| code);
+    line.split_once("/*")
+        .map_or(line, |(code, _comment)| code)
+        .trim()
 }
 
 fn is_comment_line(line: &str) -> bool {
@@ -801,6 +809,27 @@ mod tests {
                 .reason
                 .contains("observed amount values: unknown"),
             "commented wrapper patterns must not resolve boundary operands; got {:?}",
+            activation.missing_discriminators
+        );
+    }
+
+    #[test]
+    fn activation_evidence_ignores_inline_commented_match_wrapper_pattern() {
+        let owner = function(
+            "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    let _seen = match raw_amount { _ => false }; // Some(amount)\n    let amount = 1;\n    amount >= threshold\n}",
+        );
+        let test = test_with_call("score_uses_boundary", "score(Some(100), 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+
+        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+
+        assert!(!has_observed_boundary_equality(&activation));
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        assert!(
+            activation.missing_discriminators[0]
+                .reason
+                .contains("observed amount values: unknown"),
+            "inline commented wrapper patterns must not resolve boundary operands; got {:?}",
             activation.missing_discriminators
         );
     }
