@@ -2272,8 +2272,8 @@ Field contract:
 - `finding_alignment.actionable_gap_packet_public_projection` - packet-level
   badge-readiness diagnostics for the emitted packet set. It counts
   public-projection eligible packets, excluded packets, and stable
-  `projection_exclusion_reasons` rows such as `missing_receipt_path`,
-  `missing_related_test_or_observer`, `missing_confidence`,
+  `projection_exclusion_reasons` rows such as `not_actionable_gap_state`,
+  `missing_receipt_path`, `missing_related_test_or_observer`, `missing_confidence`,
   `missing_must_not_change`, `missing_raw_evidence_refs`, and
   `static_limitation_present`. This is advisory report evidence only and does
   not change public badge endpoint semantics.
@@ -2439,10 +2439,11 @@ the evidence record so agents do not have to infer the boundary or assertion
 target from a broader candidate-value hint.
 `public_projection_eligible` is an audit-only badge-readiness decision for the
 emitted packet. It is true only when the packet has public-projection
-prerequisites such as canonical repair and verify fields plus a receipt command
-or path; otherwise the stable `projection_exclusion_reasons[]` values explain
-why an otherwise useful agent packet is not yet a public badge item. This does
-not change committed badge endpoint semantics.
+prerequisites such as `gap_state = "actionable"`, canonical repair and verify
+fields plus a receipt command or path; otherwise the stable
+`projection_exclusion_reasons[]` values explain why an otherwise useful agent
+packet is not yet a public badge item. This does not change committed badge
+endpoint semantics.
 
 ## RIPR Swarm Plan
 

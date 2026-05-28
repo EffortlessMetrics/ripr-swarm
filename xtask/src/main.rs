@@ -25956,7 +25956,10 @@ fn audit_actionable_gap_projection_exclusion_reasons(
         audit_push_projection_exclusion_reason(&mut reasons, "malformed");
     }
     match input.gap_state.trim() {
-        "actionable" | "unresolved" => {}
+        "actionable" => {}
+        "unresolved" | "static_limitation" | "advisory" => {
+            audit_push_projection_exclusion_reason(&mut reasons, "not_actionable_gap_state");
+        }
         "already_observed" | "observed" | "resolved" => {
             audit_push_projection_exclusion_reason(&mut reasons, "already_observed");
         }
@@ -75396,6 +75399,34 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].canonical_gap_id, "gap:packet-receipt-ready-gap");
         Ok(())
+    }
+
+    #[test]
+    fn lane1_actionable_gap_public_projection_requires_actionable_gap_state() {
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "gap:unresolved",
+                gap_state: "unresolved",
+                actionability: "extend_related_test",
+                repair_kind: "add_boundary_assertion",
+                target_test_type: "boundary_discriminator",
+                assertion_shape: "assert_eq!(value, expected)",
+                target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: "cargo test unresolved_gap",
+                verify_command_source: "canonical_item.verify_command",
+                receipt_command_or_path: Some("cargo xtask receipts check"),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                confidence_basis: "fixture_backed",
+                must_not_change_count: 1,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["not_actionable_gap_state"]);
     }
 
     #[test]
