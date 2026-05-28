@@ -950,6 +950,8 @@ struct DogfoodUserSurfaceProjectionScenario {
     top_next_action_kind: String,
     verify_command: String,
     receipt_command: String,
+    limitation_category: String,
+    runtime_repair_command: String,
     actionable_count: usize,
     raw_findings_total: usize,
     consumes_canonical_state: bool,
@@ -976,6 +978,8 @@ struct DogfoodUserSurfaceProjectionRun {
     top_next_action_kind: String,
     verify_command: String,
     receipt_command: String,
+    limitation_category: String,
+    runtime_repair_command: String,
     actionable_count: usize,
     raw_findings_total: usize,
     consumes_canonical_state: bool,
@@ -7861,8 +7865,12 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
 ];
 
 const USER_SURFACE_PROJECTION_REQUIRED_SURFACES: &[&str] = &["badge", "lsp", "pr_comment", "ci"];
-const USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES: &[&str] =
-    &["full", "limited_large_cache_skip", "limited_stale_input"];
+const USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES: &[&str] = &[
+    "full",
+    "limited_large_cache_skip",
+    "limited_incomplete_input",
+    "limited_stale_input",
+];
 
 const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
 
@@ -8993,32 +9001,34 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
                 scenario.name
             ));
         }
-        for (label, expected, actual) in [
-            (
-                "canonical_gap_id",
-                &mut canonical_gap_id,
-                &scenario.canonical_gap_id,
-            ),
-            ("packet_id", &mut packet_id, &scenario.packet_id),
-            ("repair_kind", &mut repair_kind, &scenario.repair_kind),
-            (
-                "verify_command",
-                &mut verify_command,
-                &scenario.verify_command,
-            ),
-            (
-                "receipt_command",
-                &mut receipt_command,
-                &scenario.receipt_command,
-            ),
-        ] {
-            match expected {
-                Some(value) if value != actual => violations.push(format!(
-                    "user surface projection alignment case {} {label} must match shared {}, got {}",
-                    scenario.name, value, actual
-                )),
-                Some(_) => {}
-                None => *expected = Some(actual.clone()),
+        if scenario.run_status == "full" {
+            for (label, expected, actual) in [
+                (
+                    "canonical_gap_id",
+                    &mut canonical_gap_id,
+                    &scenario.canonical_gap_id,
+                ),
+                ("packet_id", &mut packet_id, &scenario.packet_id),
+                ("repair_kind", &mut repair_kind, &scenario.repair_kind),
+                (
+                    "verify_command",
+                    &mut verify_command,
+                    &scenario.verify_command,
+                ),
+                (
+                    "receipt_command",
+                    &mut receipt_command,
+                    &scenario.receipt_command,
+                ),
+            ] {
+                match expected {
+                    Some(value) if value != actual => violations.push(format!(
+                        "user surface projection alignment case {} {label} must match shared {}, got {}",
+                        scenario.name, value, actual
+                    )),
+                    Some(_) => {}
+                    None => *expected = Some(actual.clone()),
+                }
             }
         }
     }
@@ -38787,6 +38797,8 @@ fn dogfood_user_surface_projection_scenarios() -> Vec<DogfoodUserSurfaceProjecti
             top_next_action_kind: "unknown".to_string(),
             verify_command: "unknown".to_string(),
             receipt_command: "unknown".to_string(),
+            limitation_category: "unknown".to_string(),
+            runtime_repair_command: "unknown".to_string(),
             actionable_count: 0,
             raw_findings_total: 0,
             consumes_canonical_state: false,
@@ -38839,18 +38851,16 @@ fn dogfood_user_surface_projection_scenarios() -> Vec<DogfoodUserSurfaceProjecti
                 .unwrap_or_else(|| "unknown".to_string()),
             projection_basis: json_string_field(case, "projection_basis")
                 .unwrap_or_else(|| "unknown".to_string()),
-            canonical_gap_id: json_string_field(case, "canonical_gap_id")
-                .unwrap_or_else(|| "unknown".to_string()),
-            packet_id: json_string_field(case, "packet_id")
-                .unwrap_or_else(|| "unknown".to_string()),
-            repair_kind: json_string_field(case, "repair_kind")
-                .unwrap_or_else(|| "unknown".to_string()),
+            canonical_gap_id: json_string_field(case, "canonical_gap_id").unwrap_or_default(),
+            packet_id: json_string_field(case, "packet_id").unwrap_or_default(),
+            repair_kind: json_string_field(case, "repair_kind").unwrap_or_default(),
             top_next_action_kind: json_string_field(case, "top_next_action_kind")
                 .unwrap_or_else(|| "unknown".to_string()),
-            verify_command: json_string_field(case, "verify_command")
-                .unwrap_or_else(|| "unknown".to_string()),
-            receipt_command: json_string_field(case, "receipt_command")
-                .unwrap_or_else(|| "unknown".to_string()),
+            verify_command: json_string_field(case, "verify_command").unwrap_or_default(),
+            receipt_command: json_string_field(case, "receipt_command").unwrap_or_default(),
+            limitation_category: json_string_field(case, "limitation_category").unwrap_or_default(),
+            runtime_repair_command: json_string_field(case, "runtime_repair_command")
+                .unwrap_or_default(),
             actionable_count: json_usize_field(case, "actionable_count").unwrap_or(0),
             raw_findings_total: json_usize_field(case, "raw_findings_total").unwrap_or(0),
             consumes_canonical_state: case
@@ -38903,31 +38913,12 @@ fn dogfood_user_surface_projection_run(
         ("headline", &scenario.headline),
         ("run_status", &scenario.run_status),
         ("projection_basis", &scenario.projection_basis),
-        ("packet_id", &scenario.packet_id),
-        ("repair_kind", &scenario.repair_kind),
         ("top_next_action_kind", &scenario.top_next_action_kind),
-        ("verify_command", &scenario.verify_command),
-        ("receipt_command", &scenario.receipt_command),
         ("reason", &scenario.reason),
     ] {
         if value.trim().is_empty() || value == "unknown" {
             errors.push(format!("{label} must be present"));
         }
-    }
-    if !scenario.canonical_gap_id.starts_with("gap:") {
-        errors.push(format!(
-            "canonical_gap_id must use gap: identity, got {}",
-            scenario.canonical_gap_id
-        ));
-    }
-    if scenario.projection_basis != "canonical_actionable_gap" {
-        errors.push(format!(
-            "projection_basis must be canonical_actionable_gap, got {}",
-            scenario.projection_basis
-        ));
-    }
-    if scenario.raw_findings_total <= scenario.actionable_count {
-        errors.push("raw_findings_total must exceed actionable_count to prove raw counts are not the headline".to_string());
     }
     if !scenario.consumes_canonical_state {
         errors.push("surface must consume canonical state".to_string());
@@ -38944,14 +38935,16 @@ fn dogfood_user_surface_projection_run(
     if scenario.blocking_default {
         errors.push("surface must not be blocking by default".to_string());
     }
+    if !scenario.verify_command.trim().is_empty()
+        && scenario.verify_command == scenario.receipt_command
+    {
+        errors.push("receipt_command must stay distinct from verify_command".to_string());
+    }
     if !scenario.limited_state_visible {
         errors.push("surface must make limited state visible".to_string());
     }
     if !scenario.stale_state_visible {
         errors.push("surface must make stale state visible".to_string());
-    }
-    if scenario.verify_command == scenario.receipt_command {
-        errors.push("receipt_command must stay distinct from verify_command".to_string());
     }
     errors.extend(dogfood_user_surface_projection_runtime_state_errors(
         scenario,
@@ -38970,6 +38963,8 @@ fn dogfood_user_surface_projection_run(
         top_next_action_kind: scenario.top_next_action_kind.clone(),
         verify_command: scenario.verify_command.clone(),
         receipt_command: scenario.receipt_command.clone(),
+        limitation_category: scenario.limitation_category.clone(),
+        runtime_repair_command: scenario.runtime_repair_command.clone(),
         actionable_count: scenario.actionable_count,
         raw_findings_total: scenario.raw_findings_total,
         consumes_canonical_state: scenario.consumes_canonical_state,
@@ -38990,6 +38985,31 @@ fn dogfood_user_surface_projection_runtime_state_errors(
     let mut errors = Vec::new();
     let headline = scenario.headline.to_ascii_lowercase();
     if scenario.run_status == "full" {
+        if scenario.projection_basis != "canonical_actionable_gap" {
+            errors.push(format!(
+                "full run_status projection_basis must be canonical_actionable_gap, got {}",
+                scenario.projection_basis
+            ));
+        }
+        if !scenario.canonical_gap_id.starts_with("gap:") {
+            errors.push(format!(
+                "canonical_gap_id must use gap: identity, got {}",
+                scenario.canonical_gap_id
+            ));
+        }
+        for (label, value) in [
+            ("packet_id", &scenario.packet_id),
+            ("repair_kind", &scenario.repair_kind),
+            ("verify_command", &scenario.verify_command),
+            ("receipt_command", &scenario.receipt_command),
+        ] {
+            if value.trim().is_empty() || value == "unknown" {
+                errors.push(format!("{label} must be present for full run_status"));
+            }
+        }
+        if scenario.raw_findings_total <= scenario.actionable_count {
+            errors.push("raw_findings_total must exceed actionable_count to prove raw counts are not the headline".to_string());
+        }
         if scenario.top_next_action_kind != "attempt_ready_packet" {
             errors.push(format!(
                 "full run_status must route attempt_ready_packet, got {}",
@@ -38997,10 +39017,51 @@ fn dogfood_user_surface_projection_runtime_state_errors(
             ));
         }
     } else if scenario.run_status.starts_with("limited_") {
+        if scenario.projection_basis != "canonical_runtime_status" {
+            errors.push(format!(
+                "{} projection_basis must be canonical_runtime_status, got {}",
+                scenario.run_status, scenario.projection_basis
+            ));
+        }
         if scenario.top_next_action_kind != "resolve_limited_runtime_status" {
             errors.push(format!(
                 "{} must route resolve_limited_runtime_status, got {}",
                 scenario.run_status, scenario.top_next_action_kind
+            ));
+        }
+        if !scenario.canonical_gap_id.trim().is_empty()
+            && !scenario.canonical_gap_id.starts_with("gap:")
+        {
+            errors.push(format!(
+                "canonical_gap_id must use gap: identity, got {}",
+                scenario.canonical_gap_id
+            ));
+        }
+        if !scenario.canonical_gap_id.trim().is_empty() || !scenario.packet_id.trim().is_empty() {
+            errors.push("limited or stale run_status must not carry packet identity".to_string());
+        }
+        if !scenario.repair_kind.trim().is_empty()
+            || !scenario.verify_command.trim().is_empty()
+            || !scenario.receipt_command.trim().is_empty()
+        {
+            errors.push(
+                "limited or stale run_status must not carry packet repair commands".to_string(),
+            );
+        }
+        if scenario.limitation_category.trim().is_empty()
+            || scenario.limitation_category == "unknown"
+        {
+            errors.push(format!(
+                "{} must name a limitation_category",
+                scenario.run_status
+            ));
+        }
+        if scenario.runtime_repair_command.trim().is_empty()
+            || scenario.runtime_repair_command == "unknown"
+        {
+            errors.push(format!(
+                "{} must provide a runtime_repair_command",
+                scenario.run_status
             ));
         }
         if scenario.run_status == "limited_stale_input" {
@@ -40879,7 +40940,7 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     }
 
     body.push_str("## User Surface Projection Alignment Receipts\n\n");
-    body.push_str("These receipts validate that badge, LSP, PR comment, and CI projection examples consume the same canonical repair state instead of independently interpreting raw findings. They keep all four surfaces advisory by default and require limited/stale state visibility.\n\n");
+    body.push_str("These receipts validate that badge, LSP, PR comment, and CI projection examples consume canonical repair state for full runs and canonical runtime state for limited runs instead of independently interpreting raw findings. They keep all four surfaces advisory by default and require limited/stale state visibility.\n\n");
     body.push_str("- Default CI blocking: no\n");
     body.push_str("- Receipt input: `fixtures/user-surface-projection-alignment/corpus.json`\n\n");
     body.push_str(
@@ -40927,6 +40988,14 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "- Receipt command: `{}`\n",
             markdown_cell(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "- Limitation category: `{}`\n",
+            markdown_cell(&run.limitation_category)
+        ));
+        body.push_str(&format!(
+            "- Runtime repair command: `{}`\n",
+            markdown_cell(&run.runtime_repair_command)
         ));
         body.push_str(&format!(
             "- Counts: actionable {}, raw findings {}\n",
@@ -42290,6 +42359,14 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "        \"receipt_command\": \"{}\",\n",
             json_escape(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "        \"limitation_category\": \"{}\",\n",
+            json_escape(&run.limitation_category)
+        ));
+        body.push_str(&format!(
+            "        \"runtime_repair_command\": \"{}\",\n",
+            json_escape(&run.runtime_repair_command)
         ));
         body.push_str(&format!(
             "        \"actionable_count\": {},\n",
@@ -62683,6 +62760,8 @@ fn exact_owner_call_has_external_expected_value() {
             top_next_action_kind: "attempt_ready_packet".to_string(),
             verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
             receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            limitation_category: String::new(),
+            runtime_repair_command: String::new(),
             actionable_count: 8,
             raw_findings_total: 312,
             consumes_canonical_state: true,
@@ -63585,6 +63664,7 @@ fn exact_owner_call_has_external_expected_value() {
 
         assert!(!report.contains("run_status full"));
         assert!(report.contains("run_status limited_large_cache_skip"));
+        assert!(report.contains("run_status limited_incomplete_input"));
         assert!(report.contains("run_status limited_stale_input"));
     }
 
@@ -63602,6 +63682,8 @@ fn exact_owner_call_has_external_expected_value() {
             top_next_action_kind: "attempt_ready_packet".to_string(),
             verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
             receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            limitation_category: String::new(),
+            runtime_repair_command: String::new(),
             actionable_count: 8,
             raw_findings_total: 312,
             consumes_canonical_state: true,
@@ -63639,9 +63721,11 @@ fn exact_owner_call_has_external_expected_value() {
 
         assert!(report.contains("case id must be present"));
         assert!(report.contains("unsupported surface raw_dashboard"));
-        assert!(report.contains("projection_basis must be canonical_actionable_gap"));
+        assert!(
+            report
+                .contains("limited_stale_input projection_basis must be canonical_runtime_status")
+        );
         assert!(report.contains("canonical_gap_id must use gap: identity"));
-        assert!(report.contains("raw_findings_total must exceed actionable_count"));
         assert!(report.contains("surface must consume canonical state"));
         assert!(report.contains("surface must not reinterpret raw findings"));
         assert!(report.contains("surface must not headline raw findings"));
@@ -63650,11 +63734,38 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(report.contains("surface must make limited state visible"));
         assert!(report.contains("surface must make stale state visible"));
         assert!(report.contains("receipt_command must stay distinct from verify_command"));
+        assert!(report.contains("limited or stale run_status must not carry packet identity"));
+        assert!(
+            report.contains("limited or stale run_status must not carry packet repair commands")
+        );
+        assert!(report.contains("limited_stale_input must name a limitation_category"));
+        assert!(report.contains("limited_stale_input must provide a runtime_repair_command"));
         assert!(report.contains("limited_stale_input must route resolve_limited_runtime_status"));
         assert!(report.contains("limited_stale_input headline must make stale state visible"));
         assert!(
             report.contains("limited or stale run_status must not headline an actionable count")
         );
+    }
+
+    #[test]
+    fn dogfood_user_surface_projection_alignment_accepts_limited_runtime_status() {
+        let mut scenario = valid_user_surface_projection_scenario();
+        scenario.name = "badge_limited_state_from_canonical_runtime".to_string();
+        scenario.headline = "ripr: limited".to_string();
+        scenario.run_status = "limited_incomplete_input".to_string();
+        scenario.projection_basis = "canonical_runtime_status".to_string();
+        scenario.canonical_gap_id.clear();
+        scenario.packet_id.clear();
+        scenario.repair_kind.clear();
+        scenario.top_next_action_kind = "resolve_limited_runtime_status".to_string();
+        scenario.verify_command.clear();
+        scenario.receipt_command.clear();
+        scenario.limitation_category = "lane1_repo_exposure_sampled".to_string();
+        scenario.runtime_repair_command = "cargo xtask lane1-evidence-audit".to_string();
+
+        let run = dogfood_user_surface_projection_run(&scenario);
+
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
     }
 
     #[test]
