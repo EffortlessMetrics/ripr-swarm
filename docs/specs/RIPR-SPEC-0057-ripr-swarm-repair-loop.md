@@ -435,6 +435,10 @@ Given a packet whose `public_projection_eligible` value is false, `ripr-swarm`
 must report `blocked_by_public_projection_exclusion` rather than enqueueing it
 as repair-ready, even when the packet otherwise has typed target, verify,
 receipt, confidence, and boundary fields.
+Given a packet with a non-empty `projection_exclusion_reasons[]` array,
+`ripr-swarm` must also report `blocked_by_public_projection_exclusion`; explicit
+exclusion reasons are authoritative even if a stale producer also set
+`public_projection_eligible = true`.
 
 Given a static-only predicate-boundary assertion packet, `ripr-swarm` must
 report `blocked_by_operator_judgment` rather than enqueueing it as
