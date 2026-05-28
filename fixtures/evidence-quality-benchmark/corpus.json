@@ -1125,15 +1125,23 @@
             "related_tests": 1,
             "observed_values": 0,
             "static_limitations": 1
-          }
+          },
+          "static_limitations": [
+            {
+              "stage": "activate",
+              "state": "unknown",
+              "category": "activation_owner_call_absent",
+              "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+            }
+          ]
         }
       },
       "expected_audit_signal": {
         "section": "static_limitation_categories",
-        "metric": "activation_owner_call_unresolved",
+        "metric": "activation_owner_call_absent",
         "value": 1
       },
-      "static_limitation_category": "activation_owner_call_unresolved",
+      "static_limitation_category": "activation_owner_call_absent",
       "expected_claim": "Specific call-target affinity is relation evidence only; without an owner call it remains a named activation limitation and not user test debt.",
       "must_not_claim": [
         "Do not turn call-target token affinity into activation.",
@@ -1141,7 +1149,7 @@
         "Do not invent observed values for call-presence target-token affinity.",
         "Do not classify affinity-only call-presence seams as user test debt."
       ],
-      "repair_route": "analysis/related-test-ranking-audit-fixes"
+      "repair_route": "analysis/related-test-affinity-owner-call-tracing"
     },
     {
       "id": "one_hop_helper_owner_call_activation_values_not_required",
