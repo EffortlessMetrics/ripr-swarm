@@ -370,7 +370,7 @@ jobs:
     name: Ripr Rust Small Result
     needs: [route, rust-cx53, rust-cx43, rust-github]
     if: always()
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Summarize routed result
         env:
