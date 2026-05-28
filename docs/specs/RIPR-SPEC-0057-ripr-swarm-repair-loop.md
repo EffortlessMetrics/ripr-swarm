@@ -107,6 +107,8 @@ Before an attempt can claim improvement, typed evidence must show:
   evidence, or resolution;
 - outcome rows expose normalized `receipt_command` so downstream ledgers and
   readiness reports do not reinterpret legacy command/path fields;
+- outcome and ledger rows preserve typed `verify_result` when source artifacts
+  provide it, and do not infer success from a present verify command;
 - no production-code edit claim unless explicitly operator-authorized outside
   the default swarm contract.
 
@@ -298,10 +300,11 @@ a new actionable gap.
 
 The attempt ledger must preserve typed route context for each attempt when it
 is available: `evidence_class`, `source_file`, `repair_kind`,
-`target_test_type`, and `assertion_shape`. It must summarize latest attempts by
-`repair_kind` so repeated unchanged, regressed, no-receipt, or unknown outcomes
-become analyzer-improvement signals instead of disappearing into aggregate
-attempt counts.
+`target_test_type`, `assertion_shape`, `verify_command`, `verify_result`, and
+`receipt_command`. It must summarize latest attempts by `repair_kind` so
+repeated unchanged, regressed, no-receipt, missing-verify-result, or unknown
+outcomes become analyzer-improvement signals instead of disappearing into
+aggregate attempt counts.
 
 Readiness must treat durable `attempts[]` as the source of truth for
 attempt/outcome summary counts, repair-route quality, and missing-evidence-field

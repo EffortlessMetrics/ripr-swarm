@@ -1210,6 +1210,7 @@ struct ActionableGapOutcome {
     repair_kind: String,
     source_file: String,
     verify_command: String,
+    verify_result: Option<String>,
     receipt_command: Option<String>,
     receipt_command_or_path: Option<String>,
     receipt_state: String,
@@ -21151,6 +21152,7 @@ struct RiprSwarmAttemptLedgerEntry {
     actor_kind: String,
     receipt_path: Option<String>,
     verify_command: String,
+    verify_result: Option<String>,
     receipt_command: Option<String>,
     before_gap_state: Option<String>,
     after_gap_state: Option<String>,
@@ -22636,6 +22638,7 @@ fn ripr_swarm_attempt_ledger_entries_from_value(
                 receipt_path: audit_non_empty_string(entry, &["receipt_path"]),
                 verify_command: audit_non_empty_string(entry, &["verify_command"])
                     .unwrap_or_else(|| "verify_command_unknown".to_string()),
+                verify_result: audit_non_empty_string(entry, &["verify_result"]),
                 receipt_command: audit_non_empty_string(entry, &["receipt_command"]),
                 before_gap_state: audit_non_empty_string(entry, &["before_gap_state"]),
                 after_gap_state: audit_non_empty_string(entry, &["after_gap_state"]),
@@ -22754,6 +22757,7 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
         actor_kind,
         receipt_path: entry_receipt_path,
         verify_command,
+        verify_result: audit_non_empty_string(outcome, &["verify_result"]),
         receipt_command,
         before_gap_state: audit_non_empty_string(outcome, &["before"]),
         after_gap_state: audit_non_empty_string(outcome, &["after"]),
@@ -23006,6 +23010,14 @@ fn ripr_swarm_attempt_ledger_top_missing_evidence_fields(
         if ripr_swarm_plan_field_missing(&attempt.verify_command) {
             audit_increment(&mut counts, "verify_command");
         }
+        if attempt.outcome != "not_attempted"
+            && attempt
+                .verify_result
+                .as_deref()
+                .is_none_or(ripr_swarm_plan_field_missing)
+        {
+            audit_increment(&mut counts, "verify_result");
+        }
         if attempt
             .receipt_command
             .as_deref()
@@ -23158,6 +23170,7 @@ fn ripr_swarm_attempt_ledger_entry_json(entry: &RiprSwarmAttemptLedgerEntry) -> 
         "actor_kind": entry.actor_kind,
         "receipt_path": entry.receipt_path,
         "verify_command": entry.verify_command,
+        "verify_result": entry.verify_result,
         "receipt_command": entry.receipt_command,
         "before_gap_state": entry.before_gap_state,
         "after_gap_state": entry.after_gap_state,
@@ -23298,11 +23311,11 @@ fn ripr_swarm_attempt_ledger_push_attempt_table(
         out.push_str("No attempts in this section.\n\n");
         return;
     }
-    out.push_str("| Attempt | Gap | Packet | Repair | Outcome | Actor | Verify | Receipt |\n");
-    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    out.push_str("| Attempt | Gap | Packet | Repair | Outcome | Actor | Verify | Verify result | Receipt |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
     for attempt in attempts {
         out.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} | {} |\n",
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} | `{}` | {} |\n",
             audit_markdown_cell(&attempt.attempt_id),
             audit_markdown_cell(&attempt.canonical_gap_id),
             audit_markdown_cell(&attempt.packet_id),
@@ -23310,6 +23323,7 @@ fn ripr_swarm_attempt_ledger_push_attempt_table(
             audit_markdown_cell(&attempt.outcome),
             audit_markdown_cell(&attempt.actor_kind),
             audit_markdown_cell(&attempt.verify_command),
+            audit_markdown_cell(attempt.verify_result.as_deref().unwrap_or("unknown")),
             audit_markdown_cell(attempt.receipt_command.as_deref().unwrap_or("missing"))
         ));
     }
@@ -24366,6 +24380,9 @@ fn actionable_gap_outcome_from_packet(
     let targeted_movement = targeted_test_outcome
         .and_then(|outcome| actionable_gap_targeted_movement(outcome, packet, &id_candidates));
     let receipt_movement = receipt.and_then(actionable_gap_receipt_movement);
+    let targeted_verify_result =
+        targeted_test_outcome.and_then(actionable_gap_targeted_verify_result);
+    let receipt_verify_result = receipt.and_then(actionable_gap_receipt_verify_result);
     let receipt_timestamp = receipt.and_then(actionable_gap_receipt_timestamp);
     let receipt_state = if let Some(movement) = receipt_movement.as_ref() {
         receipt_lifecycle_state_from_movement(movement.direction.as_deref())
@@ -24397,6 +24414,16 @@ fn actionable_gap_outcome_from_packet(
     };
     let receipt_command = audit_non_empty_string(packet, &["receipt_command"])
         .or_else(|| audit_non_empty_string(packet, &["receipt_command_or_path"]));
+    let verify_result = receipt_verify_result.or_else(|| {
+        if movement
+            .as_ref()
+            .is_some_and(|movement| movement.source == "targeted_test_outcome")
+        {
+            targeted_verify_result
+        } else {
+            None
+        }
+    });
     let timestamp = receipt_timestamp.or_else(|| {
         movement
             .as_ref()
@@ -24421,6 +24448,7 @@ fn actionable_gap_outcome_from_packet(
             .unwrap_or_else(|| "source_file_unknown".to_string()),
         verify_command: audit_non_empty_string(packet, &["verify_command"])
             .unwrap_or_else(|| "verify_command_unknown".to_string()),
+        verify_result,
         receipt_command_or_path: audit_non_empty_string(packet, &["receipt_command_or_path"])
             .or_else(|| receipt_command.clone()),
         receipt_command,
@@ -24632,11 +24660,31 @@ fn actionable_gap_receipt_timestamp(receipt: &Value) -> Option<String> {
         .or_else(|| audit_non_empty_string(receipt, &["provenance", "recorded_at"]))
 }
 
+fn actionable_gap_receipt_verify_result(receipt: &Value) -> Option<String> {
+    audit_non_empty_string(receipt, &["verify_result"])
+        .or_else(|| audit_non_empty_string(receipt, &["verification", "result"]))
+        .or_else(|| audit_non_empty_string(receipt, &["verification", "status"]))
+        .or_else(|| audit_non_empty_string(receipt, &["summary", "verify_result"]))
+        .or_else(|| audit_non_empty_string(receipt, &["summary", "verification_result"]))
+        .or_else(|| audit_non_empty_string(receipt, &["provenance", "verify_result"]))
+        .or_else(|| audit_non_empty_string(receipt, &["provenance", "verification_result"]))
+}
+
 fn actionable_gap_targeted_timestamp(targeted: &Value) -> Option<String> {
     audit_non_empty_string(targeted, &["timestamp"])
         .or_else(|| audit_non_empty_string(targeted, &["generated_at"]))
         .or_else(|| audit_non_empty_string(targeted, &["provenance", "timestamp"]))
         .or_else(|| audit_non_empty_string(targeted, &["provenance", "generated_at"]))
+}
+
+fn actionable_gap_targeted_verify_result(targeted: &Value) -> Option<String> {
+    audit_non_empty_string(targeted, &["verify_result"])
+        .or_else(|| audit_non_empty_string(targeted, &["verification", "result"]))
+        .or_else(|| audit_non_empty_string(targeted, &["verification", "status"]))
+        .or_else(|| audit_non_empty_string(targeted, &["summary", "verify_result"]))
+        .or_else(|| audit_non_empty_string(targeted, &["summary", "verification_result"]))
+        .or_else(|| audit_non_empty_string(targeted, &["provenance", "verify_result"]))
+        .or_else(|| audit_non_empty_string(targeted, &["provenance", "verification_result"]))
 }
 
 fn actionable_gap_outcome_attempt_instance(
@@ -24806,6 +24854,7 @@ fn actionable_gap_outcome_json(outcome: &ActionableGapOutcome) -> Value {
         "repair_kind": outcome.repair_kind,
         "source_file": outcome.source_file,
         "verify_command": outcome.verify_command,
+        "verify_result": outcome.verify_result,
         "receipt_command": outcome.receipt_command,
         "receipt_command_or_path": outcome.receipt_command_or_path,
         "receipt_state": outcome.receipt_state,
@@ -77712,6 +77761,7 @@ covered_by = ["cargo xtask check-file-policy"]
         });
         let receipt = serde_json::json!({
             "schema_version": "0.3",
+            "verify_result": "pass",
             "seam": {
                 "seam_id": "seam-a",
                 "file": "src/pricing.rs",
@@ -77730,6 +77780,7 @@ covered_by = ["cargo xtask check-file-policy"]
         let targeted = serde_json::json!({
             "schema_version": "0.1",
             "generated_at": "unix_ms:3",
+            "verify_result": "pass",
             "moved": [],
             "unchanged": [
                 {
@@ -77801,6 +77852,12 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             value["outcomes"][0]["receipt_command"],
             "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-a"
+        );
+        assert_eq!(value["outcomes"][0]["verify_result"], "pass");
+        assert_eq!(value["outcomes"][1]["verify_result"], "pass");
+        assert_eq!(
+            value["outcomes"][3]["verify_result"],
+            serde_json::Value::Null
         );
         assert_eq!(value["summary"]["evidence_improved"], 1);
         assert_eq!(value["summary"]["evidence_unchanged"], 0);
@@ -77882,6 +77939,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_boundary_assertion",
                     "source_file": "src/pricing.rs",
                     "verify_command": "cargo test -p ripr seam_a",
+                    "verify_result": "pass",
                     "receipt_command_or_path": "cargo xtask receipts write --packet packet-boundary-001",
                     "receipt_state": "receipt_movement_improved",
                     "outcome_state": "evidence_improved",
@@ -77912,6 +77970,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "actor_kind": "agent",
                     "receipt_path": "target/ripr/reports/agent-receipt-old.json",
                     "verify_command": "cargo test -p ripr seam_a",
+                    "verify_result": "pass",
                     "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
                     "before_gap_state": "weakly_gripped",
                     "after_gap_state": "weakly_gripped",
@@ -77965,10 +78024,12 @@ covered_by = ["cargo xtask check-file-policy"]
             value["latest_attempts"][0]["attempt_id"],
             "attempt:gap-seam-a:evidence-improved:receipt-movement-improved:agent-receipt:seam-a:receipt-path-target-ripr-reports-agent-receipt-json"
         );
+        assert_eq!(value["latest_attempts"][0]["verify_result"], "pass");
         let markdown = ripr_swarm_attempt_ledger_markdown(&report);
         assert!(markdown.contains("# RIPR Swarm Attempt Ledger"));
         assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
         assert!(markdown.contains("evidence_improved"));
+        assert!(markdown.contains("| Verify result |"));
         Ok(())
     }
 
@@ -78583,6 +78644,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "actor_kind": "agent",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
+                    "verify_result": "pass",
                     "receipt_command": "cargo xtask receipts write --packet packet-output-001",
                     "outcome": "evidence_unchanged",
                     "timestamp": "unix_ms:9"
@@ -78594,6 +78656,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "actor_kind": "agent",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
+                    "verify_result": "pass",
                     "receipt_command": "cargo xtask receipts write --packet packet-output-001",
                     "outcome": "evidence_improved",
                     "timestamp": "unix_ms:10"
@@ -78726,6 +78789,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "actor_kind": "agent",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
+                    "verify_result": "pass",
                     "receipt_command": "cargo xtask receipts write --packet packet-output-001",
                     "outcome": "evidence_improved",
                     "timestamp": "unix_ms:10"
@@ -78832,6 +78896,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "actor_kind": "agent",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
+                    "verify_result": "pass",
                     "receipt_command": "cargo xtask receipts write --packet packet-output-001",
                     "outcome": "evidence_improved",
                     "timestamp": "unix_ms:10"
@@ -78934,6 +78999,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "actor_kind": "agent",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
+                    "verify_result": "pass",
                     "receipt_command": "cargo xtask receipts write --packet packet-output-001",
                     "outcome": "evidence_improved",
                     "timestamp": "unix_ms:10"

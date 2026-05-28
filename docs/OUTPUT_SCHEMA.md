@@ -2664,6 +2664,7 @@ mutation testing, change PR/CI rendering, or change public badge semantics.
       "repair_kind": "add_boundary_assertion",
       "source_file": "src/pricing.rs",
       "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+      "verify_result": "pass",
       "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id abc --json --out target/ripr/reports/agent-receipt.json",
       "receipt_command_or_path": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id abc --json --out target/ripr/reports/agent-receipt.json",
       "receipt_state": "receipt_movement_improved",
@@ -2717,6 +2718,9 @@ does not count as `evidence_improved`, `evidence_unchanged`,
 `evidence_regressed`, or `resolved` until receipt evidence is joined.
 `receipt_command` is the normalized command for downstream consumers;
 `receipt_command_or_path` remains as compatibility for older packet artifacts.
+`verify_result` is optional typed evidence copied from matching receipt or
+targeted-test outcome artifacts. Missing values remain `null`; RIPR must not
+infer a passing result from a present `verify_command`.
 `receipt_state` uses the canonical receipt lifecycle vocabulary:
 `receipt_missing`, `receipt_found`, `receipt_stale`,
 `receipt_gap_mismatch`, `receipt_movement_improved`,
@@ -2846,6 +2850,7 @@ badges.
       "actor_kind": "agent",
       "receipt_path": "target/ripr/reports/agent-receipt.json",
       "verify_command": "cargo test -p ripr boundary_gap",
+      "verify_result": "pass",
       "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
       "before_gap_state": "weakly_gripped",
       "after_gap_state": "strongly_gripped",
@@ -2869,6 +2874,7 @@ badges.
       "actor_kind": "agent",
       "receipt_path": "target/ripr/reports/agent-receipt.json",
       "verify_command": "cargo test -p ripr boundary_gap",
+      "verify_result": "pass",
       "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
       "before_gap_state": "weakly_gripped",
       "after_gap_state": "strongly_gripped",
@@ -2907,6 +2913,9 @@ and `unknown` outcomes. Missing outcome inputs make the ledger
 limited `runtime_status` instead of becoming a clean full ledger. Missing
 swarm-plan input is consumable but explicitly limited because packet ids may be
 less complete.
+`verify_result` is preserved when supplied by outcome or prior-ledger rows.
+Attempted rows with no `verify_result` contribute to
+`top_missing_evidence_fields[]` as `verify_result`.
 
 Generated `attempt_id` values include a stable attempt-instance suffix when the
 outcome carries one, preferring explicit outcome `attempt_instance`, then
