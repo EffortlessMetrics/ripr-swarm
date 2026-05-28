@@ -99,6 +99,8 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        let unique_test_helper_owner_calls_by_name =
+            unique_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
         let tests = index
             .tests
             .iter()
@@ -124,6 +126,7 @@ impl<'a> CompactGripContext<'a> {
                     test,
                     &call_names,
                     &helper_owner_calls_by_file,
+                    &unique_test_helper_owner_calls_by_name,
                 );
                 for call_name in &call_names {
                     tests_by_call_name
@@ -225,6 +228,7 @@ impl<'a> CompactGripContext<'a> {
 }
 
 type HelperOwnerCallsByFile = BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>>;
+type HelperOwnerCallsByName = BTreeMap<String, BTreeSet<String>>;
 
 fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
     let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
@@ -259,6 +263,27 @@ fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
             .insert(function.name.clone(), owner_calls);
     }
     helpers
+}
+
+fn unique_test_helper_owner_calls_by_name(
+    helpers: &HelperOwnerCallsByFile,
+) -> HelperOwnerCallsByName {
+    let mut by_name: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
+    for (file, file_helpers) in helpers {
+        if !rust_index::is_test_file(file) {
+            continue;
+        }
+        for (helper_name, owner_calls) in file_helpers {
+            by_name
+                .entry(helper_name.clone())
+                .or_default()
+                .push(owner_calls.clone());
+        }
+    }
+    by_name
+        .into_iter()
+        .filter_map(|(helper_name, owner_sets)| unique_helper_owner_calls(helper_name, owner_sets))
+        .collect()
 }
 
 fn local_function_names_by_file(index: &RustIndex) -> BTreeMap<PathBuf, BTreeSet<String>> {
@@ -371,21 +396,45 @@ fn is_helper_token_boundary(ch: Option<char>) -> bool {
     ch.is_none_or(|ch| ch == '_' || !ch.is_alphanumeric())
 }
 
+fn unique_helper_owner_calls(
+    helper_name: String,
+    owner_sets: Vec<BTreeSet<String>>,
+) -> Option<(String, BTreeSet<String>)> {
+    let mut owner_sets = owner_sets.into_iter();
+    let first = owner_sets.next()?;
+    owner_sets.next().is_none().then_some((helper_name, first))
+}
+
 fn helper_owner_call_names_for_test(
     test: &TestSummary,
     call_names: &BTreeSet<String>,
     helpers: &HelperOwnerCallsByFile,
+    unique_helpers: &HelperOwnerCallsByName,
 ) -> BTreeSet<String> {
     let Some(file_helpers) = helpers.get(&test.file) else {
-        return BTreeSet::new();
+        return helper_owner_call_names_from_unique_helpers(call_names, unique_helpers);
     };
     let mut owner_names = BTreeSet::new();
     for helper_name in call_names {
         if let Some(helper_owner_names) = file_helpers.get(helper_name) {
             owner_names.extend(helper_owner_names.iter().cloned());
         }
+        if let Some(helper_owner_names) = unique_helpers.get(helper_name) {
+            owner_names.extend(helper_owner_names.iter().cloned());
+        }
     }
     owner_names
+}
+
+fn helper_owner_call_names_from_unique_helpers(
+    call_names: &BTreeSet<String>,
+    unique_helpers: &HelperOwnerCallsByName,
+) -> BTreeSet<String> {
+    call_names
+        .iter()
+        .filter_map(|helper_name| unique_helpers.get(helper_name))
+        .flat_map(|owner_names| owner_names.iter().cloned())
+        .collect()
 }
 
 /// Why this test is related to the seam. v1: a single highest-priority
@@ -3990,6 +4039,158 @@ fn helper_exercises_pipeline() {
                 .contains("one-hop helper owner call for value-insensitive seam"),
             "activation summary should explain the test-local helper owner-call route: {}",
             evidence.activate.summary
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_unique_test_support_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let support = PathBuf::from("tests/support.rs");
+        let support_src = r#"
+use pipeline::render_pipeline;
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use support::exercise_pipeline;
+
+#[test]
+fn pipeline_from_support_helper() {
+    let rendered = exercise_pipeline();
+    assert_eq!(rendered, "alpha");
+}
+"#;
+        let index =
+            index_from_files(&[(prod, prod_src), (support, support_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected unique test-support helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "call_presence support helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("one-hop helper owner call for value-insensitive seam"),
+            "activation summary should explain the unique support helper owner-call route: {}",
+            evidence.activate.summary
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_support_helper_name_is_ambiguous_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let pipeline = PathBuf::from("src/pipeline.rs");
+        let pipeline_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let report = PathBuf::from("src/report.rs");
+        let report_src = r#"
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let support_a = PathBuf::from("tests/support_a.rs");
+        let support_a_src = r#"
+use pipeline::render_pipeline;
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+"#;
+        let support_b = PathBuf::from("tests/support_b.rs");
+        let support_b_src = r#"
+use report::render_report;
+
+pub fn exercise_pipeline() -> String {
+    render_report("alpha")
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use support_a::exercise_pipeline;
+
+#[test]
+fn pipeline_from_support_helper() {
+    let rendered = exercise_pipeline();
+    assert_eq!(rendered, "alpha");
+}
+"#;
+        let index = index_from_files(&[
+            (pipeline, pipeline_src),
+            (report, report_src),
+            (support_a, support_a_src),
+            (support_b, support_b_src),
+            (tests, tests_src),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "ambiguous test-support helper name must not get helper-owner relation: {:?}",
+            evidence.related_tests
         );
         Ok(())
     }
