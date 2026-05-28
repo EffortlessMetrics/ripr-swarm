@@ -19719,7 +19719,9 @@ impl Lane1EvidenceAuditBuilder {
                 typed_related_target_available,
                 confidence_basis: &confidence_basis,
                 must_not_change_count: must_not_change.len(),
-                raw_evidence_refs_count: raw_evidence_refs.len(),
+                raw_evidence_refs_count: audit_structured_raw_evidence_refs_count(
+                    &raw_evidence_refs,
+                ),
                 static_limitations_count: static_limitations.len(),
             });
         let public_projection_eligible = projection_exclusion_reasons.is_empty();
@@ -21898,9 +21900,10 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     let verify_command = audit_non_empty_string(packet, &["verify_command"]);
     let receipt_command_or_path = audit_non_empty_string(packet, &["receipt_command_or_path"])
         .or_else(|| audit_non_empty_string(packet, &["receipt_command"]));
-    let raw_findings_count = audit_array(packet, &["raw_evidence_refs"])
-        .len()
-        .max(audit_array(packet, &["raw_findings"]).len());
+    let raw_findings_count =
+        audit_structured_raw_evidence_refs_count(audit_array(packet, &["raw_evidence_refs"])).max(
+            audit_structured_raw_evidence_refs_count(audit_array(packet, &["raw_findings"])),
+        );
     let static_limitations_count = audit_array(packet, &["static_limitations"]).len();
     let must_not_change_count = audit_array(packet, &["must_not_change"]).len();
     let public_projection_eligible =
@@ -25520,6 +25523,26 @@ fn audit_actionable_gap_projection_exclusion_reasons(
         audit_push_projection_exclusion_reason(&mut reasons, "static_limitation_present");
     }
     reasons
+}
+
+fn audit_structured_raw_evidence_refs_count(values: &[Value]) -> usize {
+    values
+        .iter()
+        .filter(|value| audit_raw_evidence_ref_is_structured(value))
+        .count()
+}
+
+fn audit_raw_evidence_ref_is_structured(value: &Value) -> bool {
+    let has_anchor = audit_non_empty_string(value, &["file"])
+        .or_else(|| audit_non_empty_string(value, &["path"]))
+        .or_else(|| audit_non_empty_string(value, &["source_file"]))
+        .is_some();
+    let has_identity = audit_non_empty_string(value, &["kind"])
+        .or_else(|| audit_non_empty_string(value, &["source_id"]))
+        .or_else(|| audit_non_empty_string(value, &["evidence_record_ref"]))
+        .or_else(|| audit_non_empty_string(value, &["canonical_gap_id"]))
+        .is_some();
+    has_anchor && has_identity
 }
 
 fn audit_push_projection_exclusion_reason(reasons: &mut Vec<String>, reason: &str) {
@@ -76266,6 +76289,54 @@ covered_by = ["cargo xtask check-file-policy"]
                     "must_not_change": ["Do not edit production code by default."],
                     "raw_evidence_refs": [],
                     "raw_findings": [],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "raw_evidence_refs")
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_malformed_raw_evidence_refs() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:malformed-raw-evidence",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(value, expected)"
+                    },
+                    "verify_command": "cargo test malformed_raw_evidence",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": "tests/lib.rs::malformed_raw_evidence",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{}],
+                    "raw_findings": ["placeholder"],
                     "static_limitations": [],
                     "public_projection_eligible": true
                 }
