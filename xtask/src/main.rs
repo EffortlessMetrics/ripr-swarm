@@ -39071,7 +39071,10 @@ fn dogfood_user_surface_projection_runtime_state_errors(
         }
         if !matches!(
             scenario.top_next_action_kind.as_str(),
-            "attempt_ready_packet" | "improve_repair_route_quality" | "inspect_unchanged_attempts"
+            "attempt_ready_packet"
+                | "improve_repair_route_quality"
+                | "inspect_unchanged_attempts"
+                | "collect_missing_attempt_receipts"
         ) {
             errors.push(format!(
                 "full run_status must route a canonical repair-loop next action, got {}",
@@ -63983,6 +63986,56 @@ fn exact_owner_call_has_external_expected_value() {
     }
 
     #[test]
+    fn dogfood_surface_projection_alignment_covers_missing_receipt_route_quality()
+    -> Result<(), String> {
+        with_repo_cwd(|| {
+            let fixture = std::fs::read_to_string(super::SURFACE_PROJECTION_ALIGNMENT_CORPUS)
+                .map_err(|err| err.to_string())?;
+            let value: serde_json::Value =
+                serde_json::from_str(&fixture).map_err(|err| err.to_string())?;
+            let cases = value["cases"]
+                .as_array()
+                .ok_or("surface projection corpus cases must be an array")?;
+
+            let has_missing_receipt_route_quality = cases.iter().any(|case| {
+                let expected = &case["expected"];
+                let route_quality =
+                    case["artifacts"]["swarm_attempt_ledger"]["repair_route_quality"]
+                        .as_array()
+                        .and_then(|rows| rows.first())
+                        .unwrap_or(&serde_json::Value::Null);
+                let has_attempt_receipt_missing_field =
+                    case["artifacts"]["swarm_attempt_ledger"]["top_missing_evidence_fields"]
+                        .as_array()
+                        .is_some_and(|rows| {
+                            rows.iter().any(|row| {
+                                row["label"].as_str() == Some("attempt_receipt")
+                                    && row["count"].as_u64().unwrap_or(0) > 0
+                            })
+                        });
+
+                expected["outcome"].as_str() == Some("attempted_no_receipt")
+                    && expected["top_next_action_kind"].as_str()
+                        == Some("collect_missing_attempt_receipts")
+                    && route_quality["repair_kind_attempted_no_receipt"].as_u64() == Some(1)
+                    && route_quality["repair_kind_failure_count"].as_u64() == Some(1)
+                    && route_quality["repair_kind_dominant_failure_reason"].as_str()
+                        == Some("attempted_no_receipt")
+                    && has_attempt_receipt_missing_field
+            });
+
+            if has_missing_receipt_route_quality {
+                Ok(())
+            } else {
+                Err(
+                    "surface projection corpus must include an attempted_no_receipt route-quality case"
+                        .to_string(),
+                )
+            }
+        })
+    }
+
+    #[test]
     fn dogfood_user_surface_projection_alignment_matches_route_quality_non_success_source()
     -> Result<(), String> {
         with_repo_cwd(|| {
@@ -64012,6 +64065,37 @@ fn exact_owner_call_has_external_expected_value() {
             assert!(
                 report.is_empty(),
                 "route-quality non-success source should align cleanly: {report:?}"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn dogfood_user_surface_projection_alignment_matches_missing_receipt_source()
+    -> Result<(), String> {
+        with_repo_cwd(|| {
+            let sources = super::dogfood_surface_projection_alignment_scenarios();
+            let scenarios = super::dogfood_user_surface_projection_scenarios();
+            let scenario = scenarios
+                .iter()
+                .find(|scenario| scenario.name == "pr_comment_missing_receipt_from_canonical_outcome")
+                .ok_or(
+                    "user-surface corpus must include pr_comment_missing_receipt_from_canonical_outcome",
+                )?;
+
+            if scenario.top_next_action_kind != "collect_missing_attempt_receipts" {
+                return Err(format!(
+                    "missing-receipt user surface must preserve collect_missing_attempt_receipts, got {}",
+                    scenario.top_next_action_kind
+                ));
+            }
+
+            let report = super::user_surface_projection_source_alignment_errors(scenario, &sources);
+
+            assert!(
+                report.is_empty(),
+                "missing-receipt source should align cleanly: {report:?}"
             );
 
             Ok(())

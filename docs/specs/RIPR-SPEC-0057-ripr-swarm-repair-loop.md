@@ -46,6 +46,8 @@ The behavior is intentionally narrow:
 - route-quality projection preserves non-success outcomes such as unchanged
   attempts as first-class next actions instead of converting every full
   actionable packet into another blind attempt;
+- attempted packets without receipts route to `collect_missing_attempt_receipts`
+  so downstream surfaces cannot claim improvement from verify evidence alone;
 - default operation is dry-run and human-reviewable.
 
 ## Scope

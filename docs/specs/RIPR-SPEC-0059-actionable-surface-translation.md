@@ -245,9 +245,15 @@ Validation should use existing guardrails plus focused evidence checks:
   status.
 - `xtask::tests::dogfood_surface_projection_alignment_covers_route_quality_non_success`
   requires a non-success route-quality source case for downstream surfaces.
+- `xtask::tests::dogfood_surface_projection_alignment_covers_missing_receipt_route_quality`
+  requires an attempted-no-receipt route-quality source case before downstream
+  surfaces can project missing receipt state.
 - `xtask::tests::dogfood_user_surface_projection_alignment_matches_route_quality_non_success_source`
   pins full user-surface rows to degraded route-quality source state without
   converting it into `attempt_ready_packet`.
+- `xtask::tests::dogfood_user_surface_projection_alignment_matches_missing_receipt_source`
+  pins user-surface missing receipt state to `collect_missing_attempt_receipts`
+  instead of claiming improvement or another packet attempt.
 - `xtask::tests::dogfood_user_surface_projection_alignment_covers_route_quality_non_success_all_surfaces`
   requires badge, LSP, PR comment, and CI examples to consume the degraded
   route-quality source state as the same canonical next action.
