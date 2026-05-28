@@ -7861,6 +7861,8 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
 ];
 
 const USER_SURFACE_PROJECTION_REQUIRED_SURFACES: &[&str] = &["badge", "lsp", "pr_comment", "ci"];
+const USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES: &[&str] =
+    &["full", "limited_large_cache_skip", "limited_stale_input"];
 
 const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
 
@@ -8964,6 +8966,7 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
     let scenarios = dogfood_user_surface_projection_scenarios();
     let mut seen_names = BTreeSet::new();
     let mut seen_surfaces = BTreeSet::new();
+    let mut seen_run_statuses = BTreeSet::new();
     let mut canonical_gap_id: Option<String> = None;
     let mut packet_id: Option<String> = None;
     let mut repair_kind: Option<String> = None;
@@ -8977,6 +8980,7 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
             ));
         }
         seen_surfaces.insert(scenario.surface.clone());
+        seen_run_statuses.insert(scenario.run_status.clone());
         for error in dogfood_user_surface_projection_run(scenario).errors {
             violations.push(format!(
                 "user surface projection alignment case {}: {error}",
@@ -9017,6 +9021,13 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
         if !seen_surfaces.contains(*required) {
             violations.push(format!(
                 "user surface projection alignment corpus is missing surface {required}"
+            ));
+        }
+    }
+    for required in USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES {
+        if !seen_run_statuses.contains(*required) {
+            violations.push(format!(
+                "user surface projection alignment corpus is missing run_status {required}"
             ));
         }
     }
@@ -54536,22 +54547,23 @@ mod tests {
         RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
         ReportIndexRepoOpsArtifact, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
         SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher, TestOracleClass,
-        USER_SURFACE_PROJECTION_REQUIRED_SURFACES, WorktreeDoctorFinding, WorktreeDoctorSeverity,
-        actionable_gap_outcomes_json, actionable_gap_outcomes_markdown,
-        actionable_gap_outcomes_report_from_values, actionable_gap_outcomes_report_impl,
-        badge_artifact_command_args, badge_artifact_command_label, badge_artifact_jobs,
-        badge_artifact_native_slot, badge_artifacts_impl_with_runners,
-        badge_artifacts_summary_markdown, badge_basis_canonical_projection,
-        badge_basis_derived_ripr_plus_snapshot, badge_basis_needs_repo_badge_plus_job,
-        badge_basis_report_json, badge_basis_report_markdown, badge_basis_seam_native_counts,
-        badge_diff_policy_violations, badge_native_audit_snapshot, build_lsp_cockpit_report,
-        build_no_panic_allowlist_proposals, build_repo_exposure_latency_report,
-        build_targeted_test_outcome_report, campaign_source_truth_violations_for_root,
-        check_allow_attributes, check_badge_diff_policy_with_context, check_doc_artifacts,
-        check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
-        check_network_policy, check_no_panic_family, check_process_policy, check_static_language,
-        check_support_tiers, check_workflows, ci_full_evidence_gates, cockpit_json,
-        cockpit_markdown, collect_panic_findings, collect_semantic_panic_findings, command_catalog,
+        USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
+        WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
+        actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
+        actionable_gap_outcomes_report_impl, badge_artifact_command_args,
+        badge_artifact_command_label, badge_artifact_jobs, badge_artifact_native_slot,
+        badge_artifacts_impl_with_runners, badge_artifacts_summary_markdown,
+        badge_basis_canonical_projection, badge_basis_derived_ripr_plus_snapshot,
+        badge_basis_needs_repo_badge_plus_job, badge_basis_report_json,
+        badge_basis_report_markdown, badge_basis_seam_native_counts, badge_diff_policy_violations,
+        badge_native_audit_snapshot, build_lsp_cockpit_report, build_no_panic_allowlist_proposals,
+        build_repo_exposure_latency_report, build_targeted_test_outcome_report,
+        campaign_source_truth_violations_for_root, check_allow_attributes,
+        check_badge_diff_policy_with_context, check_doc_artifacts, check_droid_review_config,
+        check_executable_files, check_file_policy, check_local_context, check_network_policy,
+        check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
+        check_workflows, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+        collect_panic_findings, collect_semantic_panic_findings, command_catalog,
         command_catalog_violations, commands_report_json, commands_report_markdown,
         critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
         dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
@@ -63274,6 +63286,16 @@ fn exact_owner_call_has_external_expected_value() {
             for required in USER_SURFACE_PROJECTION_REQUIRED_SURFACES {
                 assert!(
                     surfaces.contains(required),
+                    "{required} user surface projection receipt should be checked"
+                );
+            }
+            let run_statuses = scenarios
+                .iter()
+                .map(|scenario| scenario.run_status.as_str())
+                .collect::<BTreeSet<_>>();
+            for required in USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES {
+                assert!(
+                    run_statuses.contains(required),
                     "{required} user surface projection receipt should be checked"
                 );
             }
