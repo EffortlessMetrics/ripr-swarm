@@ -76280,23 +76280,80 @@ covered_by = ["cargo xtask check-file-policy"]
 
     #[test]
     fn ripr_swarm_readiness_limited_runtime_command_routes_sampled_repo_exposure() {
-        let runtime_status = crate::Lane1RuntimeStatus {
-            state: "limited_incomplete_input".to_string(),
-            phase: Some("repo_exposure_generation".to_string()),
-            duration_ms: Some(70_604),
-            limit_ms: Some(120_000),
-            input_kind: Some("repo-exposure-json".to_string()),
-            input_path: Some("target/ripr/reports/lane1-evidence-audit.json".to_string()),
-            limitation_category: Some("lane1_repo_exposure_sampled".to_string()),
-            repair_route: Some(
-                "use the sampled work queue for the next analyzer narrowing slice".to_string(),
+        for (category, expected) in [
+            (
+                "lane1_repo_exposure_sampled",
+                Some("cargo xtask lane1-evidence-audit"),
             ),
+            (
+                "lane1_repo_exposure_incomplete",
+                Some("cargo xtask lane1-evidence-audit"),
+            ),
+            (
+                "lane1_repo_exposure_timeout",
+                Some("cargo xtask lane1-evidence-audit"),
+            ),
+            (
+                "lane1_repo_exposure_runner_error",
+                Some("cargo xtask lane1-evidence-audit"),
+            ),
+            (
+                "lane1_repo_exposure_large_cache_preflight_skip",
+                Some("cargo xtask cache report && cargo xtask cache gc --dry-run"),
+            ),
+            (
+                "lane1_repo_exposure_cache_store_skipped_large_entry",
+                Some("cargo xtask cache report"),
+            ),
+            (
+                "swarm_plan_input_unavailable",
+                Some("cargo xtask ripr-swarm plan --top 10"),
+            ),
+            (
+                "actionable_gap_outcomes_input_unavailable",
+                Some("cargo xtask actionable-gap-outcomes"),
+            ),
+            (
+                "swarm_attempt_ledger_input_unavailable",
+                Some("cargo xtask ripr-swarm attempt-ledger"),
+            ),
+            ("unknown_runtime_limitation", None),
+        ] {
+            let runtime_status = crate::Lane1RuntimeStatus {
+                state: "limited_incomplete_input".to_string(),
+                phase: Some("repo_exposure_generation".to_string()),
+                duration_ms: Some(70_604),
+                limit_ms: Some(120_000),
+                input_kind: Some("repo-exposure-json".to_string()),
+                input_path: Some("target/ripr/reports/lane1-evidence-audit.json".to_string()),
+                limitation_category: Some(category.to_string()),
+                repair_route: Some(
+                    "use the sampled work queue for the next analyzer narrowing slice".to_string(),
+                ),
+                downstream_consumable: false,
+            };
+
+            assert_eq!(
+                crate::ripr_swarm_readiness_limited_runtime_command(&runtime_status).as_deref(),
+                expected,
+                "unexpected command for {category}"
+            );
+        }
+
+        let runtime_status_without_category = crate::Lane1RuntimeStatus {
+            state: "limited_incomplete_input".to_string(),
+            phase: None,
+            duration_ms: None,
+            limit_ms: None,
+            input_kind: None,
+            input_path: None,
+            limitation_category: None,
+            repair_route: None,
             downstream_consumable: false,
         };
-
         assert_eq!(
-            crate::ripr_swarm_readiness_limited_runtime_command(&runtime_status).as_deref(),
-            Some("cargo xtask lane1-evidence-audit")
+            crate::ripr_swarm_readiness_limited_runtime_command(&runtime_status_without_category),
+            None
         );
     }
 
