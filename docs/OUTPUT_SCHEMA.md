@@ -3003,6 +3003,11 @@ When all required inputs are readable but a non-consumable limited runtime state
 is preserved from one input, readiness emits
 `resolve_limited_runtime_status` before packet or route-quality actions so
 downstream surfaces do not treat limited zero counts as work-ready truth.
+For known runtime limitation categories, that action includes the command that
+regenerates or inspects the limiting input, for example
+`cargo xtask lane1-evidence-audit` for sampled, timed-out, runner-failed, or
+incomplete repo-exposure generation and cache report/GC commands for large cache
+limits.
 
 ```json
 {
