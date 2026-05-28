@@ -188,6 +188,11 @@ state instead of an incorrect count.
 For non-full runtime states, surface examples must fail closed: the first
 screen names the limited or stale state, routes the next action to
 `resolve_limited_runtime_status`, and must not headline an actionable count.
+Limited-state projections use `projection_basis = canonical_runtime_status`,
+name a limitation category and runtime repair command, and carry no
+`canonical_gap_id`, `packet_id`, `repair_kind`, `verify_command`, or
+`receipt_command`. Those packet fields belong only to full runs where a safe
+actionable repair packet is ready.
 For full runtime states with a ready packet, the top next action may be
 `attempt_ready_packet`.
 
@@ -222,6 +227,8 @@ Validation should use existing guardrails plus focused evidence checks:
   pins fail-closed user-surface behavior for limited or stale runtime states so
   the corpus cannot route stale evidence to an attempt-ready packet or headline
   an actionable count.
+- `xtask::tests::dogfood_user_surface_projection_alignment_accepts_limited_runtime_status`
+  pins limited runtime-state projection without packet identity.
 
 Future implementation PRs should add or update fixtures for the surface they
 change. Docs-only PRs satisfy this spec by passing spec-format and doc-index
