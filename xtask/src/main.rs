@@ -22053,6 +22053,13 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     );
     let related_test_or_observer_available = ripr_swarm_plan_related_context_present(packet);
     let has_repair_route = ripr_swarm_plan_has_repair_route(packet);
+    let repair_route_consistent = has_repair_route
+        && ripr_swarm_plan_repair_route_matches_packet(
+            packet,
+            &repair_kind,
+            &target_test_type,
+            &assertion_shape,
+        );
     let has_verify_command = verify_command
         .as_deref()
         .is_some_and(|command| !ripr_swarm_plan_field_missing(command));
@@ -22070,6 +22077,9 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     }
     if !has_repair_route {
         missing_context.push("repair_route".to_string());
+    }
+    if has_repair_route && !repair_route_consistent {
+        missing_context.push("repair_route_consistency".to_string());
     }
     if !related_test_or_observer_available {
         missing_context.push("related_test_or_observer".to_string());
@@ -22114,7 +22124,7 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
 
     let mut readiness_reasons = Vec::new();
     let mut score = 0usize;
-    if has_repair_route {
+    if repair_route_consistent {
         score += 20;
         readiness_reasons.push("repair_route_present".to_string());
     }
@@ -22190,6 +22200,23 @@ fn ripr_swarm_plan_has_repair_route(packet: &Value) -> bool {
                 route,
                 &["assertion_shape", "suggested_assertion"],
             )
+    })
+}
+
+fn ripr_swarm_plan_repair_route_matches_packet(
+    packet: &Value,
+    repair_kind: &str,
+    target_test_type: &str,
+    assertion_shape: &str,
+) -> bool {
+    audit_get(packet, &["repair_route"]).is_some_and(|route| {
+        audit_non_empty_string(route, &["repair_kind"]).as_deref() == Some(repair_kind)
+            && audit_non_empty_string(route, &["target_test_type"]).as_deref()
+                == Some(target_test_type)
+            && (audit_non_empty_string(route, &["assertion_shape"]).as_deref()
+                == Some(assertion_shape)
+                || audit_non_empty_string(route, &["suggested_assertion"]).as_deref()
+                    == Some(assertion_shape))
     })
 }
 
@@ -77926,6 +77953,61 @@ covered_by = ["cargo xtask check-file-policy"]
                 .missing_context
                 .iter()
                 .any(|field| field == "repair_route")
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_inconsistent_structured_repair_routes() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:inconsistent-route",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {
+                        "repair_kind": "add_output_observer",
+                        "target_test_type": "output_observer",
+                        "assertion_shape": "assert!(output.contains(expected))"
+                    },
+                    "verify_command": "cargo test inconsistent_route",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": "tests/lib.rs::inconsistent_route",
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        let ready = ripr_swarm_plan_ready_packets(&report);
+
+        assert!(ready.is_empty());
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert!(
+            blocked[0]
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_route_consistency")
+        );
+        assert!(
+            blocked[0]
+                .blocked_reasons
+                .iter()
+                .any(|reason| reason == "missing_repair_route_consistency")
         );
     }
 
