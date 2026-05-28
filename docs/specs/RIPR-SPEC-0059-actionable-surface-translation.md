@@ -194,7 +194,11 @@ name a limitation category and runtime repair command, and carry no
 `receipt_command`. Those packet fields belong only to full runs where a safe
 actionable repair packet is ready.
 For full runtime states with a ready packet, the top next action may be
-`attempt_ready_packet`.
+`attempt_ready_packet`. Full actionable projection examples name a
+`source_alignment_case` from the repair-loop surface projection corpus and must
+match that source case's canonical gap, packet, repair kind, verify command,
+receipt command, and top next action. User-facing surfaces stay thin consumers
+of the canonical repair source instead of maintaining independent packet truth.
 
 ## Acceptance Examples
 
@@ -229,6 +233,8 @@ Validation should use existing guardrails plus focused evidence checks:
   an actionable count.
 - `xtask::tests::dogfood_user_surface_projection_alignment_accepts_limited_runtime_status`
   pins limited runtime-state projection without packet identity.
+- `xtask::tests::dogfood_user_surface_projection_alignment_matches_surface_projection_source`
+  pins full user-surface projection to the canonical repair-loop source case.
 
 Future implementation PRs should add or update fixtures for the surface they
 change. Docs-only PRs satisfy this spec by passing spec-format and doc-index

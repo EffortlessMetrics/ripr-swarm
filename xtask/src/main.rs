@@ -950,6 +950,7 @@ struct DogfoodUserSurfaceProjectionScenario {
     top_next_action_kind: String,
     verify_command: String,
     receipt_command: String,
+    source_alignment_case: String,
     limitation_category: String,
     runtime_repair_command: String,
     actionable_count: usize,
@@ -978,6 +979,7 @@ struct DogfoodUserSurfaceProjectionRun {
     top_next_action_kind: String,
     verify_command: String,
     receipt_command: String,
+    source_alignment_case: String,
     limitation_category: String,
     runtime_repair_command: String,
     actionable_count: usize,
@@ -8980,6 +8982,7 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
     }
 
     let scenarios = dogfood_user_surface_projection_scenarios();
+    let surface_projection_scenarios = dogfood_surface_projection_alignment_scenarios();
     let mut seen_names = BTreeSet::new();
     let mut seen_surfaces = BTreeSet::new();
     let mut canonical_gap_id: Option<String> = None;
@@ -8996,6 +8999,14 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
         }
         seen_surfaces.insert(scenario.surface.clone());
         for error in dogfood_user_surface_projection_run(scenario).errors {
+            violations.push(format!(
+                "user surface projection alignment case {}: {error}",
+                scenario.name
+            ));
+        }
+        for error in
+            user_surface_projection_source_alignment_errors(scenario, &surface_projection_scenarios)
+        {
             violations.push(format!(
                 "user surface projection alignment case {}: {error}",
                 scenario.name
@@ -9045,6 +9056,84 @@ fn validate_user_surface_projection_alignment_fixture_corpus_at(
     ));
 
     Ok(())
+}
+
+fn user_surface_projection_source_alignment_errors(
+    scenario: &DogfoodUserSurfaceProjectionScenario,
+    surface_projection_scenarios: &[DogfoodSurfaceProjectionAlignmentScenario],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    if scenario.run_status != "full" {
+        if !scenario.source_alignment_case.trim().is_empty() {
+            errors.push(
+                "limited or stale run_status must not carry source_alignment_case".to_string(),
+            );
+        }
+        return errors;
+    }
+
+    if scenario.source_alignment_case.trim().is_empty()
+        || scenario.source_alignment_case == "unknown"
+    {
+        errors.push("full run_status must name source_alignment_case".to_string());
+        return errors;
+    }
+
+    let Some(source) = surface_projection_scenarios
+        .iter()
+        .find(|source| source.name == scenario.source_alignment_case)
+    else {
+        errors.push(format!(
+            "source_alignment_case {} must exist in surface projection alignment corpus",
+            scenario.source_alignment_case
+        ));
+        return errors;
+    };
+
+    for (label, expected, actual) in [
+        (
+            "canonical_gap_id",
+            &source.canonical_gap_id,
+            &scenario.canonical_gap_id,
+        ),
+        ("packet_id", &source.packet_id, &scenario.packet_id),
+        ("repair_kind", &source.repair_kind, &scenario.repair_kind),
+        (
+            "verify_command",
+            &source.verify_command,
+            &scenario.verify_command,
+        ),
+        (
+            "receipt_command",
+            &source.receipt_command,
+            &scenario.receipt_command,
+        ),
+        (
+            "top_next_action_kind",
+            &source.expected_top_next_action_kind,
+            &scenario.top_next_action_kind,
+        ),
+    ] {
+        if expected != actual {
+            errors.push(format!(
+                "{label} must match source_alignment_case {}, expected {}, got {}",
+                scenario.source_alignment_case, expected, actual
+            ));
+        }
+    }
+
+    if !source
+        .advisory_consumers
+        .iter()
+        .any(|consumer| consumer == &scenario.surface)
+    {
+        errors.push(format!(
+            "surface {} must be listed by source_alignment_case {} advisory_consumers",
+            scenario.surface, scenario.source_alignment_case
+        ));
+    }
+
+    errors
 }
 
 fn user_surface_projection_required_run_status_violations(
@@ -38797,6 +38886,7 @@ fn dogfood_user_surface_projection_scenarios() -> Vec<DogfoodUserSurfaceProjecti
             top_next_action_kind: "unknown".to_string(),
             verify_command: "unknown".to_string(),
             receipt_command: "unknown".to_string(),
+            source_alignment_case: "unknown".to_string(),
             limitation_category: "unknown".to_string(),
             runtime_repair_command: "unknown".to_string(),
             actionable_count: 0,
@@ -38858,6 +38948,8 @@ fn dogfood_user_surface_projection_scenarios() -> Vec<DogfoodUserSurfaceProjecti
                 .unwrap_or_else(|| "unknown".to_string()),
             verify_command: json_string_field(case, "verify_command").unwrap_or_default(),
             receipt_command: json_string_field(case, "receipt_command").unwrap_or_default(),
+            source_alignment_case: json_string_field(case, "source_alignment_case")
+                .unwrap_or_default(),
             limitation_category: json_string_field(case, "limitation_category").unwrap_or_default(),
             runtime_repair_command: json_string_field(case, "runtime_repair_command")
                 .unwrap_or_default(),
@@ -38963,6 +39055,7 @@ fn dogfood_user_surface_projection_run(
         top_next_action_kind: scenario.top_next_action_kind.clone(),
         verify_command: scenario.verify_command.clone(),
         receipt_command: scenario.receipt_command.clone(),
+        source_alignment_case: scenario.source_alignment_case.clone(),
         limitation_category: scenario.limitation_category.clone(),
         runtime_repair_command: scenario.runtime_repair_command.clone(),
         actionable_count: scenario.actionable_count,
@@ -39002,6 +39095,7 @@ fn dogfood_user_surface_projection_runtime_state_errors(
             ("repair_kind", &scenario.repair_kind),
             ("verify_command", &scenario.verify_command),
             ("receipt_command", &scenario.receipt_command),
+            ("source_alignment_case", &scenario.source_alignment_case),
         ] {
             if value.trim().is_empty() || value == "unknown" {
                 errors.push(format!("{label} must be present for full run_status"));
@@ -39046,6 +39140,11 @@ fn dogfood_user_surface_projection_runtime_state_errors(
         {
             errors.push(
                 "limited or stale run_status must not carry packet repair commands".to_string(),
+            );
+        }
+        if !scenario.source_alignment_case.trim().is_empty() {
+            errors.push(
+                "limited or stale run_status must not carry source_alignment_case".to_string(),
             );
         }
         if scenario.limitation_category.trim().is_empty()
@@ -40990,6 +41089,10 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
             markdown_cell(&run.receipt_command)
         ));
         body.push_str(&format!(
+            "- Source alignment case: `{}`\n",
+            markdown_cell(&run.source_alignment_case)
+        ));
+        body.push_str(&format!(
             "- Limitation category: `{}`\n",
             markdown_cell(&run.limitation_category)
         ));
@@ -42359,6 +42462,10 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "        \"receipt_command\": \"{}\",\n",
             json_escape(&run.receipt_command)
+        ));
+        body.push_str(&format!(
+            "        \"source_alignment_case\": \"{}\",\n",
+            json_escape(&run.source_alignment_case)
         ));
         body.push_str(&format!(
             "        \"limitation_category\": \"{}\",\n",
@@ -62760,6 +62867,7 @@ fn exact_owner_call_has_external_expected_value() {
             top_next_action_kind: "attempt_ready_packet".to_string(),
             verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
             receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            source_alignment_case: "receipt_improved_top_next_action_alignment".to_string(),
             limitation_category: String::new(),
             runtime_repair_command: String::new(),
             actionable_count: 8,
@@ -63682,6 +63790,7 @@ fn exact_owner_call_has_external_expected_value() {
             top_next_action_kind: "attempt_ready_packet".to_string(),
             verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
             receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            source_alignment_case: "receipt_improved_top_next_action_alignment".to_string(),
             limitation_category: String::new(),
             runtime_repair_command: String::new(),
             actionable_count: 8,
@@ -63738,6 +63847,9 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(
             report.contains("limited or stale run_status must not carry packet repair commands")
         );
+        assert!(
+            report.contains("limited or stale run_status must not carry source_alignment_case")
+        );
         assert!(report.contains("limited_stale_input must name a limitation_category"));
         assert!(report.contains("limited_stale_input must provide a runtime_repair_command"));
         assert!(report.contains("limited_stale_input must route resolve_limited_runtime_status"));
@@ -63760,12 +63872,62 @@ fn exact_owner_call_has_external_expected_value() {
         scenario.top_next_action_kind = "resolve_limited_runtime_status".to_string();
         scenario.verify_command.clear();
         scenario.receipt_command.clear();
+        scenario.source_alignment_case.clear();
         scenario.limitation_category = "lane1_repo_exposure_sampled".to_string();
         scenario.runtime_repair_command = "cargo xtask lane1-evidence-audit".to_string();
 
         let run = dogfood_user_surface_projection_run(&scenario);
 
         assert!(run.errors.is_empty(), "{:?}", run.errors);
+    }
+
+    #[test]
+    fn dogfood_user_surface_projection_alignment_matches_surface_projection_source() {
+        let sources = vec![super::DogfoodSurfaceProjectionAlignmentScenario {
+            name: "receipt_improved_top_next_action_alignment".to_string(),
+            canonical_gap_id: "gap:boundary-discriminator-004".to_string(),
+            packet_id: "boundary-discriminator-004".to_string(),
+            evidence_class: "predicate_boundary".to_string(),
+            repair_kind: "add_boundary_assertion".to_string(),
+            verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
+            receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            receipt_state: "receipt_movement_improved".to_string(),
+            outcome: "evidence_improved".to_string(),
+            expected_top_next_action_kind: "attempt_ready_packet".to_string(),
+            advisory_consumers: vec![
+                "badge".to_string(),
+                "lsp".to_string(),
+                "pr_comment".to_string(),
+                "ci".to_string(),
+            ],
+            must_not_change: Vec::new(),
+            swarm_plan: serde_json::Value::Null,
+            actionable_gap_outcomes: serde_json::Value::Null,
+            attempt_ledger: serde_json::Value::Null,
+            reason: "unit source fixture".to_string(),
+        }];
+        let scenario = valid_user_surface_projection_scenario();
+
+        let errors = super::user_surface_projection_source_alignment_errors(&scenario, &sources);
+        assert!(errors.is_empty(), "{errors:?}");
+
+        let mut mismatched = scenario;
+        mismatched.packet_id = "boundary-discriminator-stale".to_string();
+        let report = super::user_surface_projection_source_alignment_errors(&mismatched, &sources)
+            .join("\n");
+        assert!(report.contains(
+            "packet_id must match source_alignment_case receipt_improved_top_next_action_alignment"
+        ));
+
+        let mut missing_source = mismatched;
+        missing_source.packet_id = "boundary-discriminator-004".to_string();
+        missing_source.source_alignment_case = "missing-source-case".to_string();
+        let report =
+            super::user_surface_projection_source_alignment_errors(&missing_source, &sources)
+                .join("\n");
+        assert!(report.contains(
+            "source_alignment_case missing-source-case must exist in surface projection alignment corpus"
+        ));
     }
 
     #[test]
