@@ -1309,23 +1309,31 @@
           "counts": {
             "observed_values": 0,
             "static_limitations": 1
-          }
+          },
+          "static_limitations": [
+            {
+              "stage": "activate",
+              "state": "unknown",
+              "category": "activation_owner_call_absent_same_file_only",
+              "repair_route": "analysis/same-file-owner-call-tracing"
+            }
+          ]
         }
       },
       "expected_audit_signal": {
         "section": "static_limitation_categories",
-        "metric": "activation_owner_call_unresolved",
+        "metric": "activation_owner_call_absent_same_file_only",
         "value": 1
       },
-      "static_limitation_category": "activation_owner_call_unresolved",
-      "expected_claim": "Helper name affinity without a direct owner call remains a named static limitation, not activation or user test debt.",
+      "static_limitation_category": "activation_owner_call_absent_same_file_only",
+      "expected_claim": "Same-file helper name affinity without a direct owner call remains a routed static limitation, not activation or user test debt.",
       "must_not_claim": [
         "Do not treat helper name affinity alone as activation.",
         "Do not treat a helper-local Vec::new return as activation for the production owner.",
         "Do not invent observed values from helper return values.",
         "Do not classify helper-name-only value-insensitive seams as user test debt."
       ],
-      "repair_route": "analysis/related-test-ranking-audit-fixes"
+      "repair_route": "analysis/same-file-owner-call-tracing"
     },
     {
       "id": "value_insensitive_owner_call_with_opaque_args_activation_values_not_required",
@@ -1416,23 +1424,31 @@
           "counts": {
             "observed_values": 0,
             "static_limitations": 1
-          }
+          },
+          "static_limitations": [
+            {
+              "stage": "activate",
+              "state": "unknown",
+              "category": "activation_owner_call_absent_assertion_target_affinity",
+              "repair_route": "analysis/assertion-target-affinity-owner-call-tracing"
+            }
+          ]
         }
       },
       "expected_audit_signal": {
         "section": "static_limitation_categories",
-        "metric": "activation_owner_call_unresolved",
+        "metric": "activation_owner_call_absent_assertion_target_affinity",
         "value": 1
       },
-      "static_limitation_category": "activation_owner_call_unresolved",
-      "expected_claim": "Affinity-only related tests for value-insensitive seams remain named static limitations until RIPR sees a direct owner call or stronger reach proof.",
+      "static_limitation_category": "activation_owner_call_absent_assertion_target_affinity",
+      "expected_claim": "Assertion-target affinity for value-insensitive seams remains a routed static limitation until RIPR sees a direct owner call or stronger reach proof.",
       "must_not_claim": [
         "Do not treat assertion-target affinity as activation without a direct owner call.",
         "Do not invent observed values for value-insensitive seams.",
         "Do not classify affinity-only value-insensitive seams as user test debt.",
         "Do not apply this owner-call limitation route to predicate-boundary value checks."
       ],
-      "repair_route": "analysis/related-test-ranking-audit-fixes"
+      "repair_route": "analysis/assertion-target-affinity-owner-call-tracing"
     },
     {
       "id": "helper_built_struct_projection_stays_activation_limitation",
