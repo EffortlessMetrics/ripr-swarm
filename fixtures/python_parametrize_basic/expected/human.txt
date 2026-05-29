@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `tax_band` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary.
   - missing discriminator amount == 100: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_tax.py
+  suggested test: test_tax_band_100_boundary
+  pytest node: tests/test_tax.py::test_tax_band_100_boundary
+  verify: pytest tests/test_tax.py::test_tax_band_100_boundary (high)
+
 Next step
   Python preview: add a focused boundary assertion for missing discriminator `amount == 100`.

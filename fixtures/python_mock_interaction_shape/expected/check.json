@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"call_effect","text":"callback = MagicMock(name=\"receipt.sent\")","line":4}
       ],
-      "evidence": ["owner: recording_callback", "owner_kind: function", "missing_discriminator: call includes \"receipt.sent\"", "test_framework: pytest (test_recording_callback_starts_idle)", "test_verify_command: pytest tests/test_callbacks.py::test_recording_callback_starts_idle (test_recording_callback_starts_idle)", "related_test_relation: syntactic_call (test_recording_callback_starts_idle)", "test_oracle: mock_expectation medium (test_recording_callback_starts_idle)", "test_oracle_shape: mock_expectation (test_recording_callback_starts_idle)"],
+      "evidence": ["owner: recording_callback", "owner_kind: function", "missing_discriminator: call includes \"receipt.sent\"", "suggested_test_file: tests/test_callbacks.py", "suggested_test_name: test_recording_callback_output_effect", "suggested_test_node_id: tests/test_callbacks.py::test_recording_callback_output_effect", "suggested_verify_command: pytest tests/test_callbacks.py::test_recording_callback_output_effect", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_recording_callback_starts_idle)", "test_verify_command: pytest tests/test_callbacks.py::test_recording_callback_starts_idle (test_recording_callback_starts_idle)", "related_test_relation: syntactic_call (test_recording_callback_starts_idle)", "test_oracle: mock_expectation medium (test_recording_callback_starts_idle)", "test_oracle_shape: mock_expectation (test_recording_callback_starts_idle)"],
       "missing": ["Related Python test reaches `recording_callback` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the changed output/log/call effect."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": "callback.assert_not_called()"
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_callbacks.py",
+        "suggested_test_name": "test_recording_callback_output_effect",
+        "suggested_test_node_id": "tests/test_callbacks.py::test_recording_callback_output_effect",
+        "verify_command": "pytest tests/test_callbacks.py::test_recording_callback_output_effect",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "mock_expectation",
       "oracle_strength": "medium",

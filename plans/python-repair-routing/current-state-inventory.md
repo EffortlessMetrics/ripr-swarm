@@ -107,6 +107,7 @@ fixture families:
   [`fixtures/python_field_assignment_shape`](../../fixtures/python_field_assignment_shape),
   [`fixtures/python_dict_field_repair_gap`](../../fixtures/python_dict_field_repair_gap),
   [`fixtures/python_ranking_noise_control`](../../fixtures/python_ranking_noise_control),
+  [`fixtures/python_test_placement_verify`](../../fixtures/python_test_placement_verify),
   [`fixtures/python_call_argument_shape`](../../fixtures/python_call_argument_shape),
   and [`fixtures/python_mock_interaction_shape`](../../fixtures/python_mock_interaction_shape).
 - related-test fixtures:
@@ -123,24 +124,25 @@ fixture families:
   [`fixtures/python_metaprogramming_limit`](../../fixtures/python_metaprogramming_limit),
   and [`fixtures/python_unsupported_syntax_limit`](../../fixtures/python_unsupported_syntax_limit).
 
-The current fixtures prove preview facts and output metadata. They do not yet
-prove Python repair cards, canonical gap closure, verify commands, agent
-packet safety, or before/after receipt movement.
+The current fixtures prove preview facts, output metadata, placement guidance,
+and static verify commands for direct weak pytest/unittest findings. They do
+not yet prove Python repair cards, canonical gap closure, agent packet safety,
+or before/after receipt movement.
 
 ## First Fixture Matrix
 
 | Matrix case | Current fixture home | Current preview coverage | Repair-routing work still needed |
 | --- | --- | --- | --- |
 | `basic_function` | `python_owner_file_match`, `python_boundary_gap` | Top-level function owners, direct calls, exact and weak oracle examples. | Add Python-only project detection and a repair-card fixture that does not depend on Cargo workspace assumptions. |
-| `predicate_boundary` | `python_boundary_gap`, `python_strong_oracle`, `python_parametrize_basic` | Predicate probe, weak/strong related-test examples, canonical gap identity, and simple equality-boundary missing discriminators such as `amount == threshold`; strong-oracle examples suppress missing-discriminator repair guidance. | Convert the missing discriminator into a repair-card assertion shape and closure receipt. |
-| `changed_return_value` | `python_return_value_shape`, `python_broad_boolean_assertion`, `python_unittest_oracle_shapes` | Return-value probes now distinguish exact observed examples from weak direct examples carrying returned-value missing discriminators such as `return value == amount >= 100`. | Produce a return-value repair card, suggested assertion, and verify command. |
-| `changed_exception` | `python_error_path_shape`, `python_pytest_raises`, `python_unittest_assertions` | Error-path probes plus pytest/unittest broad-error observers now carry exception missing discriminators such as `raises ValueError matching "positive required"` when direct weak evidence exists. | Convert exception discriminators into `pytest.raises(..., match=...)` or unittest-shaped repair cards. |
-| `dict_field_change` | `python_field_assignment_shape`, `python_dict_field_repair_gap` | Attribute assignment probes and returned dict fields can carry field/object missing discriminators such as `self.status == "paid"` and `status == "paid"` while exact related assertions remain observed. | Add richer dict/object/dataclass repair cards and placement guidance. |
+| `predicate_boundary` | `python_boundary_gap`, `python_strong_oracle`, `python_parametrize_basic`, `python_test_placement_verify` | Predicate probe, weak/strong related-test examples, canonical gap identity, simple equality-boundary missing discriminators such as `amount == threshold`, and pytest placement/verify guidance; strong-oracle examples suppress missing-discriminator repair guidance. | Convert the missing discriminator into a repair-card assertion shape and closure receipt. |
+| `changed_return_value` | `python_return_value_shape`, `python_broad_boolean_assertion`, `python_unittest_oracle_shapes` | Return-value probes now distinguish exact observed examples from weak direct examples carrying returned-value missing discriminators such as `return value == amount >= 100`, plus static placement/verify guidance for direct weak tests. | Produce a return-value repair card, suggested assertion, and receipt command. |
+| `changed_exception` | `python_error_path_shape`, `python_pytest_raises`, `python_unittest_assertions`, `python_test_placement_verify` | Error-path probes plus pytest/unittest broad-error observers now carry exception missing discriminators such as `raises ValueError matching "positive required"` when direct weak evidence exists, including unittest placement/verify guidance. | Convert exception discriminators into `pytest.raises(..., match=...)` or unittest-shaped repair cards. |
+| `dict_field_change` | `python_field_assignment_shape`, `python_dict_field_repair_gap` | Attribute assignment probes and returned dict fields can carry field/object missing discriminators such as `self.status == "paid"` and `status == "paid"` while exact related assertions remain observed; direct weak findings carry placement/verify guidance. | Add richer dict/object/dataclass repair cards. |
 | `pytest_exact_assert` | `python_strong_oracle`, `python_owner_file_match`, `python_return_value_shape` | `assert ... == ...` becomes `exact_value` / strong and can classify as `exposed`. | Tie exact assertions to a canonical gap closing receipt, not just a preview finding class. |
 | `pytest_smoke_assert` | `python_boundary_gap`, `python_broad_boolean_assertion` | Unknown, reach-only, or smoke oracle keeps finding `weakly_exposed`, and JSON evidence records the non-exact oracle shape. | Prefer strengthening the existing weak test when safe instead of always adding a new test. |
-| `unittest_assert_equal` | `python_unittest_assertions`, `python_unittest_oracle_shapes` | `self.assertEqual(...)` becomes `exact_value` / strong; unittest related tests now carry `python -m unittest module.Class.test_method` verify-command evidence, and `assertIn` / `assertRegex` / `assertDictEqual` feed output, status-code, and field oracle shapes. | Tie unittest verify commands to repair cards and agent packets once canonical Python gaps exist. |
+| `unittest_assert_equal` | `python_unittest_assertions`, `python_unittest_oracle_shapes`, `python_test_placement_verify` | `self.assertEqual(...)` becomes `exact_value` / strong; unittest related tests now carry `python -m unittest module.Class.test_method` verify-command evidence, and `assertIn` / `assertRegex` / `assertDictEqual` feed output, status-code, and field oracle shapes. Direct weak unittest findings also get suggested test methods and verify commands. | Tie unittest placement to repair cards and agent packets. |
 | `fastapi_route_optional` | Missing | FastAPI/Flask decorators currently look like decorator or call syntax, not framework facts. | Add HTTP/API fixture pack with route owner, status-code, and JSON-field repair cards; keep dynamic routing limited. |
-| `cli_output_optional` | Partial: `python_pytest_oracle_shapes`, `python_call_argument_shape` | Generic call, log/output, and side-effect shapes can carry missing discriminators such as `log contains "coupon expired"` or `call includes "receipt.sent"` when direct weak evidence exists. | Add Click/Typer/argparse output fixtures, output assertion cards, and exit-code verify guidance. |
+| `cli_output_optional` | Partial: `python_pytest_oracle_shapes`, `python_call_argument_shape` | Generic call, log/output, and side-effect shapes can carry missing discriminators such as `log contains "coupon expired"` or `call includes "receipt.sent"` when direct weak evidence exists, with generic placement/verify guidance. | Add Click/Typer/argparse output fixtures, output assertion cards, and exit-code-specific verify guidance. |
 | `dynamic_unsupported` | Static-limit fixture family | Dynamic dispatch, decorator, mocked module, missing import graph, metaprogramming, and unsupported syntax limits are visible and fail closed with typed stop reasons. | Keep those limitations out of repair queues once agent packet export exists. |
 
 ## Current Rust/Cargo Assumptions To Remove Or Contain
@@ -158,8 +160,8 @@ packet safety, or before/after receipt movement.
 
 | Surface | Current Python behavior | Work remaining for repair routing |
 | --- | --- | --- |
-| `ripr check --format human` | Renders Python preview findings when config enables Python. | Add compact repair-card sections with changed owner, missing discriminator, test shape, location, verify, receipt, and stop conditions. |
-| `ripr check --json` | Emits Python metadata fields on findings. | Add stable canonical gap fields and repair-card/verify/receipt payloads. |
+| `ripr check --format human` | Renders Python preview findings and direct weak placement/verify guidance when config enables Python. | Add compact repair-card sections with changed owner, missing discriminator, test shape, location, receipt, and stop conditions. |
+| `ripr check --json` | Emits Python metadata fields, canonical gap IDs, and additive `repair_placement` objects on direct weak actionable findings. | Add full repair-card and receipt payloads. |
 | `ripr pilot` | Produces the existing Rust seam-oriented pilot packet. | Detect Python repos and select the top Python repairable gap without Cargo assumptions. |
 | `ripr first-pr` / start-here | Can display preview language/static-limit warnings when supplied by existing artifacts. | Generate Python start-here content directly from Python canonical gaps. |
 | SARIF | Renders generic diff finding locations and RIPR properties. | Preserve Python language/status/static-limit metadata and repair-card context. |
@@ -171,7 +173,7 @@ packet safety, or before/after receipt movement.
 
 ## Next Work Item Readiness
 
-The next work item, `output/python-test-placement-verify`, can start from this
+The next work item, `output/python-repair-card-v1`, can start from this
 boundary:
 
 - Python project detection keeps no-config Python repos analyzable without
@@ -213,9 +215,11 @@ boundary:
 - Ranking-facing output now puts direct repairable weak Python gaps ahead of
   observed, no-path, heuristic-only, and static-limit preview findings while
   keeping non-actionable findings visible.
+- Direct weak pytest and unittest findings now carry suggested test file,
+  suggested test name, framework-shaped verify command, command confidence, and
+  pytest node IDs when applicable.
 
-Acceptance for the next behavior PR should turn the curated top Python finding
-into placement and verification guidance. It should keep the ranking boundary:
-public/direct weak findings with concrete discriminators remain first, while
-dynamic, heuristic-only, generated, or ambiguous cases remain low-ranked or
-non-actionable.
+Acceptance for the next behavior PR should wrap the existing owner, evidence,
+missing discriminator, placement, and verify-command pieces into concise repair
+cards without adding receipt commands, agent packets, or generated tests before
+their dedicated work items.

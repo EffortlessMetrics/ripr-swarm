@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `from_config` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value.
   - missing discriminator return value == cls(config["discount"] + 1): changed Python returned-value at line 4 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_factory.py
+  suggested test: test_from_config_return_value
+  pytest node: tests/test_factory.py::test_from_config_return_value
+  verify: pytest tests/test_factory.py::test_from_config_return_value (high)
+
 Next step
   Python preview: add or strengthen an exact return-value assertion for missing discriminator `return value == cls(config["discount"] + 1)`.

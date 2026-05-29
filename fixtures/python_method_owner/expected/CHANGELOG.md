@@ -95,3 +95,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+add Python placement and verify-command guidance
+
+Command:
+`cargo xtask goldens bless python_method_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

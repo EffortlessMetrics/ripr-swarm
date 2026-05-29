@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `recording_callback` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the changed output/log/call effect.
   - missing discriminator call includes "receipt.sent": changed Python output/log/call effect at line 4 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_callbacks.py
+  suggested test: test_recording_callback_output_effect
+  pytest node: tests/test_callbacks.py::test_recording_callback_output_effect
+  verify: pytest tests/test_callbacks.py::test_recording_callback_output_effect (high)
+
 Next step
   Python preview: add or strengthen an output/log/call-effect assertion for missing discriminator `call includes "receipt.sent"`.

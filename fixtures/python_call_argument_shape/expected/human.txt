@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `send_receipt` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the changed output/log/call effect.
   - missing discriminator call includes "receipt.sent": changed Python output/log/call effect at line 2 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_notify.py
+  suggested test: test_send_receipt_output_effect
+  pytest node: tests/test_notify.py::test_send_receipt_output_effect
+  verify: pytest tests/test_notify.py::test_send_receipt_output_effect (high)
+
 Next step
   Python preview: add or strengthen an output/log/call-effect assertion for missing discriminator `call includes "receipt.sent"`.
