@@ -76,7 +76,7 @@ state need rollback.
 
 ## Work Item: analysis/typescript-router-config-conformance
 
-Status: ready
+Status: active
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0026, RIPR-SPEC-0027
 Linked ADR: ADR-0008
@@ -95,8 +95,9 @@ labeling, and adapter-unavailable fail-closed behavior boring and fixture-backed
   `javascript`.
 - Disabling TypeScript removes TS/JS diagnostics, packets, CI grouping, and LSP
   findings.
-- CLI override support is either implemented with tests or explicitly deferred
-  with a named limitation.
+- CLI override support is explicitly deferred because current `check` parsing
+  has no `--languages` option; repo config remains the supported opt-in surface
+  for this slice.
 
 ### Proof Commands
 
