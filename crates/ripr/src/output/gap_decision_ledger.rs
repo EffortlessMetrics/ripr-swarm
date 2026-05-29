@@ -135,6 +135,8 @@ pub(crate) struct GapRepairRoute {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) assertion_shape: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) missing_discriminator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) changed_behavior: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) stop_conditions: Vec<String>,
@@ -355,21 +357,39 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     let items = value
         .get("finding_alignment")
         .and_then(|alignment| alignment.get("items"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            "expected check output object with finding_alignment.items array".to_string()
-        })?;
+        .and_then(Value::as_array);
+    let findings = value.get("findings").and_then(Value::as_array);
+    if items.is_none() && findings.is_none() {
+        return Err(
+            "expected check output object with finding_alignment.items or findings array"
+                .to_string(),
+        );
+    }
+
     let mut records = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let Some(record) = gap_record_from_finding_alignment_item(item, index) else {
-            continue;
-        };
-        if record.gap_id.is_empty() {
-            return Err(format!(
-                "finding_alignment item {index} produced an empty gap_id"
-            ));
+    if let Some(items) = items {
+        for (index, item) in items.iter().enumerate() {
+            let Some(record) = gap_record_from_finding_alignment_item(item, index) else {
+                continue;
+            };
+            if record.gap_id.is_empty() {
+                return Err(format!(
+                    "finding_alignment item {index} produced an empty gap_id"
+                ));
+            }
+            records.push(record);
         }
-        records.push(record);
+    }
+    if let Some(findings) = findings {
+        for (index, finding) in findings.iter().enumerate() {
+            let Some(record) = gap_record_from_python_repair_finding(finding, index) else {
+                continue;
+            };
+            if record.gap_id.is_empty() {
+                return Err(format!("finding {index} produced an empty gap_id"));
+            }
+            records.push(record);
+        }
     }
     Ok(records)
 }
@@ -508,6 +528,26 @@ fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
     cursor.as_str()
 }
 
+fn string_array_at(value: &Value, path: &[&str]) -> Vec<String> {
+    let mut cursor = value;
+    for segment in path {
+        let Some(next) = cursor.get(*segment) else {
+            return Vec::new();
+        };
+        cursor = next;
+    }
+    cursor
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn u64_at(value: &Value, path: &[&str]) -> Option<u64> {
     let mut cursor = value;
     for segment in path {
@@ -543,12 +583,142 @@ fn gap_kind_from_evidence(gap_state: &str, seam_kind: &str) -> &'static str {
         "actionable" => match seam_kind {
             "presentation_text" => "MissingOutputContract",
             "predicate_boundary" | "match_arm" => "MissingBoundaryAssertion",
-            "error_variant" => "MissingErrorDiscriminator",
-            "field_construction" | "return_value" => "MissingValueAssertion",
-            "call_presence" | "side_effect" => "MissingSideEffectObserver",
+            "error_variant" | "exception_path" => "MissingErrorDiscriminator",
+            "field_construction" | "field" | "dict_field" | "return_value" => {
+                "MissingValueAssertion"
+            }
+            "call_presence" | "side_effect" | "output_log" => "MissingSideEffectObserver",
             _ => "Unknown",
         },
         _ => "Unknown",
+    }
+}
+
+fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Option<GapRecord> {
+    let card = finding.get("python_repair_card")?;
+    if string_at(card, &["language"]) != Some("python") {
+        return None;
+    }
+
+    let canonical_gap_id = string_at(card, &["canonical_gap_id"])
+        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("gap:python:check-output:item_{index}"));
+    let behavior_kind = string_at(finding, &["canonical_gap", "behavior_kind"])
+        .or_else(|| string_at(finding, &["probe", "family"]))
+        .unwrap_or("unknown");
+    let source_file = string_at(finding, &["probe", "file"])
+        .or_else(|| string_at(finding, &["canonical_gap", "file"]))
+        .map(ToString::to_string);
+    let source_line = u64_at(finding, &["probe", "line"]);
+    let changed_owner = string_at(card, &["changed_owner"])
+        .or_else(|| string_at(finding, &["canonical_gap", "owner"]))
+        .map(ToString::to_string);
+    let suggested_test_file =
+        string_at(card, &["suggested_location", "test_file"]).map(ToString::to_string);
+    let suggested_test_name =
+        string_at(card, &["suggested_location", "test_name"]).map(ToString::to_string);
+    let related_test_line = first_related_test_line(finding);
+    let verify_command = string_at(card, &["verify", "command"]).map(ToString::to_string);
+    let repairability = if suggested_test_file.is_some() && verify_command.is_some() {
+        "repairable"
+    } else {
+        "unknown"
+    };
+    let anchor = GapAnchor {
+        file: source_file,
+        line: source_line,
+        owner: changed_owner,
+        dedupe_fingerprint: Some(canonical_gap_id.clone()),
+    };
+    let repair_route = if repairability == "repairable" {
+        Some(GapRepairRoute {
+            route_kind: python_route_kind(behavior_kind).to_string(),
+            target_file: suggested_test_file,
+            target_line: related_test_line,
+            related_test: suggested_test_name,
+            assertion_shape: string_at(card, &["suggested_assertion"])
+                .or_else(|| string_at(card, &["missing_discriminator"]))
+                .map(ToString::to_string),
+            missing_discriminator: string_at(card, &["missing_discriminator"])
+                .map(ToString::to_string),
+            changed_behavior: string_at(card, &["changed_behavior"]).map(ToString::to_string),
+            stop_conditions: string_array_at(card, &["stop_conditions"]),
+        })
+    } else {
+        None
+    };
+    let verification_commands = verify_command.into_iter().collect::<Vec<_>>();
+    let projection_eligibility = projection_eligibility_from_pr_evidence(
+        repairability,
+        repair_route.is_some(),
+        !verification_commands.is_empty(),
+        anchor.file.is_some() && anchor.line.is_some(),
+        "actionable",
+    );
+    let receipt_command = string_at(card, &["receipt", "command"]).map(ToString::to_string);
+    let mut evidence_ids = Vec::new();
+    if let Some(id) = string_at(finding, &["id"]) {
+        evidence_ids.push(id.to_string());
+    }
+    if !evidence_ids.iter().any(|id| id == &canonical_gap_id) {
+        evidence_ids.push(canonical_gap_id.clone());
+    }
+
+    Some(GapRecord {
+        gap_id: format!("gap:pr:{canonical_gap_id}"),
+        canonical_gap_id,
+        kind: gap_kind_from_evidence("actionable", behavior_kind).to_string(),
+        language: "python".to_string(),
+        language_status: string_at(card, &["language_status"])
+            .unwrap_or("preview")
+            .to_string(),
+        scope: "pr_local".to_string(),
+        evidence_class: behavior_kind.to_string(),
+        gap_state: "actionable".to_string(),
+        policy_state: "new".to_string(),
+        repairability: repairability.to_string(),
+        repair_route,
+        static_limit_kind: Some("python_preview".to_string()),
+        static_limit_detail: Some("Python repair cards are preview advisory evidence.".to_string()),
+        static_limits: string_array_at(card, &["limits"])
+            .into_iter()
+            .map(|limit| {
+                serde_json::json!({
+                    "kind": "python_preview_limit",
+                    "detail": limit,
+                })
+            })
+            .collect(),
+        anchor: Some(anchor),
+        evidence_ids,
+        projection_eligibility,
+        verification_commands,
+        receipt_command,
+        regeneration_commands: Vec::new(),
+        receipt: None,
+        safe_gate_predicate: None,
+        authority_boundary: string_at(card, &["authority_boundary"])
+            .unwrap_or("preview_advisory_only")
+            .to_string(),
+    })
+}
+
+fn first_related_test_line(finding: &Value) -> Option<u64> {
+    finding
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .and_then(|tests| tests.first())
+        .and_then(|test| u64_at(test, &["line"]))
+}
+
+fn python_route_kind(behavior_kind: &str) -> &'static str {
+    match behavior_kind {
+        "predicate_boundary" | "match_arm" => "AddBoundaryAssertion",
+        "exception_path" | "error_variant" => "AddErrorDiscriminator",
+        "call_presence" | "side_effect" | "output_log" => "AddSideEffectObserver",
+        "field_construction" | "field" | "dict_field" | "return_value" => "AddValueAssertion",
+        _ => "AddValueAssertion",
     }
 }
 
@@ -647,6 +817,7 @@ fn presentation_text_repair_route_from_alignment_item(
             .and_then(|text| string_at(text, &["suggested_assertion"]))
             .or_else(|| string_at(item, &["recommended_repair"]))
             .map(ToString::to_string),
+        missing_discriminator: None,
         changed_behavior: presentation_text
             .and_then(|text| string_at(text, &["text_literal"]))
             .or_else(|| presentation_text.and_then(|text| string_at(text, &["constant_name"])))
@@ -716,6 +887,9 @@ fn repair_route_from_evidence(
         related_test: string_at(canonical_item, &["related_test", "name"]).map(ToString::to_string),
         assertion_shape: string_at(evidence, &["recommendation", "assertion_shape", "example"])
             .or_else(|| string_at(canonical_item, &["recommended_repair"]))
+            .map(ToString::to_string),
+        missing_discriminator: string_at(canonical_item, &["missing_discriminator"])
+            .or_else(|| string_at(evidence, &["recommendation", "missing_discriminator"]))
             .map(ToString::to_string),
         changed_behavior: first_raw_finding_expression(evidence).map(ToString::to_string),
         stop_conditions: vec![
@@ -1927,7 +2101,7 @@ mod tests {
             .err()
             .ok_or("expected error for missing finding_alignment")?;
         assert!(
-            err_msg.contains("finding_alignment.items array"),
+            err_msg.contains("finding_alignment.items or findings array"),
             "unexpected error: {err_msg}"
         );
 
@@ -1967,6 +2141,100 @@ mod tests {
             .map_err(|e| format!("unexpected error: {e}"))?;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].kind, "MissingOutputContract");
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_python_repair_card_becomes_agent_packet_gap_record() -> Result<(), String> {
+        let payload = serde_json::json!({
+            "findings": [{
+                "id": "probe:src_pricing.py:2:python_preview",
+                "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                "canonical_gap": {
+                    "file": "src/pricing.py",
+                    "owner": "calculate_discount",
+                    "behavior_kind": "predicate_boundary"
+                },
+                "probe": {
+                    "file": "src/pricing.py",
+                    "line": 2,
+                    "family": "predicate"
+                },
+                "related_tests": [{
+                    "name": "test_calculate_discount_smoke",
+                    "file": "tests/test_pricing.py",
+                    "line": 4
+                }],
+                "python_repair_card": {
+                    "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                    "language": "python",
+                    "language_status": "preview",
+                    "authority_boundary": "preview_advisory_only",
+                    "changed_owner": "calculate_discount",
+                    "changed_behavior": "predicate_boundary changed at src/pricing.py:2: `if amount >= threshold:`",
+                    "missing_discriminator": "amount == threshold",
+                    "suggested_assertion": "Assert the owner result or effect at the boundary `amount == threshold`.",
+                    "suggested_location": {
+                        "test_file": "tests/test_pricing.py",
+                        "test_name": "test_calculate_discount_threshold_boundary"
+                    },
+                    "verify": {
+                        "command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"
+                    },
+                    "receipt": {
+                        "command": null,
+                        "status": "unavailable_until_python_gap_ledger"
+                    },
+                    "stop_conditions": [
+                        "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+                        "Stop if adding the test appears to require a production-code edit."
+                    ],
+                    "limits": ["Syntax-first Python preview evidence only."]
+                }
+            }]
+        });
+        let records = gap_records_from_check_output_json(&payload.to_string())
+            .map_err(|e| format!("parse failed: {e}"))?;
+
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.language, "python");
+        assert_eq!(record.language_status, "preview");
+        assert_eq!(record.kind, "MissingBoundaryAssertion");
+        assert_eq!(record.scope, "pr_local");
+        assert_eq!(record.repairability, "repairable");
+        assert!(projection_eligible(record, "agent_packet"));
+        assert!(!projection_eligible(record, "gate_candidate"));
+        assert_eq!(
+            record.verification_commands,
+            vec![
+                "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"
+                    .to_string()
+            ]
+        );
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or("expected repair route")?;
+        assert_eq!(route.route_kind, "AddBoundaryAssertion");
+        assert_eq!(route.target_file.as_deref(), Some("tests/test_pricing.py"));
+        assert_eq!(
+            route.missing_discriminator.as_deref(),
+            Some("amount == threshold")
+        );
+        assert_eq!(
+            route.related_test.as_deref(),
+            Some("test_calculate_discount_threshold_boundary")
+        );
+        assert_eq!(route.target_line, Some(4));
+        assert_eq!(
+            record
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.file.as_deref()),
+            Some("src/pricing.py")
+        );
+        assert_eq!(record.authority_boundary, "preview_advisory_only");
         Ok(())
     }
 

@@ -44,7 +44,7 @@ the repo enables Python in `ripr.toml`.
 The current implementation is not yet the repair-routing loop from
 RIPR-PROP-0017. The gaps are concentrated in project detection,
 diff-to-owner mapping, language-neutral first-use CLI behavior, canonical
-Python repair-gap projection, repair cards, verify commands, agent packets,
+Python repair-gap projection, repair cards, verify commands, first-use routing,
 and before/after receipts.
 
 ## Current Code Map
@@ -61,7 +61,7 @@ and before/after receipts.
 | Human output | [`crates/ripr/src/output/human/sections.rs`](../../crates/ripr/src/output/human/sections.rs) | Renders preview language/status/owner metadata for non-Rust findings. |
 | JSON output | [`crates/ripr/src/output/json/report.rs`](../../crates/ripr/src/output/json/report.rs) | Emits `language`, `language_status`, `owner_kind`, and `static_limit_kind` when present. |
 | SARIF output | [`crates/ripr/src/output/sarif.rs`](../../crates/ripr/src/output/sarif.rs) | Renders diff-scoped findings by file/line and RIPR fields, but does not yet carry Python repair-card or language-specific metadata. |
-| Repair packets | [`crates/ripr/src/output/agent_seam_packets.rs`](../../crates/ripr/src/output/agent_seam_packets.rs) | Can render language/status from gap records, but Python adapter findings are not yet converted into repair-ready gap records. |
+| Repair packets | [`crates/ripr/src/output/gap_decision_ledger.rs`](../../crates/ripr/src/output/gap_decision_ledger.rs), [`crates/ripr/src/output/agent_seam_packets.rs`](../../crates/ripr/src/output/agent_seam_packets.rs) | `reports gap-ledger --check-output` can derive PR-local Python GapRecords from actionable `python_repair_card` findings, and `agent packet --gap-ledger` exports bounded packets with allowed test files, forbidden source files, conflict groups, verify commands, receipt status, and stop conditions. |
 
 ## Current Fact Coverage
 
@@ -126,7 +126,8 @@ fixture families:
 
 The current fixtures prove preview facts, output metadata, placement guidance,
 repair cards, and static verify commands for direct weak pytest/unittest
-findings. They do not yet prove canonical gap closure, agent packet safety, or
+findings. They also prove agent packet safety through GapRecord projection for
+direct weak repair cards. They do not yet prove canonical gap closure or
 before/after receipt movement.
 
 ## First Fixture Matrix
@@ -143,7 +144,7 @@ before/after receipt movement.
 | `unittest_assert_equal` | `python_unittest_assertions`, `python_unittest_oracle_shapes`, `python_test_placement_verify` | `self.assertEqual(...)` becomes `exact_value` / strong; unittest related tests now carry `python -m unittest module.Class.test_method` verify-command evidence, and `assertIn` / `assertRegex` / `assertDictEqual` feed output, status-code, and field oracle shapes. Direct weak unittest findings also get suggested test methods and verify commands. | Tie unittest placement to repair cards and agent packets. |
 | `fastapi_route_optional` | Missing | FastAPI/Flask decorators currently look like decorator or call syntax, not framework facts. | Add HTTP/API fixture pack with route owner, status-code, and JSON-field repair cards; keep dynamic routing limited. |
 | `cli_output_optional` | Partial: `python_pytest_oracle_shapes`, `python_call_argument_shape` | Generic call, log/output, and side-effect shapes can carry missing discriminators such as `log contains "coupon expired"` or `call includes "receipt.sent"` when direct weak evidence exists, with generic placement/verify guidance. | Add Click/Typer/argparse output fixtures, output assertion cards, and exit-code-specific verify guidance. |
-| `dynamic_unsupported` | Static-limit fixture family | Dynamic dispatch, decorator, mocked module, missing import graph, metaprogramming, and unsupported syntax limits are visible and fail closed with typed stop reasons. | Keep those limitations out of repair queues once agent packet export exists. |
+| `dynamic_unsupported` | Static-limit fixture family | Dynamic dispatch, decorator, mocked module, missing import graph, metaprogramming, and unsupported syntax limits are visible and fail closed with typed stop reasons. | Keep those limitations out of first-use and queue projections while repairable Python cards move through agent packets. |
 
 ## Current Rust/Cargo Assumptions To Remove Or Contain
 
@@ -154,27 +155,26 @@ before/after receipt movement.
 | Python repo-mode analysis returns no findings. | `PythonAdapter::analyze_repo` | `ripr pilot` and repo-baseline loops cannot rely on Python repo facts until repo-mode or a Python-specific first-use bridge exists. |
 | The summary JSON field is named `changed_rust_files`. | `domain::Summary` / `output::json` | Python and mixed-language reports currently carry a Rust-shaped summary field even when the counted changed file is `.py`. |
 | Workspace exclusions must stay aligned with the Python-lane contract. | `PythonAdapter::visit_workspace` | Contained by `analysis/python-project-detection` for `.tox`, `.nox`, `site-packages`, `.pytest_cache`, `dist`, `build`, and detectable generated Python files. |
-| `first-pr`, `agent packet`, and receipt flows consume existing gap/seam artifacts. | `output::first_pr`, `output::agent_seam_packets`, `output::outcome` | Python adapter findings are not yet projected into canonical repair-gap records with allowed files, forbidden files, verify commands, and receipt commands. |
+| `first-pr`, `agent packet`, and receipt flows consume existing gap/seam artifacts. | `output::first_pr`, `output::agent_seam_packets`, `output::outcome` | Actionable Python repair cards can now become PR-local GapRecords and agent packets with allowed files, forbidden files, verify commands, and deferred receipt status; first-use selection and before/after receipts remain planned. |
 
 ## Output Surface Inventory
 
 | Surface | Current Python behavior | Work remaining for repair routing |
 | --- | --- | --- |
 | `ripr check --format human` | Renders Python preview findings and direct weak repair cards with changed owner, missing discriminator, test shape, location, verify command, preview/advisory authority, deferred receipt status, stop conditions, and limits when config enables Python. | Add receipt commands once Python outcome records exist. |
-| `ripr check --json` | Emits Python metadata fields, canonical gap IDs, additive `repair_placement` objects, and additive `python_repair_card` objects on direct weak actionable findings. | Add full receipt payloads and downstream packet projection. |
+| `ripr check --json` | Emits Python metadata fields, canonical gap IDs, additive `repair_placement` objects, and additive `python_repair_card` objects on direct weak actionable findings. | Add full receipt payloads and direct first-use selection. |
 | `ripr pilot` | Produces the existing Rust seam-oriented pilot packet. | Detect Python repos and select the top Python repairable gap without Cargo assumptions. |
 | `ripr first-pr` / start-here | Can display preview language/static-limit warnings when supplied by existing artifacts. | Generate Python start-here content directly from Python canonical gaps. |
 | SARIF | Renders generic diff finding locations and RIPR properties. | Preserve Python language/status/static-limit metadata and repair-card context. |
 | Generated CI summary | Can group preview evidence when configured. | Add safe Python advisory mode with repair-card artifacts and fork-safe posture. |
 | PR summary/front panel | Can consume existing report/gap artifacts. | Highlight top Python repair cards and no-action states from canonical Python gaps. |
 | LSP/editor | Preview routing and metadata projection exist for Python. | Project Python repair cards, skeleton copy actions, related test paths, and stale-state warnings. |
-| Agent packet | Gap-record packet rendering can include language/status. | Export deterministic Python packets with allowed test files, forbidden source files, stop conditions, verify, and receipt. |
+| Agent packet | Actionable Python repair cards can be projected to GapRecords through `ripr reports gap-ledger --check-output`, then exported through `ripr agent packet --gap-ledger ... --gap-id ... --json` with allowed test files, forbidden source files, conflict groups, stop conditions, verify commands, and receipt status. | Add queue-level sharding and outcome receipts once first-use selection and Python gap ledger movement exist. |
 | Outcome/ledger | Existing static outcome and ledger flows are Rust/gap-record oriented. | Track Python canonical gaps opened, closed, unchanged, strengthened, weakened, and newly introduced. |
 
 ## Next Work Item Readiness
 
-The next work item, `swarm/python-agent-packet-export`, can start from this
-boundary:
+The next work item, `cli/python-first-use-path`, can start from this boundary:
 
 - Python project detection keeps no-config Python repos analyzable without
   weakening explicit `ripr.toml` authority.
@@ -221,10 +221,12 @@ boundary:
 - Direct weak Python findings that already have canonical gap, concrete missing
   discriminator, related-test evidence, placement, and verify-command evidence
   now carry `python_repair_card` output in JSON and human reports.
+- `reports gap-ledger --check-output` can turn those cards into PR-local
+  Python GapRecords, and `agent packet --gap-ledger` can export bounded agent
+  packets with allowed files, forbidden files, conflict groups, verify commands,
+  deferred receipt status, and stop conditions.
 
-Acceptance for the next behavior PR should project those repair-card fields
-into deterministic agent packets with bounded allowed files, forbidden
-production files, task text, missing discriminator, test shape, verify command,
-deferred or explicit receipt status, and stop-if conditions. It should not add
-generated tests or claim before/after closure before Python outcome records
-exist.
+Acceptance for the next behavior PR should make the first-run CLI path select
+and present the top Python repairable gap from these existing artifacts without
+Cargo assumptions. It should not add generated tests or claim before/after
+closure before Python outcome records exist.

@@ -2025,6 +2025,8 @@ name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_repair_card_becomes_agent_packet_gap_record",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_packet_carries_shared_repair_route_and_stop_conditions",
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
 ]
 fixtures = [
@@ -2075,6 +2077,8 @@ code = [
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/python_repair_card.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md",
@@ -2117,6 +2121,7 @@ metrics = [
   "language_adapter_python_repair_ranking_noise_control",
   "language_adapter_python_test_placement_verify",
   "language_adapter_python_repair_card_v1",
+  "language_adapter_python_agent_packet_v1",
   "language_adapter_python_static_limit_stop_reasons",
   "language_adapter_python_static_limit_dynamic_dispatch",
   "language_adapter_python_static_limit_decorator_indirection",

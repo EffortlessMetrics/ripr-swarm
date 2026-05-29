@@ -115,6 +115,11 @@ pub(crate) fn render_agent_gap_record_packet_json(
         .as_deref()
         .or(route.related_test.as_deref())
         .map(display_path_text);
+    let allowed_files = allowed_files_for_gap_route(route);
+    let forbidden_files = forbidden_files_for_gap_record(record, route);
+    let conflict_group = conflict_group_for_gap_record(record, route);
+    let receipt_status = receipt_status_for_gap_record(record);
+    let missing_discriminator = missing_discriminator_for_gap_route(route);
     let authority_boundary = if record.authority_boundary.trim().is_empty() {
         "Agent packets are advisory; configured gate-decision artifacts remain pass/fail authority."
             .to_string()
@@ -129,6 +134,38 @@ pub(crate) fn render_agent_gap_record_packet_json(
         &stop_conditions,
         authority_boundary.as_str(),
     );
+    let anchor_json = json!({
+        "file": anchor.and_then(|anchor| anchor.file.as_deref()).map(display_path_text),
+        "line": line,
+        "owner": owner,
+        "dedupe_fingerprint": anchor.and_then(|anchor| anchor.dedupe_fingerprint.as_deref()),
+    });
+    let recommended_test_json = json!({
+        "file": recommended_file,
+        "name": route.related_test.as_deref(),
+        "reason": recommended_test_reason(route),
+    });
+    let repair_card_json = json!({
+        "gap_kind": record.kind.as_str(),
+        "changed_behavior": route.changed_behavior.as_deref(),
+        "missing_discriminator": missing_discriminator,
+        "repair": repair_text_for_gap_route(route),
+        "repair_route": route,
+        "current_evidence_strength": current_evidence_strength.as_str(),
+        "verification_commands": &record.verification_commands,
+        "verify_command": &verify_command,
+        "receipt_command": record.receipt_command.as_deref(),
+        "receipt_status": receipt_status,
+        "source_artifact": gap_ledger_path,
+        "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
+        "authority_boundary": &authority_boundary,
+    });
+    let llm_guidance_json = json!({
+        "prompt": gap_record_prompt(route, &verify_command),
+        "verify_command": &verify_command,
+        "stop_conditions": &stop_conditions,
+        "copyable_packet": pasteable_packet,
+    });
     let packet = json!({
         "task": task_for_gap_route(route),
         "source": "gap_decision_ledger",
@@ -145,44 +182,25 @@ pub(crate) fn render_agent_gap_record_packet_json(
         "file": file,
         "line": line,
         "owner": owner,
-        "anchor": {
-            "file": anchor.and_then(|anchor| anchor.file.as_deref()).map(display_path_text),
-            "line": line,
-            "owner": owner,
-            "dedupe_fingerprint": anchor.and_then(|anchor| anchor.dedupe_fingerprint.as_deref()),
-        },
+        "allowed_files": allowed_files,
+        "forbidden_files": forbidden_files,
+        "conflict_group": conflict_group,
+        "anchor": anchor_json,
         "repair_route": route,
         "repair_kind": route.route_kind.as_str(),
         "changed_behavior": route.changed_behavior.as_deref(),
-        "recommended_test": {
-            "file": recommended_file,
-            "name": route.related_test.as_deref(),
-            "reason": recommended_test_reason(route),
-        },
+        "missing_discriminator": missing_discriminator,
+        "recommended_test": recommended_test_json,
         "assertion_shape": route.assertion_shape.as_deref(),
         "evidence_ids": &record.evidence_ids,
         "verification_commands": &record.verification_commands,
-        "verify_command": verify_command,
-        "stop_conditions": stop_conditions,
-        "repair_card": {
-            "gap_kind": record.kind.as_str(),
-            "changed_behavior": route.changed_behavior.as_deref(),
-            "repair": repair_text_for_gap_route(route),
-            "repair_route": route,
-            "current_evidence_strength": current_evidence_strength.as_str(),
-            "verification_commands": &record.verification_commands,
-            "verify_command": verify_command,
-            "source_artifact": gap_ledger_path,
-            "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
-            "authority_boundary": authority_boundary,
-        },
+        "verify_command": &verify_command,
+        "receipt_command": record.receipt_command.as_deref(),
+        "receipt_status": receipt_status,
+        "stop_conditions": &stop_conditions,
+        "repair_card": repair_card_json,
         "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
-        "llm_guidance": {
-            "prompt": gap_record_prompt(route, &verify_command),
-            "verify_command": verify_command,
-            "stop_conditions": stop_conditions,
-            "copyable_packet": pasteable_packet,
-        },
+        "llm_guidance": llm_guidance_json,
         "runtime_confirmation": RUNTIME_CONFIRMATION_NOTE,
         "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
     });
@@ -375,6 +393,50 @@ fn recommended_test_reason(route: &GapRepairRoute) -> &'static str {
     }
 }
 
+fn allowed_files_for_gap_route(route: &GapRepairRoute) -> Vec<String> {
+    route
+        .target_file
+        .as_deref()
+        .map(display_path_text)
+        .into_iter()
+        .collect()
+}
+
+fn forbidden_files_for_gap_record(record: &GapRecord, route: &GapRepairRoute) -> Vec<String> {
+    let allowed = route.target_file.as_deref().map(display_path_text);
+    record
+        .anchor
+        .as_ref()
+        .and_then(|anchor| anchor.file.as_deref())
+        .map(display_path_text)
+        .filter(|file| allowed.as_deref() != Some(file.as_str()))
+        .into_iter()
+        .collect()
+}
+
+fn conflict_group_for_gap_record(record: &GapRecord, route: &GapRepairRoute) -> String {
+    if let Some(target_file) = route.target_file.as_deref() {
+        return format!("file:{}", display_path_text(target_file));
+    }
+    format!("gap:{}", gap_record_id(record))
+}
+
+fn receipt_status_for_gap_record(record: &GapRecord) -> &'static str {
+    if record.receipt_command.is_some() {
+        "available"
+    } else {
+        "missing_from_gap_record"
+    }
+}
+
+fn missing_discriminator_for_gap_route(route: &GapRepairRoute) -> Option<&str> {
+    route
+        .missing_discriminator
+        .as_deref()
+        .or(route.assertion_shape.as_deref())
+        .or(route.changed_behavior.as_deref())
+}
+
 fn repair_text_for_gap_route(route: &GapRepairRoute) -> String {
     if let Some(assertion_shape) = route.assertion_shape.clone() {
         return assertion_shape;
@@ -482,11 +544,7 @@ fn gap_record_packet_context(
     if let Some(changed_behavior) = route.changed_behavior.as_deref() {
         context.push(format!("Changed behavior: `{changed_behavior}`."));
     }
-    if let Some(discriminator) = route
-        .assertion_shape
-        .as_deref()
-        .or(route.changed_behavior.as_deref())
-    {
+    if let Some(discriminator) = missing_discriminator_for_gap_route(route) {
         context.push(format!("Missing discriminator: `{discriminator}`."));
     }
     if let Some(receipt_command) = record.receipt_command.as_deref() {
@@ -1928,6 +1986,7 @@ mod tests {
                 "route_kind":"AddBoundaryAssertion",
                 "target_file":"tests/pricing.rs",
                 "related_test":"discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
                 "assertion_shape":"assert_eq!(discount(100, 100), 90)",
                 "changed_behavior":"amount == threshold",
                 "stop_conditions":["Stop if this is baseline debt."]
@@ -1968,6 +2027,28 @@ mod tests {
         );
         assert_eq!(
             packet
+                .get("allowed_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/pricing.rs")
+        );
+        assert_eq!(
+            packet
+                .get("forbidden_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("src/pricing.rs")
+        );
+        assert_eq!(
+            packet
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/pricing.rs")
+        );
+        assert_eq!(
+            packet
                 .get("repair_route")
                 .and_then(|route| route.get("route_kind"))
                 .and_then(serde_json::Value::as_str),
@@ -1978,6 +2059,18 @@ mod tests {
                 .get("verify_command")
                 .and_then(serde_json::Value::as_str),
             Some("cargo xtask fixtures boundary_gap")
+        );
+        assert_eq!(
+            packet
+                .get("missing_discriminator")
+                .and_then(serde_json::Value::as_str),
+            Some("amount == threshold")
+        );
+        assert_eq!(
+            packet
+                .get("receipt_status")
+                .and_then(serde_json::Value::as_str),
+            Some("available")
         );
         assert_eq!(
             packet
@@ -2001,9 +2094,23 @@ mod tests {
         assert_eq!(
             packet
                 .get("repair_card")
+                .and_then(|card| card.get("missing_discriminator"))
+                .and_then(serde_json::Value::as_str),
+            Some("amount == threshold")
+        );
+        assert_eq!(
+            packet
+                .get("repair_card")
                 .and_then(|card| card.get("current_evidence_strength"))
                 .and_then(serde_json::Value::as_str),
             Some("predicate_boundary / actionable")
+        );
+        assert_eq!(
+            packet
+                .get("repair_card")
+                .and_then(|card| card.get("receipt_status"))
+                .and_then(serde_json::Value::as_str),
+            Some("available")
         );
         assert_eq!(
             packet
@@ -2086,8 +2193,7 @@ mod tests {
             "copyable packet should name the focused proof intent: {copyable_markdown}"
         );
         assert!(
-            copyable_markdown
-                .contains("- Missing discriminator: `assert_eq!(discount(100, 100), 90)`."),
+            copyable_markdown.contains("- Missing discriminator: `amount == threshold`."),
             "copyable packet should name the missing discriminator: {copyable_markdown}"
         );
         assert!(
