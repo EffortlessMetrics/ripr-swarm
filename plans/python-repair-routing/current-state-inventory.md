@@ -71,9 +71,9 @@ commands, agent packets, and before/after receipts.
 | Owners | Top-level `def`, `async def`, methods, `@staticmethod`, `@classmethod` methods, class-body owners, module-level owners, and stable `python:<path>::<qualified_owner>` probe owner IDs. | Class owners intentionally omit `owner_kind` until the shared vocabulary adds a class value; canonical repair-gap IDs remain planned. |
 | Tests | `test_*` functions, async `test_*`, `class Test*` pytest methods, `unittest.TestCase` `test_*` methods, fixture/parameter names, and test files by `test_*.py`, `*_test.py`, or `tests/` paths. | API client, CLI runner, and framework fixture semantics are recorded syntactically but not yet converted into repair locations or verify commands. |
 | Pytest oracles | `assert a == b`, boundary comparisons, field assertions, output observers through `caplog` / `capsys`, status-code and exit-code assertions, bare `assert expr`, custom `assert_*` helpers, `isinstance(...)`, `pytest.raises(...)` / imported `raises(...)`, and `pytest.mark.parametrize` presence. | No exact boundary discriminator extraction, no `match=` message observer, and no response JSON or framework-shaped repair cards yet. |
-| Unittest oracles | `assertEqual`, `assertNotEqual`, `assertTrue`, `assertFalse`, `assertRaises`, and `assertRaisesRegex`. | `assertIn`, `assertRegex`, `assertDictEqual`, verify-command selection, and command confidence remain planned. |
+| Unittest oracles | `assertEqual`, `assertNotEqual`, `assertTrue`, `assertFalse`, `assertRaises`, `assertRaisesRegex`, `assertIn`, `assertRegex`, `assertDictEqual`, and unittest verify-command evidence. | Command confidence and repair-card placement remain planned. |
 | Mock oracles | Common `mock.assert_called*` family is `mock_expectation` / medium. | Runtime mock substitution is not resolved; patched or monkeypatched modules surface as static limits. |
-| Related tests | Direct owner calls, module import-alias calls, method attribute calls, and same-stem file proximity. | Route/client references, fixture names, class references beyond simple calls, and uncertain relation reasons are not yet repair-card inputs. |
+| Related tests | Direct owner calls, module import-alias calls, method attribute calls, same-stem file proximity, test-name similarity, and fixture-name proximity. Heuristic-only links are marked uncertain and keep weak reachability. | Route/client references and class references beyond simple calls are not yet repair-card inputs. |
 | Probe shapes | Predicate/control, return value, error path, field assignment, side-effect calls, await calls, and mock initializer shapes. | No behavior-kind-specific canonical gap ID, normalized expression, field/output discriminator, or stable repair identity yet. |
 | Static limits | `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`, `mocked_module`, `missing_import_graph`, and `unsupported_syntax`. | Limits are emitted as finding context; they are not yet stop reasons for a Python repair queue. |
 
@@ -109,6 +109,8 @@ fixture families:
 - related-test fixtures:
   [`fixtures/python_cross_file_import_reference`](../../fixtures/python_cross_file_import_reference),
   [`fixtures/python_same_stem_test`](../../fixtures/python_same_stem_test),
+  [`fixtures/python_related_test_name_similarity`](../../fixtures/python_related_test_name_similarity),
+  [`fixtures/python_fixture_name_relation`](../../fixtures/python_fixture_name_relation),
   and [`fixtures/python_unrelated_test_mention`](../../fixtures/python_unrelated_test_mention).
 - static-limit fixtures:
   [`fixtures/python_dynamic_dispatch_limit`](../../fixtures/python_dynamic_dispatch_limit),
@@ -166,7 +168,7 @@ packet safety, or before/after receipt movement.
 
 ## Next Work Item Readiness
 
-The next work item, `analysis/python-related-test-linking`, can start from this
+The next work item, `analysis/python-canonical-gap-identity`, can start from this
 boundary:
 
 - Python project detection keeps no-config Python repos analyzable without
@@ -187,7 +189,10 @@ boundary:
 - Unittest preview evidence now records class-qualified selectors,
   framework-shaped `python -m unittest` verify commands, and
   output/status/field oracle shapes from common assertion-call arguments.
+- Related-test evidence now orders direct calls and import-alias calls ahead of
+  heuristic links, adds conservative test-name and fixture-name proximity, and
+  marks same-stem/name/fixture links as uncertain with weak reachability.
 
-Acceptance for the next behavior PR should improve related-test ranking and
-uncertainty evidence without changing Python's preview support tier or
-emitting repair cards before canonical Python gaps exist.
+Acceptance for the next behavior PR should introduce stable Python canonical
+gap IDs without changing Python's preview support tier or emitting repair cards
+before the gap spine exists.

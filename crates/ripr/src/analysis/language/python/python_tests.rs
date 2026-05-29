@@ -1175,6 +1175,103 @@ fn related_test_matching_falls_back_to_same_stem_when_no_call() {
 }
 
 #[test]
+fn related_test_matching_uses_test_name_similarity_as_uncertain_relation() -> Result<(), String> {
+    let owner_file = Path::new("src/pricing.py");
+    let owners = extract_owners(
+        owner_file,
+        "def apply_discount(amount):\n    return amount - 10\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "def test_apply_discount_boundary_case():\n    assert 90 == 90\n",
+    );
+    let candidates = related_test_candidates(&owners[0], &tests);
+    if candidates.len() != 1 {
+        return Err(format!(
+            "expected one name-similarity candidate, got {}",
+            candidates.len()
+        ));
+    }
+    assert_eq!(
+        candidates[0].relation,
+        PythonRelationKind::TestNameSimilarity
+    );
+    let finding = classify_change(owner_file, 2, "    return amount - 10", &owners, &tests)
+        .ok_or_else(|| "expected classification".to_string())?;
+    assert!(finding.evidence.iter().any(|item| item
+        == "related_test_relation: test_name_similarity (test_apply_discount_boundary_case)"));
+    assert!(finding.evidence.iter().any(|item| item
+        == "related_test_uncertain: test_name_similarity (test_apply_discount_boundary_case)"));
+    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Unknown);
+    Ok(())
+}
+
+#[test]
+fn related_test_matching_uses_fixture_name_as_uncertain_relation() {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def calculate_fee(amount):\n    return amount + 2\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "def test_checkout_total(pricing):\n    assert 102 == 102\n",
+    );
+    let candidates = related_test_candidates(&owners[0], &tests);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].relation, PythonRelationKind::FixtureName);
+}
+
+#[test]
+fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/users.py"),
+        "class User:\n    def activate(self):\n        return True\n",
+    );
+    let method_owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "User.activate")
+        .ok_or_else(|| "missing method owner".to_string())?;
+    let method_keys = owner_similarity_keys(method_owner);
+    assert!(method_keys.contains(&"activate".to_string()));
+    assert!(method_keys.contains(&"user_activate".to_string()));
+    assert!(method_keys.contains(&"users".to_string()));
+
+    let module_owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "<module>")
+        .ok_or_else(|| "missing module owner".to_string())?;
+    assert_eq!(
+        owner_similarity_keys(module_owner),
+        vec!["users".to_string()]
+    );
+
+    assert_eq!(
+        normalize_similarity_key("__Apply Discount!!"),
+        "apply_discount"
+    );
+    assert!(similarity_key_contains(
+        "test_apply_discount_boundary",
+        "apply_discount"
+    ));
+    assert!(similarity_key_contains(
+        "apply_discount_boundary",
+        "apply_discount"
+    ));
+    assert!(similarity_key_contains(
+        "boundary_apply_discount",
+        "apply_discount"
+    ));
+    assert!(similarity_key_contains("apply_discount", "apply_discount"));
+    assert!(!similarity_key_contains(
+        "reapply_discounted",
+        "apply_discount"
+    ));
+    assert!(!similarity_key_contains("", "apply_discount"));
+    Ok(())
+}
+
+#[test]
 fn extract_owners_returns_empty_when_source_is_unparseable() {
     let owners = extract_owners(Path::new("src/oops.py"), "def !!!");
     assert!(owners.is_empty());

@@ -1915,14 +1915,18 @@ enum PythonRelationKind {
     SyntacticCall,
     ImportAliasCall,
     SameStem,
+    TestNameSimilarity,
+    FixtureName,
 }
 
 impl PythonRelationKind {
     fn rank(self) -> u8 {
         match self {
-            Self::SyntacticCall => 3,
-            Self::ImportAliasCall => 2,
-            Self::SameStem => 1,
+            Self::SyntacticCall => 5,
+            Self::ImportAliasCall => 4,
+            Self::SameStem => 3,
+            Self::TestNameSimilarity => 2,
+            Self::FixtureName => 1,
         }
     }
 
@@ -1930,11 +1934,17 @@ impl PythonRelationKind {
         matches!(self, Self::SyntacticCall | Self::ImportAliasCall)
     }
 
+    fn is_uncertain(self) -> bool {
+        !self.uses_oracle()
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::SyntacticCall => "syntactic_call",
             Self::ImportAliasCall => "import_alias_call",
             Self::SameStem => "same_stem",
+            Self::TestNameSimilarity => "test_name_similarity",
+            Self::FixtureName => "fixture_name",
         }
     }
 }
@@ -2047,6 +2057,12 @@ fn related_test_relation(test: &PythonTest, owner: &PythonOwner) -> Option<Pytho
     if same_stem_related(test, owner) {
         return Some(PythonRelationKind::SameStem);
     }
+    if test_name_similar_to_owner(test, owner) {
+        return Some(PythonRelationKind::TestNameSimilarity);
+    }
+    if fixture_name_related_to_owner(test, owner) {
+        return Some(PythonRelationKind::FixtureName);
+    }
     None
 }
 
@@ -2154,6 +2170,72 @@ fn normalize_test_stem(stem: &str) -> &str {
     stem.strip_prefix("test_")
         .or_else(|| stem.strip_suffix("_test"))
         .unwrap_or(stem)
+}
+
+fn test_name_similar_to_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    let test_key = normalize_similarity_key(&test.name);
+    owner_similarity_keys(owner)
+        .into_iter()
+        .any(|key| similarity_key_contains(&test_key, &key))
+}
+
+fn fixture_name_related_to_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.fixtures.iter().any(|fixture| {
+        let fixture_key = normalize_similarity_key(fixture);
+        owner_similarity_keys(owner)
+            .into_iter()
+            .any(|key| similarity_key_contains(&fixture_key, &key))
+    })
+}
+
+fn owner_similarity_keys(owner: &PythonOwner) -> Vec<String> {
+    let mut keys = Vec::new();
+    if !owner.is_module_owner() {
+        keys.push(normalize_similarity_key(&owner.name));
+        if owner.qualified_name != owner.name {
+            keys.push(normalize_similarity_key(
+                &owner.qualified_name.replace('.', "_"),
+            ));
+        }
+    }
+    if let Some(stem) = owner.file.file_stem().and_then(|stem| stem.to_str()) {
+        keys.push(normalize_similarity_key(stem));
+    }
+    keys.sort();
+    keys.dedup();
+    keys.into_iter().filter(|key| key.len() >= 4).collect()
+}
+
+fn normalize_similarity_key(text: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_separator = true;
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_was_separator = false;
+        } else if !last_was_separator {
+            out.push('_');
+            last_was_separator = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    out
+}
+
+fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
+    if haystack.is_empty() || needle.is_empty() {
+        return false;
+    }
+    haystack == needle
+        || haystack
+            .strip_prefix(needle)
+            .is_some_and(|tail| tail.starts_with('_'))
+        || haystack
+            .strip_suffix(needle)
+            .is_some_and(|head| head.ends_with('_'))
+        || haystack.contains(&format!("_{needle}_"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2344,6 +2426,9 @@ fn classify_change(
     let related_candidates = related_test_candidates(owner, all_tests);
     let related = find_related_tests(owner, all_tests);
     let static_limit = static_limit_for_change(line_text, owner, &related_candidates);
+    let has_oracle_eligible_relation = related_candidates
+        .iter()
+        .any(|candidate| candidate.relation.uses_oracle());
     let strongest_strength = related
         .iter()
         .map(|test| test.oracle_strength.rank())
@@ -2365,6 +2450,17 @@ fn classify_change(
             vec![format!(
                 "No Python test references {}; add a pytest or unittest test that calls the changed owner.",
                 owner.missing_test_reference()
+            )],
+        )
+    } else if !has_oracle_eligible_relation {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
+                owner.name
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
@@ -2417,10 +2513,19 @@ fn classify_change(
     };
 
     let related_count = related.len();
-    let reach_summary = format!(
-        "{} related Python test(s) found for owner `{}`",
-        related_count, owner.name
-    );
+    let reach_summary = if related_count == 0 {
+        format!("0 related Python test(s) found for owner `{}`", owner.name)
+    } else if has_oracle_eligible_relation {
+        format!(
+            "{} related Python test(s) found for owner `{}`",
+            related_count, owner.name
+        )
+    } else {
+        format!(
+            "{} heuristic Python test link(s) found for owner `{}`; relation is uncertain",
+            related_count, owner.name
+        )
+    };
     let reach = StageEvidence::new(reach_state, Confidence::Low, &reach_summary);
     let infect = StageEvidence::new(
         StageState::Unknown,
@@ -2503,6 +2608,13 @@ fn classify_change(
             candidate.relation.as_str(),
             test.name
         ));
+        if candidate.relation.is_uncertain() {
+            evidence.push(format!(
+                "related_test_uncertain: {} ({})",
+                candidate.relation.as_str(),
+                test.name
+            ));
+        }
         if candidate.relation.uses_oracle()
             && let Some(assertion) = strongest_assertion(&test.assertions)
         {
