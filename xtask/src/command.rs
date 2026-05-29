@@ -672,11 +672,11 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Prints one bounded swarm repair packet for operator handoff without editing files, running tests, calling providers, or creating receipts.",
         ),
         command_entry(
-            "ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>]",
+            "ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>] [--real-repair-attempts <path>]",
             "report_only",
             "target/ripr/reports/swarm-attempt-ledger.{json,md}",
             false,
-            "Builds durable attempt history from swarm plan, outcome, and prior ledger artifacts without executing repairs.",
+            "Builds durable attempt history from swarm plan, outcome, prior ledger, and real repair attempt artifacts without executing repairs.",
         ),
         command_entry(
             "ripr-swarm readiness [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--attempt-ledger <path>]",
