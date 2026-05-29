@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_parse_error_unsupported_syntax/input
+
+Summary: 1 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown
+
+NOTE src/broken.ts:2
+
+Changed
+  after:    const next = ;
+
+Probe
+  family: static_unknown
+  delta:  unknown
+
+Language
+  language: typescript
+  status: preview
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
+  - infection unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
+  - propagation unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
+  - observation unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
+  - discriminator unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
+  - static_limit unsupported_syntax: 1 parser error(s)
+
+Weakness
+  - Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`.
+
+Stop reasons:
+  - static_probe_unknown
+
+Next step
+  TypeScript preview: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.

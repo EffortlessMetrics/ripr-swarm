@@ -112,7 +112,7 @@ git diff --check
 
 ## Work Item: fixtures/typescript-preview-harness
 
-Status: active
+Status: done
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027
 Linked ADR: ADR-0008
@@ -131,6 +131,21 @@ and disabled preview before broadening behavior.
 - Unsupported syntax emits `static_limit_kind = "unsupported_syntax"` where the
   public field exists.
 - No incomplete TypeScript repair packet is projected as actionable.
+
+### Proof Commands
+
+```bash
+cargo test -p ripr typescript --lib
+cargo xtask fixtures typescript_tsx_preview
+cargo xtask fixtures javascript_js_preview
+cargo xtask fixtures javascript_jsx_preview
+cargo xtask fixtures typescript_disabled
+cargo xtask fixtures typescript_parse_error_unsupported_syntax
+cargo xtask fixtures mixed_rust_typescript_preview
+cargo xtask check-traceability
+cargo xtask check-capabilities
+git diff --check
+```
 
 ## Work Item: analysis/typescript-owner-facts
 
