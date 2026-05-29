@@ -7919,6 +7919,7 @@ const USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES: &[&str] = &[
     "full",
     "limited_large_cache_skip",
     "limited_incomplete_input",
+    "limited_sampled_input",
     "limited_stale_input",
 ];
 
@@ -19053,8 +19054,8 @@ fn lane1_runtime_state_for_limitation_category(category: &str) -> &'static str {
         "lane1_repo_exposure_cache_store_skipped_large_entry"
         | "lane1_repo_exposure_large_cache_preflight_skip" => "limited_large_cache_skip",
         "limited_stale_input" => "limited_stale_input",
+        "lane1_repo_exposure_sampled" => "limited_sampled_input",
         "lane1_repo_exposure_incomplete"
-        | "lane1_repo_exposure_sampled"
         | EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED
         | EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE
         | "swarm_plan_input_unavailable"
@@ -19075,8 +19076,9 @@ fn lane1_runtime_status_priority(state: &str) -> u8 {
         "limited_timeout" => 0,
         "limited_runner_failure" => 1,
         "limited_incomplete_input" => 2,
-        "limited_stale_input" => 3,
-        "limited_large_cache_skip" => 4,
+        "limited_sampled_input" => 3,
+        "limited_stale_input" => 4,
+        "limited_large_cache_skip" => 5,
         "full" => 9,
         _ => 8,
     }
@@ -41071,6 +41073,10 @@ fn user_surface_projection_expected_runtime_route(
             "cargo xtask cache report && cargo xtask cache gc --dry-run",
         )),
         "limited_incomplete_input" => Some((
+            "lane1_repo_exposure_incomplete",
+            "cargo xtask lane1-evidence-audit",
+        )),
+        "limited_sampled_input" => Some((
             "lane1_repo_exposure_sampled",
             "cargo xtask lane1-evidence-audit",
         )),
@@ -65755,6 +65761,7 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(!report.contains("run_status full"));
         assert!(report.contains("run_status limited_large_cache_skip"));
         assert!(report.contains("run_status limited_incomplete_input"));
+        assert!(report.contains("run_status limited_sampled_input"));
         assert!(report.contains("run_status limited_stale_input"));
     }
 
@@ -65846,7 +65853,7 @@ fn exact_owner_call_has_external_expected_value() {
         let mut scenario = valid_user_surface_projection_scenario();
         scenario.name = "badge_limited_state_from_canonical_runtime".to_string();
         scenario.headline = "ripr: limited".to_string();
-        scenario.run_status = "limited_incomplete_input".to_string();
+        scenario.run_status = "limited_sampled_input".to_string();
         scenario.projection_basis = "canonical_runtime_status".to_string();
         scenario.canonical_gap_id.clear();
         scenario.packet_id.clear();
@@ -65898,7 +65905,7 @@ fn exact_owner_call_has_external_expected_value() {
         let mut scenario = valid_user_surface_projection_scenario();
         scenario.name = "badge_limited_static_limitation_backlog_from_runtime".to_string();
         scenario.headline = "ripr: limited".to_string();
-        scenario.run_status = "limited_incomplete_input".to_string();
+        scenario.run_status = "limited_sampled_input".to_string();
         scenario.projection_basis = "canonical_limitation_backlog".to_string();
         scenario.canonical_gap_id =
             "gap:activation-owner-call-absent-assertion-target-affinity".to_string();
@@ -65916,12 +65923,12 @@ fn exact_owner_call_has_external_expected_value() {
             .errors
             .join("\n");
 
-        assert!(report.contains(
-            "limited_incomplete_input projection_basis must be canonical_runtime_status"
-        ));
         assert!(
-            report.contains("limited_incomplete_input must route resolve_limited_runtime_status")
+            report.contains(
+                "limited_sampled_input projection_basis must be canonical_runtime_status"
+            )
         );
+        assert!(report.contains("limited_sampled_input must route resolve_limited_runtime_status"));
         assert!(report.contains("limited or stale run_status must not carry packet identity"));
         assert!(
             report.contains("limited or stale run_status must not carry packet repair commands")
@@ -76384,8 +76391,13 @@ covered_by = ["cargo xtask check-file-policy"]
             value["inputs"]["repo_exposure_generation"]["status"],
             "pass"
         );
-        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(value["run_status"], "limited_sampled_input");
+        assert_eq!(value["runtime_status"]["state"], "limited_sampled_input");
         assert_eq!(value["finding_alignment"]["summary"]["actionable_gaps"], 1);
+        assert_eq!(
+            value["run_limitations"][0]["run_status"],
+            "limited_sampled_input"
+        );
         assert_eq!(
             value["run_limitations"][0]["category"],
             "lane1_repo_exposure_sampled"
@@ -80995,7 +81007,12 @@ covered_by = ["cargo xtask check-file-policy"]
             ("unknown_runtime_limitation", None),
         ] {
             let runtime_status = crate::Lane1RuntimeStatus {
-                state: "limited_incomplete_input".to_string(),
+                state: if category == "lane1_repo_exposure_sampled" {
+                    "limited_sampled_input"
+                } else {
+                    "limited_incomplete_input"
+                }
+                .to_string(),
                 phase: Some("repo_exposure_generation".to_string()),
                 duration_ms: Some(70_604),
                 limit_ms: Some(120_000),
