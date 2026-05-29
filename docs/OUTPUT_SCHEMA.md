@@ -1780,6 +1780,7 @@ limited_timeout
 limited_runner_failure
 limited_large_cache_skip
 limited_incomplete_input
+limited_sampled_input
 limited_stale_input
 ```
 
@@ -2192,7 +2193,8 @@ Field contract:
 - `status` - always `"advisory"`.
 - `run_status` - Lane 1 completeness state. Values are `full`,
   `limited_timeout`, `limited_runner_failure`, `limited_large_cache_skip`,
-  `limited_incomplete_input`, or `limited_stale_input`.
+  `limited_incomplete_input`, `limited_sampled_input`, or
+  `limited_stale_input`.
 - `runtime_status` - structured completeness context matching `run_status`.
   Limited states name the phase, input kind or path, limitation category, repair
   route, timing fields when available, and `downstream_consumable`.
@@ -2235,10 +2237,10 @@ Field contract:
   `lane1_repo_exposure_cache_store_skipped_large_entry` when the live
   repo-exposure run emitted complete evidence but skipped a full classified
   seam cache store because the entry exceeded the bounded cache-store limit.
-  The default sampled repo-exposure path records
-  `lane1_repo_exposure_sampled` with input such as
-  `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful work-queue
-  evidence, not full-repo debt totals.
+  The default sampled repo-exposure path records `limited_sampled_input` with
+  `lane1_repo_exposure_sampled` and input such as
+  `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful
+  work-queue evidence, not full-repo debt totals.
   Run-limitation rows also carry `run_status`, `input_kind`, `input_path`,
   `limit_ms`, and `downstream_consumable` so consumers do not need to infer
   completeness from category strings.
@@ -3849,9 +3851,10 @@ exiting before producing trend evidence. Metric rows may still carry current
 values, but movement and badge-readiness deltas remain unknown.
 
 Trend JSON includes `run_status` and `runtime_status`. A limited current
-scorecard is preserved as `limited_incomplete_input`; an explicit missing or
-malformed previous artifact also produces a limited trend state. Missing
-implicit history remains an unknown trend, not a gate or badge claim.
+scorecard preserves its runtime state, including `limited_sampled_input` or
+`limited_incomplete_input`; an explicit missing or malformed previous artifact
+also produces a limited trend state. Missing implicit history remains an
+unknown trend, not a gate or badge claim.
 
 ```json
 {
