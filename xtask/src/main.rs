@@ -27802,13 +27802,13 @@ fn audit_actionable_gap_bounded_verify_command_from_related_target(
 
 fn audit_actionable_gap_cargo_package_from_target_file(file: &str) -> Option<String> {
     let normalized = file.trim().replace('\\', "/");
-    let package = if let Some(rest) = normalized.strip_prefix("crates/") {
-        rest.split('/').next()
+    let package = if normalized.starts_with("crates/ripr/") {
+        "ripr"
     } else if normalized.starts_with("xtask/") {
-        Some("xtask")
+        "xtask"
     } else {
-        None
-    }?;
+        return None;
+    };
     audit_actionable_gap_safe_cargo_token(package)
 }
 
@@ -27971,16 +27971,18 @@ fn audit_actionable_gap_projection_exclusion_reasons(
     {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_repair_route");
     }
-    if !matches!(
-        input.verify_command_source,
-        "canonical_item.verify_command" | "related_test_or_observer.name"
-    ) || audit_guidance_field_is_missing(input.verify_command)
+    if audit_guidance_field_is_missing(input.verify_command)
         || input.verify_command.trim() == "verify_command_unknown"
     {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_verify_command");
     } else if audit_verify_command_is_unbounded_repo_exposure_snapshot_compare(input.verify_command)
     {
         audit_push_projection_exclusion_reason(&mut reasons, "unbounded_verify_command");
+    } else if !matches!(
+        input.verify_command_source,
+        "canonical_item.verify_command" | "related_test_or_observer.name"
+    ) {
+        audit_push_projection_exclusion_reason(&mut reasons, "missing_verify_command");
     }
     if input
         .receipt_command_or_path
@@ -78803,6 +78805,62 @@ covered_by = ["cargo xtask check-file-policy"]
             },
         );
         assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn lane1_actionable_gap_verify_command_rejects_unknown_workspace_package_target() {
+        let related = serde_json::json!({
+            "file": "crates/not-a-workspace-package/src/lib.rs",
+            "name": "candidate_route",
+            "reason": "recommended_test_target"
+        });
+
+        let command =
+            crate::audit_actionable_gap_bounded_verify_command_from_related_target(Some(&related));
+
+        assert_eq!(command, None);
+    }
+
+    #[test]
+    fn lane1_actionable_gap_verify_command_names_recommendation_snapshot_as_unbounded() {
+        let record = serde_json::json!({
+            "recommendation": {
+                "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+            }
+        });
+        let canonical_item = serde_json::json!({});
+
+        let (command, source) =
+            crate::audit_actionable_gap_verify_command_with_source(&record, &canonical_item);
+
+        assert_eq!(source, "evidence_record.recommendation.verify_command");
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "gap:recommendation-unbounded-verify",
+                gap_state: "actionable",
+                actionability: "extend_related_test",
+                repair_kind: "add_call_observer",
+                target_test_type: "call_presence_observer",
+                assertion_shape: "// assert that serve_stdio called the expected target",
+                target_test_shape: "call_presence_observer: // assert that serve_stdio called the expected target",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: &command,
+                verify_command_source: &source,
+                receipt_command_or_path: Some(
+                    "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-1 --json",
+                ),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                confidence_basis: "fixture_backed",
+                must_not_change_count: 1,
+                allowed_edit_surface_count: 1,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["unbounded_verify_command"]);
     }
 
     #[test]
