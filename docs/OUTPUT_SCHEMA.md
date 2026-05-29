@@ -426,8 +426,7 @@ The evidence-first fields are additive in schema `0.1`:
   adapter that produced it (see [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md)).
   Values are `rust`, `typescript`, `javascript`, or `python`. Omitted when no
   adapter populated it. Rust findings always carry `language: "rust"`;
-  preview adapters set the preview-language value when configured and when the
-  implementation has that label wired.
+  preview adapters set the preview-language value when configured.
 - `language_status` is the per-finding adapter status. Values are `stable`
   or `preview`. **Omitted for Rust** per RIPR-SPEC-0026; configured preview
   adapters set `preview`.

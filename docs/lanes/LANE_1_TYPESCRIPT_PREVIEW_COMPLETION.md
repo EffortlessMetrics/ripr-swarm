@@ -125,11 +125,12 @@ PR-sized and do not promote support tier while they land.
 
 2. JavaScript labeling and CLI override decision
    - `.js` and `.jsx` route through the TypeScript-family adapter, but current
-     findings are labeled `language = "typescript"`, not JavaScript preview.
+     findings need to be labeled `language = "javascript"` when emitted from
+     JavaScript sources.
    - The docs mention config opt-in; no `--languages rust,typescript` CLI
      override was found in current CLI parsing.
-   - Next step: decide whether PR 2 owns separate JavaScript labels and CLI
-     override support, or explicitly defer both.
+   - Next step: land separate JavaScript labels and explicitly defer CLI
+     override support to a future app/config contract change.
 
 3. Fixture harness completion
    - Current TypeScript fixture directories use `.ts` inputs only.
