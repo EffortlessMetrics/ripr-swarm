@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return amount >= 100","line":2}
       ],
-      "evidence": ["owner: is_priority", "owner_kind: function", "missing_discriminator: return value == amount >= 100", "test_framework: pytest (test_priority_amount)", "test_verify_command: pytest tests/test_priority.py::test_priority_amount (test_priority_amount)", "related_test_relation: syntactic_call (test_priority_amount)", "test_oracle: smoke_only smoke (test_priority_amount)", "test_oracle_shape: broad_smoke_assertion (test_priority_amount)"],
+      "evidence": ["owner: is_priority", "owner_kind: function", "missing_discriminator: return value == amount >= 100", "suggested_test_file: tests/test_priority.py", "suggested_test_name: test_is_priority_return_value", "suggested_test_node_id: tests/test_priority.py::test_is_priority_return_value", "suggested_verify_command: pytest tests/test_priority.py::test_is_priority_return_value", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_priority_amount)", "test_verify_command: pytest tests/test_priority.py::test_priority_amount (test_priority_amount)", "related_test_relation: syntactic_call (test_priority_amount)", "test_oracle: smoke_only smoke (test_priority_amount)", "test_oracle_shape: broad_smoke_assertion (test_priority_amount)"],
       "missing": ["Related Python test reaches `is_priority` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the returned value."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": "assert is_priority(100)"
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_priority.py",
+        "suggested_test_name": "test_is_priority_return_value",
+        "suggested_test_node_id": "tests/test_priority.py::test_is_priority_return_value",
+        "verify_command": "pytest tests/test_priority.py::test_is_priority_return_value",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",

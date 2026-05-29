@@ -78,12 +78,52 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
         }
     }
 
+    if let Some(placement) = repair_placement_from_evidence(finding) {
+        out.push_str("\nRepair placement\n");
+        out.push_str(&format!("  suggested file: {}\n", placement.test_file));
+        out.push_str(&format!("  suggested test: {}\n", placement.test_name));
+        if let Some(node_id) = placement.test_node_id {
+            out.push_str(&format!("  pytest node: {node_id}\n"));
+        }
+        out.push_str(&format!(
+            "  verify: {} ({})\n",
+            placement.verify_command, placement.verify_confidence
+        ));
+    }
+
     if let Some(step) = &finding.recommended_next_step {
         out.push_str("\nNext step\n");
         out.push_str(&format!("  {step}\n"));
     }
 
     out
+}
+
+struct RepairPlacement<'a> {
+    test_file: &'a str,
+    test_name: &'a str,
+    test_node_id: Option<&'a str>,
+    verify_command: &'a str,
+    verify_confidence: &'a str,
+}
+
+fn repair_placement_from_evidence(finding: &Finding) -> Option<RepairPlacement<'_>> {
+    Some(RepairPlacement {
+        test_file: evidence_value(finding, "suggested_test_file: ")?,
+        test_name: evidence_value(finding, "suggested_test_name: ")?,
+        test_node_id: evidence_value(finding, "suggested_test_node_id: "),
+        verify_command: evidence_value(finding, "suggested_verify_command: ")?,
+        verify_confidence: evidence_value(finding, "suggested_verify_command_confidence: ")?,
+    })
+}
+
+fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
+    finding
+        .evidence
+        .iter()
+        .find_map(|entry| entry.strip_prefix(prefix))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn should_render_language_metadata(finding: &Finding) -> bool {

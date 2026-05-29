@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"call_effect","text":"callback(\"receipt.sent\", order_id)","line":2}
       ],
-      "evidence": ["owner: send_receipt", "owner_kind: function", "missing_discriminator: call includes \"receipt.sent\"", "test_framework: pytest (test_send_receipt_notifies_callback)", "test_verify_command: pytest tests/test_notify.py::test_send_receipt_notifies_callback (test_send_receipt_notifies_callback)", "related_test_relation: syntactic_call (test_send_receipt_notifies_callback)", "test_oracle: mock_expectation medium (test_send_receipt_notifies_callback)", "test_oracle_shape: mock_expectation (test_send_receipt_notifies_callback)"],
+      "evidence": ["owner: send_receipt", "owner_kind: function", "missing_discriminator: call includes \"receipt.sent\"", "suggested_test_file: tests/test_notify.py", "suggested_test_name: test_send_receipt_output_effect", "suggested_test_node_id: tests/test_notify.py::test_send_receipt_output_effect", "suggested_verify_command: pytest tests/test_notify.py::test_send_receipt_output_effect", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_send_receipt_notifies_callback)", "test_verify_command: pytest tests/test_notify.py::test_send_receipt_notifies_callback (test_send_receipt_notifies_callback)", "related_test_relation: syntactic_call (test_send_receipt_notifies_callback)", "test_oracle: mock_expectation medium (test_send_receipt_notifies_callback)", "test_oracle_shape: mock_expectation (test_send_receipt_notifies_callback)"],
       "missing": ["Related Python test reaches `send_receipt` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the changed output/log/call effect."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": "callback.assert_called_once_with(\"receipt.sent\", \"ord-123\")"
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_notify.py",
+        "suggested_test_name": "test_send_receipt_output_effect",
+        "suggested_test_node_id": "tests/test_notify.py::test_send_receipt_output_effect",
+        "verify_command": "pytest tests/test_notify.py::test_send_receipt_output_effect",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "mock_expectation",
       "oracle_strength": "medium",

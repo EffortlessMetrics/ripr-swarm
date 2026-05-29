@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `warn_coupon` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed output/log/call effect.
   - missing discriminator log contains "coupon expired": changed Python output/log/call effect at line 6 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_notifications.py
+  suggested test: test_warn_coupon_output_effect
+  pytest node: tests/test_notifications.py::test_warn_coupon_output_effect
+  verify: pytest tests/test_notifications.py::test_warn_coupon_output_effect (high)
+
 Next step
   Python preview: add or strengthen an output/log/call-effect assertion for missing discriminator `log contains "coupon expired"`.

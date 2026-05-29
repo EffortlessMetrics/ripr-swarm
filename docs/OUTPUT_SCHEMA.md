@@ -422,6 +422,13 @@ The evidence-first fields are additive in schema `0.1`:
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
+- `repair_placement` is an additive optional object for preview-language
+  findings that can statically name a bounded test location and command before
+  full repair-card projection. It currently appears for direct weak Python
+  findings with a concrete missing discriminator and a detected pytest or
+  unittest related test. It carries `suggested_test_file`,
+  `suggested_test_name`, optional `suggested_test_node_id`, `verify_command`,
+  and `verify_command_confidence`.
 - `canonical_gap_id` is an additive optional stable identity for a
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use

@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= threshold:","line":2}
       ],
-      "evidence": ["owner: apply_discount", "owner_kind: function", "missing_discriminator: amount == threshold", "test_framework: pytest (test_apply_discount_smoke)", "test_verify_command: pytest tests/test_discount.py::test_apply_discount_smoke (test_apply_discount_smoke)", "related_test_relation: syntactic_call (test_apply_discount_smoke)", "test_oracle_shape: reach_only (test_apply_discount_smoke)"],
+      "evidence": ["owner: apply_discount", "owner_kind: function", "missing_discriminator: amount == threshold", "suggested_test_file: tests/test_discount.py", "suggested_test_name: test_apply_discount_threshold_boundary", "suggested_test_node_id: tests/test_discount.py::test_apply_discount_threshold_boundary", "suggested_verify_command: pytest tests/test_discount.py::test_apply_discount_threshold_boundary", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_apply_discount_smoke)", "test_verify_command: pytest tests/test_discount.py::test_apply_discount_smoke (test_apply_discount_smoke)", "related_test_relation: syntactic_call (test_apply_discount_smoke)", "test_oracle_shape: reach_only (test_apply_discount_smoke)"],
       "missing": ["Related Python test reaches `apply_discount` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": ""
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_discount.py",
+        "suggested_test_name": "test_apply_discount_threshold_boundary",
+        "suggested_test_node_id": "tests/test_discount.py::test_apply_discount_threshold_boundary",
+        "verify_command": "pytest tests/test_discount.py::test_apply_discount_threshold_boundary",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",

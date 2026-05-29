@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"struct_field","text":"return {\"status\": \"paid\", \"id\": invoice_id}","line":2}
       ],
-      "evidence": ["owner: invoice_payload", "owner_kind: function", "missing_discriminator: status == \"paid\"", "test_framework: pytest (test_invoice_payload_smoke)", "test_verify_command: pytest tests/test_invoice.py::test_invoice_payload_smoke (test_invoice_payload_smoke)", "related_test_relation: syntactic_call (test_invoice_payload_smoke)", "test_oracle: smoke_only smoke (test_invoice_payload_smoke)", "test_oracle_shape: broad_smoke_assertion (test_invoice_payload_smoke)"],
+      "evidence": ["owner: invoice_payload", "owner_kind: function", "missing_discriminator: status == \"paid\"", "suggested_test_file: tests/test_invoice.py", "suggested_test_name: test_invoice_payload_field_value", "suggested_test_node_id: tests/test_invoice.py::test_invoice_payload_field_value", "suggested_verify_command: pytest tests/test_invoice.py::test_invoice_payload_field_value", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_invoice_payload_smoke)", "test_verify_command: pytest tests/test_invoice.py::test_invoice_payload_smoke (test_invoice_payload_smoke)", "related_test_relation: syntactic_call (test_invoice_payload_smoke)", "test_oracle: smoke_only smoke (test_invoice_payload_smoke)", "test_oracle_shape: broad_smoke_assertion (test_invoice_payload_smoke)"],
       "missing": ["Related Python test reaches `invoice_payload` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": "assert payload"
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_invoice.py",
+        "suggested_test_name": "test_invoice_payload_field_value",
+        "suggested_test_node_id": "tests/test_invoice.py::test_invoice_payload_field_value",
+        "verify_command": "pytest tests/test_invoice.py::test_invoice_payload_field_value",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",

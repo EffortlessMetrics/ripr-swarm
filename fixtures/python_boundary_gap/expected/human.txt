@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `apply_discount` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary.
   - missing discriminator amount == threshold: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_discount.py
+  suggested test: test_apply_discount_threshold_boundary
+  pytest node: tests/test_discount.py::test_apply_discount_threshold_boundary
+  verify: pytest tests/test_discount.py::test_apply_discount_threshold_boundary (high)
+
 Next step
   Python preview: add a focused boundary assertion for missing discriminator `amount == threshold`.

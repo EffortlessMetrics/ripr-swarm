@@ -42,4 +42,4 @@ Python preview noise, even though the noisy files sort earlier by path.
 
 - Treat static-limit or no-related-test findings as repair-ready work.
 - Hide the non-actionable findings.
-- Emit a full repair card, verify-command confidence, or receipt command.
+- Emit a full repair card, agent packet, or receipt command.

@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= threshold:","line":3}
       ],
-      "evidence": ["owner: DiscountPolicy.apply", "owner_kind: method", "missing_discriminator: amount == threshold", "test_framework: pytest (test_discount_policy_apply)", "test_verify_command: pytest tests/test_policy.py::test_discount_policy_apply (test_discount_policy_apply)", "related_test_relation: syntactic_call (test_discount_policy_apply)", "test_oracle_shape: reach_only (test_discount_policy_apply)"],
+      "evidence": ["owner: DiscountPolicy.apply", "owner_kind: method", "missing_discriminator: amount == threshold", "suggested_test_file: tests/test_policy.py", "suggested_test_name: test_apply_threshold_boundary", "suggested_test_node_id: tests/test_policy.py::test_apply_threshold_boundary", "suggested_verify_command: pytest tests/test_policy.py::test_apply_threshold_boundary", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_discount_policy_apply)", "test_verify_command: pytest tests/test_policy.py::test_discount_policy_apply (test_discount_policy_apply)", "related_test_relation: syntactic_call (test_discount_policy_apply)", "test_oracle_shape: reach_only (test_discount_policy_apply)"],
       "missing": ["Related Python test reaches `apply` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": ""
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_policy.py",
+        "suggested_test_name": "test_apply_threshold_boundary",
+        "suggested_test_node_id": "tests/test_policy.py::test_apply_threshold_boundary",
+        "verify_command": "pytest tests/test_policy.py::test_apply_threshold_boundary",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",
