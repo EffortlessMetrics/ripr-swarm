@@ -57136,10 +57136,12 @@ mod tests {
     };
 
     use super::PrActionableInput;
+    use super::RiprSwarmAttemptLedgerEntry;
     use super::RiprSwarmCommand;
     use super::RiprSwarmReadinessInput;
     use super::XtaskCommand;
     use super::dispatch;
+    use super::ripr_swarm_repair_route_quality_attempt_is_failure;
     use super::run::{
         TimedFileOutput, TimedOutput, capture_output, run, run_output, run_output_optional,
         run_output_owned,
@@ -84784,6 +84786,62 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("Failure count | Dominant failure"));
         assert!(markdown.contains("missing_verify_result"));
         Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_repair_route_quality_samples_failed_attempts_only() {
+        fn attempt(outcome: &str, verify_result: Option<&str>) -> RiprSwarmAttemptLedgerEntry {
+            RiprSwarmAttemptLedgerEntry {
+                packet_id: format!("packet-{outcome}"),
+                canonical_gap_id: format!("gap:{outcome}"),
+                attempt_id: format!("attempt:{outcome}"),
+                evidence_class: Some("output_observer".to_string()),
+                source_file: Some("crates/ripr/src/lib.rs".to_string()),
+                repair_kind: Some("add_output_observer".to_string()),
+                target_test_type: Some("output_observer".to_string()),
+                assertion_shape: Some("assert_eq".to_string()),
+                actor_kind: "agent".to_string(),
+                receipt_path: None,
+                verify_command: "cargo test -p ripr output_observer".to_string(),
+                verify_result: verify_result.map(str::to_string),
+                receipt_command: Some("cargo xtask receipts write --packet packet".to_string()),
+                before_gap_state: Some("actionable".to_string()),
+                after_gap_state: Some("actionable".to_string()),
+                outcome: outcome.to_string(),
+                timestamp: Some("unix_ms:1".to_string()),
+                receipt_state: "receipt_present".to_string(),
+                movement_source: Some("agent_receipt".to_string()),
+                reason: "fixture attempt".to_string(),
+            }
+        }
+
+        assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("receipt_present", None)
+        ));
+        assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("attempted_no_receipt", Some("not_run"))
+        ));
+        assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("evidence_unchanged", Some("pass"))
+        ));
+        assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("evidence_regressed", Some("fail"))
+        ));
+        assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("unknown", Some("pass"))
+        ));
+        assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("future_new_outcome", Some("pass"))
+        ));
+        assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("not_attempted", None)
+        ));
+        assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("evidence_improved", Some("pass"))
+        ));
+        assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+            &attempt("resolved", Some("pass"))
+        ));
     }
 
     #[test]
