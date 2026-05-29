@@ -23,10 +23,10 @@ use super::super::{AnalysisOptions, diff::ChangedFile};
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::config::OraclePolicy;
 use crate::domain::{
-    Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-    LanguageId as DomainLanguageId, LanguageStatus, OracleKind, OracleStrength, OwnerKind, Probe,
-    ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-    StageState, StaticLimitKind, SymbolId,
+    Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
+    LanguageId as DomainLanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
+    OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+    RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind, StopReason, SymbolId,
 };
 use rustpython_parser::{
     Mode,
@@ -2514,6 +2514,241 @@ fn normalize_gap_key_text(text: &str) -> String {
     }
 }
 
+fn python_infection_evidence(probe_family: &ProbeFamily, line_text: &str) -> StageEvidence {
+    let summary = match probe_family {
+        ProbeFamily::Predicate => {
+            if is_python_control_predicate_line(line_text) {
+                format!(
+                    "Changed Python predicate can alter branch selection: `{}`",
+                    line_text.trim()
+                )
+            } else {
+                format!(
+                    "Changed Python expression can alter preview-classified predicate behavior: `{}`",
+                    line_text.trim()
+                )
+            }
+        }
+        ProbeFamily::ReturnValue => {
+            format!(
+                "Changed Python return expression can alter the owner return value: `{}`",
+                line_text.trim()
+            )
+        }
+        ProbeFamily::ErrorPath => {
+            format!(
+                "Changed Python error path can alter raised exception/control behavior: `{}`",
+                line_text.trim()
+            )
+        }
+        ProbeFamily::FieldConstruction => {
+            format!(
+                "Changed Python field or attribute construction can alter object state: `{}`",
+                line_text.trim()
+            )
+        }
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
+            format!(
+                "Changed Python call or output effect can alter observable side effects: `{}`",
+                line_text.trim()
+            )
+        }
+        ProbeFamily::MatchArm => {
+            format!(
+                "Changed Python match arm can alter selected branch behavior: `{}`",
+                line_text.trim()
+            )
+        }
+        ProbeFamily::StaticUnknown => {
+            "Python preview could not classify the changed behavior shape.".to_string()
+        }
+    };
+    StageEvidence::new(StageState::Yes, Confidence::Low, summary)
+}
+
+fn python_propagation_evidence(
+    probe_family: &ProbeFamily,
+    line_text: &str,
+    static_limit: Option<&PythonStaticLimit>,
+) -> StageEvidence {
+    if let Some(limit) = static_limit {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            format!(
+                "Static limit `{}` prevents a safe Python propagation claim.",
+                limit.kind.as_str()
+            ),
+        );
+    }
+
+    match probe_family {
+        ProbeFamily::ReturnValue => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Low,
+            "Changed Python return value is already at the owner output boundary.",
+        ),
+        ProbeFamily::ErrorPath => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Low,
+            "Changed Python error path propagates through the exception/control boundary.",
+        ),
+        ProbeFamily::FieldConstruction => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.",
+        ),
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.",
+        ),
+        ProbeFamily::Predicate | ProbeFamily::MatchArm => {
+            let summary = if matches!(probe_family, ProbeFamily::Predicate)
+                && !is_python_control_predicate_line(line_text)
+            {
+                "Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."
+            } else if matches!(probe_family, ProbeFamily::Predicate) {
+                "Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."
+            } else {
+                "Changed Python match arm can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."
+            };
+            StageEvidence::new(StageState::Weak, Confidence::Low, summary)
+        }
+        ProbeFamily::StaticUnknown => StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "Python preview could not classify a propagation path for this changed behavior.",
+        ),
+    }
+}
+
+fn python_flow_sink_for(
+    probe_family: &ProbeFamily,
+    owner: &PythonOwner,
+    line: usize,
+    line_text: &str,
+) -> Option<FlowSinkFact> {
+    let kind = match probe_family {
+        ProbeFamily::ReturnValue => FlowSinkKind::ReturnValue,
+        ProbeFamily::ErrorPath => FlowSinkKind::ErrorVariant,
+        ProbeFamily::FieldConstruction => FlowSinkKind::StructField,
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => FlowSinkKind::CallEffect,
+        ProbeFamily::Predicate | ProbeFamily::MatchArm => FlowSinkKind::Unknown,
+        ProbeFamily::StaticUnknown => return None,
+    };
+
+    Some(FlowSinkFact {
+        kind,
+        text: line_text.trim().to_string(),
+        line,
+        owner: Some(owner.symbol_id()),
+    })
+}
+
+fn python_missing_discriminators(
+    probe_family: &ProbeFamily,
+    line: usize,
+    line_text: &str,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Vec<MissingDiscriminatorFact> {
+    if !matches!(probe_family, ProbeFamily::Predicate) {
+        return Vec::new();
+    }
+
+    let Some(value) = python_boundary_discriminator(line_text) else {
+        return Vec::new();
+    };
+
+    vec![MissingDiscriminatorFact {
+        value,
+        reason: format!(
+            "changed Python predicate at line {line} lacks an extracted equality-boundary discriminator"
+        ),
+        flow_sink: flow_sink.cloned(),
+    }]
+}
+
+fn python_boundary_discriminator(line_text: &str) -> Option<String> {
+    let expression = strip_python_control_prefix(line_text);
+    for operator in [">=", "<=", ">", "<"] {
+        if let Some(idx) = expression.find(operator) {
+            let left = comparison_operand_before(&expression, idx)?;
+            let right = comparison_operand_after(&expression, idx + operator.len())?;
+            if is_simple_python_discriminator_operand(&left)
+                && is_simple_python_discriminator_operand(&right)
+            {
+                return Some(format!("{left} == {right}"));
+            }
+        }
+    }
+    None
+}
+
+fn strip_python_control_prefix(line_text: &str) -> String {
+    let mut text = line_text.trim().trim_end_matches(':').trim().to_string();
+    for prefix in ["if ", "elif ", "while ", "case "] {
+        if let Some(stripped) = text.strip_prefix(prefix) {
+            text = stripped.trim().to_string();
+            break;
+        }
+    }
+    text
+}
+
+fn is_python_control_predicate_line(line_text: &str) -> bool {
+    let trimmed = line_text.trim_start();
+    (trimmed.contains(" if ") && trimmed.contains(" else "))
+        || trimmed.starts_with("if ")
+        || trimmed.starts_with("elif ")
+        || trimmed.starts_with("while ")
+        || trimmed.starts_with("for ")
+        || trimmed.starts_with("match ")
+        || trimmed.starts_with("case ")
+}
+
+fn comparison_operand_before(expression: &str, operator_start: usize) -> Option<String> {
+    let left = expression.get(..operator_start)?.trim_end();
+    let operand = left
+        .rsplit(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '(' | ')' | '[' | ']' | '{' | '}' | ',' | ':' | '+' | '-' | '*' | '/' | '%'
+                )
+        })
+        .find(|part| !part.is_empty())?;
+    Some(operand.trim().to_string())
+}
+
+fn comparison_operand_after(expression: &str, operator_end: usize) -> Option<String> {
+    let right = expression.get(operator_end..)?.trim_start();
+    let operand = right
+        .split(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '(' | ')' | '[' | ']' | '{' | '}' | ',' | ':' | '+' | '-' | '*' | '/' | '%'
+                )
+        })
+        .find(|part| !part.is_empty())?;
+    Some(operand.trim().to_string())
+}
+
+fn is_simple_python_discriminator_operand(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|ch| {
+            ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '"' || ch == '\''
+        })
+}
+
+fn stop_reason_for_python_static_limit(limit: &PythonStaticLimit) -> StopReason {
+    match limit.kind {
+        StaticLimitKind::DynamicDispatch => StopReason::DynamicDispatchUnresolved,
+        _ => StopReason::StaticProbeUnknown,
+    }
+}
+
 fn classify_change(
     file: &Path,
     line: usize,
@@ -2525,6 +2760,7 @@ fn classify_change(
     let related_candidates = related_test_candidates(owner, all_tests);
     let related = find_related_tests(owner, all_tests);
     let static_limit = static_limit_for_change(line_text, owner, &related_candidates);
+    let (family, delta) = classify_probe_shape(line_text);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -2539,8 +2775,35 @@ fn classify_change(
         .map(|test| test.oracle_kind.clone())
         .unwrap_or(OracleKind::Unknown);
 
-    let (class, reach_state, observe_state, discriminate_state, mut missing) = if related.is_empty()
+    let (class, reach_state, observe_state, discriminate_state, mut missing) = if static_limit
+        .is_some()
     {
+        (
+            ExposureClass::StaticUnknown,
+            if related.is_empty() {
+                StageState::No
+            } else if has_oracle_eligible_relation {
+                StageState::Yes
+            } else {
+                StageState::Weak
+            },
+            if related.is_empty() {
+                StageState::No
+            } else if has_oracle_eligible_relation {
+                StageState::Yes
+            } else {
+                StageState::Weak
+            },
+            if related.is_empty() {
+                StageState::No
+            } else if strongest_strength >= OracleStrength::Strong.rank() {
+                StageState::Yes
+            } else {
+                StageState::Weak
+            },
+            Vec::new(),
+        )
+    } else if related.is_empty() {
         (
             ExposureClass::NoStaticPath,
             StageState::No,
@@ -2597,7 +2860,6 @@ fn classify_change(
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let (family, delta) = classify_probe_shape(line_text);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(file, owner, &family, line_text));
@@ -2605,7 +2867,7 @@ fn classify_change(
         id: ProbeId(format!("probe:{id_path}:{line}:python_preview")),
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),
-        family,
+        family: family.clone(),
         delta,
         before: None,
         after: Some(line_text.to_string()),
@@ -2630,15 +2892,22 @@ fn classify_change(
     };
     let reach = StageEvidence::new(reach_state, Confidence::Low, &reach_summary);
     let infect = StageEvidence::new(
-        StageState::Unknown,
+        if static_limit.is_some() {
+            StageState::Unknown
+        } else {
+            StageState::Yes
+        },
         Confidence::Low,
-        "Python preview adapter does not yet model infection.",
+        if let Some(limit) = &static_limit {
+            format!(
+                "Static limit `{}` prevents a safe Python infection claim.",
+                limit.kind.as_str()
+            )
+        } else {
+            python_infection_evidence(&family, line_text).summary
+        },
     );
-    let propagate = StageEvidence::new(
-        StageState::Unknown,
-        Confidence::Low,
-        "Python preview adapter does not yet model propagation.",
-    );
+    let propagate = python_propagation_evidence(&family, line_text, static_limit.as_ref());
     let observe = StageEvidence::new(
         observe_state,
         Confidence::Low,
@@ -2660,18 +2929,16 @@ fn classify_change(
         StageEvidence::new(discriminate_state, Confidence::Low, discriminate_summary);
 
     let recommended = match class {
+        ExposureClass::StaticUnknown | ExposureClass::NoStaticPath => None,
         ExposureClass::Exposed => {
-            "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
+            Some("Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string())
         }
-        ExposureClass::NoStaticPath => {
-            "Python preview: no related test calls the changed owner; add a pytest or unittest test that exercises this behavior.".to_string()
-        }
-        _ => {
-            "Python preview: add or verify a focused exact-value assertion (`assert ... == ...` or `self.assertEqual(...)`) for the changed behavior.".to_string()
-        }
+        _ => Some("Python preview: add or verify a focused exact-value assertion (`assert ... == ...` or `self.assertEqual(...)`) for the changed behavior.".to_string()),
     };
     let confidence_value = if matches!(class, ExposureClass::Exposed) {
         0.6
+    } else if matches!(class, ExposureClass::StaticUnknown) {
+        0.2
     } else {
         0.4
     };
@@ -2685,6 +2952,12 @@ fn classify_change(
     }
     if let Some(limit) = &static_limit {
         evidence.push(limit.evidence.clone());
+    }
+    let flow_sink = python_flow_sink_for(&family, owner, line, line_text);
+    let missing_discriminators =
+        python_missing_discriminators(&family, line, line_text, flow_sink.as_ref());
+    for discriminator in &missing_discriminators {
+        evidence.push(format!("missing_discriminator: {}", discriminator.value));
     }
     for candidate in related_candidates {
         let test = candidate.test;
@@ -2755,11 +3028,18 @@ fn classify_change(
         confidence: confidence_value,
         evidence,
         missing,
-        flow_sinks: Vec::new(),
-        activation: Default::default(),
-        stop_reasons: Vec::new(),
+        flow_sinks: flow_sink.into_iter().collect(),
+        activation: crate::domain::ActivationEvidence {
+            observed_values: Vec::new(),
+            missing_discriminators,
+        },
+        stop_reasons: static_limit
+            .as_ref()
+            .map(stop_reason_for_python_static_limit)
+            .into_iter()
+            .collect(),
         related_tests: related,
-        recommended_next_step: Some(recommended),
+        recommended_next_step: recommended,
         language: Some(DomainLanguageId::Python),
         language_status: Some(LanguageStatus::Preview),
         owner_kind: owner.owner_kind,
@@ -3296,17 +3576,17 @@ def test_notifies_callback():
     fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(), String> {
         let owners = extract_owners(
             Path::new("src/pricing.py"),
-            "def apply_discount(amount):\n    if amount >= 100:\n        return amount - 10\n    return amount\n",
+            "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
         );
         let tests = extract_tests(
             Path::new("tests/test_pricing.py"),
-            "def test_apply_discount():\n    result = apply_discount(100)\n",
+            "def test_apply_discount():\n    result = apply_discount(100, 50)\n",
         );
 
         let Some(finding) = classify_change(
             Path::new("src/pricing.py"),
             2,
-            "    if amount >= 100:",
+            "    if amount >= threshold:",
             &owners,
             &tests,
         ) else {
@@ -3317,7 +3597,27 @@ def test_notifies_callback():
         assert_eq!(finding.language, Some(DomainLanguageId::Python));
         assert_eq!(finding.language_status, Some(LanguageStatus::Preview));
         assert_eq!(finding.owner_kind, Some(OwnerKind::Function));
+        assert_eq!(finding.ripr.reach.state, StageState::Yes);
+        assert_eq!(finding.ripr.infect.state, StageState::Yes);
+        assert_eq!(finding.ripr.propagate.state, StageState::Weak);
+        assert_eq!(finding.ripr.reveal.observe.state, StageState::Weak);
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
         assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(finding.flow_sinks.len(), 1);
+        assert_eq!(finding.flow_sinks[0].kind, FlowSinkKind::Unknown);
+        assert_eq!(finding.activation.missing_discriminators.len(), 1);
+        assert_eq!(
+            finding.activation.missing_discriminators[0].value,
+            "amount == threshold"
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|entry| entry == "missing_discriminator: amount == threshold")
+        );
+        assert!(finding.canonical_gap.is_some());
+        assert!(finding.recommended_next_step.is_some());
         Ok(())
     }
 
@@ -3657,8 +3957,7 @@ def test_notifies_callback():
     }
 
     #[test]
-    fn classify_change_surfaces_static_limit_without_downgrading_strong_evidence()
-    -> Result<(), String> {
+    fn classify_change_static_limit_fails_closed_even_with_strong_oracle() -> Result<(), String> {
         let owners = extract_owners(
             Path::new("src/service.py"),
             "def call_named(client, name):\n    return getattr(client, name)()\n",
@@ -3678,11 +3977,19 @@ def test_notifies_callback():
             return Err("changed line inside owner should classify".to_string());
         };
 
-        assert_eq!(finding.class, ExposureClass::Exposed);
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(
             finding.static_limit_kind,
             Some(StaticLimitKind::DynamicDispatch)
         );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![StopReason::DynamicDispatchUnresolved]
+        );
+        assert!(finding.recommended_next_step.is_none());
+        assert!(finding.canonical_gap.is_none());
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert_eq!(finding.ripr.propagate.state, StageState::Unknown);
         assert!(
             finding
                 .evidence
@@ -3722,6 +4029,10 @@ def test_notifies_callback():
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
         assert_eq!(finding.owner_kind, Some(OwnerKind::Function));
         assert!(finding.related_tests.is_empty());
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert_eq!(finding.ripr.infect.state, StageState::Yes);
+        assert_eq!(finding.ripr.propagate.state, StageState::Yes);
+        assert!(finding.recommended_next_step.is_none());
         Ok(())
     }
 

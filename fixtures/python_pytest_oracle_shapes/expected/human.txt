@@ -25,10 +25,11 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `warn_coupon`
-  - infection unknown: Python preview adapter does not yet model infection.
-  - propagation unknown: Python preview adapter does not yet model propagation.
+  - infection yes: Changed Python call or output effect can alter observable side effects: `logger.warning("coupon expired")`
+  - propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.
   - observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)
   - discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.
+  - local flow reaches call effect: logger.warning("coupon expired") (line 6)
   - related test tests/test_notifications.py:4 test_warn_coupon_logs_expired_message uses weak relational check oracle: assert "coupon expired" in caplog.text
 
 Weakness

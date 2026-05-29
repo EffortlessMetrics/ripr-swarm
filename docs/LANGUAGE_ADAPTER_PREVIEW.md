@@ -13,7 +13,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
 | TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.js`, and `.jsx`. |
-| Python | preview | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.py`. |
+| Python | preview | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected predicate missing discriminators, and fail-closed static limits for `.py`. |
 
 The preview adapters feed the same output schema and review surfaces as Rust.
 Preview findings carry additive metadata such as `language`,

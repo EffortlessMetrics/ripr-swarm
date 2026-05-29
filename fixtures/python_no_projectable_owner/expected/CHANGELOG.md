@@ -59,3 +59,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+Python RIPR evidence model now records family-specific infection and propagation evidence, predicate boundary missing discriminators, and fail-closed static limits.
+
+Command:
+`cargo xtask goldens bless python_no_projectable_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending
+
+Reason:
+Python RIPR evidence model uses generic infection wording for fallback predicate-shaped Python expressions.
+
+Command:
+`cargo xtask goldens bless python_no_projectable_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

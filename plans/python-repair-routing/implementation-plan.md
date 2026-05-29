@@ -522,7 +522,7 @@ Create durable Python canonical gap IDs.
 
 ### Work item: analysis/python-ripr-evidence-model
 
-Status: planned
+Status: done
 
 Blocked by:
 
@@ -539,6 +539,22 @@ revealability concepts.
   propagation, and revealability.
 - Non-actionable cases carry stop reasons.
 - Code changes alone do not produce recommendations.
+
+#### Delivered
+
+- Python preview findings now use family-specific RIPR infection and
+  propagation evidence for predicates, return values, exception paths,
+  field/object state, and call/output effects instead of placeholder
+  `unknown` summaries.
+- Static-limit Python findings fail closed as `static_unknown`, preserve the
+  observed reach/oracle facts, carry typed stop reasons, and omit canonical
+  repair-gap IDs and recommendations.
+- Simple predicate-boundary findings can carry an activation-level missing
+  discriminator such as `amount == threshold`; the value is visible in JSON,
+  human evidence paths, and fixture goldens.
+- Findings with no related Python test remain `no_static_path` evidence and do
+  not emit repair recommendations until repair-card, verify-command, and
+  receipt contracts exist.
 
 ### Work item: analysis/python-repair-classes-v1
 

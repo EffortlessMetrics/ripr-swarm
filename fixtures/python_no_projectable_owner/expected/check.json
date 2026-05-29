@@ -34,13 +34,14 @@
        },
       "ripr": {
         "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain"},
-        "infect": {"state":"unknown","confidence":"low","summary":"Python preview adapter does not yet model infection."},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Python preview adapter does not yet model propagation."},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `BASE_DISCOUNT = 12`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate."}
        },
-      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain", "infection unknown: Python preview adapter does not yet model infection.", "propagation unknown: Python preview adapter does not yet model propagation.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.", "related test tests/test_constants.py:4 test_base_discount uses unknown unknown oracle"],
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `BASE_DISCOUNT = 12`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.", "local flow reaches unknown sink: BASE_DISCOUNT = 12 (line 1)", "related test tests/test_constants.py:4 test_base_discount uses unknown unknown oracle"],
       "flow_sinks": [
+        {"kind":"unknown","text":"BASE_DISCOUNT = 12","line":1}
       ],
       "evidence": ["owner: <module>", "owner_kind: module_function", "test_framework: pytest (test_base_discount)", "test_verify_command: pytest tests/test_constants.py::test_base_discount (test_base_discount)", "related_test_relation: same_stem (test_base_discount)", "related_test_uncertain: same_stem (test_base_discount)"],
       "missing": ["Only heuristic Python test links were found for `<module>`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion."],
