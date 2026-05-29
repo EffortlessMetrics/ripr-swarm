@@ -702,7 +702,7 @@ Produce copy-ready human Python repair cards.
 
 ### Work item: swarm/python-agent-packet-export
 
-Status: planned
+Status: done
 
 Blocked by:
 
@@ -719,6 +719,22 @@ Export deterministic, bounded Python repair packets for swarm use.
   command, and stop conditions.
 - Packets are suitable for parallel execution without overlapping edits where
   possible.
+
+#### Delivered
+
+- `ripr reports gap-ledger --check-output <check.json>` now derives PR-local
+  Python `GapRecord` entries from actionable `python_repair_card` findings
+  without rerunning analysis.
+- The derived records preserve canonical Python gap IDs, preview language
+  status, source anchors, suggested test files, suggested test names, verify
+  commands, stop conditions, and preview/advisory authority boundaries.
+- `ripr agent packet --gap-ledger <ledger> --gap-id <id> --json` can export the
+  selected Python record through the existing agent packet envelope.
+- Gap-ledger packets now carry explicit `allowed_files`, `forbidden_files`,
+  `conflict_group`, `receipt_command`, and `receipt_status` fields so agents
+  get bounded test-edit scope and same-file conflict grouping.
+- Python preview records remain advisory: gate and RIPR-zero projections stay
+  ineligible until later policy and outcome-ledger work exists.
 
 ### Work item: cli/python-first-use-path
 

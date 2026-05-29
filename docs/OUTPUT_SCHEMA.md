@@ -441,6 +441,13 @@ The evidence-first fields are additive in schema `0.1`:
   In this preview slice, `receipt.command` is `null` and `receipt.status`
   explains that Python gap-ledger receipts are unavailable until the dedicated
   outcome work item.
+- `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
+  Python `GapRecord` entries from findings that carry `python_repair_card`.
+  Those records are advisory preview inputs for `ripr agent packet
+  --gap-ledger ... --gap-id ... --json`; they preserve the canonical Python gap
+  ID, source anchor, suggested test location, verify command, stop conditions,
+  and preview authority boundary without rerunning analysis or claiming
+  before/after closure.
 - `canonical_gap_id` is an additive optional stable identity for a
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
@@ -9377,6 +9384,12 @@ projectability from raw classifications. The selected record must have
 suppressed, preview-gating ineligible, or otherwise not agent-packet eligible
 return an actionable error instead of a repair packet.
 
+When the gap ledger was derived from check JSON, actionable Python
+`python_repair_card` findings become preview-language GapRecords with
+`policy_state = "new"`, `repairability = "repairable"`, gate and RIPR-zero
+projection ineligible, and `agent_packet` projection eligible. This is the
+Python swarm handoff path until a dedicated Python outcome ledger exists.
+
 ```json
 {
   "schema_version": "0.3",
@@ -9630,6 +9643,21 @@ Field contract:
   evidence summary in the form `<evidence_class> / <gap_state>`. Present only
   when `source = "gap_decision_ledger"` and mirrored in the copyable packet so
   agent work orders carry the same current-evidence vocabulary as `first-pr`.
+- `packets[].allowed_files` and `packets[].forbidden_files` - optional
+  GapRecord safety scope in gap-ledger packet mode. `allowed_files` is the
+  route target file when supplied. `forbidden_files` is the source anchor file
+  when it differs from the allowed file. Python preview packets use this to
+  bound agents to the suggested test file and keep production Python files
+  read-only.
+- `packets[].conflict_group` - optional gap-ledger packet grouping key used by
+  swarm schedulers to avoid parallel edits to the same target file. It is
+  `file:<target_file>` when a target file exists and otherwise falls back to the
+  selected gap ID.
+- `packets[].receipt_command` and `packets[].receipt_status` - optional
+  receipt projection in gap-ledger packet mode. `receipt_status` is
+  `"available"` when the source GapRecord supplied a receipt command and
+  `"missing_from_gap_record"` otherwise. A missing receipt is advisory
+  incompleteness, not verification failure.
 - `packets[].static_evidence_boundary` - optional static/advisory non-claim
   string. Gap-ledger packet mode uses the same boundary text as `first-pr` so
   coding agents do not infer runtime mutation proof, coverage adequacy, gate
@@ -9638,7 +9666,12 @@ Field contract:
   and `dedupe_fingerprint` when supplied by the ledger.
 - `packets[].repair_route` - optional full GapRecord repair route. Present
   for gap-ledger packet mode and mirrors the source ledger instead of
-  reconstructing repair intent from rendered prose.
+  reconstructing repair intent from rendered prose. `repair_route` may include
+  `missing_discriminator` when the source record can name the exact missing
+  proof separately from the suggested assertion shape.
+- `packets[].missing_discriminator` - optional first-screen missing proof copied
+  from `repair_route.missing_discriminator` when supplied, with compatibility
+  fallback to `assertion_shape` or `changed_behavior` for older GapRecords.
 - `packets[].verification_commands` and `packets[].verify_command` - optional
   GapRecord verification commands. `verify_command` is the first command and
   is provided for existing single-command consumers.
@@ -9648,8 +9681,9 @@ Field contract:
   of inventing a fix.
 - `packets[].repair_card` - optional GapRecord-backed repair card carrying
   repair text, route, source artifact, verification commands, and the
-  current evidence strength, static evidence boundary, and authority boundary.
-  It is the same repair vocabulary used by PR comment projection.
+  current evidence strength, receipt status, static evidence boundary, and
+  authority boundary. It is the same repair vocabulary used by PR comment
+  projection.
 - `packets[].llm_guidance.copyable_packet` - optional GapRecord-backed
   pasteable repair packet for coding agents. It carries `task`, `context`,
   `repair`, `verification`, `receipt`, `stop_conditions`, `do_not_do`,
