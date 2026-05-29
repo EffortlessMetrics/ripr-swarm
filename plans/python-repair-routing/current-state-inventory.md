@@ -106,6 +106,7 @@ fixture families:
   [`fixtures/python_error_path_shape`](../../fixtures/python_error_path_shape),
   [`fixtures/python_field_assignment_shape`](../../fixtures/python_field_assignment_shape),
   [`fixtures/python_dict_field_repair_gap`](../../fixtures/python_dict_field_repair_gap),
+  [`fixtures/python_ranking_noise_control`](../../fixtures/python_ranking_noise_control),
   [`fixtures/python_call_argument_shape`](../../fixtures/python_call_argument_shape),
   and [`fixtures/python_mock_interaction_shape`](../../fixtures/python_mock_interaction_shape).
 - related-test fixtures:
@@ -170,7 +171,7 @@ packet safety, or before/after receipt movement.
 
 ## Next Work Item Readiness
 
-The next work item, `output/python-ranking-noise-control`, can start from this
+The next work item, `output/python-test-placement-verify`, can start from this
 boundary:
 
 - Python project detection keeps no-config Python repos analyzable without
@@ -209,9 +210,12 @@ boundary:
   output/log/call effects.
 - Strong-oracle, no-path, heuristic-only, and static-limit Python findings
   suppress repair guidance rather than becoming repair-ready work.
+- Ranking-facing output now puts direct repairable weak Python gaps ahead of
+  observed, no-path, heuristic-only, and static-limit preview findings while
+  keeping non-actionable findings visible.
 
-Acceptance for the next behavior PR should keep the newly named repair classes
-curated. `ripr pilot` and ranking-facing output should prefer public/direct
-weak findings with concrete discriminators and clear verify context, while
+Acceptance for the next behavior PR should turn the curated top Python finding
+into placement and verification guidance. It should keep the ranking boundary:
+public/direct weak findings with concrete discriminators remain first, while
 dynamic, heuristic-only, generated, or ambiguous cases remain low-ranked or
 non-actionable.

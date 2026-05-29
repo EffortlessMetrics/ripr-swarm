@@ -592,7 +592,7 @@ Ship the first high-confidence Python repair classes.
 
 ### Work item: output/python-ranking-noise-control
 
-Status: planned
+Status: done
 
 Blocked by:
 
@@ -600,7 +600,9 @@ Blocked by:
 
 #### Goal
 
-Make `ripr pilot` show a curated small set of Python findings.
+Make ranking-facing output show a curated small set of Python findings. The
+existing `ripr pilot` command still consumes Rust seam inventory; Python
+first-use projection remains in `cli/python-first-use-path`.
 
 #### Acceptance
 
@@ -611,6 +613,21 @@ Make `ripr pilot` show a curated small set of Python findings.
   behavior, generated code, metaprogramming, missing test locations, and
   unclear discriminators.
 - "No actionable Python gaps" is an honest supported result.
+
+#### Delivered
+
+- The shared finding sorter now assigns Python preview findings an
+  actionability rank without changing non-Python file/line ordering.
+- Direct weak Python findings with canonical gaps, concrete missing
+  discriminators, public owners, direct related-test evidence, verify-command
+  evidence, and core repair families sort ahead of lower-value Python preview
+  findings.
+- Already-observed, no-path, heuristic-only, unknown, and static-limit Python
+  findings remain visible but sort after repairable direct weak gaps.
+- `python_ranking_noise_control` pins the report order: a direct repairable
+  predicate-boundary gap appears before observed, no-related-test, and
+  dynamic-dispatch static-limit findings even when those noisy files sort
+  earlier by path.
 
 ### Work item: output/python-test-placement-verify
 
