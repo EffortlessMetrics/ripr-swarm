@@ -122,16 +122,20 @@ Completed after the initial audit:
   status.
 - `.js` and `.jsx` findings emitted by the TypeScript-family adapter are now
   separately labeled `language = "javascript"`.
+- The fixture harness now covers `.tsx`, `.js`, `.jsx`, mixed Rust plus
+  TypeScript, Rust-only disabled TypeScript, and parser-error
+  `unsupported_syntax` preview limitations.
 - The current `check` parser still has no `--languages rust,typescript`
   override. Config remains the supported opt-in surface for this lane; CLI
   override support is deferred to a later app/config contract change.
 
 1. Fixture harness completion
-   - Current TypeScript fixture directories use `.ts` inputs only.
-   - Missing fixture families: `.tsx`, `.js`, `.jsx`, parse error /
+   - Status: done.
+   - Fixture families now cover `.ts`, `.tsx`, `.js`, `.jsx`, parse error /
      `unsupported_syntax`, mixed Rust + TypeScript repo, TypeScript disabled,
      and TypeScript enabled.
-   - Next step: add harness fixtures before broadening adapter behavior.
+   - Next step: keep new behavior slices fixture-first and avoid projecting
+     incomplete TypeScript repair packets as actionable.
 
 2. Owner facts
    - Current owner facts do not populate `owner_kind` for TypeScript findings.
