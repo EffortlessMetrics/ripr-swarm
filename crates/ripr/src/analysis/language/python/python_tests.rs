@@ -1222,6 +1222,54 @@ fn related_test_matching_uses_fixture_name_as_uncertain_relation() {
 }
 
 #[test]
+fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() {
+    let owners = extract_owners(
+        Path::new("src/users.py"),
+        "class User:\n    def activate(self):\n        return True\n",
+    );
+    let method_owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "User.activate")
+        .expect("method owner");
+    let method_keys = owner_similarity_keys(method_owner);
+    assert!(method_keys.contains(&"activate".to_string()));
+    assert!(method_keys.contains(&"user_activate".to_string()));
+    assert!(method_keys.contains(&"users".to_string()));
+
+    let module_owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "<module>")
+        .expect("module owner");
+    assert_eq!(
+        owner_similarity_keys(module_owner),
+        vec!["users".to_string()]
+    );
+
+    assert_eq!(
+        normalize_similarity_key("__Apply Discount!!"),
+        "apply_discount"
+    );
+    assert!(similarity_key_contains(
+        "test_apply_discount_boundary",
+        "apply_discount"
+    ));
+    assert!(similarity_key_contains(
+        "apply_discount_boundary",
+        "apply_discount"
+    ));
+    assert!(similarity_key_contains(
+        "boundary_apply_discount",
+        "apply_discount"
+    ));
+    assert!(similarity_key_contains("apply_discount", "apply_discount"));
+    assert!(!similarity_key_contains(
+        "reapply_discounted",
+        "apply_discount"
+    ));
+    assert!(!similarity_key_contains("", "apply_discount"));
+}
+
+#[test]
 fn extract_owners_returns_empty_when_source_is_unparseable() {
     let owners = extract_owners(Path::new("src/oops.py"), "def !!!");
     assert!(owners.is_empty());
