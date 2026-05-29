@@ -340,7 +340,9 @@ Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus
 generated CI behavior and LSP smoke coverage. The CLI first-use path also
 checks that `ripr pilot` can surface a top Python repair card from diff-scoped
-preview evidence without requiring a Cargo workspace.
+preview evidence without requiring a Cargo workspace, and that `ripr first-pr`
+can route an existing Python preview GapRecord into a preview-limited
+start-here packet for a Python project root.
 
 ## Implementation Mapping
 
@@ -368,6 +370,7 @@ adapter contributes:
 - `language_adapter_python_canonical_gap_identity`
 - `language_adapter_python_ripr_evidence_model`
 - `language_adapter_python_missing_discriminator_boundary`
+- `language_adapter_python_first_pr_start_here_path`
 - `language_adapter_python_repair_class_predicate_boundary`
 - `language_adapter_python_repair_class_return_value`
 - `language_adapter_python_repair_class_exception_path`

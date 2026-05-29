@@ -25,6 +25,15 @@
       "expected_output_state": "actionable_gap"
     },
     {
+      "id": "python-preview-gap",
+      "description": "A repairable Python preview gap becomes a preview-limited first-run repair.",
+      "input": "python-preview-gap/inputs/reports/gap-decision-ledger.json",
+      "expected": "python-preview-gap/expected/start-here.json",
+      "expected_status": "actionable",
+      "expected_state": "top_gap",
+      "expected_output_state": "preview_limited"
+    },
+    {
       "id": "empty-diff",
       "description": "An empty diff emits schema-valid no-action output.",
       "input": "empty-diff/inputs/reports/gap-decision-ledger.json",

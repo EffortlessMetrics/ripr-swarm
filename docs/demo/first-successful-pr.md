@@ -5,7 +5,7 @@ This demo shows the adopter path that `ripr first-pr` is meant to make obvious:
 ```text
 one PR
 -> one start-here packet
--> one repairable Rust gap or a clear no-action state
+-> one repairable stable Rust gap, preview Python gap, or a clear no-action state
 -> one repair route
 -> one verification command
 -> one receipt trail
@@ -54,6 +54,7 @@ fixtures/first_successful_pr/boundary-gap/README.md
 | --- | --- | --- | --- | --- |
 | `boundary-gap` | Changed Rust behavior is reached by a related test, but the equality boundary is not checked. | Top gap: missing boundary assertion for `amount >= threshold`. | `AddBoundaryAssertion` in `tests/pricing.rs`. | `cargo xtask fixtures boundary_gap` |
 | `output-contract-gap` | User-facing output text changed without checked output or golden evidence. | Top gap: missing output contract for `APPLE_M3_AIR_DEVICE_LABELS_TEXT`. | `AddOutputGolden` in the expected output fixture. | `cargo xtask goldens check` |
+| `python-preview-gap` | Changed Python behavior is reached by a related pytest context, but the equality boundary is not checked. | Top gap: preview-limited missing boundary assertion for `amount >= threshold`. | `AddBoundaryAssertion` in `tests/test_pricing.py`. | `pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary` |
 | `empty-diff` | The PR has no changed behavior to inspect. | Successful no-action state. | No repair selected. | No-action is advisory, not adequacy proof. |
 | `blocked-ledger` | The gap ledger cannot be trusted yet. | Blocked state with a regeneration command. | Refresh the ledger before assigning repair work. | `ripr reports gap-ledger ...` |
 
@@ -99,6 +100,29 @@ fixtures/boundary_gap/calibration/targeted-test-outcome.md
 
 That receipt records static before/after movement. It does not claim runtime
 mutation confirmation, coverage adequacy, correctness, or merge approval.
+
+## Python Preview Gap Story
+
+The Python preview case proves the same first-run packet can route an explicit
+preview gap-ledger record without requiring a Cargo workspace:
+
+```text
+Changed behavior:
+  if amount >= threshold:
+
+Why it matters:
+  A related Python test reaches the change, but no boundary discriminator was
+  found.
+
+Repair:
+  Add a pytest assertion for amount == threshold.
+
+Verify:
+  pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary
+```
+
+The packet stays `preview_limited`, labels the language status as `preview`,
+and keeps the static/advisory boundary visible before repair guidance.
 
 ## Output Contract Story
 
