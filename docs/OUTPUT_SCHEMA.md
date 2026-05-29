@@ -2370,6 +2370,9 @@ full or limited before acting on them.
 analyzer repair routes from the source Lane 1 audit so downstream swarm
 surfaces can explain why no packet is safely actionable without turning those
 limitations into user repair work.
+For `top_categories[]`, `repair_route` is the dominant route from the
+route-grained backlog packets for that category when packet evidence exists;
+otherwise it uses the category fallback route.
 
 ```json
 {
@@ -2413,15 +2416,15 @@ limitations into user repair work.
     "source": "lane1-evidence-audit.static_limitations",
     "top_categories": [
       {
-        "category": "activation_value_unresolved",
-        "count": 141,
-        "repair_route": "analysis/value-resolution-audit-fixes"
+        "category": "activation_boundary_input_unresolved",
+        "count": 297,
+        "repair_route": "analysis/local-computed-boundary-operand-resolution"
       }
     ],
     "top_repair_routes": [
       {
-        "repair_route": "analysis/value-resolution-audit-fixes",
-        "count": 141
+        "repair_route": "analysis/local-computed-boundary-operand-resolution",
+        "count": 297
       }
     ],
     "limitation_backlog_packets": [

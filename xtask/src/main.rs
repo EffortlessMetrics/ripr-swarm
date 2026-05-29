@@ -21118,18 +21118,24 @@ fn lane1_actionable_gap_packets_json(report: &Lane1EvidenceAuditReport) -> Resul
 }
 
 fn lane1_static_limitation_backlog_json(report: &Lane1EvidenceAuditReport) -> Value {
+    let top_categories = audit_top_counts(report.static_limitation_category_counts.clone())
+        .iter()
+        .map(|row| {
+            let repair_route = lane1_static_limitation_category_repair_route(
+                &row.label,
+                &report.static_limitation_backlog_packets,
+            );
+            serde_json::json!({
+                "category": row.label,
+                "count": row.count,
+                "repair_route": repair_route,
+            })
+        })
+        .collect::<Vec<_>>();
+
     serde_json::json!({
         "source": "lane1-evidence-audit.static_limitations",
-        "top_categories": audit_top_counts(report.static_limitation_category_counts.clone())
-            .iter()
-            .map(|row| {
-                serde_json::json!({
-                    "category": row.label,
-                    "count": row.count,
-                    "repair_route": static_limitation_repair_route(&row.label),
-                })
-            })
-            .collect::<Vec<_>>(),
+        "top_categories": top_categories,
         "top_repair_routes": audit_top_counts(report.static_limitation_repair_route_counts.clone())
             .iter()
             .map(|row| {
@@ -21143,6 +21149,26 @@ fn lane1_static_limitation_backlog_json(report: &Lane1EvidenceAuditReport) -> Va
             &report.static_limitation_backlog_packets
         ),
     })
+}
+
+fn lane1_static_limitation_category_repair_route(
+    category: &str,
+    packets: &[Lane1StaticLimitationBacklogPacket],
+) -> String {
+    let mut repair_route_counts = BTreeMap::new();
+    for packet in packets
+        .iter()
+        .filter(|packet| packet.limitation_category == category)
+    {
+        *repair_route_counts
+            .entry(packet.repair_route.clone())
+            .or_insert(0) += packet.signal_count;
+    }
+
+    audit_top_counts(repair_route_counts)
+        .first()
+        .map(|row| row.label.clone())
+        .unwrap_or_else(|| static_limitation_repair_route(category).to_string())
 }
 
 fn lane1_static_limitation_backlog_packet_from_builder(
@@ -77647,6 +77673,10 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             packet["repair_route"],
+            "analysis/local-computed-boundary-operand-resolution"
+        );
+        assert_eq!(
+            value["static_limitation_backlog"]["top_categories"][0]["repair_route"],
             "analysis/local-computed-boundary-operand-resolution"
         );
         assert_eq!(packet["signal_count"], serde_json::Value::from(1));
