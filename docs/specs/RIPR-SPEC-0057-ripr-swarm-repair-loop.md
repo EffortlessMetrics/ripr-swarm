@@ -366,6 +366,9 @@ claim improvement, regression, or unchanged evidence.
 When `latest_attempts[]` includes a `receipt_present` sample, readiness should
 copy the first sample packet ID, canonical gap ID, and repair kind into the
 `join_receipt_evidence_movement` next action.
+When `orphaned_receipts[]` includes samples, readiness should copy the first
+sample packet ID, canonical gap ID, and repair kind into the
+`reconcile_orphaned_receipts` next action.
 When `latest_attempts[]` includes `evidence_unchanged` or `evidence_regressed`
 samples, readiness should copy the first matching sample packet ID, canonical
 gap ID, and repair kind into the matching `inspect_unchanged_attempts` or
