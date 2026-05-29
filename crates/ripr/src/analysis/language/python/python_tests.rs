@@ -1222,7 +1222,8 @@ fn related_test_matching_uses_fixture_name_as_uncertain_relation() {
 }
 
 #[test]
-fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() {
+fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() -> Result<(), String>
+{
     let owners = extract_owners(
         Path::new("src/users.py"),
         "class User:\n    def activate(self):\n        return True\n",
@@ -1230,7 +1231,7 @@ fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() {
     let method_owner = owners
         .iter()
         .find(|owner| owner.qualified_name == "User.activate")
-        .expect("method owner");
+        .ok_or_else(|| "missing method owner".to_string())?;
     let method_keys = owner_similarity_keys(method_owner);
     assert!(method_keys.contains(&"activate".to_string()));
     assert!(method_keys.contains(&"user_activate".to_string()));
@@ -1239,7 +1240,7 @@ fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() {
     let module_owner = owners
         .iter()
         .find(|owner| owner.qualified_name == "<module>")
-        .expect("module owner");
+        .ok_or_else(|| "missing module owner".to_string())?;
     assert_eq!(
         owner_similarity_keys(module_owner),
         vec!["users".to_string()]
@@ -1267,6 +1268,7 @@ fn owner_similarity_keys_cover_qualified_names_modules_and_token_boundaries() {
         "apply_discount"
     ));
     assert!(!similarity_key_contains("", "apply_discount"));
+    Ok(())
 }
 
 #[test]
