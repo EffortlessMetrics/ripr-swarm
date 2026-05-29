@@ -1392,6 +1392,13 @@ fn patterns_to_avoid_for(entry: &ClassifiedSeam) -> Vec<AvoidPattern> {
             reason: "candidate values should include the missing discriminator".to_string(),
         });
     }
+    if matches!(entry.seam.kind(), SeamKind::ErrorVariant) {
+        out.push(AvoidPattern {
+            pattern: "treating any Err(_) / is_err() / expect_err() as sufficient".to_string(),
+            reason: "this route only improves evidence when the test matches the exact error variant or payload named by the seam"
+                .to_string(),
+        });
+    }
     if out.is_empty() && matches!(entry.class, SeamGripClass::Ungripped) {
         out.push(AvoidPattern {
             pattern: "copying a smoke-only test shape".to_string(),
@@ -1488,9 +1495,13 @@ fn suggested_assertions_for(
                 "assert_eq!({owner_short}(/* {hint} */), /* expected */)"
             )]
         }
-        SeamKind::ErrorVariant => vec![format!(
-            "assert!(matches!({owner_short}(/* trigger */), Err(/* exact variant */)))"
-        )],
+        SeamKind::ErrorVariant => {
+            let (trigger_hint, expected_label, pattern_hint) =
+                error_variant_assertion_hint(required);
+            vec![format!(
+                "let err = {owner_short}(/* trigger {trigger_hint} */).expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));"
+            )]
+        }
         SeamKind::ReturnValue => vec![format!(
             "assert_eq!({owner_short}(/* input */), /* expected */)"
         )],
@@ -1507,6 +1518,22 @@ fn suggested_assertions_for(
             "// assert that {owner_short} called the expected target"
         )],
     }
+}
+
+fn error_variant_assertion_hint(
+    required: Option<&RequiredDiscriminator>,
+) -> (String, String, String) {
+    if let Some(RequiredDiscriminator::ErrorVariant { variant }) = required
+        && !variant.trim().is_empty()
+    {
+        let variant = variant.trim().to_string();
+        return (variant.clone(), variant.clone(), variant);
+    }
+    (
+        "the exact error variant".to_string(),
+        "the exact error variant".to_string(),
+        "/* exact error variant */".to_string(),
+    )
 }
 
 fn predicate_boundary_assertion_hint(
@@ -2468,8 +2495,10 @@ mod tests {
             "\"value\": \"input that triggers AuthError::RevokedToken\"",
             "\"missing_oracle_shape\": \"exact error-variant assertion",
             "\"assertion_shape\": {\"kind\": \"exact_error_variant\"",
-            "assert!(matches!(authenticate(/* trigger */), Err(/* exact variant */)))",
+            "let err = authenticate(/* trigger AuthError::RevokedToken */).expect_err",
+            "assert!(matches!(err, AuthError::RevokedToken",
             "\"pattern\": \"broad_error in empty_token_is_rejected\"",
+            "\"pattern\": \"treating any Err(_) / is_err() / expect_err() as sufficient\"",
         ] {
             if !json.contains(needle) {
                 return Err(format!(
