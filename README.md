@@ -81,8 +81,11 @@ Does this changed behavior appear exposed to a meaningful test assertion?
 
 The usable repair loop is Rust/Cargo: find one named gap, add one focused proof
 outside `ripr`, and keep the receipt. TypeScript and Python are opt-in preview
-surfaces; see [Support tiers](docs/status/SUPPORT_TIERS.md) for what is usable,
-stable, preview, advisory, blocked, or unsupported.
+surfaces. Python preview evidence can now name syntax-derived RIPR stages and
+selected predicate-boundary discriminators, but it remains advisory and does not
+yet emit Python repair cards, verify commands, or closure receipts. See
+[Support tiers](docs/status/SUPPORT_TIERS.md) for what is usable, stable,
+preview, advisory, blocked, or unsupported.
 
 ## The Problem
 

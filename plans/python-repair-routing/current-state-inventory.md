@@ -44,8 +44,8 @@ the repo enables Python in `ripr.toml`.
 The current implementation is not yet the repair-routing loop from
 RIPR-PROP-0017. The gaps are concentrated in project detection,
 diff-to-owner mapping, language-neutral first-use CLI behavior, canonical
-Python gap identity, missing-discriminator extraction, repair cards, verify
-commands, agent packets, and before/after receipts.
+Python repair-gap projection, repair cards, verify commands, agent packets,
+and before/after receipts.
 
 ## Current Code Map
 
@@ -70,12 +70,13 @@ commands, agent packets, and before/after receipts.
 | Source snapshots | Stable file/span/language facts for modules, classes, functions, methods, decorators, parameters, returns, raises, predicates, comparisons, boolean expressions, calls, assignments, attribute writes, dict/list/set literals, string literals, and print/log calls. | Snapshot facts are still internal analysis substrate; they are not yet projected as canonical gap IDs or repair cards. |
 | Owners | Top-level `def`, `async def`, methods, `@staticmethod`, `@classmethod` methods, class-body owners, module-level owners, and stable `python:<path>::<qualified_owner>` probe owner IDs. | Class owners intentionally omit `owner_kind` until the shared vocabulary adds a class value; canonical repair-gap IDs remain planned. |
 | Tests | `test_*` functions, async `test_*`, `class Test*` pytest methods, `unittest.TestCase` `test_*` methods, fixture/parameter names, and test files by `test_*.py`, `*_test.py`, or `tests/` paths. | API client, CLI runner, and framework fixture semantics are recorded syntactically but not yet converted into repair locations or verify commands. |
-| Pytest oracles | `assert a == b`, boundary comparisons, field assertions, output observers through `caplog` / `capsys`, status-code and exit-code assertions, bare `assert expr`, custom `assert_*` helpers, `isinstance(...)`, `pytest.raises(...)` / imported `raises(...)`, and `pytest.mark.parametrize` presence. | No exact boundary discriminator extraction, no `match=` message observer, and no response JSON or framework-shaped repair cards yet. |
+| Pytest oracles | `assert a == b`, boundary comparisons, field assertions, output observers through `caplog` / `capsys`, status-code and exit-code assertions, bare `assert expr`, custom `assert_*` helpers, `isinstance(...)`, `pytest.raises(...)` / imported `raises(...)`, and `pytest.mark.parametrize` presence. | Boundary discriminator extraction is limited to simple syntax-derived predicate comparisons; no `match=` message observer, response JSON observer, or framework-shaped repair card exists yet. |
 | Unittest oracles | `assertEqual`, `assertNotEqual`, `assertTrue`, `assertFalse`, `assertRaises`, `assertRaisesRegex`, `assertIn`, `assertRegex`, `assertDictEqual`, and unittest verify-command evidence. | Command confidence and repair-card placement remain planned. |
 | Mock oracles | Common `mock.assert_called*` family is `mock_expectation` / medium. | Runtime mock substitution is not resolved; patched or monkeypatched modules surface as static limits. |
 | Related tests | Direct owner calls, module import-alias calls, method attribute calls, same-stem file proximity, test-name similarity, and fixture-name proximity. Heuristic-only links are marked uncertain and keep weak reachability. | Route/client references and class references beyond simple calls are not yet repair-card inputs. |
-| Probe shapes | Predicate/control, return value, error path, field assignment, side-effect calls, await calls, and mock initializer shapes. | Canonical Python gap IDs now identify non-static-limit preview findings by language, file, owner, behavior kind, probe kind, and normalized discriminator. Repair-card identity and closure receipts remain planned. |
-| Static limits | `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`, `mocked_module`, `missing_import_graph`, and `unsupported_syntax`. | Limits are emitted as finding context; they are not yet stop reasons for a Python repair queue. |
+| Probe shapes | Predicate/control, return value, error path, field assignment, side-effect calls, await calls, and mock initializer shapes. | Canonical Python gap IDs now identify non-static-limit preview findings by language, file, owner, behavior kind, probe kind, and normalized discriminator; repair-card identity and closure receipts remain planned. |
+| RIPR evidence | Non-static Python findings carry reach, infection, propagation, observation, and discriminator evidence using Python behavior-family summaries. | Evidence remains syntax-first and preview; it does not execute imports, run tests, generate repairs, or claim mutation adequacy. |
+| Static limits | `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`, `mocked_module`, `missing_import_graph`, and `unsupported_syntax`. | Limits fail closed as `static_unknown` with typed stop reasons and no repair recommendation or canonical repair-gap ID. |
 
 ## Existing Fixture Corpus
 
@@ -129,7 +130,7 @@ packet safety, or before/after receipt movement.
 | Matrix case | Current fixture home | Current preview coverage | Repair-routing work still needed |
 | --- | --- | --- | --- |
 | `basic_function` | `python_owner_file_match`, `python_boundary_gap` | Top-level function owners, direct calls, exact and weak oracle examples. | Add Python-only project detection and a repair-card fixture that does not depend on Cargo workspace assumptions. |
-| `predicate_boundary` | `python_boundary_gap`, `python_strong_oracle`, `python_parametrize_basic` | Predicate probe and weak/strong related-test examples. | Extract a canonical missing discriminator such as `amount == threshold`; avoid line-number-only gap identity. |
+| `predicate_boundary` | `python_boundary_gap`, `python_strong_oracle`, `python_parametrize_basic` | Predicate probe, weak/strong related-test examples, canonical gap identity, and simple equality-boundary missing discriminators such as `amount == threshold`. | Convert the missing discriminator into a repair-card assertion shape and closure receipt. |
 | `changed_return_value` | `python_return_value_shape` | Return-value probe with related exact pytest assertion. | Produce a return-value repair card, suggested assertion, and verify command. |
 | `changed_exception` | `python_error_path_shape`, `python_pytest_raises`, `python_unittest_assertions` | Error-path probe plus pytest/unittest broad-error observers. | Distinguish exception type versus message discriminator, including `pytest.raises(..., match=...)` guidance. |
 | `dict_field_change` | Partial: `python_field_assignment_shape` | Attribute assignment probe with exact related assertion. | Add dict/object/dataclass return-field fixtures and field-specific repair cards. |
@@ -138,7 +139,7 @@ packet safety, or before/after receipt movement.
 | `unittest_assert_equal` | `python_unittest_assertions`, `python_unittest_oracle_shapes` | `self.assertEqual(...)` becomes `exact_value` / strong; unittest related tests now carry `python -m unittest module.Class.test_method` verify-command evidence, and `assertIn` / `assertRegex` / `assertDictEqual` feed output, status-code, and field oracle shapes. | Tie unittest verify commands to repair cards and agent packets once canonical Python gaps exist. |
 | `fastapi_route_optional` | Missing | FastAPI/Flask decorators currently look like decorator or call syntax, not framework facts. | Add HTTP/API fixture pack with route owner, status-code, and JSON-field repair cards; keep dynamic routing limited. |
 | `cli_output_optional` | Missing | Generic call and side-effect shapes exist, but CLI runners and stdout/stderr assertions are not modeled. | Add Click/Typer/argparse output fixtures, output assertion cards, and exit-code verify guidance. |
-| `dynamic_unsupported` | Static-limit fixture family | Dynamic dispatch, decorator, mocked module, missing import graph, metaprogramming, and unsupported syntax limits are visible. | Convert applicable limits into non-actionable stop reasons so repair queues do not assign unsafe work. |
+| `dynamic_unsupported` | Static-limit fixture family | Dynamic dispatch, decorator, mocked module, missing import graph, metaprogramming, and unsupported syntax limits are visible and fail closed with typed stop reasons. | Keep those limitations out of repair queues once agent packet export exists. |
 
 ## Current Rust/Cargo Assumptions To Remove Or Contain
 
@@ -168,7 +169,7 @@ packet safety, or before/after receipt movement.
 
 ## Next Work Item Readiness
 
-The next work item, `analysis/python-ripr-evidence-model`, can start from this
+The next work item, `analysis/python-repair-classes-v1`, can start from this
 boundary:
 
 - Python project detection keeps no-config Python repos analyzable without
@@ -194,10 +195,17 @@ boundary:
   marks same-stem/name/fixture links as uncertain with weak reachability.
 - Non-static-limit Python findings now carry stable `canonical_gap_id` values
   across JSON, human, SARIF, GitHub annotation, LSP diagnostic/hover, and
-  context-packet surfaces; static-limit findings intentionally remain
-  limitation-only until typed non-actionable gap states exist.
+  context-packet surfaces.
+- Python RIPR stage evidence now distinguishes reachability, changed-behavior
+  infection, propagation, observation, and revealability for non-static
+  findings.
+- Static-limit findings intentionally fail closed as `static_unknown` with
+  typed stop reasons, no canonical repair-gap ID, and no repair recommendation.
+- Simple predicate-boundary findings can carry activation-level missing
+  discriminator facts such as `amount == threshold`.
 
-Acceptance for the next behavior PR should express Python findings in RIPR
-reachability, infection, propagation, and revealability terms without emitting
-repair cards before actionability, stop reasons, and verify/receipt commands are
-typed.
+Acceptance for the next behavior PR should ship the first high-confidence
+Python repair classes without broadening static analysis beyond the current
+syntax-first evidence model. Predicate boundary, return value, exception path,
+field, and output/log examples should get positive and negative fixtures, while
+dynamic or ambiguous cases remain non-actionable.

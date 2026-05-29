@@ -25,10 +25,11 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `warn_coupon`
-  - infection unknown: Python preview adapter does not yet model infection.
-  - propagation unknown: Python preview adapter does not yet model propagation.
+  - infection yes: Changed Python return expression can alter the owner return value: `return "coupon expired"`
+  - propagation yes: Changed Python return value is already at the owner output boundary.
   - observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)
   - discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.
+  - local flow reaches returned value: return "coupon expired" (line 3)
   - related test tests/test_notifications.py:7 test_warn_coupon_output_message uses weak relational check oracle: self.assertIn("coupon expired", result.output)
 
 Weakness

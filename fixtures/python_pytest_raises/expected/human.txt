@@ -25,14 +25,16 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `normalize_quantity`
-  - infection unknown: Python preview adapter does not yet model infection.
-  - propagation unknown: Python preview adapter does not yet model propagation.
+  - infection yes: Changed Python predicate can alter branch selection: `if value <= 0:`
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.
   - observation weak: Strongest extracted Python oracle kind: `broad_error` (rank 3)
   - discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.
+  - local flow reaches unknown sink: if value <= 0: (line 2)
   - related test tests/test_quantity.py:6 test_rejects_zero_quantity uses weak broad error oracle: pytest.raises(ValueError)
 
 Weakness
   - Related Python test reaches `normalize_quantity` but the strongest extracted oracle is `broad_error`; add or verify an exact-value assertion to make the preview finding stronger.
+  - missing discriminator value == 0: changed Python predicate at line 2 lacks an extracted equality-boundary discriminator
 
 Next step
   Python preview: add or verify a focused exact-value assertion (`assert ... == ...` or `self.assertEqual(...)`) for the changed behavior.

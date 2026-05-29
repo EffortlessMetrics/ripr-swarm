@@ -25,10 +25,11 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `recording_callback`
-  - infection unknown: Python preview adapter does not yet model infection.
-  - propagation unknown: Python preview adapter does not yet model propagation.
+  - infection yes: Changed Python call or output effect can alter observable side effects: `callback = MagicMock(name="receipt.sent")`
+  - propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.
   - observation weak: Strongest extracted Python oracle kind: `mock_expectation` (rank 4)
   - discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.
+  - local flow reaches call effect: callback = MagicMock(name="receipt.sent") (line 4)
   - related test tests/test_callbacks.py:4 test_recording_callback_starts_idle uses medium mock expectation oracle: callback.assert_not_called()
 
 Weakness
