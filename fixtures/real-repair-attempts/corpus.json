@@ -204,6 +204,40 @@
       "reason": "A real merged limitation-route PR made local/computed boundary operands more trustworthy by preserving named non-actionability instead of routing unsafe repair work."
     },
     {
+      "id": "call_presence_target_affinity_limitation_route_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#555",
+      "canonical_gap_id": "gap:activation-owner-call-absent-call-presence-target-affinity",
+      "packet_id": "limitation:activation_owner_call_absent_call_presence_target_affinity:analysis-call-presence-target-affinity-owner-call-tracing",
+      "repair_kind": "sharpen_static_limitation_route",
+      "target_test_or_observer_shape": "evidence-record and benchmark fixture assertions that call-presence target-token affinity remains a named static limitation and does not satisfy activation",
+      "verify_command": "cargo test -p ripr evidence_record_splits_call_presence_target_affinity_owner_call_absence_limitation -- --test-threads=1",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask dogfood",
+      "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "static_limitation",
+      "after_gap_state": "static_limitation",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Split call-presence target-token affinity out of the broader assertion-target affinity owner-call limitation route while preserving non-actionable status.",
+      "evidence_movement": "The top sampled limitation route now points to a precise call-presence analyzer backlog item instead of blending target-token affinity with other assertion-target affinity.",
+      "operator_note": "This is a successful negative-capability repair-loop attempt: it improved analyzer backlog precision without emitting a public repair packet or treating target-token assertions as owner-call activation.",
+      "must_not_change": [
+        "public projection eligibility for static limitations",
+        "activation satisfied by call-target assertion text",
+        "direct owner-call or helper-call requirements",
+        "public badge semantics"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/evidence-quality-benchmark/corpus.json:call_presence_specific_call_target_affinity_stays_named_limitation",
+        "crates/ripr/src/output/evidence_record.rs:evidence_record_splits_call_presence_target_affinity_owner_call_absence_limitation",
+        "docs/specs/RIPR-SPEC-0031-lane1-evidence-quality-audit.md",
+        "docs/OUTPUT_SCHEMA.md:activation_owner_call_absent_call_presence_target_affinity"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged limitation-route PR made the highest-volume sampled call-presence target-affinity limitation more trustworthy by routing it to a precise analyzer backlog item while keeping it non-actionable."
+    },
+    {
       "id": "assertion_target_affinity_limitation_route_improved",
       "source_ref": "EffortlessMetrics/ripr-swarm#504",
       "canonical_gap_id": "gap:activation-owner-call-absent-assertion-target-affinity",
