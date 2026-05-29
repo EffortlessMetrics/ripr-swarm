@@ -1028,7 +1028,7 @@ fn validate_language(
             language.as_str().to_string(),
         ));
     }
-    if !context.enabled_languages.contains(&language) {
+    if !language_enabled(context.enabled_languages, language) {
         return Err(GapArtifactRejection::DisabledLanguage(
             language.as_str().to_string(),
         ));
@@ -1039,6 +1039,12 @@ fn validate_language(
         ));
     }
     Ok(())
+}
+
+fn language_enabled(enabled_languages: &[LanguageId], language: LanguageId) -> bool {
+    enabled_languages.contains(&language)
+        || (language == LanguageId::JavaScript
+            && enabled_languages.contains(&LanguageId::TypeScript))
 }
 
 fn validate_paths(root: &Path, paths: &[String]) -> Result<(), GapArtifactRejection> {
@@ -1101,7 +1107,8 @@ fn language_from_value(value: &Value) -> Result<Option<LanguageId>, GapArtifactR
     match language {
         None => Ok(None),
         Some("rust") => Ok(Some(LanguageId::Rust)),
-        Some("typescript") | Some("javascript") => Ok(Some(LanguageId::TypeScript)),
+        Some("typescript") => Ok(Some(LanguageId::TypeScript)),
+        Some("javascript") => Ok(Some(LanguageId::JavaScript)),
         Some("python") => Ok(Some(LanguageId::Python)),
         Some(other) => Err(GapArtifactRejection::MalformedArtifact(match other {
             "" => "language must not be empty",
@@ -2102,6 +2109,35 @@ mod tests {
         assert_eq!(
             enabled.identities[0].canonical_gap_id.as_deref(),
             Some("gap:py:pricing")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_preview_gap_ledger_is_enabled_by_typescript_adapter() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["gap_id"] = json!("gap:js:pricing");
+        artifact["records"][0]["canonical_gap_id"] = json!("gap:js:pricing");
+        artifact["records"][0]["language"] = json!("javascript");
+
+        let disabled = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]));
+        assert_eq!(
+            disabled,
+            Err(GapArtifactRejection::DisabledLanguage(
+                "javascript".to_string()
+            ))
+        );
+
+        let enabled = validate_gap_artifact(
+            &artifact,
+            &context(&[LanguageId::Rust, LanguageId::TypeScript]),
+        )
+        .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(enabled.language, Some(LanguageId::JavaScript));
+        assert_eq!(enabled.language_status, Some(LanguageStatus::Preview));
+        assert_eq!(
+            enabled.identities[0].canonical_gap_id.as_deref(),
+            Some("gap:js:pricing")
         );
         Ok(())
     }
