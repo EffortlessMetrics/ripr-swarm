@@ -2011,6 +2011,7 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
 ]
 fixtures = [
+  "fixtures/python/basic",
   "fixtures/python_boundary_gap",
   "fixtures/python_async_owner",
   "fixtures/python_unittest_basic",
@@ -2046,6 +2047,7 @@ code = [
   "crates/ripr/src/analysis/language/mod.rs",
   "crates/ripr/src/analysis/language/router.rs",
   "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/config.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md",

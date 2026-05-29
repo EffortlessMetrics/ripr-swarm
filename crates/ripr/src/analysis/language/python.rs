@@ -41,6 +41,25 @@ use source_utils::{
     is_test_file, line_for_range_end, line_for_range_start, normalized_path, text_for_range,
 };
 
+const PYTHON_WORKSPACE_EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".ripr",
+    ".direnv",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    ".tox",
+    ".nox",
+    "site-packages",
+    ".pytest_cache",
+    ".mypy_cache",
+    "dist",
+    "build",
+];
+
 /// Python preview adapter.
 ///
 /// Stateless: routing, parsing, and per-file extraction only.
@@ -1108,17 +1127,7 @@ fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        if name == ".git"
-            || name == "target"
-            || name == "node_modules"
-            || name == ".ripr"
-            || name == ".direnv"
-            || name == "__pycache__"
-            || name == ".venv"
-            || name == "venv"
-            || name == "env"
-            || name == ".mypy_cache"
-        {
+        if is_python_workspace_excluded_dir(name) {
             continue;
         }
         let file_type = match entry.file_type() {
@@ -1129,12 +1138,27 @@ fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             visit_workspace(root, &path, out);
         } else if file_type.is_file() {
             let adapter = PythonAdapter;
-            if adapter.accepts_path(&path) {
+            if adapter.accepts_path(&path) && !is_detectable_generated_python_file(&path) {
                 let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
                 out.push(relative);
             }
         }
     }
+}
+
+fn is_python_workspace_excluded_dir(name: &str) -> bool {
+    PYTHON_WORKSPACE_EXCLUDED_DIRS.contains(&name)
+}
+
+fn is_detectable_generated_python_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.ends_with("_pb2.py")
+        || name.ends_with("_pb2_grpc.py")
+        || name.ends_with(".generated.py")
+        || name.ends_with("_generated.py")
+        || name.starts_with("generated_")
 }
 
 impl LanguageAdapter for PythonAdapter {

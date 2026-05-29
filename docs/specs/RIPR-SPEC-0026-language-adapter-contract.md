@@ -59,7 +59,8 @@ specs and fixtures justify a higher status.
 | Workspace root | yes | Same root the existing CLI/LSP receives. |
 | Diff (paths + spans) | yes | Same diff inputs as the Rust path. |
 | Source file content | yes | Read through the existing file abstraction. |
-| Repo configuration | yes | `ripr.toml` declares which languages are enabled. |
+| Repo configuration | yes | `ripr.toml` declares which languages are enabled when present. |
+| Project detection | yes | A missing `ripr.toml` may enable a preview adapter only when a language-specific detector recognizes the repository shape. |
 | Cargo feature set | yes | Determines which preview adapters are available in the current binary. |
 | Language router decision | yes | Maps each changed file to at most one adapter. |
 | Existing report inputs | optional | Lane 4 producers continue to consume their existing artifacts; language metadata is additive. |
@@ -120,8 +121,14 @@ enabled = ["rust"]
 ```
 
 The default `enabled` value is `["rust"]`. Preview adapters do not run
-when absent from `enabled`. A `--languages rust,typescript` CLI flag
-overrides config when needed.
+when absent from explicit `enabled`. When `ripr.toml` is missing, a
+language-specific project detector may add a preview adapter for a recognized
+project root; Python project detection is the first such exception. A
+`--languages rust,typescript` CLI flag overrides config when needed.
+
+An explicit `ripr.toml` is authoritative. For example, a Python-shaped
+repository with `[languages] enabled = ["rust"]` must keep Python preview
+disabled.
 
 Runtime opt-in is not the same as build-time availability. The published
 default build may include preview adapter support, but Rust-only binaries
@@ -164,7 +171,9 @@ The contract is supported only when the implementation can show:
 ## Non-Goals
 
 - No runtime mutation execution.
-- No default-on preview adapters.
+- No blanket default-on preview adapters. Project detection may select a
+  preview adapter for a recognized repository root only when explicit
+  `ripr.toml` language config is absent.
 - No requirement that every distributed binary ships every preview parser
   dependency.
 - No new published crate, binary, LSP server, or editor extension.

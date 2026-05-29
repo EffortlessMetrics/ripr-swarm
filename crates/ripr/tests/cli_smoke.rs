@@ -1899,6 +1899,47 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
 }
 
 #[test]
+fn pilot_accepts_python_project_without_ripr_config() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/python/basic");
+    let out_dir = unique_temp_workspace("pilot-python-basic");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("RIPR pilot complete."));
+    assert!(out_dir.join("pilot-summary.json").exists());
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn check_detects_python_project_without_ripr_config() {
+    let root = workspace_root().join("fixtures/python/basic");
+    let diff = root.join("diff.patch");
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--diff",
+        &diff.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(r#""language": "python""#));
+    assert!(stdout.contains(r#""language_status": "preview""#));
+    assert!(stdout.contains("python_preview"));
+}
+
+#[test]
 fn pilot_honors_explicit_mode_over_repo_config() -> Result<(), String> {
     let workspace = make_temp_workspace_with_production_seam()?;
     std::fs::write(

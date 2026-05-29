@@ -140,11 +140,11 @@ packet safety, or before/after receipt movement.
 
 | Assumption | Current owner | Why it blocks the lane |
 | --- | --- | --- |
-| Default language config is Rust-only when `ripr.toml` is absent. | `config` / `analysis` | A normal Python repo with `pyproject.toml`, `requirements.txt`, or `tests/` will not get Python preview analysis without explicit config. |
+| Missing `ripr.toml` used to be Rust-only for every repo shape. | `config` / `analysis` | Contained by `analysis/python-project-detection`: Python project markers now select Python preview when config is absent, and explicit `ripr.toml` still wins. |
 | `ripr pilot` builds the first-use packet from repo seam inventory. | `cli` / `analysis::seam_inventory` / `output::pilot` | Python findings can appear in `ripr check`, but the first-use path in RIPR-PROP-0017 needs Python project detection and top repair-card selection. |
 | Python repo-mode analysis returns no findings. | `PythonAdapter::analyze_repo` | `ripr pilot` and repo-baseline loops cannot rely on Python repo facts until repo-mode or a Python-specific first-use bridge exists. |
 | The summary JSON field is named `changed_rust_files`. | `domain::Summary` / `output::json` | Python and mixed-language reports currently carry a Rust-shaped summary field even when the counted changed file is `.py`. |
-| Workspace exclusions are narrower than the Python-lane contract. | `PythonAdapter::visit_workspace` | Existing exclusions cover `.git`, `target`, `node_modules`, `.ripr`, `.direnv`, `__pycache__`, `.venv`, `venv`, `env`, and `.mypy_cache`; PR 3 still needs `.tox`, `.nox`, `site-packages`, `.pytest_cache`, `dist`, `build`, and generated-code handling. |
+| Workspace exclusions must stay aligned with the Python-lane contract. | `PythonAdapter::visit_workspace` | Contained by `analysis/python-project-detection` for `.tox`, `.nox`, `site-packages`, `.pytest_cache`, `dist`, `build`, and detectable generated Python files. |
 | `first-pr`, `agent packet`, and receipt flows consume existing gap/seam artifacts. | `output::first_pr`, `output::agent_seam_packets`, `output::outcome` | Python adapter findings are not yet projected into canonical repair-gap records with allowed files, forbidden files, verify commands, and receipt commands. |
 
 ## Output Surface Inventory
@@ -164,19 +164,19 @@ packet safety, or before/after receipt movement.
 
 ## Next Work Item Readiness
 
-The next work item, `analysis/python-project-detection`, can start from this
+The next work item, `analysis/python-source-facts`, can start from this
 boundary:
 
-- Add first-class Python project detection from `pyproject.toml`, `setup.py`,
-  `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`,
-  `tests/`, and `src/`.
-- Keep default Rust-only behavior for repos with no Python signal.
-- Extend Python traversal exclusions to match the lane contract.
-- Make Python-only and mixed repos fail closed with named limitations instead
-  of Cargo-specific setup errors.
-- Preserve the preview/advisory support-tier boundary until later repair-card,
-  dogfood, receipt, and promotion evidence exists.
+- `ripr pilot --root fixtures/python/basic` works without a Cargo workspace or
+  `ripr.toml`.
+- `ripr check --root fixtures/python/basic --diff
+  fixtures/python/basic/diff.patch --json` emits Python preview metadata from
+  project detection.
+- Repos with no Python signal remain Rust-only by default.
+- Explicit `ripr.toml` still controls language selection, including disabling
+  Python preview in Python-shaped repos.
+- The Python walker skips virtualenv, cache, build, distribution, and
+  detectable generated Python files.
 
-Acceptance for the next behavior PR should include a Python-only fixture home
-for `basic_function` and a mixed-repo fixture that proves Python detection does
-not collide with Rust routing.
+Acceptance for the next behavior PR should grow source fact snapshots while
+preserving this no-config project detection boundary.
