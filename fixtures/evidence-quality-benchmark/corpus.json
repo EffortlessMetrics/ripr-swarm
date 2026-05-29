@@ -1397,7 +1397,7 @@
       "fixture_reference": "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_value_insensitive_seam_when_only_affinity_related_then_activation_names_owner_call_limitation",
       "sample": {
         "file": "tests/contract_tests.rs",
-        "source": "let return_value = Vec::<&str>::new();\nassert!(return_value.is_empty());"
+        "source": "// Text mentions like `device_labels(` are not owner calls.\nlet note = \"device_labels(\";\nlet return_value = Vec::<&str>::new();\nassert!(!note.is_empty());\nassert!(return_value.is_empty());"
       },
       "expected_repo_exposure": {
         "static_gap_created": true,
@@ -1444,6 +1444,7 @@
       "expected_claim": "Assertion-target affinity for value-insensitive seams remains a routed static limitation until RIPR sees a direct owner call or stronger reach proof.",
       "must_not_claim": [
         "Do not treat assertion-target affinity as activation without a direct owner call.",
+        "Do not treat owner-call text inside comments or strings as a direct owner call.",
         "Do not invent observed values for value-insensitive seams.",
         "Do not classify affinity-only value-insensitive seams as user test debt.",
         "Do not apply this owner-call limitation route to predicate-boundary value checks."
