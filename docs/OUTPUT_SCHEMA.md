@@ -1304,11 +1304,11 @@ Field contract:
   remain non-activating static limitations.
 - `seams[].related_tests[].relation_confidence` — `high`, `medium`,
   `low`, or `opaque`. Mapping from reason: `direct_owner_call`,
-  `helper_owner_call`, and `assertion_target_affinity` → `high`;
-  `same_test_file`,
-  `same_module`, `owner_named_test`, `import_path_affinity` →
-  `medium`; `fixture_owner_affinity` → `low`. Independent of
-  `oracle_strength`: a `low` relation can still carry a strong oracle.
+  `helper_owner_call` → `high`; `assertion_target_affinity`,
+  `same_test_file`, `same_module`, `owner_named_test`, and
+  `import_path_affinity` → `medium`; `fixture_owner_affinity` → `low`.
+  Independent of `oracle_strength`: a `low` relation can still carry a strong
+  oracle.
 - The `related_tests` array is **ranked** by
   `(confidence, reason_priority, oracle_strength, activation_overlap, file,
   name, line)` so the highest-confidence tests appear first, then the nearest
