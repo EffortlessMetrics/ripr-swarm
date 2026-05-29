@@ -49,9 +49,19 @@ Each actionable finding includes:
   suggested location, verify command, preview/advisory authority, deferred
   receipt status, stop conditions, and limits.
 
+The check JSON can also feed:
+
+```bash
+ripr reports gap-ledger --check-output check.json
+```
+
+which derives PR-local Python GapRecords that `ripr agent packet --gap-ledger`
+can export with allowed test files, forbidden source files, conflict groups,
+verify commands, deferred receipt status, and the same stop conditions.
+
 ## Must Not
 
 - Invent placement for missing-test, heuristic-only, or static-limit findings.
 - Run pytest, unittest, or import Python modules.
-- Emit an agent packet, generate tests, or invent a receipt command before the
-  Python gap-ledger outcome slice exists.
+- Emit an agent packet directly from `ripr check`, generate tests, or invent a
+  receipt command before the Python outcome-ledger slice exists.
