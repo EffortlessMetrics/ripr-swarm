@@ -422,6 +422,11 @@ The evidence-first fields are additive in schema `0.1`:
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
+- `probe.owner` is an additive optional stable owner identifier emitted when a
+  preview-language adapter populated a changed owner. Python preview owners use
+  `python:<path>::<owner>`, for example
+  `python:src/pricing.py::calculate_discount`. Module-level Python changes use
+  `<module>` as the owner segment.
 - `language` is the per-finding source language reported by the language
   adapter that produced it (see [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md)).
   Values are `rust`, `typescript`, `javascript`, or `python`. Omitted when no
@@ -1297,11 +1302,14 @@ Field contract:
   `same_test_file`, `same_module`, `owner_named_test`,
   `import_path_affinity`, `fixture_owner_affinity`. Detection lives in
   `crates/ripr/src/analysis/test_grip_evidence.rs`.
-  `helper_owner_call` is limited to a one-hop same-file helper that directly
-  calls the owner. The helper either carries the specific owner token in its
-  name or is a direct delegating wrapper that calls exactly one specific local
-  owner. Generic owner names, skipped-owner wrappers, and two-hop wrapper chains
-  remain non-activating static limitations.
+  `helper_owner_call` is limited to a one-hop helper or wrapper that directly
+  calls the owner. Supported shapes are same-file helpers, test-local helpers,
+  explicitly qualified test-support helpers, and unambiguous same-package
+  production wrappers. The helper either carries the specific owner token in
+  its name or is a direct delegating wrapper that calls exactly one specific
+  owner. Generic owner names, skipped-owner wrappers, ambiguous production
+  wrapper names, local test-helper shadows, and two-hop wrapper chains remain
+  non-activating static limitations.
 - `seams[].related_tests[].relation_confidence` — `high`, `medium`,
   `low`, or `opaque`. Mapping from reason: `direct_owner_call`,
   `helper_owner_call` → `high`; `assertion_target_affinity`,
