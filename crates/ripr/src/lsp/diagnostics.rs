@@ -1138,6 +1138,7 @@ mod seam_diagnostic_tests {
                 target_line: Some(33),
                 related_test: Some("tests/pricing.rs::discount_threshold".to_string()),
                 assertion_shape: Some("assert_eq!(price(threshold), expected)".to_string()),
+                missing_discriminator: Some("amount == threshold".to_string()),
                 changed_behavior: Some("amount >= threshold".to_string()),
                 stop_conditions: vec!["Stop if the target owner moved.".to_string()],
             }),
