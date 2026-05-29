@@ -34,13 +34,14 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `apply_tax`"},
-        "infect": {"state":"unknown","confidence":"low","summary":"Python preview adapter does not yet model infection."},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Python preview adapter does not yet model propagation."},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return amount + 2`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `apply_tax`", "infection unknown: Python preview adapter does not yet model infection.", "propagation unknown: Python preview adapter does not yet model propagation.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/test_checkout_tax.py:4 test_checkout_tax_alias_import uses strong exact value oracle: assert taxed(10) == 12"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `apply_tax`", "infection yes: Changed Python return expression can alter the owner return value: `return amount + 2`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return amount + 2 (line 2)", "related test tests/test_checkout_tax.py:4 test_checkout_tax_alias_import uses strong exact value oracle: assert taxed(10) == 12"],
       "flow_sinks": [
+        {"kind":"return_value","text":"return amount + 2","line":2}
       ],
       "evidence": ["owner: apply_tax", "owner_kind: function", "test_framework: pytest (test_checkout_tax_alias_import)", "test_verify_command: pytest tests/test_checkout_tax.py::test_checkout_tax_alias_import (test_checkout_tax_alias_import)", "related_test_relation: import_alias_call (test_checkout_tax_alias_import)", "test_oracle: exact_value strong (test_checkout_tax_alias_import)"],
       "missing": ["Related Python test reaches `apply_tax` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],

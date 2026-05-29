@@ -34,13 +34,14 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `warn_coupon`"},
-        "infect": {"state":"unknown","confidence":"low","summary":"Python preview adapter does not yet model infection."},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Python preview adapter does not yet model propagation."},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return \"coupon expired\"`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `warn_coupon`", "infection unknown: Python preview adapter does not yet model infection.", "propagation unknown: Python preview adapter does not yet model propagation.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.", "related test tests/test_notifications.py:7 test_warn_coupon_output_message uses weak relational check oracle: self.assertIn(\"coupon expired\", result.output)"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `warn_coupon`", "infection yes: Changed Python return expression can alter the owner return value: `return \"coupon expired\"`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.", "local flow reaches returned value: return \"coupon expired\" (line 3)", "related test tests/test_notifications.py:7 test_warn_coupon_output_message uses weak relational check oracle: self.assertIn(\"coupon expired\", result.output)"],
       "flow_sinks": [
+        {"kind":"return_value","text":"return \"coupon expired\"","line":3}
       ],
       "evidence": ["owner: warn_coupon", "owner_kind: function", "test_framework: unittest (test_warn_coupon_output_message)", "test_verify_command: python -m unittest tests.test_notifications.NotificationTests.test_warn_coupon_output_message (test_warn_coupon_output_message)", "related_test_relation: syntactic_call (test_warn_coupon_output_message)", "test_oracle: relational_check weak (test_warn_coupon_output_message)", "test_oracle_shape: output_assertion (test_warn_coupon_output_message)"],
       "missing": ["Related Python test reaches `warn_coupon` but the strongest extracted oracle is `relational_check`; add or verify an exact-value assertion to make the preview finding stronger."],

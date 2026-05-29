@@ -184,6 +184,32 @@ gap-state projection. This prevents dynamic or unsupported Python cases from
 being mistaken for bounded repair work before repair cards and stop reasons
 exist.
 
+## Python RIPR Evidence
+
+For non-static-limit findings, the adapter must express the same RIPR evidence
+spine as other languages:
+
+- reachability: related Python tests, direct calls, import-alias calls, or
+  conservative proximity links
+- infection: the changed Python behavior family, such as predicate, return
+  value, exception path, field/object state, or call/output effect
+- propagation: whether the changed behavior is already at an output boundary,
+  can flow through an exception/control boundary, or can only weakly propagate
+  through unresolved control, object, or side-effect flow
+- revealability: the strongest extracted pytest or unittest oracle and whether
+  it discriminates the changed behavior
+
+Static-limit findings must fail closed. They keep any observed reachability and
+oracle facts, but their infection and propagation stages remain `unknown`, the
+finding class is `static_unknown`, a typed stop reason is emitted, and no
+canonical repair-gap ID or repair recommendation is emitted.
+
+Simple predicate-boundary findings may also carry activation-level missing
+discriminator facts. For example, a changed `if amount >= threshold:` predicate
+can emit `amount == threshold` as a syntax-derived missing discriminator. These
+facts are evidence only until a later repair-card contract supplies the test
+shape, verify command, and receipt command.
+
 ## Required Evidence
 
 The Python preview contract is supported only when the implementation
@@ -206,6 +232,13 @@ can show:
 - fixtures proving Python preview findings carry stable canonical gap IDs
   across human and JSON output while static-limit findings remain limitation
   evidence rather than repair gaps
+- fixtures proving non-static-limit Python findings carry RIPR infection and
+  propagation evidence instead of placeholder unknowns
+- fixtures proving static-limit Python findings fail closed as `static_unknown`
+  with typed stop reasons and no repair recommendation or canonical repair-gap
+  ID
+- a fixture proving a simple predicate-boundary finding carries an
+  activation-level missing discriminator such as `amount == threshold`
 - a fixture proving `mock.assert_called*` is recognised as a
   side-effect oracle
 - a fixture covering parametrized `pytest` cases

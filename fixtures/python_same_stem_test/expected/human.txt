@@ -25,10 +25,11 @@ Static exposure
 
 Evidence
   - reach weak: 1 heuristic Python test link(s) found for owner `reconcile_total`; relation is uncertain
-  - infection unknown: Python preview adapter does not yet model infection.
-  - propagation unknown: Python preview adapter does not yet model propagation.
+  - infection yes: Changed Python return expression can alter the owner return value: `return amount - 2`
+  - propagation yes: Changed Python return value is already at the owner output boundary.
   - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
   - discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.
+  - local flow reaches returned value: return amount - 2 (line 2)
   - related test tests/test_reconcile.py:1 test_reconcile_fixture_contract uses unknown unknown oracle
 
 Weakness

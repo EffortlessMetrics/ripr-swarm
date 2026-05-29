@@ -25,10 +25,11 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `send_receipt`
-  - infection unknown: Python preview adapter does not yet model infection.
-  - propagation unknown: Python preview adapter does not yet model propagation.
+  - infection yes: Changed Python call or output effect can alter observable side effects: `callback("receipt.sent", order_id)`
+  - propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.
   - observation weak: Strongest extracted Python oracle kind: `mock_expectation` (rank 4)
   - discriminator weak: Python preview adapter found no strong discriminator; use `assert ... == ...` or `self.assertEqual(...)` to escalate.
+  - local flow reaches call effect: callback("receipt.sent", order_id) (line 2)
   - related test tests/test_notify.py:6 test_send_receipt_notifies_callback uses medium mock expectation oracle: callback.assert_called_once_with("receipt.sent", "ord-123")
 
 Weakness
