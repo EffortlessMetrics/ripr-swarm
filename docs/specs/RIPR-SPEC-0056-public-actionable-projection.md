@@ -363,10 +363,11 @@ Generated endpoint refresh:
 Packet readiness without endpoint refresh:
 
 - Given `actionable-gaps.json` with emitted packets where
-  `public_projection_eligible = true`, `allowed_edit_surface[]` is present, and
-  no projection exclusions, the scorecard may report those packets as
-  internally projection-ready. It must not edit public endpoint JSON or claim a
-  badge refresh happened.
+  `public_projection_eligible = true`, `allowed_edit_surface[]` is present,
+  each derived edit-surface entry resolves to an existing workspace file, and no
+  projection exclusions, the scorecard may report those packets as internally
+  projection-ready. It must not edit public endpoint JSON or claim a badge
+  refresh happened.
 
 Packet exclusion:
 
