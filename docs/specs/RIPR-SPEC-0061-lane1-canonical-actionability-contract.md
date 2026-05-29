@@ -154,13 +154,15 @@ receipt hint. A path-only value stays non-ready with
 `must_not_change[]` is required because packets are intended to bound repair
 attempts. `allowed_edit_surface[]` is required because delegated packet attempts
 need an explicit workspace-relative edit cage. A packet without at least one
-allowed file is not public-projection eligible or swarm-ready. Typical
+allowed file that resolves to an existing workspace file is not
+public-projection eligible or swarm-ready. Typical
 `must_not_change[]` entries include:
 
 When canonical items do not already carry `related_test_or_observer`, the
 structured `recommendation.recommended_test` target may supply that packet
-field and the derived `allowed_edit_surface[]`. Implementations must not parse
-free-form recommendation prose to infer this edit cage.
+field and the derived `allowed_edit_surface[]`, but only when the target file
+exists in the workspace. Implementations must not parse free-form recommendation
+prose or create guessed root-level test paths to infer this edit cage.
 
 - do not edit production code;
 - do not broaden the assertion beyond the named observer shape;

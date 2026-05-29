@@ -327,7 +327,9 @@ the standalone `target/ripr/reports/actionable-gaps.{json,md}` artifacts. Each
 packet is one canonical item, preserves raw findings as supporting evidence,
 includes missing discriminator facts, repair and verification guidance, and
 carries conservative `must_not_change` boundaries plus `allowed_edit_surface[]`
-file bounds. It does not fan raw findings back out into separate user work.
+file bounds. Derived edit surfaces must resolve to existing workspace files;
+missing target files are reported as `missing_allowed_edit_surface`. The packet
+does not fan raw findings back out into separate user work.
 
 Given emitted actionable-gap packets, the audit also records packet-level
 public projection readiness. `public_projection_eligible` is true only when the
@@ -365,6 +367,9 @@ movement remains static evidence movement rather than mutation proof.
   or path and records the receipt source without changing badge counts.
 - `xtask::tests::lane1_actionable_gap_public_projection_requires_allowed_edit_surface`
   pins that public projection excludes packets without a bounded edit surface.
+- `xtask::tests::lane1_actionable_gap_packets_exclude_missing_edit_surface_file`
+  pins that a typed recommended test target is still not public-projection
+  eligible or swarm-ready when its edit-surface file does not exist.
 - `xtask::tests::lane1_actionable_gap_packets_keep_observed_gaps_out_of_public_projection`
   pins that observed/no-action dispositions do not become public-projection
   eligible even when a malformed packet carries repair, verify, and receipt
