@@ -63,19 +63,7 @@ Updated:
 ## Pending
 
 Reason:
-exposed strong Python oracles omit missing discriminator; Python repair classes v1 emits family-specific missing discriminators and suppresses repair guidance for non-actionable cases.
-
-Command:
-`cargo xtask goldens bless python_unittest_assertions --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending
-
-Reason:
-Python repair guidance suppresses exposed verification notes and observed side-effect discriminators
+Python repair classes v1 emits family-specific missing discriminators, suppresses repair guidance for non-actionable cases, and suppresses exposed verification notes plus observed side-effect discriminators.
 
 Command:
 `cargo xtask goldens bless python_unittest_assertions --reason "..."`
