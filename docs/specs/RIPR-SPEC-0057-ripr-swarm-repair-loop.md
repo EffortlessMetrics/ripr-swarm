@@ -203,7 +203,7 @@ A packet is swarm-ready only when typed fields provide a closed repair loop.
 | `raw_findings[]` | Supporting evidence only; never the selection unit. |
 | `static_limitations[]` | Must be empty for repair-ready packets or explicitly handled as a blocked state. |
 | `must_not_change[]` | Required for any attempt that could otherwise broaden into production-code edits. |
-| `allowed_edit_surface[]` | Required bounded workspace-relative file list for delegated edits. |
+| `allowed_edit_surface[]` | Required bounded workspace-relative file list for delegated edits. Derived entries must resolve to existing workspace files before a packet can be swarm-ready. |
 | `confidence_basis` | Required for ranking and blocked-state explanation. |
 
 Missing fields do not make the packet disappear. They move it to a blocked or
