@@ -209,6 +209,17 @@ affinity.
 - `test_grip_evidence::tests::given_call_presence_when_same_file_wrapper_directly_calls_owner_then_activation_is_yes`
   pins the `call_presence` same-file direct-wrapper activation sub-shape without
   synthetic observed values.
+- `test_grip_evidence::tests::given_call_presence_when_integration_test_calls_production_wrapper_then_activation_is_yes`
+  pins the `call_presence` production-wrapper activation sub-shape: an
+  integration test can call an unambiguous production one-hop wrapper that
+  directly calls the owner without inventing synthetic observed values.
+- `test_grip_evidence::tests::given_call_presence_when_production_wrapper_name_is_ambiguous_then_activation_stays_unknown`
+  pins the production-wrapper ambiguity guard: duplicate production helper
+  names with different owner-call targets do not become helper-owner-call
+  activation.
+- `test_grip_evidence::tests::given_call_presence_when_test_local_helper_shadows_production_wrapper_then_activation_stays_unknown`
+  pins that a test-local helper with the same name as a production wrapper does
+  not inherit the production wrapper's owner-call relation.
 - `test_grip_evidence::tests::given_call_presence_when_test_local_helper_wraps_owner_call_in_err_then_activation_is_yes`
   pins that `Err(owner(...))` is a safe one-hop helper constructor for
   value-insensitive `call_presence` activation when the helper directly calls

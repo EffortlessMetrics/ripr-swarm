@@ -103,6 +103,9 @@ impl<'a> CompactGripContext<'a> {
             unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
         let helper_owner_calls_by_module_path =
             helper_owner_calls_by_module_path(&helper_owner_calls_by_file);
+        let production_helper_owner_calls_by_package =
+            production_helper_owner_calls_by_package(&helper_owner_calls_by_file);
+        let function_names_by_file = local_function_names_by_file(index);
         let tests = index
             .tests
             .iter()
@@ -130,6 +133,8 @@ impl<'a> CompactGripContext<'a> {
                     &helper_owner_calls_by_file,
                     &unambiguous_test_helper_owner_calls_by_name,
                     &helper_owner_calls_by_module_path,
+                    &production_helper_owner_calls_by_package,
+                    &function_names_by_file,
                 );
                 for call_name in &call_names {
                     tests_by_call_name
@@ -233,6 +238,7 @@ impl<'a> CompactGripContext<'a> {
 type HelperOwnerCallsByFile = BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>>;
 type HelperOwnerCallsByName = BTreeMap<String, BTreeSet<String>>;
 type HelperOwnerCallsByModulePath = BTreeMap<String, BTreeMap<String, BTreeSet<String>>>;
+type HelperOwnerCallsByPackage = BTreeMap<String, HelperOwnerCallsByName>;
 
 fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
     let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
@@ -301,6 +307,40 @@ fn helper_owner_calls_by_module_path(
             }
             let module_path = module_path_for(file)?.replace('/', "::");
             Some((module_path, file_helpers.clone()))
+        })
+        .collect()
+}
+
+fn production_helper_owner_calls_by_package(
+    helpers: &HelperOwnerCallsByFile,
+) -> HelperOwnerCallsByPackage {
+    let mut by_package: BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> = BTreeMap::new();
+    for (file, file_helpers) in helpers {
+        if rust_index::is_test_file(file) {
+            continue;
+        }
+        let Some(package) = package_scope(file) else {
+            continue;
+        };
+        for (helper_name, owner_calls) in file_helpers {
+            by_package
+                .entry(package.clone())
+                .or_default()
+                .entry(helper_name.clone())
+                .or_default()
+                .push(owner_calls.clone());
+        }
+    }
+    by_package
+        .into_iter()
+        .filter_map(|(package, helper_sets)| {
+            let helpers = helper_sets
+                .into_iter()
+                .filter_map(|(helper_name, owner_sets)| {
+                    common_helper_owner_calls(helper_name, owner_sets)
+                })
+                .collect::<HelperOwnerCallsByName>();
+            (!helpers.is_empty()).then_some((package, helpers))
         })
         .collect()
 }
@@ -446,24 +486,33 @@ fn helper_owner_call_names_for_test(
     helpers: &HelperOwnerCallsByFile,
     unique_helpers: &HelperOwnerCallsByName,
     qualified_helpers: &HelperOwnerCallsByModulePath,
+    production_helpers: &HelperOwnerCallsByPackage,
+    local_function_names_by_file: &BTreeMap<PathBuf, BTreeSet<String>>,
 ) -> BTreeSet<String> {
     let mut owner_names =
         helper_owner_call_names_from_qualified_calls(&test.calls, qualified_helpers);
-    let Some(file_helpers) = helpers.get(&test.file) else {
+    let local_function_names = local_function_names_by_file.get(&test.file);
+    if let Some(file_helpers) = helpers.get(&test.file) {
+        for helper_name in call_names {
+            if let Some(helper_owner_names) = file_helpers.get(helper_name) {
+                owner_names.extend(helper_owner_names.iter().cloned());
+            }
+            if let Some(helper_owner_names) = unique_helpers.get(helper_name) {
+                owner_names.extend(helper_owner_names.iter().cloned());
+            }
+        }
+    } else {
         owner_names.extend(helper_owner_call_names_from_unique_helpers(
             call_names,
             unique_helpers,
         ));
-        return owner_names;
-    };
-    for helper_name in call_names {
-        if let Some(helper_owner_names) = file_helpers.get(helper_name) {
-            owner_names.extend(helper_owner_names.iter().cloned());
-        }
-        if let Some(helper_owner_names) = unique_helpers.get(helper_name) {
-            owner_names.extend(helper_owner_names.iter().cloned());
-        }
     }
+    owner_names.extend(helper_owner_call_names_from_production_helpers(
+        test,
+        call_names,
+        production_helpers,
+        local_function_names,
+    ));
     owner_names
 }
 
@@ -520,6 +569,28 @@ fn helper_owner_call_names_from_unique_helpers(
     call_names
         .iter()
         .filter_map(|helper_name| unique_helpers.get(helper_name))
+        .flat_map(|owner_names| owner_names.iter().cloned())
+        .collect()
+}
+
+fn helper_owner_call_names_from_production_helpers(
+    test: &TestSummary,
+    call_names: &BTreeSet<String>,
+    production_helpers: &HelperOwnerCallsByPackage,
+    local_function_names: Option<&BTreeSet<String>>,
+) -> BTreeSet<String> {
+    let Some(package) = package_scope(&test.file) else {
+        return BTreeSet::new();
+    };
+    let Some(package_helpers) = production_helpers.get(&package) else {
+        return BTreeSet::new();
+    };
+    call_names
+        .iter()
+        .filter(|helper_name| {
+            !local_function_names.is_some_and(|names| names.contains(*helper_name))
+        })
+        .filter_map(|helper_name| package_helpers.get(helper_name))
         .flat_map(|owner_names| owner_names.iter().cloned())
         .collect()
 }
@@ -1394,6 +1465,17 @@ fn package_prefix(path: &Path) -> Option<String> {
             }
             return Some(format!("{prefix}/"));
         }
+    }
+    None
+}
+
+fn package_scope(path: &Path) -> Option<String> {
+    let normalized = normalize_path(path);
+    if let Some(prefix) = package_prefix(path) {
+        return Some(prefix);
+    }
+    if normalized.starts_with("src/") || normalized.starts_with("tests/") {
+        return Some(String::new());
     }
     None
 }
@@ -4300,6 +4382,190 @@ fn helper_exercises_pipeline() {
                 .contains("one-hop helper owner call for value-insensitive seam"),
             "activation summary should explain the test-local helper owner-call route: {}",
             evidence.activate.summary
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_integration_test_calls_production_wrapper_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::exercise_pipeline;
+
+#[test]
+fn production_wrapper_exercises_pipeline() {
+    let format_output = exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected production wrapper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "production wrapper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_production_wrapper_name_is_ambiguous_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let pipeline = PathBuf::from("src/pipeline.rs");
+        let pipeline_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let report = PathBuf::from("src/report.rs");
+        let report_src = r#"
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_report("beta")
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::exercise_pipeline;
+
+#[test]
+fn ambiguous_production_wrapper_keeps_pipeline_limited() {
+    let format_output = exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#;
+        let index = index_from_files(&[
+            (pipeline, pipeline_src),
+            (report, report_src),
+            (tests, tests_src),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "ambiguous production wrapper name must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_shadows_production_wrapper_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+fn exercise_pipeline() -> String {
+    "alpha".to_string()
+}
+
+#[test]
+fn local_shadow_keeps_pipeline_limited() {
+    let format_output = exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "test-local shadow must not inherit production wrapper relation: {:?}",
+            evidence.related_tests
         );
         Ok(())
     }
