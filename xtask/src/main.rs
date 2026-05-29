@@ -25834,6 +25834,23 @@ fn ripr_swarm_attempt_ledger_outcome_sample(
     )
 }
 
+fn ripr_swarm_attempt_ledger_orphaned_receipt_sample(
+    ledger: Option<&Value>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(ledger) = ledger else {
+        return (None, None, None);
+    };
+    let receipts = audit_array(ledger, &["orphaned_receipts"]);
+    let Some(receipt) = receipts.first() else {
+        return (None, None, None);
+    };
+    (
+        ripr_swarm_json_string(receipt, &["packet_id"]),
+        ripr_swarm_json_string(receipt, &["canonical_gap_id"]),
+        ripr_swarm_json_string(receipt, &["repair_kind"]),
+    )
+}
+
 fn actionable_gap_outcomes_missing_verify_result_count(outcomes: &Value) -> usize {
     audit_array(outcomes, &["outcomes"])
         .iter()
@@ -26137,12 +26154,14 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     if summary.orphaned_receipts > 0 {
+        let (packet_id, canonical_gap_id, repair_kind) =
+            ripr_swarm_attempt_ledger_orphaned_receipt_sample(attempt_ledger_input.value);
         actions.push(RiprSwarmReadinessNextAction {
             kind: "reconcile_orphaned_receipts".to_string(),
-            packet_id: None,
-            canonical_gap_id: None,
+            packet_id,
+            canonical_gap_id,
             evidence_class: None,
-            repair_kind: None,
+            repair_kind,
             command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
             reason: format!(
                 "{} receipt(s) did not match a current actionable packet; inspect receipt identity before using outcome counts",
@@ -80713,6 +80732,22 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing next action {kind}"
             );
         }
+        let orphan_action = actions
+            .iter()
+            .find(|action| action["kind"] == "reconcile_orphaned_receipts")
+            .ok_or("missing orphan next action")?;
+        assert_eq!(
+            orphan_action["packet_id"],
+            serde_json::Value::from("packet:orphan")
+        );
+        assert_eq!(
+            orphan_action["canonical_gap_id"],
+            serde_json::Value::from("gap:orphan")
+        );
+        assert_eq!(
+            orphan_action["repair_kind"],
+            serde_json::Value::from("add_boundary_assertion")
+        );
         let unchanged_action = actions
             .iter()
             .find(|action| action["kind"] == "inspect_unchanged_attempts")
