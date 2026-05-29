@@ -50,6 +50,17 @@ fn assertion_oracles(source: &str) -> Vec<(OracleKind, OracleStrength)> {
     out
 }
 
+fn assertion_shapes(source: &str) -> Vec<PythonOracleShape> {
+    let tests = extract_tests(Path::new("tests/test_inline.py"), source);
+    let mut out = Vec::new();
+    for test in tests {
+        for assertion in test.assertions {
+            out.push(assertion.oracle_shape);
+        }
+    }
+    out
+}
+
 fn source_fact_kind_names(facts: &PythonSourceFacts) -> BTreeSet<&'static str> {
     facts.facts.iter().map(|fact| fact.kind.as_str()).collect()
 }
@@ -295,6 +306,67 @@ def test_with_item_assertion():
 }
 
 #[test]
+fn pytest_oracle_shapes_cover_repair_routing_categories() -> Result<(), String> {
+    let source = r#"
+from pytest import raises
+
+def test_pytest_shapes(client, caplog, capsys, monkeypatch):
+    assert calculate(2) == 3
+    assert amount >= threshold
+    with raises(ValueError):
+        fail()
+    assert result["status"] == "paid"
+    assert "expired" in caplog.text
+    assert capsys.readouterr().out == "ok\n"
+    assert response.status_code == 422
+    assert flag
+    assert_valid(result)
+"#;
+    let tests = extract_tests(Path::new("tests/test_shapes.py"), source);
+    let test = tests
+        .first()
+        .ok_or_else(|| "expected pytest test to be extracted".to_string())?;
+    assert_eq!(
+        test.fixtures,
+        vec![
+            "caplog".to_string(),
+            "capsys".to_string(),
+            "client".to_string(),
+            "monkeypatch".to_string()
+        ]
+    );
+
+    let helper_shapes = assertion_shapes(source);
+    if helper_shapes.len() != test.assertions.len() {
+        return Err(format!(
+            "shape helper should see same assertions, got helper={} direct={}",
+            helper_shapes.len(),
+            test.assertions.len()
+        ));
+    }
+    let shapes: BTreeSet<_> = helper_shapes.into_iter().collect();
+    for expected in [
+        PythonOracleShape::ExactAssertion,
+        PythonOracleShape::BoundaryAssertion,
+        PythonOracleShape::ExceptionAssertion,
+        PythonOracleShape::FieldAssertion,
+        PythonOracleShape::OutputAssertion,
+        PythonOracleShape::StatusCodeAssertion,
+        PythonOracleShape::BroadSmokeAssertion,
+        PythonOracleShape::UnknownCustomHelper,
+    ] {
+        if !shapes.contains(&expected) {
+            return Err(format!(
+                "expected oracle shape `{}` in {:?}",
+                expected.as_str(),
+                shapes
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn oracle_for_call_recognizes_all_unittest_and_mock_variants() -> Result<(), String> {
     let source = r#"
 import unittest
@@ -309,6 +381,9 @@ class CaseAll(unittest.TestCase):
             do_one()
         with self.assertRaisesRegex(ValueError, "bad"):
             do_two()
+        self.assertIn("status", payload)
+        self.assertRegex(message, "paid")
+        self.assertDictEqual(payload, {"status": "paid"})
         mock.assert_called()
         mock.assert_called_once()
         mock.assert_called_with(1)
@@ -339,15 +414,15 @@ class CaseAll(unittest.TestCase):
         .iter()
         .filter(|(kind, _)| matches!(kind, OracleKind::MockExpectation))
         .count();
-    if strong < 1 {
+    if strong < 2 {
         return Err(format!(
-            "expected at least one ExactValue oracle (assertEqual), got {:?}",
+            "expected exact-value oracles (assertEqual/assertDictEqual), got {:?}",
             oracles
         ));
     }
-    if relational < 1 {
+    if relational < 3 {
         return Err(format!(
-            "expected at least one RelationalCheck oracle (assertNotEqual), got {:?}",
+            "expected relational oracles (assertNotEqual/assertIn/assertRegex), got {:?}",
             oracles
         ));
     }
@@ -540,8 +615,8 @@ fn is_unittest_class_accepts_bare_and_dotted_test_case_bases() -> Result<(), Str
     if dotted.first().map(|t| t.framework) != Some("unittest") {
         return Err("`unittest.TestCase` base should mark unittest framework".to_string());
     }
-    if neither.first().map(|t| t.framework) != Some("pytest") {
-        return Err("non-TestCase base should fall back to pytest framework".to_string());
+    if !neither.is_empty() {
+        return Err("non-TestCase, non-Test* class should not be a pytest class".to_string());
     }
     Ok(())
 }
@@ -746,6 +821,7 @@ fn same_stem_related_handles_missing_stems() {
         body_text: String::new(),
         imports: Vec::new(),
         decorators: Vec::new(),
+        fixtures: Vec::new(),
         parametrized: false,
         framework: "pytest",
         assertions: Vec::new(),
@@ -1080,6 +1156,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         // Dotted form like `@mock.patch(...)` must satisfy the
         // `decorator.ends_with(".patch")` branch.
         decorators: vec!["mock.patch".to_string()],
+        fixtures: Vec::new(),
         parametrized: false,
         framework: "pytest",
         assertions: Vec::new(),
@@ -1092,6 +1169,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         body_text: String::new(),
         imports: Vec::new(),
         decorators: vec!["patch".to_string()],
+        fixtures: Vec::new(),
         parametrized: false,
         framework: "pytest",
         assertions: Vec::new(),
@@ -1104,6 +1182,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         body_text: String::new(),
         imports: Vec::new(),
         decorators: vec!["pytest.mark.skip".to_string()],
+        fixtures: Vec::new(),
         parametrized: false,
         framework: "pytest",
         assertions: Vec::new(),
