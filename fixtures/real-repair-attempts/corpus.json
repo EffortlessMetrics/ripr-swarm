@@ -338,6 +338,41 @@
       ],
       "missing_receipt_reason": "formal agent verify receipt was not emitted because generating target/ripr/pilot/after.repo-exposure.json timed out after 20 minutes",
       "reason": "A real queued packet attempt exposed that the default repo-exposure verify route can be too broad for a bounded test-only repair handoff."
+    },
+    {
+      "id": "repair_route_quality_sample_actions_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#575",
+      "canonical_gap_id": "gap:repair-route-quality-sample-actions",
+      "packet_id": "repair-route-quality-sample-actions-001",
+      "repair_kind": "add_repair_route_quality_action_samples",
+      "target_test_or_observer_shape": "attempt-ledger and readiness assertions that failing repair-route quality rows carry sample packet and canonical gap identities",
+      "verify_command": "cargo test -p xtask ripr_swarm_repair_route_quality_samples_failed_attempts_only -- --test-threads=1",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask ripr-swarm readiness",
+      "receipt_path": "target/ripr/reports/swarm-readiness.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Added sample packet IDs and canonical gap IDs to repair-route quality rows and copied the first failed sample into improve_repair_route_quality readiness actions.",
+      "evidence_movement": "Readiness can now route repair-route-quality work to a concrete failed attempt instead of only naming an aggregate repair_kind.",
+      "operator_note": "This improves route-learning guidance without changing public badge semantics, CI gates, provider integration, mutation execution, or autonomous edits.",
+      "must_not_change": [
+        "public badge semantics",
+        "CI gate defaults",
+        "provider integration",
+        "mutation execution",
+        "autonomous repair behavior"
+      ],
+      "raw_evidence_refs": [
+        "xtask/src/main.rs:ripr_swarm_repair_route_quality_samples_failed_attempts_only",
+        "xtask/src/main.rs:ripr_swarm_readiness_consumes_attempt_ledger_counts",
+        "docs/OUTPUT_SCHEMA.md:repair-route quality rows include sample packet IDs",
+        "docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md:Repair-route quality rows should carry sample packet IDs"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged repair-loop PR made route-quality next actions more actionable by preserving concrete failed-attempt samples."
     }
   ]
 }
