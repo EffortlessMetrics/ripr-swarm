@@ -3539,7 +3539,10 @@ pub fn device_labels() -> Vec<&'static str> {
         let tests_src = r#"
 #[test]
 fn return_value_contract_mentions_empty_output() {
+    // Text mentions like `device_labels(` are not owner calls.
+    let note = "device_labels(";
     let return_value = Vec::<&str>::new();
+    assert!(!note.is_empty());
     assert!(return_value.is_empty());
 }
 "#;
@@ -3559,6 +3562,14 @@ fn return_value_contract_mentions_empty_output() {
                 .iter()
                 .any(|test| test.relation_reason == RelationReason::AssertionTargetAffinity),
             "expected assertion-target affinity related test, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::DirectOwnerCall),
+            "string/comment owner mentions must not become direct owner-call evidence: {:?}",
             evidence.related_tests
         );
         assert_eq!(evidence.activate.state, StageState::Unknown);

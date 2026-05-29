@@ -201,7 +201,8 @@ affinity.
 - `test_grip_evidence::tests::given_value_insensitive_seam_when_only_affinity_related_then_activation_names_owner_call_limitation`
   pins the same assertion-target affinity limitation route for value-insensitive
   seams: relation evidence alone stays non-actionable and routes to
-  `analysis/assertion-target-affinity-owner-call-tracing`.
+  `analysis/assertion-target-affinity-owner-call-tracing`. Comment or string
+  mentions of `owner_name(` do not count as owner-call activation.
 - `test_grip_evidence::tests::given_full_evidence_when_one_hop_helper_calls_owner_then_value_insensitive_activation_is_yes`
   pins same-file one-hop helper owner-call activation for value-insensitive
   seams without synthetic observed values.
