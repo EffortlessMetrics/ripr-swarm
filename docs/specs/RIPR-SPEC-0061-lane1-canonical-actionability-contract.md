@@ -104,6 +104,7 @@ are present and internally consistent:
 - `receipt_command` or receipt path that can be turned into a receipt command
 - `confidence`
 - `must_not_change[]`
+- `allowed_edit_surface[]`
 - `raw_evidence_refs[]`
 
 `raw_evidence_refs[]` is evidence lineage, not a placeholder slot. Each public
@@ -139,6 +140,7 @@ Every public or swarm-ready repair packet must include:
 - `receipt_command`
 - `confidence`
 - `must_not_change[]`
+- `allowed_edit_surface[]`
 - `raw_evidence_refs[]`
 
 The packet form uses the same structured `raw_evidence_refs[]` rule as the
@@ -146,7 +148,10 @@ canonical item. A packet with only placeholder refs is not swarm-ready even when
 it carries `repair_kind`, `verify_command`, and `receipt_command`.
 
 `must_not_change[]` is required because packets are intended to bound repair
-attempts. Typical entries include:
+attempts. `allowed_edit_surface[]` is required because delegated packet attempts
+need an explicit workspace-relative edit cage. A packet without at least one
+allowed file is not public-projection eligible or swarm-ready. Typical
+`must_not_change[]` entries include:
 
 - do not edit production code;
 - do not broaden the assertion beyond the named observer shape;
@@ -226,6 +231,7 @@ Consumers must fail closed when:
 - `verify_command` is missing;
 - `receipt_command` is missing;
 - `must_not_change[]` is missing;
+- `allowed_edit_surface[]` is missing;
 - the item has static limitations that are not explicitly handled;
 - the run is stale or not downstream-consumable;
 - the item is raw-only, seam-inventory-only, or preview-only.
@@ -321,7 +327,8 @@ Current and planned producers:
 - `cargo xtask lane1-evidence-audit` and `cargo xtask actionable-gaps` emit
   Lane 1 canonical counts and repair packets.
 - `cargo xtask ripr-swarm plan` consumes actionable packets and blocks missing
-  verify, receipt, static-limitation, and must-not-change cases.
+  verify, receipt, static-limitation, must-not-change, and allowed-edit-surface
+  cases.
 - LSP actionable gap queue validation consumes `actionable-gaps` artifacts and
   suppresses unsafe packets.
 

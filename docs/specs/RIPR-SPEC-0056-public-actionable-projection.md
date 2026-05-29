@@ -363,9 +363,10 @@ Generated endpoint refresh:
 Packet readiness without endpoint refresh:
 
 - Given `actionable-gaps.json` with emitted packets where
-  `public_projection_eligible = true` and no projection exclusions, the
-  scorecard may report those packets as internally projection-ready. It must
-  not edit public endpoint JSON or claim a badge refresh happened.
+  `public_projection_eligible = true`, `allowed_edit_surface[]` is present, and
+  no projection exclusions, the scorecard may report those packets as
+  internally projection-ready. It must not edit public endpoint JSON or claim a
+  badge refresh happened.
 
 Packet exclusion:
 
@@ -412,7 +413,8 @@ Landed implementation surfaces:
   report fields.
 - `target/ripr/reports/actionable-gaps.{json,md}` records packet-level
   `public_projection_eligible` and `projection_exclusion_reasons[]` readiness
-  diagnostics for emitted actionable packets without changing endpoint counts.
+  diagnostics for emitted actionable packets, including missing bounded edit
+  surfaces, without changing endpoint counts.
 - `target/ripr/reports/evidence-quality-scorecard.{json,md}` carries
   actionable-gap packet eligible/excluded counts and projection-exclusion
   reasons from the audit.
@@ -465,8 +467,8 @@ The landed implementation proves:
   items so packet-level public projection readiness can be assessed from
   canonical repair, verify, and receipt fields rather than raw findings;
 - actionable-gap packets still distinguish agent-usable repair packets from
-  public projection readiness by naming missing receipt or canonical guidance
-  prerequisites when any required field is absent;
+  public projection readiness by naming missing receipt, bounded edit surface,
+  or canonical guidance prerequisites when any required field is absent;
 - scorecard and trend reports now carry packet-level public projection
   readiness as internal badge-readiness evidence, including eligible packet
   counts, excluded packet counts, and exclusion reasons;

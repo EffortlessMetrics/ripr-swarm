@@ -1984,6 +1984,9 @@ runtime execution.
         "confidence_basis": "static_only",
         "must_not_change": [
           "Do not infer actionability from raw static class."
+        ],
+        "allowed_edit_surface": [
+          "tests/pricing.rs"
         ]
       }
     ],
@@ -2273,8 +2276,9 @@ Field contract:
   are agent-safe work items: they carry stable identity, evidence class, repair
   kind, `target_test_shape`, related test or observer, verification command,
   receipt command, raw evidence references as supporting evidence, confidence
-  basis, and conservative `must_not_change` boundaries. They do not create user
-  work from raw static class alone.
+  basis, conservative `must_not_change` boundaries, and
+  `allowed_edit_surface[]` file bounds. They do not create user work from raw
+  static class alone.
   `raw_evidence_refs[]` entries are structured evidence anchors. For public
   projection and swarm planning, at least one entry must carry an anchor field
   (`file`, `path`, or `source_file`) and an identity field (`kind`,
@@ -2286,9 +2290,10 @@ Field contract:
   public-projection eligible packets, excluded packets, and stable
   `projection_exclusion_reasons` rows such as `not_actionable_gap_state`,
   `missing_receipt_command`, `missing_related_test_or_observer`, `missing_confidence`,
-  `missing_must_not_change`, `missing_raw_evidence_refs`, and
-  `static_limitation_present`. This is advisory report evidence only and does
-  not change public badge endpoint semantics.
+  `missing_must_not_change`, `missing_allowed_edit_surface`,
+  `missing_raw_evidence_refs`, and `static_limitation_present`. This is
+  advisory report evidence only and does not change public badge endpoint
+  semantics.
 - `finding_alignment.runtime_confidence_by_class` - runtime confidence coverage
   rows at the canonical evidence-class grain. Each row reports canonical item
   count, calibrated-supported, fixture-backed, static-only, unknown-confidence,
@@ -2476,6 +2481,9 @@ limitations into user repair work.
       "confidence_basis": "static_only",
       "must_not_change": [
         "Do not infer actionability from raw static class."
+      ],
+      "allowed_edit_surface": [
+        "tests/pricing.rs"
       ]
     }
   ],
@@ -2589,6 +2597,7 @@ enter the swarm-ready queue.
     "missing_receipt_command": 0,
     "missing_repair_route": 0,
     "missing_must_not_change": 0,
+    "missing_allowed_edit_surface": 0,
     "related_context_missing": 3,
     "static_limitation_packets": 2,
     "high_confidence_packets": 4
@@ -2612,6 +2621,7 @@ enter the swarm-ready queue.
         "receipt_command_present",
         "related_test_or_observer_present",
         "must_not_change_present",
+        "allowed_edit_surface_present",
         "public_projection_eligible",
         "no_static_limitation",
         "confidence_basis_fixture_backed"
@@ -2620,6 +2630,8 @@ enter the swarm-ready queue.
       "missing_context": [],
       "verify_command": "cargo xtask evidence-quality-scorecard",
       "receipt_command": "cargo xtask receipts check",
+      "allowed_edit_surface": ["tests/pricing.rs"],
+      "allowed_edit_surface_count": 1,
       "related_test_or_observer_available": true,
       "must_not_change_count": 1,
       "raw_findings_count": 2,

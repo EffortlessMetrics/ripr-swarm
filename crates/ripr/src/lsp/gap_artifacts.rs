@@ -469,6 +469,11 @@ fn validate_actionable_gaps(
                 &["must_not_change"],
                 "actionable packet must carry must_not_change",
             )?;
+            require_actionable_packet_array(
+                packet,
+                &["allowed_edit_surface"],
+                "actionable packet must carry allowed_edit_surface",
+            )?;
             require_actionable_packet_raw_evidence_refs(
                 packet,
                 &["raw_evidence_refs"],
@@ -1424,6 +1429,9 @@ mod tests {
             "confidence_basis": "static_only",
             "must_not_change": [
                 "Do not infer actionability from raw static class."
+            ],
+            "allowed_edit_surface": [
+                "tests/pricing.rs"
             ]
         });
         json!({
@@ -1896,6 +1904,19 @@ mod tests {
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
             Err(GapArtifactRejection::MalformedArtifact(
                 "actionable packet must carry must_not_change"
+            ))
+        );
+    }
+
+    #[test]
+    fn actionable_gaps_report_rejects_missing_allowed_edit_surface() {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["allowed_edit_surface"] = json!([]);
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry allowed_edit_surface"
             ))
         );
     }
