@@ -324,15 +324,16 @@ commands, the audit emits bounded actionable-gap packets in the audit JSON and
 the standalone `target/ripr/reports/actionable-gaps.{json,md}` artifacts. Each
 packet is one canonical item, preserves raw findings as supporting evidence,
 includes missing discriminator facts, repair and verification guidance, and
-carries conservative `must_not_change` boundaries. It does not fan raw findings
-back out into separate user work.
+carries conservative `must_not_change` boundaries plus `allowed_edit_surface[]`
+file bounds. It does not fan raw findings back out into separate user work.
 
 Given emitted actionable-gap packets, the audit also records packet-level
 public projection readiness. `public_projection_eligible` is true only when the
-packet has canonical repair and verify sources plus a receipt command or path.
-Packets that are useful for humans or agents but not badge-ready remain in the
-artifact with stable `projection_exclusion_reasons[]` such as
-`missing_receipt_command`; this does not change public badge semantics.
+packet has canonical repair and verify sources, a receipt command or path, and a
+bounded `allowed_edit_surface[]`. Packets that are useful for humans or agents
+but not badge-ready remain in the artifact with stable
+`projection_exclusion_reasons[]` such as `missing_receipt_command` or
+`missing_allowed_edit_surface`; this does not change public badge semantics.
 
 Given an actionable-gap packet artifact, an optional agent receipt artifact, and
 an optional targeted-test outcome artifact, `cargo xtask actionable-gap-outcomes`
@@ -356,10 +357,12 @@ movement remains static evidence movement rather than mutation proof.
 - `xtask::tests::lane1_actionable_gap_packets_emit_agent_safe_work_items`
   pins the embedded and standalone actionable-gap packet contracts, including
   missing discriminators, repair kind, verify command, raw finding support, and
-  conservative `must_not_change` boundaries.
+  conservative `must_not_change` plus `allowed_edit_surface` boundaries.
 - `xtask::tests::lane1_actionable_gap_packets_mark_public_projection_ready_with_receipt`
   pins that packet-level public projection readiness requires a receipt command
   or path and records the receipt source without changing badge counts.
+- `xtask::tests::lane1_actionable_gap_public_projection_requires_allowed_edit_surface`
+  pins that public projection excludes packets without a bounded edit surface.
 - `xtask::tests::lane1_actionable_gap_packets_keep_observed_gaps_out_of_public_projection`
   pins that observed/no-action dispositions do not become public-projection
   eligible even when a malformed packet carries repair, verify, and receipt

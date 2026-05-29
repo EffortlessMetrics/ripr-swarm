@@ -18171,6 +18171,7 @@ struct Lane1ActionableGapPacket {
     static_limitations: Vec<Value>,
     confidence_basis: String,
     must_not_change: Vec<String>,
+    allowed_edit_surface: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19937,6 +19938,11 @@ impl Lane1EvidenceAuditBuilder {
         let must_not_change = audit_string_array(canonical_item, &["must_not_change"])
             .or_else(|| audit_string_array(record, &["must_not_change"]))
             .unwrap_or_else(default_actionable_gap_packet_must_not_change);
+        let allowed_edit_surface = audit_actionable_gap_allowed_edit_surface(
+            record,
+            canonical_item,
+            &related_test_or_observer,
+        );
         let gap_state = audit_non_empty_string(canonical_item, &["gap_state"])
             .unwrap_or_else(|| "gap_state_unknown".to_string());
         let actionability = audit_non_empty_string(canonical_item, &["actionability"])
@@ -19960,6 +19966,7 @@ impl Lane1EvidenceAuditBuilder {
                 typed_related_target_available,
                 confidence_basis: &confidence_basis,
                 must_not_change_count: must_not_change.len(),
+                allowed_edit_surface_count: allowed_edit_surface.len(),
                 raw_evidence_refs_count: audit_structured_raw_evidence_refs_count(
                     &raw_evidence_refs,
                 ),
@@ -20006,6 +20013,7 @@ impl Lane1EvidenceAuditBuilder {
                 static_limitations,
                 confidence_basis,
                 must_not_change,
+                allowed_edit_surface,
             },
         );
     }
@@ -20960,6 +20968,7 @@ fn audit_actionable_gap_packet_json(packet: &Lane1ActionableGapPacket) -> Value 
         },
         "confidence_basis": packet.confidence_basis,
         "must_not_change": packet.must_not_change,
+        "allowed_edit_surface": packet.allowed_edit_surface,
     })
 }
 
@@ -21498,6 +21507,8 @@ struct RiprSwarmPlanPacket {
     receipt_command_or_path: Option<String>,
     related_test_or_observer_available: bool,
     must_not_change_count: usize,
+    allowed_edit_surface: Vec<String>,
+    allowed_edit_surface_count: usize,
     raw_findings_count: usize,
     static_limitations_count: usize,
     public_projection_eligible: bool,
@@ -22404,6 +22415,8 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
         );
     let static_limitations_count = audit_array(packet, &["static_limitations"]).len();
     let must_not_change_count = audit_array(packet, &["must_not_change"]).len();
+    let allowed_edit_surface = ripr_swarm_plan_allowed_edit_surface(packet);
+    let allowed_edit_surface_count = allowed_edit_surface.len();
     let public_projection_eligible =
         audit_bool(packet, &["public_projection_eligible"]).unwrap_or(false);
     let projection_exclusion_reasons = audit_array(packet, &["projection_exclusion_reasons"])
@@ -22461,6 +22474,9 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     if must_not_change_count == 0 {
         missing_context.push("must_not_change".to_string());
     }
+    if allowed_edit_surface_count == 0 {
+        missing_context.push("allowed_edit_surface".to_string());
+    }
     if raw_findings_count == 0 {
         missing_context.push("raw_evidence_refs".to_string());
     }
@@ -22512,6 +22528,10 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
         score += 10;
         readiness_reasons.push("must_not_change_present".to_string());
     }
+    if allowed_edit_surface_count > 0 {
+        score += 10;
+        readiness_reasons.push("allowed_edit_surface_present".to_string());
+    }
     if public_projection_eligible {
         score += 10;
         readiness_reasons.push("public_projection_eligible".to_string());
@@ -22552,6 +22572,8 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
         receipt_command_or_path,
         related_test_or_observer_available,
         must_not_change_count,
+        allowed_edit_surface,
+        allowed_edit_surface_count,
         raw_findings_count,
         static_limitations_count,
         public_projection_eligible,
@@ -22619,6 +22641,23 @@ fn ripr_swarm_plan_related_target_file(value: &Value) -> Option<String> {
         Value::Array(values) => values.iter().find_map(ripr_swarm_plan_related_target_file),
         Value::Null | Value::Bool(_) | Value::Number(_) => None,
     }
+}
+
+fn ripr_swarm_plan_allowed_edit_surface(packet: &Value) -> Vec<String> {
+    let mut values = audit_string_array(packet, &["allowed_edit_surface"]).unwrap_or_default();
+    if values.is_empty()
+        && let Some(target) = audit_get(packet, &["related_test_or_observer"])
+            .or_else(|| audit_get(packet, &["candidate_value_or_observer"]))
+            .and_then(ripr_swarm_plan_related_target_file)
+    {
+        values.push(target);
+    }
+    let mut seen = BTreeSet::new();
+    values
+        .into_iter()
+        .filter_map(|value| ripr_swarm_attempt_workspace_relative_file_token(&value))
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn ripr_swarm_plan_non_missing_field(value: &Value, field: &str) -> bool {
@@ -22825,6 +22864,16 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
             .iter()
             .filter(|packet| packet.missing_context.iter().any(|field| field == "must_not_change"))
             .count(),
+        "missing_allowed_edit_surface": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "allowed_edit_surface")
+            })
+            .count(),
         "related_context_missing": report
             .packets
             .iter()
@@ -22874,6 +22923,8 @@ fn ripr_swarm_plan_packets_json(packets: &[RiprSwarmPlanPacket]) -> Vec<Value> {
                 "receipt_command": packet.receipt_command_or_path,
                 "related_test_or_observer_available": packet.related_test_or_observer_available,
                 "must_not_change_count": packet.must_not_change_count,
+                "allowed_edit_surface": packet.allowed_edit_surface,
+                "allowed_edit_surface_count": packet.allowed_edit_surface_count,
                 "raw_findings_count": packet.raw_findings_count,
                 "raw_findings_supporting_only": true,
                 "static_limitations_count": packet.static_limitations_count,
@@ -22930,6 +22981,7 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "missing_receipt_command",
         "missing_repair_route",
         "missing_must_not_change",
+        "missing_allowed_edit_surface",
         "related_context_missing",
         "static_limitation_packets",
         "high_confidence_packets",
@@ -26925,6 +26977,7 @@ struct AuditActionableGapProjectionInput<'a> {
     typed_related_target_available: bool,
     confidence_basis: &'a str,
     must_not_change_count: usize,
+    allowed_edit_surface_count: usize,
     raw_evidence_refs_count: usize,
     static_limitations_count: usize,
 }
@@ -27004,6 +27057,9 @@ fn audit_actionable_gap_projection_exclusion_reasons(
     if input.must_not_change_count == 0 {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_must_not_change");
     }
+    if input.allowed_edit_surface_count == 0 {
+        audit_push_projection_exclusion_reason(&mut reasons, "missing_allowed_edit_surface");
+    }
     if input.raw_evidence_refs_count == 0 {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_raw_evidence_refs");
     }
@@ -27044,6 +27100,29 @@ fn audit_actionable_gap_related_test_or_observer(canonical_item: &Value) -> Opti
         .or_else(|| audit_get(canonical_item, &["related_test_or_observer"]))
         .or_else(|| audit_get(canonical_item, &["observer"]))
         .cloned()
+}
+
+fn audit_actionable_gap_allowed_edit_surface(
+    record: &Value,
+    canonical_item: &Value,
+    related_test_or_observer: &Option<Value>,
+) -> Vec<String> {
+    let mut values = audit_string_array(canonical_item, &["allowed_edit_surface"])
+        .or_else(|| audit_string_array(record, &["allowed_edit_surface"]))
+        .unwrap_or_default();
+    if values.is_empty()
+        && let Some(target) = related_test_or_observer
+            .as_ref()
+            .and_then(ripr_swarm_plan_related_target_file)
+    {
+        values.push(target);
+    }
+    let mut seen = BTreeSet::new();
+    values
+        .into_iter()
+        .filter_map(|value| ripr_swarm_attempt_workspace_relative_file_token(&value))
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn audit_actionable_gap_candidate_value_or_observer(
@@ -77208,6 +77287,10 @@ covered_by = ["cargo xtask check-file-policy"]
             packet_value["packets"][0]["raw_evidence_refs"][0]["kind"],
             "weakly_exposed"
         );
+        assert_eq!(
+            packet_value["packets"][0]["allowed_edit_surface"][0],
+            "tests/pricing.rs"
+        );
         let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
             10,
             Path::new("target/ripr/reports/actionable-gaps.json"),
@@ -77239,12 +77322,42 @@ covered_by = ["cargo xtask check-file-policy"]
                 typed_related_target_available: true,
                 confidence_basis: "fixture_backed",
                 must_not_change_count: 1,
+                allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
             },
         );
 
         assert_eq!(reasons, vec!["not_actionable_gap_state"]);
+    }
+
+    #[test]
+    fn lane1_actionable_gap_public_projection_requires_allowed_edit_surface() {
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "gap:missing-edit-surface",
+                gap_state: "actionable",
+                actionability: "extend_related_test",
+                repair_kind: "add_boundary_assertion",
+                target_test_type: "boundary_discriminator",
+                assertion_shape: "assert_eq!(value, expected)",
+                target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: "cargo test missing_edit_surface",
+                verify_command_source: "canonical_item.verify_command",
+                receipt_command_or_path: Some("cargo xtask receipts check"),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                confidence_basis: "fixture_backed",
+                must_not_change_count: 1,
+                allowed_edit_surface_count: 0,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["missing_allowed_edit_surface"]);
     }
 
     #[test]
@@ -77308,7 +77421,10 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             packet_value["packets"][0]["projection_exclusion_reasons"],
-            serde_json::json!(["missing_related_test_or_observer"])
+            serde_json::json!([
+                "missing_related_test_or_observer",
+                "missing_allowed_edit_surface"
+            ])
         );
         let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
             10,
@@ -80841,7 +80957,11 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             packet_value["packets"][0]["projection_exclusion_reasons"],
-            serde_json::json!(["missing_repair_route", "missing_related_test_or_observer"])
+            serde_json::json!([
+                "missing_repair_route",
+                "missing_related_test_or_observer",
+                "missing_allowed_edit_surface"
+            ])
         );
         assert_eq!(
             packet_value["summary"]["public_projection_eligible_packets"],
@@ -82917,7 +83037,8 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing_repair_route",
                 "missing_verify_command",
                 "missing_receipt_command",
-                "missing_related_test_or_observer"
+                "missing_related_test_or_observer",
+                "missing_allowed_edit_surface"
             ])
         );
         let actionable_static_limitation_reasons =
