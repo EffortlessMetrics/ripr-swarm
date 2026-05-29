@@ -344,6 +344,11 @@ Dogfood attempt receipts must not contradict their recorded outcome: movement
 receipt state and explicit `evidence_movement` tokens must not claim improved,
 unchanged, or regressed evidence that conflicts with the outcome, and
 no-receipt attempts must not claim receipt-backed evidence movement.
+Repo-local real repair attempts may be imported into the attempt ledger as
+advisory dogfood evidence. Imported dogfood attempts affect attempt/outcome and
+repair-route-quality summaries, but they do not create public repair packets,
+do not make static limitations swarm-ready, and do not change badge, LSP, PR,
+or CI authority.
 
 Readiness must treat durable `attempts[]` as the source of truth for
 attempt/outcome summary counts, repair-route quality, and missing-evidence-field
@@ -596,6 +601,9 @@ Current implementation coverage:
 - `xtask::tests::ripr_swarm_attempt_ledger_summarizes_repair_route_quality`
   pins typed route context, per-`repair_kind` route-quality metrics, top
   failing routes, and missing evidence fields;
+- `xtask::tests::ripr_swarm_attempt_ledger_imports_real_repair_attempts`
+  pins advisory import of repo-local dogfood repair attempts into durable
+  attempt history and route-quality summaries without creating repair packets;
 - `xtask::tests::ripr_swarm_readiness_consumes_attempt_ledger_counts`
   pins readiness consumption of the attempt ledger and repair-route quality,
   plus forwarding of the swarm-plan static-limitation backlog into readiness
