@@ -19326,7 +19326,7 @@ fn lane1_evidence_audit_from_repo_exposure_file(
         )
     })?;
     let reader = BufReader::new(file);
-    let mut builder = Lane1EvidenceAuditBuilder::default();
+    let mut builder = Lane1EvidenceAuditBuilder::new(root);
     let mut schema_version = None;
     let mut saw_seams_array = false;
 
@@ -19375,7 +19375,7 @@ fn lane1_evidence_audit_from_repo_exposure(
         .and_then(Value::as_array)
         .ok_or_else(|| "repo exposure JSON is missing `seams` array".to_string())?;
 
-    let mut builder = Lane1EvidenceAuditBuilder::default();
+    let mut builder = Lane1EvidenceAuditBuilder::new(root);
     for seam in seams {
         builder.ingest_seam(seam);
     }
@@ -19385,6 +19385,7 @@ fn lane1_evidence_audit_from_repo_exposure(
 
 #[derive(Default)]
 struct Lane1EvidenceAuditBuilder {
+    workspace_root: Option<PathBuf>,
     summary: Lane1EvidenceAuditSummary,
     finding_alignment: Lane1EvidenceAuditFindingAlignmentSummary,
     movement: Lane1EvidenceAuditMovement,
@@ -19429,6 +19430,13 @@ struct Lane1EvidenceAuditBuilder {
 }
 
 impl Lane1EvidenceAuditBuilder {
+    fn new(root: &str) -> Self {
+        Self {
+            workspace_root: Some(PathBuf::from(root)),
+            ..Self::default()
+        }
+    }
+
     fn ingest_seam(&mut self, seam: &Value) {
         self.summary.seams_total += 1;
         let record = seam
@@ -19938,6 +19946,7 @@ impl Lane1EvidenceAuditBuilder {
             .or_else(|| audit_string_array(record, &["must_not_change"]))
             .unwrap_or_else(default_actionable_gap_packet_must_not_change);
         let allowed_edit_surface = audit_actionable_gap_allowed_edit_surface(
+            self.workspace_root.as_deref(),
             record,
             canonical_item,
             &related_test_or_observer,
@@ -22670,6 +22679,10 @@ fn ripr_swarm_plan_related_target_file(value: &Value) -> Option<String> {
 }
 
 fn ripr_swarm_plan_allowed_edit_surface(packet: &Value) -> Vec<String> {
+    if ripr_swarm_readiness_packet_projection_exclusion(packet, "missing_allowed_edit_surface") {
+        return Vec::new();
+    }
+
     let mut values = audit_string_array(packet, &["allowed_edit_surface"]).unwrap_or_default();
     if values.is_empty()
         && let Some(target) = audit_get(packet, &["related_test_or_observer"])
@@ -27731,6 +27744,7 @@ fn audit_actionable_gap_related_test_or_observer(
 }
 
 fn audit_actionable_gap_allowed_edit_surface(
+    workspace_root: Option<&Path>,
     record: &Value,
     canonical_item: &Value,
     related_test_or_observer: &Option<Value>,
@@ -27748,9 +27762,24 @@ fn audit_actionable_gap_allowed_edit_surface(
     let mut seen = BTreeSet::new();
     values
         .into_iter()
-        .filter_map(|value| ripr_swarm_attempt_workspace_relative_file_token(&value))
+        .filter_map(|value| {
+            audit_existing_workspace_file_token(workspace_root, &value).or_else(|| {
+                workspace_root
+                    .is_none()
+                    .then(|| ripr_swarm_attempt_workspace_relative_file_token(&value))?
+            })
+        })
         .filter(|value| seen.insert(value.clone()))
         .collect()
+}
+
+fn audit_existing_workspace_file_token(
+    workspace_root: Option<&Path>,
+    value: &str,
+) -> Option<String> {
+    let token = ripr_swarm_attempt_workspace_relative_file_token(value)?;
+    let root = workspace_root?;
+    root.join(&token).is_file().then_some(token)
 }
 
 fn audit_actionable_gap_candidate_value_or_observer(
@@ -77898,8 +77927,11 @@ covered_by = ["cargo xtask check-file-policy"]
 
     #[test]
     fn lane1_actionable_gap_packets_emit_agent_safe_work_items() -> Result<(), String> {
+        let root = temp_dir("lane1-agent-safe-work-items");
+        write(&root.join("tests/pricing.rs"), "");
+        let root = root.to_string_lossy().to_string();
         let report = lane1_evidence_audit_from_repo_exposure(
-            ".",
+            &root,
             r#"{
               "schema_version": "0.3",
               "scope": "repo",
@@ -78045,8 +78077,11 @@ covered_by = ["cargo xtask check-file-policy"]
     #[test]
     fn lane1_actionable_gap_packets_mark_public_projection_ready_with_receipt() -> Result<(), String>
     {
+        let root = temp_dir("lane1-public-projection-ready");
+        write(&root.join("tests/pricing.rs"), "");
+        let root = root.to_string_lossy().to_string();
         let report = lane1_evidence_audit_from_repo_exposure(
-            ".",
+            &root,
             r#"{
               "schema_version": "0.3",
               "scope": "repo",
@@ -78162,8 +78197,11 @@ covered_by = ["cargo xtask check-file-policy"]
 
     #[test]
     fn lane1_actionable_gap_packets_use_recommended_test_as_related_target() -> Result<(), String> {
+        let root = temp_dir("lane1-recommended-test-target");
+        write(&root.join("tests/lsp_tests.rs"), "");
+        let root = root.to_string_lossy().to_string();
         let report = lane1_evidence_audit_from_repo_exposure(
-            ".",
+            &root,
             r#"{
               "schema_version": "0.3",
               "scope": "repo",
@@ -78240,6 +78278,97 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             ready[0].canonical_gap_id,
             "gap:packet-recommended-test-target"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn lane1_actionable_gap_packets_exclude_missing_edit_surface_file() -> Result<(), String> {
+        let root = temp_dir("lane1-missing-edit-surface-file");
+        let root = root.to_string_lossy().to_string();
+        let report = lane1_evidence_audit_from_repo_exposure(
+            &root,
+            r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-missing-edit-surface-file",
+                  "headline_eligible": true,
+                  "file": "src/lsp.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-missing-edit-surface-file",
+                    "canonical_gap_id": "gap:packet-missing-edit-surface-file",
+                    "location": {"file": "src/lsp.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                    ],
+                    "recommendation": {
+                      "recommended_test": {
+                        "file": "tests/lsp_tests.rs",
+                        "name": "serve_stdio_call_presence_observer",
+                        "reason": "recommended focused observer target"
+                      }
+                    },
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-missing-edit-surface-file",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "call_presence",
+                      "gap_state": "actionable",
+                      "actionability": "add_focused_test",
+                      "raw_findings": [
+                        {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                      ],
+                      "why": "write a focused test for the missing call observer",
+                      "recommended_repair": "Add a call observer in tests/lsp_tests.rs.",
+                      "repair_route": {
+                        "repair_kind": "add_call_observer",
+                        "target_test_type": "call_presence_observer",
+                        "suggested_assertion": "// assert that serve_stdio called the expected target"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )?;
+
+        let packet_json = lane1_actionable_gap_packets_json(&report)?;
+        let packet_value: serde_json::Value =
+            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+
+        assert_eq!(
+            packet_value["packets"][0]["related_test_or_observer"]["file"],
+            "tests/lsp_tests.rs"
+        );
+        assert_eq!(
+            packet_value["packets"][0]["allowed_edit_surface"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            packet_value["packets"][0]["public_projection_eligible"],
+            serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            packet_value["packets"][0]["projection_exclusion_reasons"],
+            serde_json::json!(["missing_allowed_edit_surface"])
+        );
+
+        let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &packet_value,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(
+            blocked[0].missing_context,
+            vec!["allowed_edit_surface".to_string()]
         );
         Ok(())
     }

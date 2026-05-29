@@ -2281,8 +2281,10 @@ Field contract:
   kind, `target_test_shape`, related test or observer, verification command,
   receipt command, raw evidence references as supporting evidence, confidence
   basis, conservative `must_not_change` boundaries, and
-  `allowed_edit_surface[]` file bounds. They do not create user work from raw
-  static class alone.
+  `allowed_edit_surface[]` file bounds. Derived edit surfaces must resolve to
+  existing workspace files before public projection or swarm-ready ranking; a
+  guessed or missing file is reported as `missing_allowed_edit_surface`. Packets
+  do not create user work from raw static class alone.
   `raw_evidence_refs[]` entries are structured evidence anchors. For public
   projection and swarm planning, at least one entry must carry an anchor field
   (`file`, `path`, or `source_file`) and an identity field (`kind`,
@@ -2673,9 +2675,10 @@ enter the swarm-ready queue.
 ```
 
 `swarm_state = queued` means the packet is ready for a bounded dry-run repair
-attempt. Queued packets require a structured `repair_route` object and a typed
+attempt. Queued packets require a structured `repair_route` object, a typed
 workspace-relative `related_test_or_observer` or `candidate_value_or_observer`
-target. Candidate prose, `repair_route_source` hints, and top-level
+target, and an `allowed_edit_surface[]` entry that resolves to an existing
+workspace file. Candidate prose, `repair_route_source` hints, and top-level
 repair-shape strings remain supporting context only; they do not authorize file
 edits or swarm-ready ranking by themselves. Packets missing required typed
 context use `blocked_by_missing_context`. Packets with static limitations use
