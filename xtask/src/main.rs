@@ -21716,6 +21716,8 @@ struct RiprSwarmRepairRouteQualityRow {
     receipt_present: usize,
     missing_verify_result: usize,
     unknown: usize,
+    sample_packet_ids: Vec<String>,
+    sample_canonical_gap_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -24231,6 +24233,13 @@ fn ripr_swarm_attempt_ledger_repair_route_quality(
             "not_attempted" => {}
             _ => row.unknown += 1,
         }
+        if ripr_swarm_repair_route_quality_attempt_is_failure(attempt) {
+            ripr_swarm_push_limited_unique(&mut row.sample_packet_ids, &attempt.packet_id);
+            ripr_swarm_push_limited_unique(
+                &mut row.sample_canonical_gap_ids,
+                &attempt.canonical_gap_id,
+            );
+        }
     }
     let mut rows = rows.into_values().collect::<Vec<_>>();
     rows.sort_by(|left, right| {
@@ -24331,6 +24340,27 @@ fn ripr_swarm_attempt_missing_verify_result(attempt: &RiprSwarmAttemptLedgerEntr
             .is_none_or(ripr_swarm_plan_field_missing)
 }
 
+fn ripr_swarm_repair_route_quality_attempt_is_failure(
+    attempt: &RiprSwarmAttemptLedgerEntry,
+) -> bool {
+    ripr_swarm_attempt_missing_verify_result(attempt)
+        || matches!(
+            attempt.outcome.as_str(),
+            "attempted_no_receipt" | "evidence_unchanged" | "evidence_regressed" | "unknown"
+        )
+        || !matches!(
+            attempt.outcome.as_str(),
+            "not_attempted"
+                | "receipt_present"
+                | "evidence_improved"
+                | "evidence_unchanged"
+                | "evidence_regressed"
+                | "resolved"
+                | "attempted_no_receipt"
+                | "unknown"
+        )
+}
+
 fn ripr_swarm_repair_route_quality_success_rate(row: &RiprSwarmRepairRouteQualityRow) -> Value {
     if row.attempted == 0 {
         Value::Null
@@ -24357,6 +24387,8 @@ fn ripr_swarm_repair_route_quality_json(rows: &[RiprSwarmRepairRouteQualityRow])
                 "repair_kind_failure_count": ripr_swarm_repair_route_quality_failure_count(row),
                 "repair_kind_dominant_failure_reason": ripr_swarm_repair_route_quality_dominant_failure_reason(row),
                 "repair_kind_success_rate": ripr_swarm_repair_route_quality_success_rate(row),
+                "sample_packet_ids": row.sample_packet_ids,
+                "sample_canonical_gap_ids": row.sample_canonical_gap_ids,
             })
         })
         .collect()
@@ -24609,8 +24641,8 @@ fn ripr_swarm_push_repair_route_quality_table(
         out.push_str("No repair-route quality rows are available.\n\n");
         return;
     }
-    out.push_str("| Repair kind | Attempted | Improved | Unchanged | Regressed | Resolved | Failure count | Dominant failure | Success rate |\n");
-    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |\n");
+    out.push_str("| Repair kind | Attempted | Improved | Unchanged | Regressed | Resolved | Failure count | Dominant failure | Success rate | Sample packets | Sample gaps |\n");
+    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |\n");
     for row in rows {
         let success_rate = match ripr_swarm_repair_route_quality_success_rate(row) {
             Value::Number(number) => number.to_string(),
@@ -24620,7 +24652,7 @@ fn ripr_swarm_push_repair_route_quality_table(
         let dominant_failure =
             ripr_swarm_repair_route_quality_dominant_failure_reason(row).unwrap_or("n/a");
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | `{}` | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | `{}` | {} | {} | {} |\n",
             audit_markdown_cell(&row.repair_kind),
             row.attempted,
             row.improved,
@@ -24629,7 +24661,9 @@ fn ripr_swarm_push_repair_route_quality_table(
             row.resolved,
             failure_count,
             audit_markdown_cell(dominant_failure),
-            success_rate
+            success_rate,
+            audit_markdown_cell(&row.sample_packet_ids.join(", ")),
+            audit_markdown_cell(&row.sample_canonical_gap_ids.join(", "))
         ));
     }
     out.push('\n');
@@ -25882,6 +25916,9 @@ fn ripr_swarm_repair_route_quality_row_from_value(
         missing_verify_result: audit_usize(row, &["repair_kind_missing_verify_result"])
             .unwrap_or_default(),
         unknown: audit_usize(row, &["repair_kind_unknown"]).unwrap_or_default(),
+        sample_packet_ids: audit_string_array(row, &["sample_packet_ids"]).unwrap_or_default(),
+        sample_canonical_gap_ids: audit_string_array(row, &["sample_canonical_gap_ids"])
+            .unwrap_or_default(),
     })
 }
 
@@ -26194,8 +26231,8 @@ fn ripr_swarm_readiness_next_actions(
         let dominant_count = ripr_swarm_repair_route_quality_dominant_failure_count(route);
         actions.push(RiprSwarmReadinessNextAction {
             kind: "improve_repair_route_quality".to_string(),
-            packet_id: None,
-            canonical_gap_id: None,
+            packet_id: route.sample_packet_ids.first().cloned(),
+            canonical_gap_id: route.sample_canonical_gap_ids.first().cloned(),
             evidence_class: None,
             repair_kind: Some(route.repair_kind.clone()),
             command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
@@ -84700,6 +84737,14 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_failing_repair_routes"][0]["repair_kind_dominant_failure_reason"],
             "missing_verify_result"
         );
+        assert_eq!(
+            value["top_failing_repair_routes"][0]["sample_packet_ids"][0],
+            serde_json::Value::from("packet-output-001")
+        );
+        assert_eq!(
+            value["top_failing_repair_routes"][0]["sample_canonical_gap_ids"][0],
+            serde_json::Value::from("gap:output-a")
+        );
         assert_eq!(value["summary"]["missing_verify_result"], 4);
         assert!(
             value["top_missing_evidence_fields"]
@@ -84819,7 +84864,9 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind_attempted_no_receipt": 0,
                     "repair_kind_receipt_present": 0,
                     "repair_kind_unknown": 0,
-                    "repair_kind_success_rate": 0.0
+                    "repair_kind_success_rate": 0.0,
+                    "sample_packet_ids": ["packet-output-001"],
+                    "sample_canonical_gap_ids": ["gap:output-a"]
                 }
             ],
             "top_missing_evidence_fields": [
@@ -84856,13 +84903,11 @@ covered_by = ["cargo xtask check-file-policy"]
             report.repair_route_quality[0].repair_kind,
             "add_output_observer"
         );
-        assert!(
-            report
-                .next_actions
-                .iter()
-                .any(|action| action.kind == "improve_repair_route_quality"
-                    && action.repair_kind.as_deref() == Some("add_output_observer"))
-        );
+        assert!(report.next_actions.iter().any(|action| action.kind
+            == "improve_repair_route_quality"
+            && action.repair_kind.as_deref() == Some("add_output_observer")
+            && action.packet_id.as_deref() == Some("packet-output-001")
+            && action.canonical_gap_id.as_deref() == Some("gap:output-a")));
         assert!(report.next_actions.iter().any(|action| {
             action.kind == "inspect_unchanged_attempts"
                 && action.command.as_deref() == Some("cargo xtask ripr-swarm attempt-ledger")
@@ -84894,11 +84939,21 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_failing_repair_routes"][0]["repair_kind_dominant_failure_reason"],
             "regressed"
         );
+        assert_eq!(
+            value["top_failing_repair_routes"][0]["sample_packet_ids"][0],
+            serde_json::Value::from("packet-output-001")
+        );
+        assert_eq!(
+            value["top_failing_repair_routes"][0]["sample_canonical_gap_ids"][0],
+            serde_json::Value::from("gap:output-a")
+        );
         assert!(
             value["next_actions"]
                 .as_array()
                 .is_some_and(|actions| actions.iter().any(|action| {
                     action["kind"] == "improve_repair_route_quality"
+                        && action["packet_id"] == "packet-output-001"
+                        && action["canonical_gap_id"] == "gap:output-a"
                         && action["reason"]
                             .as_str()
                             .is_some_and(|reason| reason.contains("dominant reason `regressed`"))
