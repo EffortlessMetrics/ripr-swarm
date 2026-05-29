@@ -86,7 +86,9 @@ struct CompactTest<'a> {
     module_path: Option<String>,
     name_lower: String,
     call_names: BTreeSet<String>,
+    assertion_tokens: BTreeSet<String>,
     helper_owner_call_names: BTreeSet<String>,
+    target_affinity_owner_call_names: BTreeSet<String>,
     code_lines: Vec<String>,
     value_facts: OnceCell<super::value_resolution::ValueEnvFacts>,
 }
@@ -105,6 +107,8 @@ impl<'a> CompactGripContext<'a> {
             helper_owner_calls_by_module_path(&helper_owner_calls_by_file);
         let production_helper_owner_calls_by_package =
             production_helper_owner_calls_by_package(&helper_owner_calls_by_file);
+        let target_affinity_production_owner_calls_by_package =
+            target_affinity_production_owner_calls_by_package(index);
         let function_names_by_file = local_function_names_by_file(index);
         let tests = index
             .tests
@@ -122,6 +126,7 @@ impl<'a> CompactGripContext<'a> {
                         assertion_tokens.insert(token);
                     }
                 }
+                let local_function_names = function_names_by_file.get(&test.file);
                 let code_lines = test
                     .body
                     .lines()
@@ -136,6 +141,13 @@ impl<'a> CompactGripContext<'a> {
                     &production_helper_owner_calls_by_package,
                     &function_names_by_file,
                 );
+                let target_affinity_owner_call_names =
+                    helper_owner_call_names_from_production_helpers(
+                        test,
+                        &call_names,
+                        &target_affinity_production_owner_calls_by_package,
+                        local_function_names,
+                    );
                 for call_name in &call_names {
                     tests_by_call_name
                         .entry(call_name.clone())
@@ -172,7 +184,9 @@ impl<'a> CompactGripContext<'a> {
                     module_path: module_path_for(&test.file),
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
+                    assertion_tokens,
                     helper_owner_call_names,
+                    target_affinity_owner_call_names,
                     code_lines,
                     value_facts: OnceCell::new(),
                 }
@@ -342,6 +356,63 @@ fn production_helper_owner_calls_by_package(
                 .collect::<HelperOwnerCallsByName>();
             (!helpers.is_empty()).then_some((package, helpers))
         })
+        .collect()
+}
+
+fn target_affinity_production_owner_calls_by_package(
+    index: &RustIndex,
+) -> HelperOwnerCallsByPackage {
+    let function_names_by_file = local_function_names_by_file(index);
+    let mut by_package: BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> = BTreeMap::new();
+    for function in index
+        .functions
+        .iter()
+        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
+    {
+        let Some(package) = package_scope(&function.file) else {
+            continue;
+        };
+        let Some(local_function_names) = function_names_by_file.get(&function.file) else {
+            continue;
+        };
+        let owner_calls =
+            target_affinity_direct_owner_calls_for_function(function, local_function_names);
+        if owner_calls.is_empty() {
+            continue;
+        }
+        by_package
+            .entry(package)
+            .or_default()
+            .entry(function.name.clone())
+            .or_default()
+            .push(owner_calls);
+    }
+    by_package
+        .into_iter()
+        .filter_map(|(package, helper_sets)| {
+            let helpers = helper_sets
+                .into_iter()
+                .filter_map(|(helper_name, owner_sets)| {
+                    common_helper_owner_calls(helper_name, owner_sets)
+                })
+                .collect::<HelperOwnerCallsByName>();
+            (!helpers.is_empty()).then_some((package, helpers))
+        })
+        .collect()
+}
+
+fn target_affinity_direct_owner_calls_for_function(
+    function: &FunctionSummary,
+    local_function_names: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    function
+        .calls
+        .iter()
+        .filter(|call| call.name != function.name)
+        .filter(|call| supported_helper_owner_call_name(&call.name, local_function_names, None))
+        .filter(|call| owner_token_is_specific_enough(&call.name.to_ascii_lowercase()))
+        .filter(|call| call.text.contains(&format!("{}(", call.name)))
+        .map(|call| call.name.clone())
         .collect()
 }
 
@@ -831,6 +902,14 @@ fn find_related_tests_with_context<'context, 'index>(
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
+    match_call_presence_target_affinity_owner_call(
+        &mut candidates,
+        seam,
+        context,
+        prefix,
+        &owner,
+        &target_tokens,
+    );
     match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
     match_same_test_file(&mut candidates, context, prefix, &owner);
     match_same_module(&mut candidates, context, prefix, &owner);
@@ -995,6 +1074,44 @@ fn match_helper_owner_call(
             RelationReason::HelperOwnerCall,
         );
     }
+}
+
+fn match_call_presence_target_affinity_owner_call(
+    candidates: &mut BTreeMap<usize, RelationReason>,
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    prefix: Option<&str>,
+    owner: &OwnerContext,
+    target_tokens: &BTreeSet<String>,
+) {
+    if seam.kind() != SeamKind::CallPresence || owner.name.is_empty() || target_tokens.is_empty() {
+        return;
+    }
+    for (test_index, test) in context.tests.iter().enumerate() {
+        if !test
+            .target_affinity_owner_call_names
+            .contains(owner.name.as_str())
+            || !test_assertion_mentions_any_target_token(test, target_tokens)
+        {
+            continue;
+        }
+        insert_related_candidate(
+            candidates,
+            context,
+            prefix,
+            test_index,
+            RelationReason::HelperOwnerCall,
+        );
+    }
+}
+
+fn test_assertion_mentions_any_target_token(
+    test: &CompactTest<'_>,
+    target_tokens: &BTreeSet<String>,
+) -> bool {
+    target_tokens
+        .iter()
+        .any(|token| test.assertion_tokens.contains(token))
 }
 
 fn match_assertion_target_affinity(
@@ -1540,11 +1657,18 @@ fn activate_evidence(
         && related
             .iter()
             .any(|indexed| has_direct_owner_call(indexed, owner_name));
+    let target_affinity_tokens =
+        (seam.kind() == SeamKind::CallPresence).then(|| assertion_target_tokens(seam));
     let helper_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
-        && related
-            .iter()
-            .any(|indexed| has_owner_call_via_one_hop_helper(indexed, owner_name));
+        && related.iter().any(|indexed| {
+            has_owner_call_via_one_hop_helper(indexed, owner_name)
+                || has_owner_call_via_target_affinity(
+                    indexed,
+                    owner_name,
+                    target_affinity_tokens.as_ref(),
+                )
+        });
 
     let state = if related.is_empty() {
         StageState::No
@@ -1712,6 +1836,18 @@ fn has_direct_owner_call(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
 
 fn has_owner_call_via_one_hop_helper(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
     indexed.helper_owner_call_names.contains(owner_name)
+}
+
+fn has_owner_call_via_target_affinity(
+    indexed: &CompactTest<'_>,
+    owner_name: &str,
+    target_tokens: Option<&BTreeSet<String>>,
+) -> bool {
+    indexed
+        .target_affinity_owner_call_names
+        .contains(owner_name)
+        && target_tokens
+            .is_some_and(|tokens| test_assertion_mentions_any_target_token(indexed, tokens))
 }
 
 fn observed_argument_selection(
@@ -2075,10 +2211,17 @@ fn compact_activate_evidence(
     }
 
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
+    let target_affinity_tokens =
+        (seam.kind() == SeamKind::CallPresence).then(|| assertion_target_tokens(seam));
     let direct_owner_call = !owner_name.is_empty()
         && related.iter().any(|indexed| {
             indexed.call_names.contains(owner_name)
                 || indexed.helper_owner_call_names.contains(owner_name)
+                || has_owner_call_via_target_affinity(
+                    indexed,
+                    owner_name,
+                    target_affinity_tokens.as_ref(),
+                )
         });
     let state = if related.is_empty() {
         StageState::No
@@ -4565,6 +4708,141 @@ fn command_formats_dynamic_args() {
         assert!(
             evidence.observed_values.is_empty(),
             "mixed-owner production wrapper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_multi_owner_production_wrapper_has_target_affinity_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+pub fn exercise_both(input: &str) -> String {
+    let pipeline = render_pipeline(input);
+    let report = render_report(input);
+    format!("format_output={pipeline};format_report={report}")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::exercise_both;
+
+#[test]
+fn multi_owner_wrapper_observes_pipeline_call_target() {
+    let rendered = exercise_both("alpha");
+    assert!(rendered.contains("format_output"));
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected target-affinity production wrapper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence.observed_values.is_empty(),
+            "target-affinity call_presence wrapper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_multi_owner_wrapper_asserts_other_target_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+pub fn exercise_both(input: &str) -> String {
+    let pipeline = render_pipeline(input);
+    let report = render_report(input);
+    format!("format_output={pipeline};format_report={report}")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::exercise_both;
+
+#[test]
+fn multi_owner_wrapper_observes_report_call_target() {
+    let rendered = exercise_both("alpha");
+    assert!(rendered.contains("format_report"));
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "other target token must not prove pipeline owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert_ne!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence.observed_values.is_empty(),
+            "other-target wrapper must not invent observed values: {:?}",
             evidence.observed_values
         );
         Ok(())
