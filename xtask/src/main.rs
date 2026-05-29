@@ -40116,6 +40116,7 @@ fn dogfood_real_repair_attempt_run(
     if scenario.receipt_command == scenario.verify_command {
         errors.push("receipt_command must stay distinct from verify_command".to_string());
     }
+    dogfood_real_repair_attempt_push_movement_consistency_errors(scenario, &mut errors);
     if scenario.reason.trim().is_empty() {
         errors.push("reason must explain why the attempt is useful dogfood".to_string());
     }
@@ -40145,6 +40146,74 @@ fn dogfood_real_repair_attempt_run(
         reason: scenario.reason.clone(),
         errors,
     }
+}
+
+fn dogfood_real_repair_attempt_push_movement_consistency_errors(
+    scenario: &DogfoodRealRepairAttemptScenario,
+    errors: &mut Vec<String>,
+) {
+    let expected_movement = dogfood_real_repair_attempt_outcome_movement_term(&scenario.outcome);
+    let conflicting_receipt_terms = dogfood_real_repair_attempt_conflicting_movement_terms(
+        &scenario.receipt_state,
+        expected_movement,
+    );
+    if !conflicting_receipt_terms.is_empty() {
+        errors.push(format!(
+            "receipt_state for {} must not claim conflicting movement terms: {}",
+            scenario.outcome,
+            conflicting_receipt_terms.join(", ")
+        ));
+    }
+
+    let conflicting_evidence_tokens =
+        dogfood_real_repair_attempt_conflicting_evidence_movement_tokens(
+            &scenario.evidence_movement,
+            expected_movement,
+        );
+    if !conflicting_evidence_tokens.is_empty() {
+        errors.push(format!(
+            "evidence_movement for {} must not claim conflicting movement tokens: {}",
+            scenario.outcome,
+            conflicting_evidence_tokens.join(", ")
+        ));
+    }
+}
+
+fn dogfood_real_repair_attempt_outcome_movement_term(outcome: &str) -> Option<&'static str> {
+    match outcome {
+        "evidence_improved" => Some("improved"),
+        "evidence_unchanged" => Some("unchanged"),
+        "evidence_regressed" => Some("regressed"),
+        _ => None,
+    }
+}
+
+fn dogfood_real_repair_attempt_conflicting_movement_terms(
+    value: &str,
+    expected: Option<&str>,
+) -> Vec<String> {
+    let normalized = value.to_ascii_lowercase();
+    ["improved", "unchanged", "regressed"]
+        .into_iter()
+        .filter(|term| Some(*term) != expected && normalized.contains(term))
+        .map(str::to_string)
+        .collect()
+}
+
+fn dogfood_real_repair_attempt_conflicting_evidence_movement_tokens(
+    value: &str,
+    expected: Option<&str>,
+) -> Vec<String> {
+    let normalized = value.to_ascii_lowercase();
+    [
+        ("evidence_improved", "improved"),
+        ("evidence_unchanged", "unchanged"),
+        ("evidence_regressed", "regressed"),
+    ]
+    .into_iter()
+    .filter(|(token, term)| Some(*term) != expected && normalized.contains(token))
+    .map(|(token, _)| token.to_string())
+    .collect()
 }
 
 fn dogfood_user_surface_projection_scenarios() -> Vec<DogfoodUserSurfaceProjectionScenario> {
@@ -65103,6 +65172,41 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(
             missing_report.contains("attempted_no_receipt must include missing_receipt_reason")
         );
+    }
+
+    #[test]
+    fn dogfood_real_repair_attempt_rejects_movement_contradictions() {
+        let mut mismatched_receipt = valid_real_repair_attempt_scenario();
+        mismatched_receipt.outcome = "evidence_improved".to_string();
+        mismatched_receipt.receipt_state = "receipt_movement_regressed".to_string();
+        mismatched_receipt.evidence_movement =
+            "evidence_regressed despite an improved outcome".to_string();
+
+        let report = dogfood_real_repair_attempt_run(&mismatched_receipt)
+            .errors
+            .join("\n");
+        assert!(report.contains(
+            "receipt_state for evidence_improved must not claim conflicting movement terms: regressed"
+        ));
+        assert!(report.contains(
+            "evidence_movement for evidence_improved must not claim conflicting movement tokens: evidence_regressed"
+        ));
+
+        let mut missing_receipt_claim = valid_real_repair_attempt_scenario();
+        missing_receipt_claim.outcome = "attempted_no_receipt".to_string();
+        missing_receipt_claim.receipt_path = None;
+        missing_receipt_claim.receipt_state = "receipt_missing".to_string();
+        missing_receipt_claim.missing_receipt_reason =
+            Some("operator stopped before writing a receipt".to_string());
+        missing_receipt_claim.evidence_movement =
+            "evidence_improved without receipt evidence".to_string();
+
+        let missing_report = dogfood_real_repair_attempt_run(&missing_receipt_claim)
+            .errors
+            .join("\n");
+        assert!(missing_report.contains(
+            "evidence_movement for attempted_no_receipt must not claim conflicting movement tokens: evidence_improved"
+        ));
     }
 
     #[test]

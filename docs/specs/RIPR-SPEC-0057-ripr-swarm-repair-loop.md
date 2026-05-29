@@ -335,6 +335,10 @@ is available: `evidence_class`, `source_file`, `repair_kind`,
 repeated unchanged, regressed, no-receipt, missing-verify-result, or unknown
 outcomes become analyzer-improvement signals instead of disappearing into
 aggregate attempt counts.
+Dogfood attempt receipts must not contradict their recorded outcome: movement
+receipt state and explicit `evidence_movement` tokens must not claim improved,
+unchanged, or regressed evidence that conflicts with the outcome, and
+no-receipt attempts must not claim receipt-backed evidence movement.
 
 Readiness must treat durable `attempts[]` as the source of truth for
 attempt/outcome summary counts, repair-route quality, and missing-evidence-field
@@ -593,6 +597,9 @@ Current implementation coverage:
 - `xtask::tests::ripr_swarm_readiness_routes_static_limitation_backlog_when_no_ready_packets`
   pins readiness `top_limitation_routes[]` and sample packet routing without
   making limitation backlog packets swarm-ready.
+- `xtask::tests::dogfood_real_repair_attempt_rejects_movement_contradictions`
+  pins that real repair attempt receipts cannot record contradictory movement
+  claims or claim evidence movement without a receipt.
 
 Follow-up implementation PRs should add tests for:
 
