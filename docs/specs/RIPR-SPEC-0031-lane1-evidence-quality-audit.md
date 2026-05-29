@@ -268,7 +268,7 @@ records `run_limitations[].category = "lane1_repo_exposure_sampled"`, and keeps
 the sampled raw/canonical/actionable counts available as partial work-queue
 evidence. Downstream scorecards must surface that named limitation and must not
 treat sampled counts as full-repo debt totals. The audit also reports
-`run_status = "limited_incomplete_input"` and `runtime_status` details for that
+`run_status = "limited_sampled_input"` and `runtime_status` details for that
 sampled input. If generation times out before a
 complete repo-exposure JSON document exists, the audit still writes a limited
 artifact with `run_limitations[].category = "lane1_repo_exposure_timeout"`,
