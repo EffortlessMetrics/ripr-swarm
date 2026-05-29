@@ -2039,6 +2039,8 @@ fixtures = [
   "fixtures/python_owner_file_match",
   "fixtures/python_cross_file_import_reference",
   "fixtures/python_same_stem_test",
+  "fixtures/python_related_test_name_similarity",
+  "fixtures/python_fixture_name_relation",
   "fixtures/python_unrelated_test_mention",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",

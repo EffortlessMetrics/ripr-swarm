@@ -453,7 +453,7 @@ Support common `unittest` repos without a separate output model.
 
 ### Work item: analysis/python-related-test-linking
 
-Status: planned
+Status: done
 
 Blocked by:
 
@@ -470,6 +470,20 @@ Connect changed owners to likely tests using conservative static signals.
 - Distinguish related strong tests, related weak tests, and no related test.
 - Weak related tests are preferred repair locations.
 - Uncertain links are marked uncertain.
+
+#### Delivered
+
+- Related-test ranking now keeps direct syntactic calls and import-alias calls
+  ahead of heuristic links so weak directly related tests remain preferred
+  repair locations.
+- Same-stem file proximity, test-name similarity, and fixture-name proximity
+  are treated as heuristic-only links: they keep weak reachability, do not
+  promote assertions to strong revealability, and emit
+  `related_test_uncertain` evidence.
+- `python_related_test_name_similarity` and
+  `python_fixture_name_relation` pin the new uncertain relation outputs, while
+  existing same-stem and module-level fixtures were refreshed to preserve the
+  same uncertainty boundary.
 
 ### Work item: analysis/python-canonical-gap-identity
 
