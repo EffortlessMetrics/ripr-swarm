@@ -2510,6 +2510,42 @@ mod tests {
     }
 
     #[test]
+    fn error_variant_assertion_shape_fallback_names_exact_variant_without_nested_comments() {
+        let seam = seam_with(
+            "auth::authenticate",
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "AuthError::RevokedToken".to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        );
+        let classified = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for(
+            SeamKind::ErrorVariant,
+            "auth::authenticate",
+            &classified.evidence,
+        );
+
+        assert_eq!(shape.kind, "exact_error_variant");
+        assert!(
+            shape
+                .example
+                .contains("authenticate(/* trigger the exact error variant */)")
+        );
+        assert!(
+            shape
+                .example
+                .contains("expect_err(\"expected the exact error variant\")")
+        );
+        assert!(
+            shape
+                .example
+                .contains("assert!(matches!(err, /* exact error variant */")
+        );
+        assert!(!shape.example.contains("/* trigger /*"));
+    }
+
+    #[test]
     fn packet_v2_carries_side_effect_and_call_observer_guidance() -> Result<(), String> {
         let side_effect = seam_with(
             "billing::charge_customer",
