@@ -2777,14 +2777,35 @@ fn python_return_dict_field_discriminator(line_text: &str) -> Option<String> {
 
 fn python_output_or_call_discriminator(line_text: &str) -> Option<String> {
     let text = line_text.trim();
-    let literal = first_python_string_literal(text)?;
     if text.starts_with("print(") {
+        let literal = first_python_string_literal(text)?;
         Some(format!("output contains {literal}"))
     } else if text.contains("logger.") || text.contains("logging.") {
+        let literal = first_python_string_literal(text)?;
         Some(format!("log contains {literal}"))
-    } else {
+    } else if let Some(call) = python_call_payload_expression(text) {
+        let literal = first_python_string_literal(call)?;
         Some(format!("call includes {literal}"))
+    } else {
+        None
     }
+}
+
+fn python_call_payload_expression(text: &str) -> Option<&str> {
+    if contains_mock_initializer(text) {
+        return None;
+    }
+    let text = text.strip_prefix("await ").unwrap_or(text).trim();
+    if looks_like_call_expression(text) {
+        return Some(text);
+    }
+    if let Some((_, rhs)) = split_python_assignment(text) {
+        let rhs = rhs.strip_prefix("await ").unwrap_or(rhs).trim();
+        if looks_like_call_expression(rhs) {
+            return Some(rhs);
+        }
+    }
+    None
 }
 
 fn split_python_assignment(text: &str) -> Option<(&str, &str)> {
@@ -2923,10 +2944,7 @@ fn python_recommended_next_step(
     missing_discriminators: &[MissingDiscriminatorFact],
 ) -> Option<String> {
     match class {
-        ExposureClass::StaticUnknown | ExposureClass::NoStaticPath => None,
-        ExposureClass::Exposed => {
-            Some("Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.".to_string())
-        }
+        ExposureClass::StaticUnknown | ExposureClass::NoStaticPath | ExposureClass::Exposed => None,
         _ if !has_oracle_eligible_relation => None,
         _ => {
             let missing = &missing_discriminators.first()?.value;
@@ -2947,6 +2965,27 @@ fn python_recommended_next_step(
             ))
         }
     }
+}
+
+fn python_related_oracle_observes_missing_discriminator(
+    probe_family: &ProbeFamily,
+    missing: &MissingDiscriminatorFact,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> bool {
+    if !matches!(
+        probe_family,
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+    ) {
+        return false;
+    }
+    let Some(literal) = first_python_string_literal(&missing.value) else {
+        return false;
+    };
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .filter_map(|candidate| strongest_assertion(&candidate.test.assertions))
+        .any(|assertion| assertion.text.contains(&literal))
 }
 
 fn classify_change(
@@ -3108,7 +3147,7 @@ fn classify_change(
         .is_none()
         .then(|| python_flow_sink_for(&family, owner, line, line_text))
         .flatten();
-    let missing_discriminators = if static_limit.is_none()
+    let mut missing_discriminators = if static_limit.is_none()
         && matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
     {
@@ -3116,6 +3155,9 @@ fn classify_change(
     } else {
         Vec::new()
     };
+    missing_discriminators.retain(|missing| {
+        !python_related_oracle_observes_missing_discriminator(&family, missing, &related_candidates)
+    });
     let observe = StageEvidence::new(
         observe_state,
         Confidence::Low,
@@ -4017,12 +4059,51 @@ def test_notifies_callback():
         .ok_or_else(|| "strong predicate change should classify".to_string())?;
         assert_eq!(exposed.class, ExposureClass::Exposed);
         assert!(exposed.activation.missing_discriminators.is_empty());
+        assert!(exposed.recommended_next_step.is_none());
+
+        let observed_call = classify_change(
+            Path::new("src/notify.py"),
+            2,
+            "    notifier(\"receipt.sent\", order_id)",
+            &extract_owners(
+                Path::new("src/notify.py"),
+                "def send_receipt(notifier, order_id):\n    notifier(\"receipt.sent\", order_id)\n",
+            ),
+            &extract_tests(
+                Path::new("tests/test_notify.py"),
+                "from src.notify import send_receipt\n\n\
+                 def test_send_receipt_notifies_callback():\n    notifier = Mock()\n    send_receipt(notifier, \"ord-123\")\n    notifier.assert_called_once_with(\"receipt.sent\", \"ord-123\")\n",
+            ),
+        )
+        .ok_or_else(|| "observed call-effect change should classify".to_string())?;
+        assert_eq!(observed_call.class, ExposureClass::WeaklyExposed);
+        assert!(observed_call.activation.missing_discriminators.is_empty());
+        assert!(observed_call.recommended_next_step.is_none());
+
+        let mock_initializer = classify_change(
+            Path::new("src/callbacks.py"),
+            4,
+            "    callback = MagicMock(name=\"receipt.sent\")",
+            &extract_owners(
+                Path::new("src/callbacks.py"),
+                "from unittest.mock import MagicMock\n\n\
+                 def recording_callback():\n    callback = MagicMock(name=\"receipt\")\n    return callback\n",
+            ),
+            &extract_tests(
+                Path::new("tests/test_callbacks.py"),
+                "from src.callbacks import recording_callback\n\n\
+                 def test_recording_callback_starts_idle():\n    callback = recording_callback()\n    callback.assert_not_called()\n",
+            ),
+        )
+        .ok_or_else(|| "mock-initializer change should classify".to_string())?;
+        assert_eq!(mock_initializer.class, ExposureClass::WeaklyExposed);
         assert!(
-            exposed
-                .recommended_next_step
-                .as_deref()
-                .is_some_and(|step| step.contains("observed under a strong oracle"))
+            mock_initializer
+                .activation
+                .missing_discriminators
+                .is_empty()
         );
+        assert!(mock_initializer.recommended_next_step.is_none());
 
         let static_unknown = classify_change(
             Path::new("src/service.py"),
