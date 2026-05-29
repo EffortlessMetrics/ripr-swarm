@@ -569,9 +569,8 @@ impl RelationReason {
 
     fn confidence(self) -> RelationConfidence {
         match self {
-            Self::DirectOwnerCall | Self::HelperOwnerCall | Self::AssertionTargetAffinity => {
-                RelationConfidence::High
-            }
+            Self::DirectOwnerCall | Self::HelperOwnerCall => RelationConfidence::High,
+            Self::AssertionTargetAffinity => RelationConfidence::Medium,
             Self::SameTestFile
             | Self::SameModule
             | Self::OwnerNamedTest
@@ -4135,6 +4134,14 @@ fn emit_receipt_sends_value() {
             "specific target token should remain eligible for assertion-target affinity; got {:?}",
             evidence.related_tests
         );
+        assert!(
+            evidence.related_tests.iter().any(|test| {
+                test.relation_reason == RelationReason::AssertionTargetAffinity
+                    && test.relation_confidence == RelationConfidence::Medium
+            }),
+            "assertion-target affinity should stay medium confidence because it does not prove owner execution; got {:?}",
+            evidence.related_tests
+        );
         assert_eq!(evidence.activate.state, StageState::Unknown);
         assert!(
             evidence
@@ -5738,7 +5745,7 @@ mod tests {
                 RelationReason::AssertionTargetAffinity,
                 "assertion_target_affinity",
                 2,
-                RelationConfidence::High,
+                RelationConfidence::Medium,
             ),
             (
                 RelationReason::SameTestFile,
@@ -5944,7 +5951,7 @@ mod tests {
             grip.relation_reason,
             RelationReason::AssertionTargetAffinity
         );
-        assert_eq!(grip.relation_confidence, RelationConfidence::High);
+        assert_eq!(grip.relation_confidence, RelationConfidence::Medium);
         Ok(())
     }
 
