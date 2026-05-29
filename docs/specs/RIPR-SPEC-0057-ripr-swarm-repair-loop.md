@@ -179,6 +179,10 @@ the item is not actionable, the analyzer unlock condition, and non-claims. Packe
 identity is route-grained so one limitation category can produce separate
 analyzer backlog packets for separate repair routes. They remain non-actionable
 and must not be placed in `top_ready_packets`.
+Readiness may project the leading analyzer backlog routes as
+`top_limitation_routes[]`. That projection is separate from
+`repair_route_quality[]`, which is attempt-outcome evidence; limitation routes
+remain non-actionable until the full public packet contract is satisfied.
 
 ## Required Packet Fields
 
@@ -574,6 +578,9 @@ Current implementation coverage:
 - `xtask::tests::lane1_static_limitation_backlog_splits_same_category_by_repair_route`
   pins route-grained analyzer backlog packet identity when one limitation
   category has multiple repair routes.
+- `xtask::tests::ripr_swarm_readiness_routes_static_limitation_backlog_when_no_ready_packets`
+  pins readiness `top_limitation_routes[]` and sample packet routing without
+  making limitation backlog packets swarm-ready.
 
 Follow-up implementation PRs should add tests for:
 
@@ -650,4 +657,5 @@ Future reports should expose:
 - `repair_kind_dominant_failure_reason`;
 - `repair_kind_success_rate`;
 - `top_failing_repair_routes`;
+- `top_limitation_routes`;
 - `top_missing_evidence_fields`.

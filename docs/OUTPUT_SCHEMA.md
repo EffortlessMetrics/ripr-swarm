@@ -3108,6 +3108,9 @@ Readiness forwards `static_limitation_backlog` from `swarm-plan` so thin
 surfaces can show the leading analyzer repair routes when no packet is safely
 actionable. This field is advisory limitation backlog, not a public actionable
 count and not a CI gate predicate.
+`top_limitation_routes[]` is a readiness-level projection of those analyzer
+routes with sample packet context. It is intentionally separate from
+`repair_route_quality[]`, which is based only on latest repair attempts.
 `top_next_action` is a single-object projection of `next_actions[0]` for
 thin downstream surfaces that need one canonical next route without
 reinterpreting the full advisory queue.
@@ -3197,6 +3200,18 @@ limits.
       }
     ]
   },
+  "top_limitation_routes": [
+    {
+      "repair_route": "analysis/value-resolution-audit-fixes",
+      "signal_count": 141,
+      "sample_packet_id": "limitation:activation-value-unresolved:value-resolution-audit-fixes",
+      "sample_limitation_category": "activation_value_unresolved",
+      "sample_canonical_gap_ids": ["gap:value-resolution"],
+      "dominant_evidence_class": "predicate_boundary",
+      "why_not_actionable": "activation value cannot be safely mapped to a test input",
+      "unlock_condition": "implement analyzer value-resolution before public repair packets are emitted"
+    }
+  ],
   "blocked_state_routes": [
     {
       "state": "blocked_by_missing_context",
