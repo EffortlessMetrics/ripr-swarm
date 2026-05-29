@@ -763,9 +763,13 @@ Make first Python runs useful in CLI.
   boundaries, limitation counts, verify command, and deferred receipt status.
 - `ripr check --root . --format json` already emits the underlying
   `python_repair_card` object.
-- `ripr first-pr --root . --base origin/main --head HEAD` still needs direct
-  Python start-here selection or a generated gap-ledger bridge in a follow-up
-  slice.
+- `ripr first-pr --root . --base origin/main --head HEAD` can now accept
+  Python-only project roots and select preview Python GapRecords from the
+  existing gap decision ledger into `start-here.{json,md}` with
+  `preview_limited` output state, missing discriminator, verify command, and
+  receipt command.
+- A follow-up slice still needs direct generation of the Python gap-ledger
+  bridge from first-use preview cards and before/after Python outcome receipts.
 
 ### Work item: output/python-surface-projection
 

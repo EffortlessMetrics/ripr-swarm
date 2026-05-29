@@ -516,7 +516,7 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
     RiprConfig::from_raw(raw)
 }
 
-fn detect_python_project(root: &Path) -> bool {
+pub(crate) fn detect_python_project(root: &Path) -> bool {
     PYTHON_PROJECT_MARKERS
         .iter()
         .any(|marker| root.join(marker).is_file())
