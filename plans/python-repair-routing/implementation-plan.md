@@ -768,8 +768,11 @@ Make first Python runs useful in CLI.
   existing gap decision ledger into `start-here.{json,md}` with
   `preview_limited` output state, missing discriminator, verify command, and
   receipt command.
-- A follow-up slice still needs direct generation of the Python gap-ledger
-  bridge from first-use preview cards and before/after Python outcome receipts.
+- Python-only `first-pr` gap-ledger recovery now points at the existing bridge:
+  `ripr check --json` followed by `ripr reports gap-ledger --check-output`,
+  rather than the Rust repo-exposure path.
+- A follow-up slice still needs Python before/after outcome receipts and, if
+  useful, a direct `first-pr` producer flag for supplied check-output JSON.
 
 ### Work item: output/python-surface-projection
 
