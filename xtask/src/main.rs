@@ -26151,12 +26151,16 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     if summary.regressed_packets > 0 {
+        let (packet_id, canonical_gap_id, repair_kind) = ripr_swarm_attempt_ledger_outcome_sample(
+            attempt_ledger_input.value,
+            "evidence_regressed",
+        );
         actions.push(RiprSwarmReadinessNextAction {
             kind: "inspect_regressed_attempts".to_string(),
-            packet_id: None,
-            canonical_gap_id: None,
+            packet_id,
+            canonical_gap_id,
             evidence_class: None,
-            repair_kind: None,
+            repair_kind,
             command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
             reason: format!(
                 "{} attempted packet(s) regressed evidence; inspect receipts and stop repeating that repair route",
@@ -26183,12 +26187,16 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     if summary.unchanged_packets > 0 {
+        let (packet_id, canonical_gap_id, repair_kind) = ripr_swarm_attempt_ledger_outcome_sample(
+            attempt_ledger_input.value,
+            "evidence_unchanged",
+        );
         actions.push(RiprSwarmReadinessNextAction {
             kind: "inspect_unchanged_attempts".to_string(),
-            packet_id: None,
-            canonical_gap_id: None,
+            packet_id,
+            canonical_gap_id,
             evidence_class: None,
-            repair_kind: None,
+            repair_kind,
             command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
             reason: format!(
                 "{} attempted packet(s) left evidence unchanged; refine the repair route before retrying",
@@ -80705,6 +80713,38 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing next action {kind}"
             );
         }
+        let unchanged_action = actions
+            .iter()
+            .find(|action| action["kind"] == "inspect_unchanged_attempts")
+            .ok_or("missing unchanged next action")?;
+        assert_eq!(
+            unchanged_action["packet_id"],
+            serde_json::Value::from("packet:unchanged")
+        );
+        assert_eq!(
+            unchanged_action["canonical_gap_id"],
+            serde_json::Value::from("gap:unchanged")
+        );
+        assert_eq!(
+            unchanged_action["repair_kind"],
+            serde_json::Value::from("add_output_observer")
+        );
+        let regressed_action = actions
+            .iter()
+            .find(|action| action["kind"] == "inspect_regressed_attempts")
+            .ok_or("missing regressed next action")?;
+        assert_eq!(
+            regressed_action["packet_id"],
+            serde_json::Value::from("packet:regressed")
+        );
+        assert_eq!(
+            regressed_action["canonical_gap_id"],
+            serde_json::Value::from("gap:regressed")
+        );
+        assert_eq!(
+            regressed_action["repair_kind"],
+            serde_json::Value::from("add_output_observer")
+        );
         let markdown = ripr_swarm_readiness_markdown(&report);
         assert!(markdown.contains("## Blocked State Routes"));
         assert!(markdown.contains("blocked_by_missing_context"));
