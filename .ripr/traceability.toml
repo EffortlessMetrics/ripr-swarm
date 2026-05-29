@@ -1967,6 +1967,12 @@ fixtures = [
   "fixtures/typescript_mocked_module_limit",
   "fixtures/typescript_awaited_promise_reject",
   "fixtures/typescript_effect_probe_shapes",
+  "fixtures/typescript_tsx_preview",
+  "fixtures/javascript_js_preview",
+  "fixtures/javascript_jsx_preview",
+  "fixtures/typescript_disabled",
+  "fixtures/typescript_parse_error_unsupported_syntax",
+  "fixtures/mixed_rust_typescript_preview",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript.rs",
@@ -1985,6 +1991,7 @@ outputs = [
   "docs/lanes/LANE_1_TYPESCRIPT_PREVIEW_COMPLETION.md",
   "plans/typescript-preview-completion/implementation-plan.md",
   "fixtures/typescript_mocked_module_limit/expected/check.json",
+  "fixtures/typescript_parse_error_unsupported_syntax/expected/check.json",
   "docs/handoffs/2026-05-13-language-adapter-preview-receipts.md",
   "docs/handoffs/2026-05-13-campaign-27-closeout.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
