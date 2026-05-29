@@ -890,6 +890,7 @@ fn classify_change(
     }
     Some(Finding {
         id: probe.id.0.clone(),
+        canonical_gap: None,
         probe,
         class,
         ripr: RiprEvidence {
@@ -973,6 +974,7 @@ fn unsupported_syntax_finding(
 
     Finding {
         id: probe.id.0.clone(),
+        canonical_gap: None,
         probe,
         class: ExposureClass::StaticUnknown,
         ripr: RiprEvidence {
