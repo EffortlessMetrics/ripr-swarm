@@ -385,9 +385,18 @@ or uncertain evidence.
 
 Readiness must also expose blocked packet states as a route table. Each
 reported blocked class must include a count, human-readable reason, next action
-kind, and repair route so `blocked_by_missing_context`,
+kind, repair route, and example packet/canonical gap identity when the source
+artifact has one, so `blocked_by_missing_context`,
 `blocked_by_static_limitation`, `blocked_by_public_projection_exclusion`, and
-`blocked_by_operator_judgment` do not appear only in raw packet JSON.
+`blocked_by_operator_judgment` do not appear only in raw packet JSON. The table
+must also route field-level blockers such as `not_actionable_gap_state`,
+`missing_verify_command`, `missing_receipt_command`, `missing_repair_route`,
+`missing_related_test_or_observer`, `missing_must_not_change`,
+`missing_allowed_edit_surface`, and `missing_raw_evidence_refs`, plus outcome
+blockers such as `attempted_no_receipt`, `missing_verify_result`,
+`orphan_receipt`, `unchanged_attempt`, and `regressed_attempt`.
+`swarm-plan` must provide non-top-limited packet examples for plan-derived
+blocked classes so readiness examples are not dependent on `--top` truncation.
 
 Readiness must also expose `top_next_action` as a stable projection of
 `next_actions[0]`. Downstream surfaces may show that object directly, but they
@@ -572,8 +581,9 @@ Current implementation coverage:
   plus forwarding of the swarm-plan static-limitation backlog into readiness
   output.
 - `xtask::tests::ripr_swarm_readiness_audits_blocked_state_routes`
-  pins blocked-state counts, reasons, next action kinds, repair routes, and
-  Markdown/JSON parity for readiness route auditing.
+  pins blocked-state counts, reasons, next action kinds, repair routes, example
+  packet/canonical gap identities, and Markdown/JSON parity for readiness route
+  auditing.
 - `xtask::tests::lane1_static_limitation_backlog_emits_analyzer_packets`
   pins analyzer backlog packets for named limitations without emitting public
   repair packets.
@@ -639,6 +649,11 @@ Future reports should expose:
 - `swarm_missing_verify_command`;
 - `swarm_missing_verify_result`;
 - `swarm_missing_receipt_command`;
+- `swarm_missing_repair_route`;
+- `swarm_missing_must_not_change`;
+- `swarm_missing_allowed_edit_surface`;
+- `swarm_missing_raw_evidence_refs`;
+- `swarm_related_context_missing`;
 - `swarm_static_limitation_packets`;
 - `swarm_high_confidence_packets`;
 - `swarm_attempted_packets`;

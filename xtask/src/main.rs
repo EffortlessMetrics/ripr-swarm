@@ -21657,9 +21657,15 @@ struct RiprSwarmReadinessSummary {
     blocked_by_public_projection_exclusion_packets: usize,
     blocked_by_operator_judgment_packets: usize,
     public_projection_excluded_packets: usize,
+    not_actionable_gap_state: usize,
     missing_verify_command: usize,
     missing_verify_result: usize,
     missing_receipt_command: usize,
+    missing_repair_route: usize,
+    missing_must_not_change: usize,
+    missing_allowed_edit_surface: usize,
+    missing_raw_evidence_refs: usize,
+    related_context_missing: usize,
     static_limitation_packets: usize,
     high_confidence_packets: usize,
     attempted_packets: usize,
@@ -21690,6 +21696,18 @@ struct RiprSwarmReadinessBlockedStateRoute {
     reason: String,
     next_action_kind: String,
     repair_route: String,
+    example_packet_id: Option<String>,
+    example_canonical_gap_id: Option<String>,
+    example_repair_kind: Option<String>,
+    example_receipt_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct RiprSwarmReadinessBlockedStateSample {
+    packet_id: Option<String>,
+    canonical_gap_id: Option<String>,
+    repair_kind: Option<String>,
+    receipt_path: Option<String>,
 }
 
 struct RiprSwarmReadinessInput<'a> {
@@ -22784,6 +22802,7 @@ fn ripr_swarm_plan_json(report: &RiprSwarmPlanReport) -> Result<String, String> 
         "top_blocked_packets": ripr_swarm_plan_packets_json(
             &ripr_swarm_plan_blocked_packets(report)
         ),
+        "blocked_state_examples": ripr_swarm_plan_blocked_state_examples_json(report),
         "top_missing_verify_or_receipt": ripr_swarm_plan_packets_json(
             &ripr_swarm_plan_missing_verify_or_receipt_packets(report)
         ),
@@ -22852,6 +22871,20 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
             .iter()
             .filter(|packet| packet.swarm_state == "blocked_by_public_projection_exclusion")
             .count(),
+        "not_actionable_gap_state": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "actionable_gap_state")
+                    || packet
+                        .projection_exclusion_reasons
+                        .iter()
+                        .any(|reason| reason == "not_actionable_gap_state")
+            })
+            .count(),
         "missing_verify_command": missing_verify,
         "missing_receipt_command": missing_receipt,
         "missing_repair_route": report
@@ -22872,6 +22905,16 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                     .missing_context
                     .iter()
                     .any(|field| field == "allowed_edit_surface")
+            })
+            .count(),
+        "missing_raw_evidence_refs": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "raw_evidence_refs")
             })
             .count(),
         "related_context_missing": report
@@ -22935,6 +22978,149 @@ fn ripr_swarm_plan_packets_json(packets: &[RiprSwarmPlanPacket]) -> Vec<Value> {
         .collect()
 }
 
+fn ripr_swarm_plan_blocked_state_examples_json(report: &RiprSwarmPlanReport) -> Vec<Value> {
+    let mut rows = Vec::new();
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "blocked_by_missing_context",
+        |packet| packet.swarm_state == "blocked_by_missing_context",
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "blocked_by_static_limitation",
+        |packet| packet.swarm_state == "blocked_by_static_limitation",
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "blocked_by_public_projection_exclusion",
+        |packet| packet.swarm_state == "blocked_by_public_projection_exclusion",
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "blocked_by_operator_judgment",
+        |packet| packet.swarm_state == "blocked_by_operator_judgment",
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "not_actionable_gap_state",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "actionable_gap_state")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "not_actionable_gap_state")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_verify_command",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "verify_command")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_receipt_command",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "receipt_command")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_repair_route",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_route")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_related_test_or_observer",
+        |packet| {
+            !packet.related_test_or_observer_available
+                || packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "related_test_or_observer")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_must_not_change",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "must_not_change")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_allowed_edit_surface",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "allowed_edit_surface")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_raw_evidence_refs",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "raw_evidence_refs")
+        },
+    );
+    rows
+}
+
+fn ripr_swarm_plan_push_blocked_state_example<F>(
+    rows: &mut Vec<Value>,
+    packets: &[RiprSwarmPlanPacket],
+    state: &str,
+    predicate: F,
+) where
+    F: Fn(&RiprSwarmPlanPacket) -> bool,
+{
+    if let Some(packet) = packets.iter().find(|packet| predicate(packet)) {
+        rows.push(serde_json::json!({
+            "state": state,
+            "example_packet_id": packet.packet_id,
+            "example_canonical_gap_id": packet.canonical_gap_id,
+            "example_repair_kind": packet.repair_kind,
+            "example_missing_context": packet.missing_context,
+            "example_projection_exclusion_reasons": packet.projection_exclusion_reasons,
+            "example_blocked_reasons": packet.blocked_reasons,
+        }));
+    }
+}
+
 fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
     let summary = ripr_swarm_plan_summary_json(report);
     let mut out = String::new();
@@ -22982,6 +23168,7 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "missing_repair_route",
         "missing_must_not_change",
         "missing_allowed_edit_surface",
+        "missing_raw_evidence_refs",
         "related_context_missing",
         "static_limitation_packets",
         "high_confidence_packets",
@@ -24173,7 +24360,8 @@ fn ripr_swarm_readiness_from_values(
         .unwrap_or(Value::Null);
     let top_limitation_routes =
         ripr_swarm_readiness_top_limitation_routes(&static_limitation_backlog);
-    let blocked_state_routes = ripr_swarm_readiness_blocked_state_routes(&summary);
+    let blocked_state_routes =
+        ripr_swarm_readiness_blocked_state_routes(&summary, swarm_plan.value, attempt_ledger.value);
     let runtime_status =
         ripr_swarm_readiness_runtime_status(&swarm_plan, &actionable_gap_outcomes, &attempt_ledger);
     let next_actions = ripr_swarm_readiness_next_actions(
@@ -24331,10 +24519,22 @@ fn ripr_swarm_readiness_summary(
         summary.public_projection_excluded_packets =
             audit_usize(plan, &["summary", "public_projection_excluded_packets"])
                 .unwrap_or_default();
+        summary.not_actionable_gap_state =
+            audit_usize(plan, &["summary", "not_actionable_gap_state"]).unwrap_or_default();
         summary.missing_verify_command =
             audit_usize(plan, &["summary", "missing_verify_command"]).unwrap_or_default();
         summary.missing_receipt_command =
             audit_usize(plan, &["summary", "missing_receipt_command"]).unwrap_or_default();
+        summary.missing_repair_route =
+            audit_usize(plan, &["summary", "missing_repair_route"]).unwrap_or_default();
+        summary.missing_must_not_change =
+            audit_usize(plan, &["summary", "missing_must_not_change"]).unwrap_or_default();
+        summary.missing_allowed_edit_surface =
+            audit_usize(plan, &["summary", "missing_allowed_edit_surface"]).unwrap_or_default();
+        summary.missing_raw_evidence_refs =
+            audit_usize(plan, &["summary", "missing_raw_evidence_refs"]).unwrap_or_default();
+        summary.related_context_missing =
+            audit_usize(plan, &["summary", "related_context_missing"]).unwrap_or_default();
         summary.static_limitation_packets =
             audit_usize(plan, &["summary", "static_limitation_packets"]).unwrap_or_default();
         summary.high_confidence_packets =
@@ -24503,9 +24703,15 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
             .blocked_by_public_projection_exclusion_packets,
         "blocked_by_operator_judgment_packets": summary.blocked_by_operator_judgment_packets,
         "public_projection_excluded_packets": summary.public_projection_excluded_packets,
+        "not_actionable_gap_state": summary.not_actionable_gap_state,
         "missing_verify_command": summary.missing_verify_command,
         "missing_verify_result": summary.missing_verify_result,
         "missing_receipt_command": summary.missing_receipt_command,
+        "missing_repair_route": summary.missing_repair_route,
+        "missing_must_not_change": summary.missing_must_not_change,
+        "missing_allowed_edit_surface": summary.missing_allowed_edit_surface,
+        "missing_raw_evidence_refs": summary.missing_raw_evidence_refs,
+        "related_context_missing": summary.related_context_missing,
         "static_limitation_packets": summary.static_limitation_packets,
         "high_confidence_packets": summary.high_confidence_packets,
         "attempted_packets": summary.attempted_packets,
@@ -24521,45 +24727,353 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
 
 fn ripr_swarm_readiness_blocked_state_routes(
     summary: &RiprSwarmReadinessSummary,
+    swarm_plan: Option<&Value>,
+    attempt_ledger: Option<&Value>,
 ) -> Vec<RiprSwarmReadinessBlockedStateRoute> {
-    [
-        RiprSwarmReadinessBlockedStateRoute {
-            state: "blocked_by_missing_context".to_string(),
-            count: summary.blocked_by_missing_context_packets,
-            reason: "required packet context is missing before the packet can be safely delegated"
-                .to_string(),
-            next_action_kind: "inspect_blocked_missing_context".to_string(),
-            repair_route: "cargo xtask lane1-evidence-audit".to_string(),
-        },
-        RiprSwarmReadinessBlockedStateRoute {
-            state: "blocked_by_static_limitation".to_string(),
-            count: summary.blocked_by_static_limitation_packets,
-            reason: "a named static limitation prevents a safe bounded repair route".to_string(),
-            next_action_kind: "route_static_limitations".to_string(),
-            repair_route: "cargo xtask lane1-evidence-audit".to_string(),
-        },
-        RiprSwarmReadinessBlockedStateRoute {
-            state: "blocked_by_public_projection_exclusion".to_string(),
-            count: summary.blocked_by_public_projection_exclusion_packets,
-            reason:
-                "public projection eligibility is false or projection_exclusion_reasons are present"
-                    .to_string(),
-            next_action_kind: "inspect_public_projection_exclusions".to_string(),
-            repair_route: "cargo xtask lane1-evidence-audit".to_string(),
-        },
-        RiprSwarmReadinessBlockedStateRoute {
-            state: "blocked_by_operator_judgment".to_string(),
-            count: summary.blocked_by_operator_judgment_packets,
-            reason:
-                "typed context exists, but default swarm routing still requires operator judgment"
-                    .to_string(),
-            next_action_kind: "route_operator_judgment_packets".to_string(),
-            repair_route: "cargo xtask ripr-swarm plan --top 10".to_string(),
-        },
-    ]
-    .into_iter()
-    .filter(|route| route.count > 0)
-    .collect()
+    let mut routes = Vec::new();
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "blocked_by_missing_context",
+        summary.blocked_by_missing_context_packets,
+        "required packet context is missing before the packet can be safely delegated",
+        "inspect_blocked_missing_context",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "blocked_by_missing_context",
+            |packet| {
+                audit_non_empty_string(packet, &["swarm_state"]).as_deref()
+                    == Some("blocked_by_missing_context")
+            },
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "blocked_by_static_limitation",
+        summary.blocked_by_static_limitation_packets,
+        "a named static limitation prevents a safe bounded repair route",
+        "route_static_limitations",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "blocked_by_static_limitation",
+            |packet| {
+                audit_non_empty_string(packet, &["swarm_state"]).as_deref()
+                    == Some("blocked_by_static_limitation")
+            },
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "blocked_by_public_projection_exclusion",
+        summary.blocked_by_public_projection_exclusion_packets,
+        "public projection eligibility is false or projection_exclusion_reasons are present",
+        "inspect_public_projection_exclusions",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "blocked_by_public_projection_exclusion",
+            |packet| {
+                audit_non_empty_string(packet, &["swarm_state"]).as_deref()
+                    == Some("blocked_by_public_projection_exclusion")
+            },
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "blocked_by_operator_judgment",
+        summary.blocked_by_operator_judgment_packets,
+        "typed context exists, but default swarm routing still requires operator judgment",
+        "route_operator_judgment_packets",
+        "cargo xtask ripr-swarm plan --top 10",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "blocked_by_operator_judgment",
+            |packet| {
+                audit_non_empty_string(packet, &["swarm_state"]).as_deref()
+                    == Some("blocked_by_operator_judgment")
+            },
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "not_actionable_gap_state",
+        summary.not_actionable_gap_state,
+        "gap_state is not actionable, so the packet must stay out of public repair queues",
+        "inspect_non_actionable_gap_state",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "not_actionable_gap_state", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "actionable_gap_state")
+                || ripr_swarm_readiness_packet_projection_exclusion(
+                    packet,
+                    "not_actionable_gap_state",
+                )
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_verify_command",
+        summary.missing_verify_command,
+        "the packet has no usable verify command",
+        "fix_verify_command_source",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_verify_command", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "verify_command")
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_receipt_command",
+        summary.missing_receipt_command,
+        "the packet has no usable receipt command",
+        "fix_receipt_command_source",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_receipt_command", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "receipt_command")
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_repair_route",
+        summary.missing_repair_route,
+        "the packet has no structured repair route",
+        "fix_repair_route_source",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_repair_route", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "repair_route")
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_related_test_or_observer",
+        summary.related_context_missing,
+        "the packet has no typed related test or observer target",
+        "fix_related_test_or_observer",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "missing_related_test_or_observer",
+            |packet| {
+                audit_bool(packet, &["related_test_or_observer_available"]) == Some(false)
+                    || ripr_swarm_readiness_packet_missing_context(
+                        packet,
+                        "related_test_or_observer",
+                    )
+            },
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_must_not_change",
+        summary.missing_must_not_change,
+        "the packet has no must_not_change boundaries",
+        "fix_must_not_change_boundaries",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_must_not_change", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "must_not_change")
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_allowed_edit_surface",
+        summary.missing_allowed_edit_surface,
+        "the packet has no allowed_edit_surface edit cage",
+        "fix_allowed_edit_surface",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "missing_allowed_edit_surface",
+            |packet| ripr_swarm_readiness_packet_missing_context(packet, "allowed_edit_surface"),
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_raw_evidence_refs",
+        summary.missing_raw_evidence_refs,
+        "the packet has no structured raw evidence references",
+        "fix_raw_evidence_refs",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(
+            swarm_plan,
+            "missing_raw_evidence_refs",
+            |packet| ripr_swarm_readiness_packet_missing_context(packet, "raw_evidence_refs"),
+        ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "attempted_no_receipt",
+        summary.attempted_no_receipt_packets,
+        "an attempt exists without a matching receipt",
+        "collect_missing_attempt_receipts",
+        "cargo xtask ripr-swarm attempt-ledger",
+        ripr_swarm_readiness_attempt_sample(attempt_ledger, |attempt| {
+            attempt.outcome == "attempted_no_receipt"
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_verify_result",
+        summary.missing_verify_result,
+        "an attempt is missing typed verify_result evidence",
+        "inspect_missing_verify_results",
+        "cargo xtask ripr-swarm attempt-ledger",
+        ripr_swarm_readiness_attempt_sample(attempt_ledger, |attempt| {
+            attempt.outcome != "not_attempted"
+                && attempt
+                    .verify_result
+                    .as_deref()
+                    .is_none_or(ripr_swarm_plan_field_missing)
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "orphan_receipt",
+        summary.orphaned_receipts,
+        "a receipt does not match any current actionable packet",
+        "reconcile_orphaned_receipts",
+        "cargo xtask ripr-swarm attempt-ledger",
+        ripr_swarm_readiness_orphan_receipt_sample(attempt_ledger),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "unchanged_attempt",
+        summary.unchanged_packets,
+        "an attempted packet left evidence unchanged",
+        "inspect_unchanged_attempts",
+        "cargo xtask ripr-swarm attempt-ledger",
+        ripr_swarm_readiness_attempt_sample(attempt_ledger, |attempt| {
+            attempt.outcome == "evidence_unchanged"
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "regressed_attempt",
+        summary.regressed_packets,
+        "an attempted packet regressed evidence",
+        "inspect_regressed_attempts",
+        "cargo xtask ripr-swarm attempt-ledger",
+        ripr_swarm_readiness_attempt_sample(attempt_ledger, |attempt| {
+            attempt.outcome == "evidence_regressed"
+        }),
+    );
+    routes
+}
+
+fn ripr_swarm_readiness_push_blocked_state_route(
+    routes: &mut Vec<RiprSwarmReadinessBlockedStateRoute>,
+    state: &str,
+    count: usize,
+    reason: &str,
+    next_action_kind: &str,
+    repair_route: &str,
+    sample: RiprSwarmReadinessBlockedStateSample,
+) {
+    if count == 0 {
+        return;
+    }
+    routes.push(RiprSwarmReadinessBlockedStateRoute {
+        state: state.to_string(),
+        count,
+        reason: reason.to_string(),
+        next_action_kind: next_action_kind.to_string(),
+        repair_route: repair_route.to_string(),
+        example_packet_id: sample.packet_id,
+        example_canonical_gap_id: sample.canonical_gap_id,
+        example_repair_kind: sample.repair_kind,
+        example_receipt_path: sample.receipt_path,
+    });
+}
+
+fn ripr_swarm_readiness_plan_packet_sample<F>(
+    swarm_plan: Option<&Value>,
+    state: &str,
+    predicate: F,
+) -> RiprSwarmReadinessBlockedStateSample
+where
+    F: Fn(&Value) -> bool,
+{
+    let Some(plan) = swarm_plan else {
+        return RiprSwarmReadinessBlockedStateSample::default();
+    };
+    if let Some(example) = audit_array(plan, &["blocked_state_examples"])
+        .iter()
+        .find(|example| audit_non_empty_string(example, &["state"]).as_deref() == Some(state))
+    {
+        return RiprSwarmReadinessBlockedStateSample {
+            packet_id: audit_non_empty_string(example, &["example_packet_id"]),
+            canonical_gap_id: audit_non_empty_string(example, &["example_canonical_gap_id"]),
+            repair_kind: audit_non_empty_string(example, &["example_repair_kind"]),
+            receipt_path: None,
+        };
+    }
+    let mut packets = audit_array(plan, &["top_blocked_packets"])
+        .iter()
+        .collect::<Vec<_>>();
+    packets.extend(audit_array(plan, &["top_ready_packets"]).iter());
+    packets
+        .into_iter()
+        .find(|packet| predicate(packet))
+        .map(|packet| RiprSwarmReadinessBlockedStateSample {
+            packet_id: audit_non_empty_string(packet, &["packet_id"]),
+            canonical_gap_id: audit_non_empty_string(packet, &["canonical_gap_id"]),
+            repair_kind: audit_non_empty_string(packet, &["repair_kind"]),
+            receipt_path: None,
+        })
+        .unwrap_or_default()
+}
+
+fn ripr_swarm_readiness_attempt_sample<F>(
+    attempt_ledger: Option<&Value>,
+    predicate: F,
+) -> RiprSwarmReadinessBlockedStateSample
+where
+    F: Fn(&RiprSwarmAttemptLedgerEntry) -> bool,
+{
+    let Some(ledger) = attempt_ledger else {
+        return RiprSwarmReadinessBlockedStateSample::default();
+    };
+    let attempts = ripr_swarm_attempt_ledger_entries_from_value(ledger);
+    let latest_attempts = ripr_swarm_attempt_ledger_latest_attempts(&attempts);
+    latest_attempts
+        .into_iter()
+        .find(predicate)
+        .map(|attempt| RiprSwarmReadinessBlockedStateSample {
+            packet_id: Some(attempt.packet_id),
+            canonical_gap_id: Some(attempt.canonical_gap_id),
+            repair_kind: attempt.repair_kind,
+            receipt_path: attempt.receipt_path,
+        })
+        .unwrap_or_default()
+}
+
+fn ripr_swarm_readiness_orphan_receipt_sample(
+    attempt_ledger: Option<&Value>,
+) -> RiprSwarmReadinessBlockedStateSample {
+    let Some(ledger) = attempt_ledger else {
+        return RiprSwarmReadinessBlockedStateSample::default();
+    };
+    audit_array(ledger, &["orphaned_receipts"])
+        .first()
+        .map(|receipt| RiprSwarmReadinessBlockedStateSample {
+            packet_id: audit_non_empty_string(receipt, &["packet_id"]),
+            canonical_gap_id: audit_non_empty_string(receipt, &["canonical_gap_id"]),
+            repair_kind: audit_non_empty_string(receipt, &["repair_kind"]),
+            receipt_path: audit_non_empty_string(receipt, &["receipt_path"])
+                .or_else(|| audit_non_empty_string(receipt, &["path"])),
+        })
+        .unwrap_or_default()
+}
+
+fn ripr_swarm_readiness_packet_missing_context(packet: &Value, field: &str) -> bool {
+    audit_array(packet, &["missing_context"])
+        .iter()
+        .any(|value| value.as_str() == Some(field))
+}
+
+fn ripr_swarm_readiness_packet_projection_exclusion(packet: &Value, reason: &str) -> bool {
+    audit_array(packet, &["projection_exclusion_reasons"])
+        .iter()
+        .any(|value| value.as_str() == Some(reason))
 }
 
 fn ripr_swarm_readiness_blocked_state_routes_json(
@@ -24574,6 +25088,10 @@ fn ripr_swarm_readiness_blocked_state_routes_json(
                 "reason": route.reason,
                 "next_action_kind": route.next_action_kind,
                 "repair_route": route.repair_route,
+                "example_packet_id": route.example_packet_id,
+                "example_canonical_gap_id": route.example_canonical_gap_id,
+                "example_repair_kind": route.example_repair_kind,
+                "example_receipt_path": route.example_receipt_path,
             })
         })
         .collect()
@@ -24880,6 +25398,20 @@ fn ripr_swarm_readiness_next_actions(
                 .to_string(),
         });
     }
+    if summary.not_actionable_gap_state > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "inspect_non_actionable_gap_state".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) have non-actionable gap_state; keep them out of public repair queues and inspect the named limitation or advisory route",
+                summary.not_actionable_gap_state
+            ),
+        });
+    }
     if summary.missing_receipt_command > 0 {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "fix_receipt_command_source".to_string(),
@@ -24905,6 +25437,76 @@ fn ripr_swarm_readiness_next_actions(
             reason: format!(
                 "{} packet(s) are missing verify commands; improve canonical item verify routing before ranking them as repair-ready",
                 summary.missing_verify_command
+            ),
+        });
+    }
+    if summary.missing_repair_route > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_repair_route_source".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing structured repair routes; repair canonical item route projection before attempting swarm work",
+                summary.missing_repair_route
+            ),
+        });
+    }
+    if summary.related_context_missing > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_related_test_or_observer".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing typed related test or observer context; repair target projection before attempting swarm work",
+                summary.related_context_missing
+            ),
+        });
+    }
+    if summary.missing_must_not_change > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_must_not_change_boundaries".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing must_not_change boundaries; repair packet constraints before attempting swarm work",
+                summary.missing_must_not_change
+            ),
+        });
+    }
+    if summary.missing_allowed_edit_surface > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_allowed_edit_surface".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing allowed_edit_surface edit cages; repair packet edit bounds before attempting swarm work",
+                summary.missing_allowed_edit_surface
+            ),
+        });
+    }
+    if summary.missing_raw_evidence_refs > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_raw_evidence_refs".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing structured raw evidence references; repair evidence lineage before attempting swarm work",
+                summary.missing_raw_evidence_refs
             ),
         });
     }
@@ -25308,8 +25910,15 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "blocked_by_public_projection_exclusion_packets",
         "blocked_by_operator_judgment_packets",
         "public_projection_excluded_packets",
+        "not_actionable_gap_state",
         "missing_verify_command",
+        "missing_verify_result",
         "missing_receipt_command",
+        "missing_repair_route",
+        "missing_must_not_change",
+        "missing_allowed_edit_surface",
+        "missing_raw_evidence_refs",
+        "related_context_missing",
         "static_limitation_packets",
         "high_confidence_packets",
         "attempted_packets",
@@ -25374,20 +25983,28 @@ fn ripr_swarm_readiness_push_blocked_state_routes_table(
     routes: &[RiprSwarmReadinessBlockedStateRoute],
 ) {
     out.push_str("## Blocked State Routes\n\n");
-    out.push_str("| State | Count | Next action | Repair route | Reason |\n");
-    out.push_str("| --- | ---: | --- | --- | --- |\n");
+    out.push_str("| State | Count | Example packet | Example gap | Example receipt | Next action | Repair route | Reason |\n");
+    out.push_str("| --- | ---: | --- | --- | --- | --- | --- | --- |\n");
     for route in routes {
         out.push_str(&format!(
-            "| `{}` | {} | `{}` | `{}` | {} |\n",
+            "| `{}` | {} | `{}` | `{}` | `{}` | `{}` | `{}` | {} |\n",
             audit_markdown_cell(&route.state),
             route.count,
+            audit_markdown_cell(route.example_packet_id.as_deref().unwrap_or("unknown")),
+            audit_markdown_cell(
+                route
+                    .example_canonical_gap_id
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(route.example_receipt_path.as_deref().unwrap_or("n/a")),
             audit_markdown_cell(&route.next_action_kind),
             audit_markdown_cell(&route.repair_route),
             audit_markdown_cell(&route.reason),
         ));
     }
     if routes.is_empty() {
-        out.push_str("| none | 0 |  |  | no blocked packet states reported |\n");
+        out.push_str("| none | 0 |  |  |  |  |  | no blocked packet states reported |\n");
     }
     out.push('\n');
 }
@@ -78343,13 +78960,67 @@ covered_by = ["cargo xtask check-file-policy"]
                 "blocked_by_public_projection_exclusion_packets": 1,
                 "blocked_by_operator_judgment_packets": 1,
                 "public_projection_excluded_packets": 1,
-                "missing_verify_command": 0,
-                "missing_receipt_command": 0,
+                "not_actionable_gap_state": 1,
+                "missing_verify_command": 1,
+                "missing_verify_result": 1,
+                "missing_receipt_command": 1,
+                "missing_repair_route": 1,
+                "missing_must_not_change": 1,
+                "missing_allowed_edit_surface": 1,
+                "missing_raw_evidence_refs": 1,
+                "related_context_missing": 1,
                 "static_limitation_packets": 1,
                 "high_confidence_packets": 0
             },
             "top_ready_packets": [],
             "top_blocked_packets": [
+                {
+                    "packet_id": "packet:missing-context",
+                    "canonical_gap_id": "gap:missing-context",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "swarm_state": "blocked_by_missing_context",
+                    "missing_context": [
+                        "actionable_gap_state",
+                        "repair_route",
+                        "related_test_or_observer",
+                        "verify_command",
+                        "receipt_command",
+                        "must_not_change",
+                        "allowed_edit_surface",
+                        "raw_evidence_refs"
+                    ],
+                    "projection_exclusion_reasons": [
+                        "not_actionable_gap_state"
+                    ],
+                    "related_test_or_observer_available": false,
+                    "blocked_reasons": [
+                        "missing_context"
+                    ]
+                },
+                {
+                    "packet_id": "packet:static-limit",
+                    "canonical_gap_id": "gap:static-limit",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "swarm_state": "blocked_by_static_limitation",
+                    "blocked_reasons": [
+                        "static_limitation_present"
+                    ]
+                },
+                {
+                    "packet_id": "packet:projection",
+                    "canonical_gap_id": "gap:projection",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "swarm_state": "blocked_by_public_projection_exclusion",
+                    "projection_exclusion_reasons": [
+                        "missing_allowed_edit_surface"
+                    ],
+                    "blocked_reasons": [
+                        "public_projection_exclusion"
+                    ]
+                },
                 {
                     "packet_id": "packet:manual",
                     "canonical_gap_id": "gap:manual",
@@ -78383,10 +79054,57 @@ covered_by = ["cargo xtask check-file-policy"]
                 "downstream_consumable": true
             },
             "summary": {
-                "attempts_total": 0,
+                "attempts_total": 3,
                 "not_attempted": 0,
-                "orphaned_receipts": 0
-            }
+                "attempted_no_receipt": 1,
+                "evidence_unchanged": 1,
+                "evidence_regressed": 1,
+                "orphaned_receipts": 1
+            },
+            "attempts": [
+                {
+                    "packet_id": "packet:no-receipt",
+                    "canonical_gap_id": "gap:no-receipt",
+                    "attempt_id": "attempt:no-receipt",
+                    "repair_kind": "add_boundary_assertion",
+                    "actor_kind": "codex",
+                    "verify_command": "cargo test -p foo no_receipt",
+                    "outcome": "attempted_no_receipt",
+                    "receipt_state": "missing"
+                },
+                {
+                    "packet_id": "packet:unchanged",
+                    "canonical_gap_id": "gap:unchanged",
+                    "attempt_id": "attempt:unchanged",
+                    "repair_kind": "add_output_observer",
+                    "actor_kind": "codex",
+                    "receipt_path": "target/ripr/receipts/unchanged.json",
+                    "verify_command": "cargo test -p foo unchanged",
+                    "verify_result": "passed",
+                    "outcome": "evidence_unchanged",
+                    "receipt_state": "found"
+                },
+                {
+                    "packet_id": "packet:regressed",
+                    "canonical_gap_id": "gap:regressed",
+                    "attempt_id": "attempt:regressed",
+                    "repair_kind": "add_output_observer",
+                    "actor_kind": "codex",
+                    "receipt_path": "target/ripr/receipts/regressed.json",
+                    "verify_command": "cargo test -p foo regressed",
+                    "verify_result": "failed",
+                    "outcome": "evidence_regressed",
+                    "receipt_state": "found"
+                }
+            ],
+            "orphaned_receipts": [
+                {
+                    "packet_id": "packet:orphan",
+                    "canonical_gap_id": "gap:orphan",
+                    "repair_kind": "add_boundary_assertion",
+                    "receipt_path": "target/ripr/receipts/orphan.json"
+                }
+            ]
         });
         let report = ripr_swarm_readiness_from_values(
             RiprSwarmReadinessInput {
@@ -78428,29 +79146,149 @@ covered_by = ["cargo xtask check-file-policy"]
             value["summary"]["blocked_by_operator_judgment_packets"],
             serde_json::Value::from(1)
         );
+        for key in [
+            "not_actionable_gap_state",
+            "missing_verify_command",
+            "missing_verify_result",
+            "missing_receipt_command",
+            "missing_repair_route",
+            "missing_must_not_change",
+            "missing_allowed_edit_surface",
+            "missing_raw_evidence_refs",
+            "related_context_missing",
+            "attempted_no_receipt_packets",
+            "unchanged_packets",
+            "regressed_packets",
+            "orphaned_receipts",
+        ] {
+            assert_eq!(
+                value["summary"][key],
+                serde_json::Value::from(1),
+                "summary count for {key}"
+            );
+        }
         let routes = value["blocked_state_routes"]
             .as_array()
             .ok_or("blocked_state_routes must be an array")?;
-        for (state, action, repair_route) in [
+        for (state, action, repair_route, packet_id, canonical_gap_id) in [
             (
                 "blocked_by_missing_context",
                 "inspect_blocked_missing_context",
                 "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
             ),
             (
                 "blocked_by_static_limitation",
                 "route_static_limitations",
                 "cargo xtask lane1-evidence-audit",
+                "packet:static-limit",
+                "gap:static-limit",
             ),
             (
                 "blocked_by_public_projection_exclusion",
                 "inspect_public_projection_exclusions",
                 "cargo xtask lane1-evidence-audit",
+                "packet:projection",
+                "gap:projection",
             ),
             (
                 "blocked_by_operator_judgment",
                 "route_operator_judgment_packets",
                 "cargo xtask ripr-swarm plan --top 10",
+                "packet:manual",
+                "gap:manual",
+            ),
+            (
+                "not_actionable_gap_state",
+                "inspect_non_actionable_gap_state",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_verify_command",
+                "fix_verify_command_source",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_receipt_command",
+                "fix_receipt_command_source",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_repair_route",
+                "fix_repair_route_source",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_related_test_or_observer",
+                "fix_related_test_or_observer",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_must_not_change",
+                "fix_must_not_change_boundaries",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_allowed_edit_surface",
+                "fix_allowed_edit_surface",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_raw_evidence_refs",
+                "fix_raw_evidence_refs",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "attempted_no_receipt",
+                "collect_missing_attempt_receipts",
+                "cargo xtask ripr-swarm attempt-ledger",
+                "packet:no-receipt",
+                "gap:no-receipt",
+            ),
+            (
+                "missing_verify_result",
+                "inspect_missing_verify_results",
+                "cargo xtask ripr-swarm attempt-ledger",
+                "packet:no-receipt",
+                "gap:no-receipt",
+            ),
+            (
+                "orphan_receipt",
+                "reconcile_orphaned_receipts",
+                "cargo xtask ripr-swarm attempt-ledger",
+                "packet:orphan",
+                "gap:orphan",
+            ),
+            (
+                "unchanged_attempt",
+                "inspect_unchanged_attempts",
+                "cargo xtask ripr-swarm attempt-ledger",
+                "packet:unchanged",
+                "gap:unchanged",
+            ),
+            (
+                "regressed_attempt",
+                "inspect_regressed_attempts",
+                "cargo xtask ripr-swarm attempt-ledger",
+                "packet:regressed",
+                "gap:regressed",
             ),
         ] {
             let route = routes
@@ -78460,6 +79298,8 @@ covered_by = ["cargo xtask check-file-policy"]
             assert_eq!(route["count"], serde_json::Value::from(1));
             assert_eq!(route["next_action_kind"], action);
             assert_eq!(route["repair_route"], repair_route);
+            assert_eq!(route["example_packet_id"], packet_id);
+            assert_eq!(route["example_canonical_gap_id"], canonical_gap_id);
             assert!(
                 route["reason"]
                     .as_str()
@@ -78474,6 +79314,17 @@ covered_by = ["cargo xtask check-file-policy"]
             "route_static_limitations",
             "inspect_public_projection_exclusions",
             "route_operator_judgment_packets",
+            "inspect_non_actionable_gap_state",
+            "fix_repair_route_source",
+            "fix_related_test_or_observer",
+            "fix_must_not_change_boundaries",
+            "fix_allowed_edit_surface",
+            "fix_raw_evidence_refs",
+            "collect_missing_attempt_receipts",
+            "inspect_missing_verify_results",
+            "reconcile_orphaned_receipts",
+            "inspect_unchanged_attempts",
+            "inspect_regressed_attempts",
         ] {
             assert!(
                 actions.iter().any(|action| action["kind"] == kind),
@@ -78484,6 +79335,10 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("## Blocked State Routes"));
         assert!(markdown.contains("blocked_by_missing_context"));
         assert!(markdown.contains("inspect_blocked_missing_context"));
+        assert!(markdown.contains("packet:missing-context"));
+        assert!(markdown.contains("gap:missing-context"));
+        assert!(markdown.contains("fix_allowed_edit_surface"));
+        assert!(markdown.contains("target/ripr/receipts/orphan.json"));
         assert!(markdown.contains("cargo xtask lane1-evidence-audit"));
         Ok(())
     }

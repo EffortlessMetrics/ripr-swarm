@@ -2525,6 +2525,8 @@ path supplied by `--actionable-gaps`. It is report-only. It does not edit files,
 run tests, call providers, generate tests, create receipts, run mutation
 testing, change PR/CI rendering, change editor/LSP behavior, change gates, or
 change public badges.
+`blocked_state_examples[]` is not top-limit truncated; it gives readiness one
+sample packet per blocked packet class where the plan has source data.
 
 For compatibility with current actionable-gap packets, input may carry either
 `receipt_command_or_path` or `receipt_command`. The swarm plan normalizes the
@@ -2598,10 +2600,22 @@ enter the swarm-ready queue.
     "missing_repair_route": 0,
     "missing_must_not_change": 0,
     "missing_allowed_edit_surface": 0,
+    "missing_raw_evidence_refs": 0,
     "related_context_missing": 3,
     "static_limitation_packets": 2,
     "high_confidence_packets": 4
   },
+  "blocked_state_examples": [
+    {
+      "state": "missing_allowed_edit_surface",
+      "example_packet_id": "packet:missing-edit-surface",
+      "example_canonical_gap_id": "gap:missing-edit-surface",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_missing_context": ["allowed_edit_surface"],
+      "example_projection_exclusion_reasons": [],
+      "example_blocked_reasons": ["missing_context"]
+    }
+  ],
   "top_ready_packets": [
     {
       "packet_id": "gap:abc",
@@ -3230,21 +3244,33 @@ limits.
       "count": 12,
       "reason": "required packet context is missing before the packet can be safely delegated",
       "next_action_kind": "inspect_blocked_missing_context",
-      "repair_route": "cargo xtask lane1-evidence-audit"
+      "repair_route": "cargo xtask lane1-evidence-audit",
+      "example_packet_id": "packet:missing-context",
+      "example_canonical_gap_id": "gap:missing-context",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_receipt_path": null
     },
     {
       "state": "blocked_by_static_limitation",
       "count": 2,
       "reason": "a named static limitation prevents a safe bounded repair route",
       "next_action_kind": "route_static_limitations",
-      "repair_route": "cargo xtask lane1-evidence-audit"
+      "repair_route": "cargo xtask lane1-evidence-audit",
+      "example_packet_id": "packet:static-limit",
+      "example_canonical_gap_id": "gap:static-limit",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_receipt_path": null
     },
     {
       "state": "blocked_by_operator_judgment",
       "count": 1,
       "reason": "typed context exists, but default swarm routing still requires operator judgment",
       "next_action_kind": "route_operator_judgment_packets",
-      "repair_route": "cargo xtask ripr-swarm plan --top 10"
+      "repair_route": "cargo xtask ripr-swarm plan --top 10",
+      "example_packet_id": "packet:manual",
+      "example_canonical_gap_id": "gap:manual",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_receipt_path": null
     }
   ],
   "repair_route_quality": [
@@ -3367,9 +3393,14 @@ operator-judgment packets that are visible but not default swarm-ready. It does
 not execute the action or consume raw findings as work. `top_next_action` is
 the first item in that queue, duplicated as a stable object for badge, LSP, PR,
 CI, or other thin surfaces that should not implement their own ranking rules.
-`blocked_state_routes[]` gives every reported blocked packet state a count,
-reason, next action kind, and repair route so no blocked class is visible only
-through raw packet JSON.
+`blocked_state_routes[]` gives every reported blocked packet or attempt state a
+count, reason, next action kind, repair route, and example packet/canonical gap
+identity when source artifacts provide one, so no blocked class is visible only
+through raw packet JSON. It includes coarse states such as
+`blocked_by_missing_context`, field-level blockers such as
+`missing_allowed_edit_surface` and `missing_raw_evidence_refs`, and outcome
+blockers such as `orphan_receipt`, `unchanged_attempt`, and
+`regressed_attempt`.
 
 
 ## Evidence Quality Scorecard
