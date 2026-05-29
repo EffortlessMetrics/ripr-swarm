@@ -3847,6 +3847,7 @@ metrics = [
   "swarm_verified_regressed",
   "swarm_failed_to_apply",
   "swarm_orphaned_receipts",
+  "top_limitation_routes",
   "real_repair_attempt_receipts",
 ]
 

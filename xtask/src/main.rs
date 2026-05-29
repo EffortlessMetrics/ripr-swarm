@@ -21540,6 +21540,7 @@ struct RiprSwarmReadinessReport {
     attempt_ledger_limitation: Option<String>,
     summary: RiprSwarmReadinessSummary,
     static_limitation_backlog: Value,
+    top_limitation_routes: Vec<RiprSwarmLimitationRouteRow>,
     blocked_state_routes: Vec<RiprSwarmReadinessBlockedStateRoute>,
     repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
     top_failing_repair_routes: Vec<RiprSwarmRepairRouteQualityRow>,
@@ -21596,6 +21597,18 @@ struct RiprSwarmRepairRouteQualityRow {
     receipt_present: usize,
     missing_verify_result: usize,
     unknown: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RiprSwarmLimitationRouteRow {
+    repair_route: String,
+    signal_count: usize,
+    sample_packet_id: Option<String>,
+    sample_limitation_category: Option<String>,
+    sample_canonical_gap_ids: Vec<String>,
+    dominant_evidence_class: Option<String>,
+    why_not_actionable: Option<String>,
+    unlock_condition: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24106,6 +24119,8 @@ fn ripr_swarm_readiness_from_values(
         .and_then(|plan| audit_get(plan, &["static_limitation_backlog"]))
         .cloned()
         .unwrap_or(Value::Null);
+    let top_limitation_routes =
+        ripr_swarm_readiness_top_limitation_routes(&static_limitation_backlog);
     let blocked_state_routes = ripr_swarm_readiness_blocked_state_routes(&summary);
     let runtime_status =
         ripr_swarm_readiness_runtime_status(&swarm_plan, &actionable_gap_outcomes, &attempt_ledger);
@@ -24113,6 +24128,7 @@ fn ripr_swarm_readiness_from_values(
         &summary,
         swarm_plan.value,
         &top_failing_repair_routes,
+        &top_limitation_routes,
         &static_limitation_backlog,
         [&swarm_plan, &actionable_gap_outcomes, &attempt_ledger],
         &runtime_status,
@@ -24138,6 +24154,7 @@ fn ripr_swarm_readiness_from_values(
         attempt_ledger_limitation: attempt_ledger.limitation,
         summary,
         static_limitation_backlog,
+        top_limitation_routes,
         blocked_state_routes,
         repair_route_quality,
         top_failing_repair_routes,
@@ -24388,6 +24405,9 @@ fn ripr_swarm_readiness_json(report: &RiprSwarmReadinessReport) -> Result<String
         },
         "summary": ripr_swarm_readiness_summary_json(&report.summary),
         "static_limitation_backlog": report.static_limitation_backlog,
+        "top_limitation_routes": ripr_swarm_limitation_routes_json(
+            &report.top_limitation_routes
+        ),
         "blocked_state_routes": ripr_swarm_readiness_blocked_state_routes_json(
             &report.blocked_state_routes
         ),
@@ -24521,6 +24541,99 @@ fn ripr_swarm_readiness_repair_route_quality(
         .collect::<Vec<_>>()
 }
 
+fn ripr_swarm_readiness_top_limitation_routes(backlog: &Value) -> Vec<RiprSwarmLimitationRouteRow> {
+    let mut rows = BTreeMap::<String, RiprSwarmLimitationRouteRow>::new();
+    for row in audit_array(backlog, &["top_repair_routes"]) {
+        let Some(repair_route) = audit_non_empty_string(row, &["repair_route"])
+            .or_else(|| audit_non_empty_string(row, &["label"]))
+        else {
+            continue;
+        };
+        let signal_count = audit_usize(row, &["count"]).unwrap_or_default();
+        rows.entry(repair_route.clone())
+            .or_insert_with(|| RiprSwarmLimitationRouteRow {
+                repair_route,
+                signal_count,
+                sample_packet_id: None,
+                sample_limitation_category: None,
+                sample_canonical_gap_ids: Vec::new(),
+                dominant_evidence_class: None,
+                why_not_actionable: None,
+                unlock_condition: None,
+            })
+            .signal_count = signal_count;
+    }
+    for packet in audit_array(backlog, &["limitation_backlog_packets"]) {
+        let category = audit_non_empty_string(packet, &["limitation_category"])
+            .or_else(|| audit_non_empty_string(packet, &["category"]));
+        let Some(repair_route) = audit_non_empty_string(packet, &["repair_route"]).or_else(|| {
+            category
+                .as_deref()
+                .map(static_limitation_repair_route)
+                .map(str::to_string)
+        }) else {
+            continue;
+        };
+        let signal_count = audit_usize(packet, &["signal_count"]).unwrap_or_default();
+        let row = rows
+            .entry(repair_route.clone())
+            .or_insert_with(|| RiprSwarmLimitationRouteRow {
+                repair_route,
+                signal_count,
+                sample_packet_id: None,
+                sample_limitation_category: None,
+                sample_canonical_gap_ids: Vec::new(),
+                dominant_evidence_class: None,
+                why_not_actionable: None,
+                unlock_condition: None,
+            });
+        row.signal_count = row.signal_count.max(signal_count);
+        if row.sample_packet_id.is_none() {
+            row.sample_packet_id = audit_non_empty_string(packet, &["packet_id"]);
+            row.sample_limitation_category = category;
+            row.sample_canonical_gap_ids = ripr_swarm_limitation_route_sample_gap_ids(packet);
+            row.dominant_evidence_class =
+                audit_non_empty_string(packet, &["dominant_evidence_class"]);
+            row.why_not_actionable = audit_non_empty_string(packet, &["why_not_actionable"]);
+            row.unlock_condition = audit_non_empty_string(packet, &["unlock_condition"]);
+        }
+    }
+    let mut rows = rows.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .signal_count
+            .cmp(&left.signal_count)
+            .then_with(|| left.repair_route.cmp(&right.repair_route))
+    });
+    rows.truncate(LANE1_EVIDENCE_AUDIT_TOP_LIMIT);
+    rows
+}
+
+fn ripr_swarm_limitation_route_sample_gap_ids(packet: &Value) -> Vec<String> {
+    audit_array(packet, &["samples"])
+        .iter()
+        .filter_map(|sample| audit_non_empty_string(sample, &["canonical_gap_id"]))
+        .take(3)
+        .collect()
+}
+
+fn ripr_swarm_limitation_routes_json(rows: &[RiprSwarmLimitationRouteRow]) -> Vec<Value> {
+    rows.iter()
+        .map(|row| {
+            serde_json::json!({
+                "repair_route": row.repair_route,
+                "signal_count": row.signal_count,
+                "sample_packet_id": row.sample_packet_id,
+                "sample_limitation_category": row.sample_limitation_category,
+                "sample_canonical_gap_ids": row.sample_canonical_gap_ids,
+                "dominant_evidence_class": row.dominant_evidence_class,
+                "why_not_actionable": row.why_not_actionable,
+                "unlock_condition": row.unlock_condition,
+            })
+        })
+        .collect()
+}
+
 fn ripr_swarm_readiness_top_failing_repair_routes(
     rows: &[RiprSwarmRepairRouteQualityRow],
 ) -> Vec<RiprSwarmRepairRouteQualityRow> {
@@ -24650,6 +24763,7 @@ fn ripr_swarm_readiness_next_actions(
     summary: &RiprSwarmReadinessSummary,
     swarm_plan: Option<&Value>,
     top_failing_repair_routes: &[RiprSwarmRepairRouteQualityRow],
+    top_limitation_routes: &[RiprSwarmLimitationRouteRow],
     static_limitation_backlog: &Value,
     inputs: [&RiprSwarmReadinessInput<'_>; 3],
     runtime_status: &Lane1RuntimeStatus,
@@ -24887,6 +25001,22 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     if summary.swarm_ready_packets == 0
+        && let Some(route) = top_limitation_routes.first()
+    {
+        let sample_packet = route.sample_packet_id.as_deref().unwrap_or("unknown");
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "route_static_limitation_backlog".to_string(),
+            packet_id: route.sample_packet_id.clone(),
+            canonical_gap_id: route.sample_canonical_gap_ids.first().cloned(),
+            evidence_class: route.dominant_evidence_class.clone(),
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "No swarm-ready packets are available; top limitation route `{}` has {} signal(s), sample packet `{sample_packet}`; route analyzer work instead of attempting user test repairs",
+                route.repair_route, route.signal_count
+            ),
+        });
+    } else if summary.swarm_ready_packets == 0
         && let Some((category, count, repair_route)) =
             ripr_swarm_static_limitation_backlog_top_category(static_limitation_backlog)
     {
@@ -25148,6 +25278,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
     out.push('\n');
     ripr_swarm_readiness_push_blocked_state_routes_table(&mut out, &report.blocked_state_routes);
     ripr_swarm_push_static_limitation_backlog_markdown(&mut out, &report.static_limitation_backlog);
+    ripr_swarm_readiness_push_top_limitation_routes_table(&mut out, &report.top_limitation_routes);
     out.push_str("\n## Repair Route Quality\n\n");
     ripr_swarm_push_repair_route_quality_table(&mut out, &report.repair_route_quality);
     if !report.top_missing_evidence_fields.is_empty() {
@@ -25205,6 +25336,41 @@ fn ripr_swarm_readiness_push_blocked_state_routes_table(
     }
     if routes.is_empty() {
         out.push_str("| none | 0 |  |  | no blocked packet states reported |\n");
+    }
+    out.push('\n');
+}
+
+fn ripr_swarm_readiness_push_top_limitation_routes_table(
+    out: &mut String,
+    rows: &[RiprSwarmLimitationRouteRow],
+) {
+    if rows.is_empty() {
+        return;
+    }
+    out.push_str("\n## Top Limitation Routes\n\n");
+    out.push_str(
+        "Limitation routes are analyzer backlog signals, not swarm-ready repair work.\n\n",
+    );
+    out.push_str("| Repair route | Signals | Sample packet | Category | Dominant class | Unlock condition |\n");
+    out.push_str("| --- | ---: | --- | --- | --- | --- |\n");
+    for row in rows {
+        out.push_str(&format!(
+            "| `{}` | {} | `{}` | `{}` | `{}` | {} |\n",
+            audit_markdown_cell(&row.repair_route),
+            row.signal_count,
+            audit_markdown_cell(row.sample_packet_id.as_deref().unwrap_or("unknown")),
+            audit_markdown_cell(
+                row.sample_limitation_category
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(row.dominant_evidence_class.as_deref().unwrap_or("unknown")),
+            audit_markdown_cell(
+                row.unlock_condition
+                    .as_deref()
+                    .unwrap_or("inspect the analyzer route before attempting repairs")
+            )
+        ));
     }
     out.push('\n');
 }
@@ -78806,6 +78972,24 @@ covered_by = ["cargo xtask check-file-policy"]
                         "repair_route": "analysis/related-test-affinity-owner-call-tracing",
                         "count": 1148
                     }
+                ],
+                "limitation_backlog_packets": [
+                    {
+                        "packet_id": "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing",
+                        "limitation_category": "activation_owner_call_absent_affinity_only",
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "signal_count": 1148,
+                        "dominant_evidence_class": "call_presence",
+                        "why_not_actionable": "related tests are affinity-ranked but not tied to direct owner calls",
+                        "unlock_condition": "implement related-test owner-call tracing before repair packets are emitted",
+                        "samples": [
+                            {
+                                "canonical_gap_id": "gap:affinity-owner-call",
+                                "source_file": "src/lib.rs",
+                                "evidence_class": "call_presence"
+                            }
+                        ]
+                    }
                 ]
             },
             "top_ready_packets": []
@@ -78867,6 +79051,14 @@ covered_by = ["cargo xtask check-file-policy"]
             "route_static_limitation_backlog"
         );
         assert_eq!(
+            value["top_next_action"]["packet_id"],
+            "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing"
+        );
+        assert_eq!(
+            value["top_next_action"]["canonical_gap_id"],
+            "gap:affinity-owner-call"
+        );
+        assert_eq!(
             value["top_next_action"]["command"],
             "cargo xtask lane1-evidence-audit"
         );
@@ -78879,7 +79071,20 @@ covered_by = ["cargo xtask check-file-policy"]
             value["static_limitation_backlog"]["top_categories"][0]["category"],
             "activation_owner_call_absent_affinity_only"
         );
+        assert_eq!(
+            value["top_limitation_routes"][0]["repair_route"],
+            "analysis/related-test-affinity-owner-call-tracing"
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["sample_packet_id"],
+            "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing"
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["sample_canonical_gap_ids"][0],
+            "gap:affinity-owner-call"
+        );
         let markdown = ripr_swarm_readiness_markdown(&report);
+        assert!(markdown.contains("## Top Limitation Routes"));
         assert!(markdown.contains("route_static_limitation_backlog"));
         assert!(markdown.contains("analysis/related-test-affinity-owner-call-tracing"));
         Ok(())
@@ -79074,6 +79279,7 @@ covered_by = ["cargo xtask check-file-policy"]
         let actions = ripr_swarm_readiness_next_actions(
             &summary,
             Some(&swarm_plan),
+            &[],
             &[],
             &Value::Null,
             [
