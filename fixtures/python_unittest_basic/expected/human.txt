@@ -36,5 +36,10 @@ Weakness
   - Related Python test reaches `risk_score` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary.
   - missing discriminator amount == 100: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_risk.py
+  suggested test: test_risk_score_100_boundary
+  verify: python -m unittest tests.test_risk.RiskScoreTests.test_risk_score_100_boundary (high)
+
 Next step
   Python preview: add a focused boundary assertion for missing discriminator `amount == 100`.

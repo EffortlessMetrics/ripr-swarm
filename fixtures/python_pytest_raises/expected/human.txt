@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `normalize_quantity` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the changed boundary.
   - missing discriminator value == 0: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_quantity.py
+  suggested test: test_normalize_quantity_0_boundary
+  pytest node: tests/test_quantity.py::test_normalize_quantity_0_boundary
+  verify: pytest tests/test_quantity.py::test_normalize_quantity_0_boundary (high)
+
 Next step
   Python preview: add a focused boundary assertion for missing discriminator `value == 0`.

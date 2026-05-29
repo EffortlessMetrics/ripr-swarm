@@ -43,7 +43,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return cls(config[\"discount\"] + 1)","line":4}
       ],
-      "evidence": ["owner: PriceRule.from_config", "owner_kind: class_method", "owner_decorators: classmethod", "missing_discriminator: return value == cls(config[\"discount\"] + 1)", "test_framework: pytest (test_price_rule_from_config)", "test_verify_command: pytest tests/test_factory.py::test_price_rule_from_config (test_price_rule_from_config)", "related_test_relation: syntactic_call (test_price_rule_from_config)", "test_oracle: relational_check weak (test_price_rule_from_config)", "test_oracle_shape: boundary_assertion (test_price_rule_from_config)"],
+      "evidence": ["owner: PriceRule.from_config", "owner_kind: class_method", "owner_decorators: classmethod", "missing_discriminator: return value == cls(config[\"discount\"] + 1)", "suggested_test_file: tests/test_factory.py", "suggested_test_name: test_from_config_return_value", "suggested_test_node_id: tests/test_factory.py::test_from_config_return_value", "suggested_verify_command: pytest tests/test_factory.py::test_from_config_return_value", "suggested_verify_command_confidence: high", "suggested_test_location_reason: nearest direct pytest relation", "test_framework: pytest (test_price_rule_from_config)", "test_verify_command: pytest tests/test_factory.py::test_price_rule_from_config (test_price_rule_from_config)", "related_test_relation: syntactic_call (test_price_rule_from_config)", "test_oracle: relational_check weak (test_price_rule_from_config)", "test_oracle_shape: boundary_assertion (test_price_rule_from_config)"],
       "missing": ["Related Python test reaches `from_config` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value."],
       "activation": {
         "observed_values": [
@@ -75,6 +75,13 @@
           "oracle": "assert PriceRule.from_config({\"discount\": 4}) is not None"
         }
       ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_factory.py",
+        "suggested_test_name": "test_from_config_return_value",
+        "suggested_test_node_id": "tests/test_factory.py::test_from_config_return_value",
+        "verify_command": "pytest tests/test_factory.py::test_from_config_return_value",
+        "verify_command_confidence": "high"
+       },
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",

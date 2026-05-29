@@ -205,6 +205,10 @@ fn finding_json_with_config_and_counts(
         out.push('\n');
     }
     out.push_str(&format!("{}],\n", "  ".repeat(indent + 1)));
+    if let Some(placement) = repair_placement_from_evidence(finding) {
+        repair_placement_json(out, &placement, indent + 1);
+        out.push_str(",\n");
+    }
     let stop_reasons = stop_reason_values(finding);
     array_field(out, indent + 1, "stop_reasons", &stop_reasons, true);
     let strongest = strongest_related_test(finding);
@@ -496,6 +500,77 @@ fn flow_sink_json(out: &mut String, sink: &FlowSinkFact) {
         escape(&sink.text),
         sink.line
     ));
+}
+
+struct RepairPlacement {
+    suggested_test_file: String,
+    suggested_test_name: String,
+    suggested_test_node_id: Option<String>,
+    verify_command: String,
+    verify_command_confidence: String,
+}
+
+fn repair_placement_from_evidence(finding: &Finding) -> Option<RepairPlacement> {
+    Some(RepairPlacement {
+        suggested_test_file: evidence_value(finding, "suggested_test_file: ")?.to_string(),
+        suggested_test_name: evidence_value(finding, "suggested_test_name: ")?.to_string(),
+        suggested_test_node_id: evidence_value(finding, "suggested_test_node_id: ")
+            .map(ToString::to_string),
+        verify_command: evidence_value(finding, "suggested_verify_command: ")?.to_string(),
+        verify_command_confidence: evidence_value(
+            finding,
+            "suggested_verify_command_confidence: ",
+        )?
+        .to_string(),
+    })
+}
+
+fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
+    finding
+        .evidence
+        .iter()
+        .find_map(|entry| entry.strip_prefix(prefix))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn repair_placement_json(out: &mut String, placement: &RepairPlacement, indent: usize) {
+    out.push_str(&format!(
+        "{}\"repair_placement\": {{\n",
+        "  ".repeat(indent)
+    ));
+    field(
+        out,
+        indent + 1,
+        "suggested_test_file",
+        &placement.suggested_test_file,
+        true,
+    );
+    field(
+        out,
+        indent + 1,
+        "suggested_test_name",
+        &placement.suggested_test_name,
+        true,
+    );
+    if let Some(node_id) = &placement.suggested_test_node_id {
+        field(out, indent + 1, "suggested_test_node_id", node_id, true);
+    }
+    field(
+        out,
+        indent + 1,
+        "verify_command",
+        &placement.verify_command,
+        true,
+    );
+    field(
+        out,
+        indent + 1,
+        "verify_command_confidence",
+        &placement.verify_command_confidence,
+        false,
+    );
+    out.push_str(&format!("{} }}", "  ".repeat(indent)));
 }
 
 pub(super) fn stop_reason_values(finding: &Finding) -> Vec<String> {

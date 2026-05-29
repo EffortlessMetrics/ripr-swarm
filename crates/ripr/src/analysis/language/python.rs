@@ -1955,6 +1955,16 @@ struct PythonRelatedCandidate<'a> {
     relation: PythonRelationKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonRepairPlacement {
+    suggested_test_file: String,
+    suggested_test_name: String,
+    suggested_test_node_id: Option<String>,
+    verify_command: String,
+    verify_command_confidence: &'static str,
+    location_reason: &'static str,
+}
+
 fn related_test_candidates<'a>(
     owner: &PythonOwner,
     all_tests: &'a [PythonTest],
@@ -2036,6 +2046,113 @@ fn verify_command_for_test(test: &PythonTest) -> Option<String> {
                 "python -m unittest {module}.{}",
                 test.qualified_name
             ))
+        }
+        _ => None,
+    }
+}
+
+fn suggested_python_test_name(
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+    missing_discriminator: &str,
+) -> String {
+    let owner_name = python_identifier_slug(&owner.name);
+    let suffix = match probe_family {
+        ProbeFamily::Predicate => predicate_boundary_test_suffix(missing_discriminator)
+            .unwrap_or_else(|| "boundary".to_string()),
+        ProbeFamily::ReturnValue => "return_value".to_string(),
+        ProbeFamily::ErrorPath => "exception_path".to_string(),
+        ProbeFamily::FieldConstruction => "field_value".to_string(),
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => "output_effect".to_string(),
+        ProbeFamily::MatchArm | ProbeFamily::StaticUnknown => "behavior".to_string(),
+    };
+    format!("test_{owner_name}_{suffix}")
+}
+
+fn predicate_boundary_test_suffix(missing_discriminator: &str) -> Option<String> {
+    let (_, right) = missing_discriminator.split_once("==")?;
+    let right = python_identifier_slug(right.trim());
+    if right.is_empty() {
+        None
+    } else {
+        Some(format!("{right}_boundary"))
+    }
+}
+
+fn python_identifier_slug(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_separator = false;
+    for ch in input.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_was_separator = false;
+        } else if !out.is_empty() && !last_was_separator {
+            out.push('_');
+            last_was_separator = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "behavior".to_string()
+    } else {
+        out
+    }
+}
+
+fn suggested_qualified_test_name(test: &PythonTest, suggested_test_name: &str) -> String {
+    test.qualified_name
+        .rsplit_once('.')
+        .map(|(prefix, _)| format!("{prefix}.{suggested_test_name}"))
+        .unwrap_or_else(|| suggested_test_name.to_string())
+}
+
+fn unittest_module_for_path(path: &str) -> String {
+    path.strip_suffix(".py")
+        .unwrap_or(path)
+        .replace(['/', '\\'], ".")
+}
+
+fn python_repair_placement(
+    class: &ExposureClass,
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+    missing_discriminators: &[MissingDiscriminatorFact],
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonRepairPlacement> {
+    if !matches!(class, ExposureClass::WeaklyExposed) {
+        return None;
+    }
+    let missing = missing_discriminators.first()?;
+    let candidate = related_candidates
+        .iter()
+        .find(|candidate| candidate.relation.uses_oracle())?;
+    let path = normalized_path(&candidate.test.file);
+    let suggested_test_name = suggested_python_test_name(owner, probe_family, &missing.value);
+    let qualified_name = suggested_qualified_test_name(candidate.test, &suggested_test_name);
+    match candidate.test.framework {
+        "pytest" => {
+            let node_id = format!("{path}::{}", qualified_name.replace('.', "::"));
+            Some(PythonRepairPlacement {
+                suggested_test_file: path,
+                suggested_test_name,
+                suggested_test_node_id: Some(node_id.clone()),
+                verify_command: format!("pytest {node_id}"),
+                verify_command_confidence: "high",
+                location_reason: "nearest direct pytest relation",
+            })
+        }
+        "unittest" => {
+            let selector = format!("{}.{}", unittest_module_for_path(&path), qualified_name);
+            Some(PythonRepairPlacement {
+                suggested_test_file: path,
+                suggested_test_name,
+                suggested_test_node_id: None,
+                verify_command: format!("python -m unittest {selector}"),
+                verify_command_confidence: "high",
+                location_reason: "nearest direct unittest relation",
+            })
         }
         _ => None,
     }
@@ -3152,6 +3269,13 @@ fn classify_change(
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
+    let repair_placement = python_repair_placement(
+        &class,
+        owner,
+        &family,
+        &missing_discriminators,
+        &related_candidates,
+    );
     let confidence_value = if matches!(class, ExposureClass::Exposed) {
         0.6
     } else if matches!(class, ExposureClass::StaticUnknown) {
@@ -3172,6 +3296,31 @@ fn classify_change(
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
+    }
+    if let Some(placement) = &repair_placement {
+        evidence.push(format!(
+            "suggested_test_file: {}",
+            placement.suggested_test_file
+        ));
+        evidence.push(format!(
+            "suggested_test_name: {}",
+            placement.suggested_test_name
+        ));
+        if let Some(node_id) = &placement.suggested_test_node_id {
+            evidence.push(format!("suggested_test_node_id: {node_id}"));
+        }
+        evidence.push(format!(
+            "suggested_verify_command: {}",
+            placement.verify_command
+        ));
+        evidence.push(format!(
+            "suggested_verify_command_confidence: {}",
+            placement.verify_command_confidence
+        ));
+        evidence.push(format!(
+            "suggested_test_location_reason: {}",
+            placement.location_reason
+        ));
     }
     for candidate in related_candidates {
         let test = candidate.test;
@@ -3418,6 +3567,13 @@ mod tests {
             .iter()
             .map(|missing| missing.value.as_str())
             .collect()
+    }
+
+    fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
+        finding
+            .evidence
+            .iter()
+            .find_map(|entry| entry.strip_prefix(prefix))
     }
 
     #[test]
@@ -3992,6 +4148,87 @@ def test_notifies_callback():
                 .recommended_next_step
                 .as_deref()
                 .is_some_and(|step| step.contains("output/log/call-effect assertion"))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_emits_python_repair_placement_and_verify_command() -> Result<(), String> {
+        let pytest_finding = classify_change(
+            Path::new("src/pricing.py"),
+            2,
+            "    if amount >= threshold:",
+            &extract_owners(
+                Path::new("src/pricing.py"),
+                "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+            ),
+            &extract_tests(
+                Path::new("tests/test_pricing.py"),
+                "from src.pricing import calculate_discount\n\n\
+                 def test_calculate_discount_smoke():\n    result = calculate_discount(150, 100)\n    assert result\n",
+            ),
+        )
+        .ok_or_else(|| "pytest boundary change should classify".to_string())?;
+        assert_eq!(pytest_finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(
+            evidence_value(&pytest_finding, "suggested_test_file: "),
+            Some("tests/test_pricing.py")
+        );
+        assert_eq!(
+            evidence_value(&pytest_finding, "suggested_test_name: "),
+            Some("test_calculate_discount_threshold_boundary")
+        );
+        assert_eq!(
+            evidence_value(&pytest_finding, "suggested_test_node_id: "),
+            Some("tests/test_pricing.py::test_calculate_discount_threshold_boundary")
+        );
+        assert_eq!(
+            evidence_value(&pytest_finding, "suggested_verify_command: "),
+            Some("pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary")
+        );
+        assert_eq!(
+            evidence_value(&pytest_finding, "suggested_verify_command_confidence: "),
+            Some("high")
+        );
+
+        let unittest_finding = classify_change(
+            Path::new("src/validation.py"),
+            3,
+            "        raise ValueError(\"positive required\")",
+            &extract_owners(
+                Path::new("src/validation.py"),
+                "def require_positive(value):\n    if value <= 0:\n        raise ValueError(\"positive required\")\n    return value\n",
+            ),
+            &extract_tests(
+                Path::new("tests/test_validation.py"),
+                "import unittest\nfrom src.validation import require_positive\n\n\
+                 class TestValidation(unittest.TestCase):\n    def test_rejects_zero_value(self):\n        with self.assertRaises(ValueError):\n            require_positive(0)\n",
+            ),
+        )
+        .ok_or_else(|| "unittest exception change should classify".to_string())?;
+        assert_eq!(unittest_finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(
+            evidence_value(&unittest_finding, "suggested_test_file: "),
+            Some("tests/test_validation.py")
+        );
+        assert_eq!(
+            evidence_value(&unittest_finding, "suggested_test_name: "),
+            Some("test_require_positive_exception_path")
+        );
+        assert_eq!(
+            evidence_value(&unittest_finding, "suggested_test_node_id: "),
+            None
+        );
+        assert_eq!(
+            evidence_value(&unittest_finding, "suggested_verify_command: "),
+            Some(
+                "python -m unittest tests.test_validation.TestValidation.test_require_positive_exception_path"
+            )
+        );
+        assert_eq!(
+            evidence_value(&unittest_finding, "suggested_verify_command_confidence: "),
+            Some("high")
         );
 
         Ok(())

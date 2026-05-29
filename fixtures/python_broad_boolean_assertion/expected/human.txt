@@ -36,5 +36,11 @@ Weakness
   - Related Python test reaches `is_priority` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the returned value.
   - missing discriminator return value == amount >= 100: changed Python returned-value at line 2 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_priority.py
+  suggested test: test_is_priority_return_value
+  pytest node: tests/test_priority.py::test_is_priority_return_value
+  verify: pytest tests/test_priority.py::test_is_priority_return_value (high)
+
 Next step
   Python preview: add or strengthen an exact return-value assertion for missing discriminator `return value == amount >= 100`.

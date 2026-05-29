@@ -631,7 +631,7 @@ first-use projection remains in `cli/python-first-use-path`.
 
 ### Work item: output/python-test-placement-verify
 
-Status: planned
+Status: done
 
 Blocked by:
 
@@ -647,6 +647,21 @@ Recommend where and how to verify a Python repair.
   possible, and pytest or unittest command.
 - Command confidence is included.
 - Commands do not assume dependencies that are not detected.
+
+#### Delivered
+
+- Direct weak Python findings with a concrete missing discriminator now emit
+  placement metadata for the nearest direct pytest or unittest related test:
+  suggested test file, suggested test name, pytest node ID when applicable,
+  verify command, and verify-command confidence.
+- Human output renders a compact `Repair placement` block before the next-step
+  wording; JSON output carries the same data as an additive
+  `repair_placement` object.
+- The command builder only emits placement when a related test framework is
+  detected statically, so heuristic-only, no-path, static-limit, and
+  already-observed findings do not get invented commands.
+- `python_test_placement_verify` pins pytest and unittest placement output,
+  while existing direct weak Python goldens now show the same placement fields.
 
 ### Work item: output/python-repair-card-v1
 

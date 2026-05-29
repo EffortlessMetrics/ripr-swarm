@@ -36,5 +36,10 @@ Weakness
   - Related Python test reaches `warn_coupon` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value.
   - missing discriminator return value == "coupon expired": changed Python returned-value at line 3 lacks a concrete repair discriminator
 
+Repair placement
+  suggested file: tests/test_notifications.py
+  suggested test: test_warn_coupon_return_value
+  verify: python -m unittest tests.test_notifications.NotificationTests.test_warn_coupon_return_value (high)
+
 Next step
   Python preview: add or strengthen an exact return-value assertion for missing discriminator `return value == "coupon expired"`.

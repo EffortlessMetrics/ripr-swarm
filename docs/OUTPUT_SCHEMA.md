@@ -422,6 +422,13 @@ The evidence-first fields are additive in schema `0.1`:
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
+- `repair_placement` is an additive optional object for preview-language
+  findings that can statically name a bounded test location and command before
+  full repair-card projection. It currently appears for direct weak Python
+  findings with a concrete missing discriminator and a detected pytest or
+  unittest related test. It carries `suggested_test_file`,
+  `suggested_test_name`, optional `suggested_test_node_id`, `verify_command`,
+  and `verify_command_confidence`.
 - `canonical_gap_id` is an additive optional stable identity for a
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
@@ -3025,7 +3032,10 @@ completeness fields as JSON before listing ledger inputs.
   "top_missing_evidence_fields": [
     {
       "label": "receipt_command",
-      "count": 1
+      "count": 1,
+      "sample_packet_ids": ["packet-boundary-001"],
+      "sample_canonical_gap_ids": ["gap:abc"],
+      "sample_repair_kinds": ["add_boundary_assertion"]
     }
   ],
   "attempts": [
@@ -3127,7 +3137,10 @@ receipt-only, missing-verify-result, unknown, and success-rate counts.
 `top_failing_repair_routes[]` is the subset with unchanged, regressed,
 no-receipt, missing-verify-result, or unknown outcomes,
 ordered for analyzer-improvement routing. `top_missing_evidence_fields[]`
-counts missing route/verify/receipt fields that prevent route-quality analysis.
+counts missing route/verify/receipt fields that prevent route-quality analysis
+and includes sample packet IDs, canonical gap IDs, and repair kinds when the
+row is derived from attempts. Legacy label/count-only rows remain readable and
+default sample arrays to empty.
 `repair_kind_failure_count` is the sum of unchanged, regressed, no-receipt,
 missing-verify-result, and unknown latest attempts.
 `repair_kind_dominant_failure_reason` is the highest-count failing bucket, with
@@ -3373,7 +3386,10 @@ limits.
   "top_missing_evidence_fields": [
     {
       "label": "receipt_command",
-      "count": 1
+      "count": 1,
+      "sample_packet_ids": ["packet-boundary-001"],
+      "sample_canonical_gap_ids": ["gap:abc"],
+      "sample_repair_kinds": ["add_boundary_assertion"]
     }
   ],
   "top_next_action": {
