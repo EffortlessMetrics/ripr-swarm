@@ -19912,7 +19912,7 @@ impl Lane1EvidenceAuditBuilder {
             .clone()
             .filter(|_| receipt_source.ends_with(".receipt_command"));
         let related_test_or_observer =
-            audit_actionable_gap_related_test_or_observer(canonical_item);
+            audit_actionable_gap_related_test_or_observer(record, canonical_item);
         let candidate_value_or_observer =
             audit_actionable_gap_candidate_value_or_observer(record, canonical_item);
         let typed_related_target_available = related_test_or_observer
@@ -27719,10 +27719,14 @@ fn audit_push_projection_exclusion_reason(reasons: &mut Vec<String>, reason: &st
     }
 }
 
-fn audit_actionable_gap_related_test_or_observer(canonical_item: &Value) -> Option<Value> {
+fn audit_actionable_gap_related_test_or_observer(
+    record: &Value,
+    canonical_item: &Value,
+) -> Option<Value> {
     audit_get(canonical_item, &["related_test"])
         .or_else(|| audit_get(canonical_item, &["related_test_or_observer"]))
         .or_else(|| audit_get(canonical_item, &["observer"]))
+        .or_else(|| audit_get(record, &["recommendation", "recommended_test"]))
         .cloned()
 }
 
@@ -78153,6 +78157,90 @@ covered_by = ["cargo xtask check-file-policy"]
         let ready = ripr_swarm_plan_ready_packets(&swarm_plan);
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].canonical_gap_id, "gap:packet-receipt-ready-gap");
+        Ok(())
+    }
+
+    #[test]
+    fn lane1_actionable_gap_packets_use_recommended_test_as_related_target() -> Result<(), String> {
+        let report = lane1_evidence_audit_from_repo_exposure(
+            ".",
+            r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-recommended-test-target",
+                  "headline_eligible": true,
+                  "file": "src/lsp.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-recommended-test-target",
+                    "canonical_gap_id": "gap:packet-recommended-test-target",
+                    "location": {"file": "src/lsp.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                    ],
+                    "recommendation": {
+                      "recommended_test": {
+                        "file": "tests/lsp_tests.rs",
+                        "name": "serve_stdio_call_presence_observer",
+                        "reason": "recommended focused observer target"
+                      }
+                    },
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-recommended-test-target",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "call_presence",
+                      "gap_state": "actionable",
+                      "actionability": "add_focused_test",
+                      "raw_findings": [
+                        {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                      ],
+                      "why": "write a focused test for the missing call observer",
+                      "recommended_repair": "Add a call observer in tests/lsp_tests.rs.",
+                      "repair_route": {
+                        "repair_kind": "add_call_observer",
+                        "target_test_type": "call_presence_observer",
+                        "suggested_assertion": "// assert that serve_stdio called the expected target"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )?;
+
+        let packet_json = lane1_actionable_gap_packets_json(&report)?;
+        let packet_value: serde_json::Value =
+            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+
+        assert_eq!(
+            packet_value["packets"][0]["related_test_or_observer"]["file"],
+            "tests/lsp_tests.rs"
+        );
+        assert_eq!(
+            packet_value["packets"][0]["allowed_edit_surface"][0],
+            "tests/lsp_tests.rs"
+        );
+        assert_eq!(
+            packet_value["packets"][0]["public_projection_eligible"],
+            serde_json::Value::Bool(true)
+        );
+
+        let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &packet_value,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&swarm_plan);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(
+            ready[0].canonical_gap_id,
+            "gap:packet-recommended-test-target"
+        );
         Ok(())
     }
 
