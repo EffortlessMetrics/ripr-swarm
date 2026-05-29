@@ -1175,6 +1175,53 @@ fn related_test_matching_falls_back_to_same_stem_when_no_call() {
 }
 
 #[test]
+fn related_test_matching_uses_test_name_similarity_as_uncertain_relation() -> Result<(), String> {
+    let owner_file = Path::new("src/pricing.py");
+    let owners = extract_owners(
+        owner_file,
+        "def apply_discount(amount):\n    return amount - 10\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "def test_apply_discount_boundary_case():\n    assert 90 == 90\n",
+    );
+    let candidates = related_test_candidates(&owners[0], &tests);
+    if candidates.len() != 1 {
+        return Err(format!(
+            "expected one name-similarity candidate, got {}",
+            candidates.len()
+        ));
+    }
+    assert_eq!(
+        candidates[0].relation,
+        PythonRelationKind::TestNameSimilarity
+    );
+    let finding = classify_change(owner_file, 2, "    return amount - 10", &owners, &tests)
+        .ok_or_else(|| "expected classification".to_string())?;
+    assert!(finding.evidence.iter().any(|item| item
+        == "related_test_relation: test_name_similarity (test_apply_discount_boundary_case)"));
+    assert!(finding.evidence.iter().any(|item| item
+        == "related_test_uncertain: test_name_similarity (test_apply_discount_boundary_case)"));
+    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Unknown);
+    Ok(())
+}
+
+#[test]
+fn related_test_matching_uses_fixture_name_as_uncertain_relation() {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def calculate_fee(amount):\n    return amount + 2\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "def test_checkout_total(pricing):\n    assert 102 == 102\n",
+    );
+    let candidates = related_test_candidates(&owners[0], &tests);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].relation, PythonRelationKind::FixtureName);
+}
+
+#[test]
 fn extract_owners_returns_empty_when_source_is_unparseable() {
     let owners = extract_owners(Path::new("src/oops.py"), "def !!!");
     assert!(owners.is_empty());

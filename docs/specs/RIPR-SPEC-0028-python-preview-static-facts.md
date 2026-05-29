@@ -130,6 +130,9 @@ syntactic call proximity. Direct owner calls must be token-aware. Module
 import aliases may match attribute calls such as `pricing.apply_discount(...)`;
 arbitrary object method calls must not be treated as related to a top-level
 function owner unless the changed owner is itself a method or class method.
+Test-name and fixture-name proximity may provide a suggested repair location,
+but these links must be marked uncertain, must keep weak reachability, and must
+not promote unrelated assertions to strong revealability.
 
 ## Probe Facts
 
@@ -176,6 +179,8 @@ can show:
   output, and status-code oracles
 - a fixture proving pytest and unittest related tests produce
   framework-shaped verify commands
+- fixtures proving test-name and fixture-name proximity are related-test
+  heuristics but remain explicitly uncertain
 - a fixture proving `mock.assert_called*` is recognised as a
   side-effect oracle
 - a fixture covering parametrized `pytest` cases
