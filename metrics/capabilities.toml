@@ -1525,6 +1525,12 @@ evidence = [
   "fixtures/typescript_mocked_module_limit",
   "fixtures/typescript_awaited_promise_reject",
   "fixtures/typescript_effect_probe_shapes",
+  "fixtures/typescript_tsx_preview",
+  "fixtures/javascript_js_preview",
+  "fixtures/javascript_jsx_preview",
+  "fixtures/typescript_disabled",
+  "fixtures/typescript_parse_error_unsupported_syntax",
+  "fixtures/mixed_rust_typescript_preview",
   "cargo xtask dogfood checks TypeScript preview labels, disabled-language behavior, static limits, and no cross-language related-test routing"
 ]
 fixtures = [
@@ -1533,10 +1539,16 @@ fixtures = [
   "fixtures/typescript_return_value_shape",
   "fixtures/typescript_mocked_module_limit",
   "fixtures/typescript_awaited_promise_reject",
-  "fixtures/typescript_effect_probe_shapes"
+  "fixtures/typescript_effect_probe_shapes",
+  "fixtures/typescript_tsx_preview",
+  "fixtures/javascript_js_preview",
+  "fixtures/javascript_jsx_preview",
+  "fixtures/typescript_disabled",
+  "fixtures/typescript_parse_error_unsupported_syntax",
+  "fixtures/mixed_rust_typescript_preview"
 ]
-next = "fixtures/typescript-preview-harness"
-metric = "language_adapter_typescript_findings_preview, language_adapter_typescript_static_limit_mocked_module"
+next = "analysis/typescript-owner-facts"
+metric = "language_adapter_typescript_findings_preview, language_adapter_typescript_static_limit_mocked_module, language_adapter_typescript_static_limit_unsupported_syntax"
 
 [[capability]]
 id = "sarif_ci_policy"
