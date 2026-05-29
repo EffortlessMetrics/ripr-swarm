@@ -1096,6 +1096,17 @@ fn existing_source_module_test_file(file: &std::path::Path) -> Option<String> {
             return Some(display_path(&candidate));
         }
     }
+    let mut ancestor = parent.parent();
+    while let Some(module_dir) = ancestor {
+        if module_dir.file_name().and_then(|value| value.to_str()) == Some("src") {
+            break;
+        }
+        let candidate = module_dir.join("tests.rs");
+        if path_resolves_to_existing_file(&candidate) {
+            return Some(display_path(&candidate));
+        }
+        ancestor = module_dir.parent();
+    }
     None
 }
 
@@ -2251,10 +2262,21 @@ mod tests {
     fn inferred_test_file_keeps_legacy_path_when_module_tests_are_missing() {
         assert_eq!(
             inferred_test_file(
-                std::path::Path::new("crates/ripr/src/output/pilot/render/render_helpers.rs"),
+                std::path::Path::new("crates/ripr/src/not_a_real_module/render_helpers.rs"),
                 "push_markdown_recommendation"
             ),
             "tests/render_helpers_tests.rs"
+        );
+    }
+
+    #[test]
+    fn inferred_test_file_prefers_existing_ancestor_module_tests() {
+        assert_eq!(
+            inferred_test_file(
+                std::path::Path::new("crates/ripr/src/output/pilot/render/render_helpers.rs"),
+                "push_markdown_recommendation"
+            ),
+            "crates/ripr/src/output/pilot/tests.rs"
         );
     }
 
@@ -2281,6 +2303,34 @@ mod tests {
         assert!(
             json.contains("\"file\": \"crates/ripr/src/lsp/tests.rs\""),
             "expected existing source module test target in: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn packet_v2_recommends_existing_ancestor_module_test_file_when_visible() -> Result<(), String>
+    {
+        let seam = RepoSeam::new(
+            "crates/ripr/src/output/pilot/render/render_helpers.rs",
+            "push_markdown_recommendation",
+            SeamKind::CallPresence,
+            64,
+            64,
+            "targeted_test_brief_outline_for_classified_seam(entry)",
+            RequiredDiscriminator::CallSite {
+                target: "targeted_test_brief_outline_for_classified_seam(entry)".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let json = render_agent_seam_packets_json(&[classified_with(
+            seam,
+            SeamGripClass::Ungripped,
+            Vec::new(),
+        )]);
+
+        assert!(
+            json.contains("\"file\": \"crates/ripr/src/output/pilot/tests.rs\""),
+            "expected existing ancestor module test target in: {json}"
         );
         Ok(())
     }
