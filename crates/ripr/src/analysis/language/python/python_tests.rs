@@ -317,6 +317,9 @@ def test_pytest_shapes(client, caplog, capsys, monkeypatch):
         fail()
     assert result["status"] == "paid"
     assert "expired" in caplog.text
+    assert (caplog.text or captured.stdout) == "expired"
+    assert caplog.text.lower == "expired"
+    assert (result.kind or result["kind"]) == "paid"
     assert capsys.readouterr().out == "ok\n"
     assert response.status_code == 422
     assert flag
@@ -363,6 +366,62 @@ def test_pytest_shapes(client, caplog, capsys, monkeypatch):
             ));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn oracle_shape_names_are_stable() {
+    let names: Vec<_> = [
+        PythonOracleShape::ExactAssertion,
+        PythonOracleShape::BoundaryAssertion,
+        PythonOracleShape::ExceptionAssertion,
+        PythonOracleShape::FieldAssertion,
+        PythonOracleShape::OutputAssertion,
+        PythonOracleShape::StatusCodeAssertion,
+        PythonOracleShape::BroadSmokeAssertion,
+        PythonOracleShape::MockExpectation,
+        PythonOracleShape::UnknownCustomHelper,
+    ]
+    .into_iter()
+    .map(PythonOracleShape::as_str)
+    .collect();
+    assert_eq!(
+        names,
+        vec![
+            "exact_assertion",
+            "boundary_assertion",
+            "exception_assertion",
+            "field_assertion",
+            "output_assertion",
+            "status_code_assertion",
+            "broad_smoke_assertion",
+            "mock_expectation",
+            "unknown_custom_helper",
+        ]
+    );
+}
+
+#[test]
+fn extract_tests_records_vararg_and_kwarg_pytest_fixtures() -> Result<(), String> {
+    let tests = extract_tests(
+        Path::new("tests/test_fixtures.py"),
+        r#"
+def test_fixture_args(amount, *extras, client, **kw):
+    assert amount == 1
+"#,
+    );
+    let test = tests
+        .first()
+        .ok_or_else(|| "expected pytest test to be extracted".to_string())?;
+    assert_eq!(
+        test.fixtures,
+        vec![
+            "amount".to_string(),
+            "client".to_string(),
+            "extras".to_string(),
+            "kw".to_string(),
+        ]
+    );
     Ok(())
 }
 
@@ -1240,6 +1299,46 @@ fn classify_change_emits_decorator_evidence_when_owner_has_decorator() -> Result
         return Err(format!(
             "expected `retry` decorator to be listed, got: {evidence_joined}"
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_emits_pytest_repair_evidence() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/checkout.py"),
+        "def checkout():\n    return Response(422)\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        r#"
+import pytest
+
+@pytest.mark.parametrize("coupon", ["expired"])
+def test_checkout_expired_coupon(client, caplog, coupon):
+    response = checkout()
+    assert response.status_code == 422
+"#,
+    );
+    let finding = classify_change(
+        Path::new("src/checkout.py"),
+        2,
+        "    return Response(422)",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    let evidence_joined = finding.evidence.join("\n");
+    for expected in [
+        "test_fixtures: caplog, client, coupon",
+        "test_parametrized: pytest",
+        "test_oracle_shape: status_code_assertion",
+    ] {
+        if !evidence_joined.contains(expected) {
+            return Err(format!(
+                "expected evidence `{expected}`, got: {evidence_joined}"
+            ));
+        }
     }
     Ok(())
 }
