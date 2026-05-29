@@ -236,6 +236,40 @@
       ],
       "missing_receipt_reason": null,
       "reason": "A real merged limitation-route PR made assertion-target affinity more trustworthy by routing it to a precise analyzer backlog item while keeping it non-actionable."
+    },
+    {
+      "id": "iterator_boundary_limitation_route_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#488",
+      "canonical_gap_id": "gap:fixture_iterator_local_boundary",
+      "packet_id": "limitation:activation-boundary-input-unresolved:iterator-boundary-operand-resolution",
+      "repair_kind": "sharpen_static_limitation_route",
+      "target_test_or_observer_shape": "evidence-record and swarm-plan fixture assertions that iterator-derived boundary operands remain named static limitations instead of public repair packets",
+      "verify_command": "cargo test -p ripr evidence_record_keeps_unresolved_boundary_operands_as_named_limitation",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask check-fixture-contracts",
+      "receipt_path": "fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "static_limitation",
+      "after_gap_state": "static_limitation",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Routed iterator-derived activation-boundary operands to a precise static-limitation analyzer backlog instead of speculative boundary assertion guidance.",
+      "evidence_movement": "Iterator-derived operands now have fixture-backed proof that RIPR refuses to invent activation values and names the analyzer route required to unlock actionability.",
+      "operator_note": "This is a negative-capability repair-loop attempt: the useful outcome is sharper non-actionability, not a public packet.",
+      "must_not_change": [
+        "public projection eligibility for static limitations",
+        "synthetic activation values for iterator-derived operands",
+        "repair_kind add_boundary_assertion for unresolved iterator operands",
+        "public badge semantics"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json:fixture_iterator_local_boundary",
+        "fixtures/swarm-plan-packet-corpus/corpus.json:iterator_boundary_static_limitation",
+        "crates/ripr/src/output/evidence_record.rs:evidence_record_keeps_unresolved_boundary_operands_as_named_limitation",
+        "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged analyzer PR made iterator-derived boundary operands more trustworthy by routing them to a precise limitation route while keeping them non-actionable."
     }
   ]
 }
