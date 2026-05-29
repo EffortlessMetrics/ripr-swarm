@@ -2906,8 +2906,9 @@ packet so attempt history remains visible without creating new actionable gaps.
 
 ## RIPR Swarm Attempt Ledger
 
-`cargo xtask ripr-swarm attempt-ledger` joins the swarm plan and
-actionable-gap outcome report into durable attempt history:
+`cargo xtask ripr-swarm attempt-ledger` joins the swarm plan,
+actionable-gap outcome report, optional real repair attempts, and prior ledger
+into durable attempt history:
 
 ```text
 target/ripr/reports/swarm-attempt-ledger.json
@@ -2915,14 +2916,17 @@ target/ripr/reports/swarm-attempt-ledger.md
 ```
 
 The command reads `target/ripr/reports/swarm-plan.json`,
-`target/ripr/reports/actionable-gap-outcomes.json`, and any existing
-`target/ripr/reports/swarm-attempt-ledger.json` by default. It preserves prior
-durable attempt entries by `attempt_id`, drops stale synthetic `not_attempted`
+`target/ripr/reports/actionable-gap-outcomes.json`, any existing
+`target/ripr/reports/swarm-attempt-ledger.json`, and
+`fixtures/real-repair-attempts/corpus.json` by default. The real-repair-attempts
+input is advisory dogfood evidence; it is imported as attempt history and route
+quality, not as a new public repair packet. The command preserves prior durable
+attempt entries by `attempt_id`, drops stale synthetic `not_attempted`
 placeholders when their packet is no longer present in the current swarm plan,
-adds the current outcome join, and highlights the latest attempt per
-`canonical_gap_id`. It does not execute repairs, edit files, run tests, create
-receipts, call providers, run mutation testing, change PR/CI rendering, change
-editor/LSP behavior, change gates, or change public badges.
+adds the current outcome join, imports real dogfood attempts, and highlights the
+latest attempt per `canonical_gap_id`. It does not execute repairs, edit files,
+run tests, create receipts, call providers, run mutation testing, change PR/CI
+rendering, change editor/LSP behavior, change gates, or change public badges.
 The Markdown sibling includes a `Runtime Status` table with the same
 completeness fields as JSON before listing ledger inputs.
 
@@ -2959,6 +2963,11 @@ completeness fields as JSON before listing ledger inputs.
     },
     "prior_ledger": {
       "path": "target/ripr/reports/swarm-attempt-ledger.json",
+      "state": "read",
+      "limitation": null
+    },
+    "real_repair_attempts": {
+      "path": "fixtures/real-repair-attempts/corpus.json",
       "state": "read",
       "limitation": null
     }

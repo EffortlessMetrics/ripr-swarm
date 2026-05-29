@@ -1151,6 +1151,7 @@ struct RiprSwarmAttemptLedgerArgs {
     swarm_plan_path: PathBuf,
     actionable_gap_outcomes_path: PathBuf,
     prior_ledger_path: PathBuf,
+    real_repair_attempts_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21666,6 +21667,9 @@ struct RiprSwarmAttemptLedgerReport {
     prior_ledger_path: String,
     prior_ledger_state: String,
     prior_ledger_limitation: Option<String>,
+    real_repair_attempts_path: String,
+    real_repair_attempts_state: String,
+    real_repair_attempts_limitation: Option<String>,
     attempts: Vec<RiprSwarmAttemptLedgerEntry>,
     latest_attempts: Vec<RiprSwarmAttemptLedgerEntry>,
     repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
@@ -22027,6 +22031,7 @@ fn parse_ripr_swarm_attempt_ledger_args(
     let mut actionable_gap_outcomes_path =
         PathBuf::from("target/ripr/reports/actionable-gap-outcomes.json");
     let mut prior_ledger_path = PathBuf::from("target/ripr/reports/swarm-attempt-ledger.json");
+    let mut real_repair_attempts_path = PathBuf::from(REAL_REPAIR_ATTEMPTS_CORPUS);
     let mut index = 1usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -22058,6 +22063,16 @@ fn parse_ripr_swarm_attempt_ledger_args(
                 };
                 prior_ledger_path = PathBuf::from(value);
             }
+            "--real-repair-attempts" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(
+                        "ripr-swarm attempt-ledger --real-repair-attempts requires a path"
+                            .to_string(),
+                    );
+                };
+                real_repair_attempts_path = PathBuf::from(value);
+            }
             other => {
                 return Err(format!(
                     "unknown ripr-swarm attempt-ledger argument `{other}`\n{}",
@@ -22072,11 +22087,12 @@ fn parse_ripr_swarm_attempt_ledger_args(
         swarm_plan_path,
         actionable_gap_outcomes_path,
         prior_ledger_path,
+        real_repair_attempts_path,
     })
 }
 
 fn ripr_swarm_usage() -> String {
-    "usage: cargo xtask ripr-swarm plan [--top <n>] [--actionable-gaps <path>]\n       cargo xtask ripr-swarm attempt --packet <id> --dry-run [--actionable-gaps <path>]\n       cargo xtask ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>]\n       cargo xtask ripr-swarm readiness [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--attempt-ledger <path>]"
+    "usage: cargo xtask ripr-swarm plan [--top <n>] [--actionable-gaps <path>]\n       cargo xtask ripr-swarm attempt --packet <id> --dry-run [--actionable-gaps <path>]\n       cargo xtask ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>] [--real-repair-attempts <path>]\n       cargo xtask ripr-swarm readiness [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--attempt-ledger <path>]"
         .to_string()
 }
 
@@ -23440,7 +23456,9 @@ fn ripr_swarm_attempt_ledger_report(args: &RiprSwarmAttemptLedgerArgs) -> Result
     ) = ripr_swarm_read_optional_json(&args.actionable_gap_outcomes_path);
     let (prior_ledger_state, prior_ledger_limitation, prior_ledger) =
         ripr_swarm_read_optional_json(&args.prior_ledger_path);
-    let report = ripr_swarm_attempt_ledger_from_values(
+    let (real_repair_attempts_state, real_repair_attempts_limitation, real_repair_attempts) =
+        ripr_swarm_read_optional_json(&args.real_repair_attempts_path);
+    let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
         generated_at,
         RiprSwarmReadinessInput {
             path: normalize_path(&args.swarm_plan_path),
@@ -23460,6 +23478,12 @@ fn ripr_swarm_attempt_ledger_report(args: &RiprSwarmAttemptLedgerArgs) -> Result
             limitation: prior_ledger_limitation,
             value: prior_ledger.as_ref(),
         },
+        RiprSwarmReadinessInput {
+            path: normalize_path(&args.real_repair_attempts_path),
+            state: real_repair_attempts_state,
+            limitation: real_repair_attempts_limitation,
+            value: real_repair_attempts.as_ref(),
+        },
     );
 
     write_report(
@@ -23472,17 +23496,45 @@ fn ripr_swarm_attempt_ledger_report(args: &RiprSwarmAttemptLedgerArgs) -> Result
     )
 }
 
+#[cfg(test)]
 fn ripr_swarm_attempt_ledger_from_values(
     generated_at: String,
     swarm_plan: RiprSwarmReadinessInput<'_>,
     actionable_gap_outcomes: RiprSwarmReadinessInput<'_>,
     prior_ledger: RiprSwarmReadinessInput<'_>,
 ) -> RiprSwarmAttemptLedgerReport {
+    ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+        generated_at,
+        swarm_plan,
+        actionable_gap_outcomes,
+        prior_ledger,
+        RiprSwarmReadinessInput {
+            path: normalize_path(Path::new(REAL_REPAIR_ATTEMPTS_CORPUS)),
+            state: "not_supplied".to_string(),
+            limitation: Some("real repair attempts input was not supplied".to_string()),
+            value: None,
+        },
+    )
+}
+
+fn ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+    generated_at: String,
+    swarm_plan: RiprSwarmReadinessInput<'_>,
+    actionable_gap_outcomes: RiprSwarmReadinessInput<'_>,
+    prior_ledger: RiprSwarmReadinessInput<'_>,
+    real_repair_attempts: RiprSwarmReadinessInput<'_>,
+) -> RiprSwarmAttemptLedgerReport {
     let plan_packets = ripr_swarm_attempt_ledger_plan_packet_index(swarm_plan.value);
     let mut attempts = prior_ledger
         .value
         .map(|ledger| ripr_swarm_attempt_ledger_prior_entries_from_value(ledger, &plan_packets))
         .unwrap_or_default();
+    if let Some(real_attempts) = real_repair_attempts.value {
+        attempts.extend(ripr_swarm_attempt_ledger_entries_from_real_repair_attempts(
+            &generated_at,
+            real_attempts,
+        ));
+    }
     if let Some(outcomes) = actionable_gap_outcomes.value {
         attempts.extend(ripr_swarm_attempt_ledger_entries_from_outcomes(
             &generated_at,
@@ -23528,6 +23580,9 @@ fn ripr_swarm_attempt_ledger_from_values(
         prior_ledger_path: prior_ledger.path,
         prior_ledger_state: prior_ledger.state,
         prior_ledger_limitation: prior_ledger.limitation,
+        real_repair_attempts_path: real_repair_attempts.path,
+        real_repair_attempts_state: real_repair_attempts.state,
+        real_repair_attempts_limitation: real_repair_attempts.limitation,
         attempts,
         latest_attempts,
         repair_route_quality,
@@ -23717,6 +23772,60 @@ fn ripr_swarm_attempt_ledger_entries_from_value(
                 movement_source: audit_non_empty_string(entry, &["movement_source"]),
                 reason: audit_non_empty_string(entry, &["reason"])
                     .unwrap_or_else(|| "prior ledger entry".to_string()),
+            })
+        })
+        .collect()
+}
+
+fn ripr_swarm_attempt_ledger_entries_from_real_repair_attempts(
+    generated_at: &str,
+    corpus: &Value,
+) -> Vec<RiprSwarmAttemptLedgerEntry> {
+    if audit_non_empty_string(corpus, &["kind"]).as_deref() != Some("real_repair_attempts_corpus") {
+        return Vec::new();
+    }
+    audit_array(corpus, &["cases"])
+        .iter()
+        .filter_map(|case| {
+            let canonical_gap_id = audit_non_empty_string(case, &["canonical_gap_id"])?;
+            let outcome =
+                audit_non_empty_string(case, &["outcome"]).unwrap_or_else(|| "unknown".to_string());
+            let receipt_state = audit_non_empty_string(case, &["receipt_state"])
+                .unwrap_or_else(|| RECEIPT_NOT_APPLICABLE.to_string());
+            let case_id =
+                audit_non_empty_string(case, &["id"]).unwrap_or_else(|| canonical_gap_id.clone());
+            Some(RiprSwarmAttemptLedgerEntry {
+                packet_id: audit_non_empty_string(case, &["packet_id"])
+                    .unwrap_or_else(|| canonical_gap_id.clone()),
+                canonical_gap_id: canonical_gap_id.clone(),
+                attempt_id: ripr_swarm_attempt_ledger_attempt_id(
+                    &canonical_gap_id,
+                    &outcome,
+                    &receipt_state,
+                    Some("real_repair_attempts"),
+                    None,
+                    Some(&case_id),
+                ),
+                evidence_class: audit_non_empty_string(case, &["evidence_class"]),
+                source_file: audit_non_empty_string(case, &["source_file"]),
+                repair_kind: audit_non_empty_string(case, &["repair_kind"]),
+                target_test_type: audit_non_empty_string(case, &["target_test_or_observer_shape"]),
+                assertion_shape: audit_non_empty_string(case, &["target_test_or_observer_shape"]),
+                actor_kind: audit_non_empty_string(case, &["actor_kind"])
+                    .unwrap_or_else(|| "unknown".to_string()),
+                receipt_path: audit_non_empty_string(case, &["receipt_path"]),
+                verify_command: audit_non_empty_string(case, &["verify_command"])
+                    .unwrap_or_else(|| "verify_command_unknown".to_string()),
+                verify_result: audit_non_empty_string(case, &["verify_result"]),
+                receipt_command: audit_non_empty_string(case, &["receipt_command"]),
+                before_gap_state: audit_non_empty_string(case, &["before_gap_state"]),
+                after_gap_state: audit_non_empty_string(case, &["after_gap_state"]),
+                outcome,
+                timestamp: Some(generated_at.to_string()),
+                receipt_state,
+                movement_source: Some("real_repair_attempts".to_string()),
+                reason: audit_non_empty_string(case, &["reason"])
+                    .unwrap_or_else(|| "real repair attempt corpus case".to_string()),
             })
         })
         .collect()
@@ -23979,13 +24088,25 @@ fn ripr_swarm_attempt_ledger_latest_attempts(
     for attempt in attempts {
         let replace = latest
             .get(&attempt.canonical_gap_id)
-            .map(|current| ripr_swarm_attempt_ledger_timestamp_is_newer_or_equal(attempt, current))
+            .map(|current| ripr_swarm_attempt_ledger_should_replace_latest(attempt, current))
             .unwrap_or(true);
         if replace {
             latest.insert(attempt.canonical_gap_id.clone(), attempt.clone());
         }
     }
     latest.into_values().collect()
+}
+
+fn ripr_swarm_attempt_ledger_should_replace_latest(
+    attempt: &RiprSwarmAttemptLedgerEntry,
+    current: &RiprSwarmAttemptLedgerEntry,
+) -> bool {
+    let attempt_is_durable = attempt.outcome != "not_attempted";
+    let current_is_durable = current.outcome != "not_attempted";
+    if attempt_is_durable != current_is_durable {
+        return attempt_is_durable;
+    }
+    ripr_swarm_attempt_ledger_timestamp_is_newer_or_equal(attempt, current)
 }
 
 fn ripr_swarm_attempt_ledger_timestamp_is_newer_or_equal(
@@ -24232,6 +24353,11 @@ fn ripr_swarm_attempt_ledger_json(report: &RiprSwarmAttemptLedgerReport) -> Resu
                 "state": report.prior_ledger_state,
                 "limitation": report.prior_ledger_limitation,
             },
+            "real_repair_attempts": {
+                "path": report.real_repair_attempts_path,
+                "state": report.real_repair_attempts_state,
+                "limitation": report.real_repair_attempts_limitation,
+            },
         },
         "summary": ripr_swarm_attempt_ledger_summary_json(&summary),
         "repair_route_quality": ripr_swarm_repair_route_quality_json(&report.repair_route_quality),
@@ -24331,10 +24457,21 @@ fn ripr_swarm_attempt_ledger_markdown(report: &RiprSwarmAttemptLedgerReport) -> 
         )
     ));
     out.push_str(&format!(
-        "| prior ledger | `{}` | `{}` | {} |\n\n",
+        "| prior ledger | `{}` | `{}` | {} |\n",
         audit_markdown_cell(&report.prior_ledger_state),
         audit_markdown_cell(&report.prior_ledger_path),
         audit_markdown_cell(report.prior_ledger_limitation.as_deref().unwrap_or(""))
+    ));
+    out.push_str(&format!(
+        "| real repair attempts | `{}` | `{}` | {} |\n\n",
+        audit_markdown_cell(&report.real_repair_attempts_state),
+        audit_markdown_cell(&report.real_repair_attempts_path),
+        audit_markdown_cell(
+            report
+                .real_repair_attempts_limitation
+                .as_deref()
+                .unwrap_or("")
+        )
     ));
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n");
@@ -56895,25 +57032,26 @@ mod tests {
         report_status_from_text, ripr_command_literals_in_text, ripr_debug_binary,
         ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
         ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
-        ripr_swarm_attempt_ledger_from_values, ripr_swarm_attempt_ledger_json,
-        ripr_swarm_attempt_ledger_markdown, ripr_swarm_plan_blocked_packets,
-        ripr_swarm_plan_blocked_report, ripr_swarm_plan_from_actionable_gaps_value,
-        ripr_swarm_plan_json, ripr_swarm_plan_markdown, ripr_swarm_plan_packet_is_high_confidence,
-        ripr_swarm_plan_ready_packets, ripr_swarm_read_optional_json,
-        ripr_swarm_readiness_from_values, ripr_swarm_readiness_json, ripr_swarm_readiness_markdown,
-        ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
-        routed_rust_workflow_contract_violations, run_ci_full_evidence_gates,
-        run_repo_badge_artifact_command, sarif_policy_report_json, sarif_policy_report_markdown,
-        semantic_selector_matches, should_scan_static_language_path, should_skip_path,
-        sorted_allowlist_content, sorted_capability_blocks_content, sorted_command_catalog_content,
-        sorted_markdown_index_table_content, sorted_traceability_behavior_blocks_content,
-        spec_id_from_path, spec_ids_in_text, spec_numbering_violations, specs,
-        static_language_allowlist_covers, status_for_report, suggested_fixes_patch,
-        suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
-        targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
-        test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
-        test_oracle_tests_in_text, unknown_command_message,
-        user_surface_projection_required_run_status_violations,
+        ripr_swarm_attempt_ledger_from_values,
+        ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts,
+        ripr_swarm_attempt_ledger_json, ripr_swarm_attempt_ledger_markdown,
+        ripr_swarm_plan_blocked_packets, ripr_swarm_plan_blocked_report,
+        ripr_swarm_plan_from_actionable_gaps_value, ripr_swarm_plan_json, ripr_swarm_plan_markdown,
+        ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
+        ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
+        ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions,
+        ripr_swarm_readiness_summary, routed_rust_workflow_contract_violations,
+        run_ci_full_evidence_gates, run_repo_badge_artifact_command, sarif_policy_report_json,
+        sarif_policy_report_markdown, semantic_selector_matches, should_scan_static_language_path,
+        should_skip_path, sorted_allowlist_content, sorted_capability_blocks_content,
+        sorted_command_catalog_content, sorted_markdown_index_table_content,
+        sorted_traceability_behavior_blocks_content, spec_id_from_path, spec_ids_in_text,
+        spec_numbering_violations, specs, static_language_allowlist_covers, status_for_report,
+        suggested_fixes_patch, suspicious_runtime_file_names, targeted_test_outcome,
+        targeted_test_outcome_report_json, targeted_test_outcome_report_markdown,
+        test_efficiency_entry, test_efficiency_report_json, test_efficiency_report_markdown,
+        test_oracle_report_json, test_oracle_report_markdown, test_oracle_tests_in_text,
+        unknown_command_message, user_surface_projection_required_run_status_violations,
         validate_actionable_gap_outcomes_fixture_case,
         validate_actionable_gap_outcomes_fixture_corpus, validate_local_context_allowlist,
         validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
@@ -79505,6 +79643,23 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn ripr_swarm_command_parses_attempt_ledger_real_attempts_arg() -> Result<(), String> {
+        let parsed = parse_ripr_swarm_args(&[
+            "attempt-ledger".to_string(),
+            "--real-repair-attempts".to_string(),
+            "fixtures/real-repair-attempts/corpus.json".to_string(),
+        ])?;
+        let RiprSwarmCommand::AttemptLedger(args) = parsed else {
+            return Err("expected ripr-swarm attempt-ledger args".to_string());
+        };
+        assert_eq!(
+            args.real_repair_attempts_path,
+            PathBuf::from("fixtures/real-repair-attempts/corpus.json")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_command_parses_readiness_args() -> Result<(), String> {
         let command = XtaskCommand::parse([
             "ripr-swarm".to_string(),
@@ -83769,6 +83924,134 @@ covered_by = ["cargo xtask check-file-policy"]
                 .map_err(|err| err.to_string())?;
         assert_eq!(value["summary"]["attempts_total"], 2);
         assert_eq!(value["summary"]["evidence_unchanged"], 1);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_imports_real_repair_attempts() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "outcomes": [
+                {
+                    "canonical_gap_id": "gap:missing-receipt",
+                    "packet_id": "gap:missing-receipt",
+                    "outcome_state": "not_attempted",
+                    "receipt_state": "receipt_not_applicable",
+                    "repair_kind": "add_call_observer",
+                    "verify_command": "cargo test -p ripr missing_receipt"
+                }
+            ]
+        });
+        let real_attempts = serde_json::json!({
+            "schema_version": "0.1",
+            "kind": "real_repair_attempts_corpus",
+            "cases": [
+                {
+                    "id": "route-improved",
+                    "canonical_gap_id": "gap:route-improved",
+                    "packet_id": "limitation:route-improved",
+                    "repair_kind": "sharpen_static_limitation_route",
+                    "target_test_or_observer_shape": "fixture-backed analyzer route split",
+                    "verify_command": "cargo test -p ripr route_improved",
+                    "verify_result": "pass",
+                    "receipt_command": "cargo xtask dogfood",
+                    "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+                    "receipt_state": "receipt_movement_improved",
+                    "actor_kind": "codex",
+                    "before_gap_state": "static_limitation",
+                    "after_gap_state": "static_limitation",
+                    "outcome": "evidence_improved",
+                    "reason": "real analyzer backlog route improved"
+                },
+                {
+                    "id": "missing-receipt",
+                    "canonical_gap_id": "gap:missing-receipt",
+                    "packet_id": "gap:missing-receipt",
+                    "repair_kind": "add_call_observer",
+                    "target_test_or_observer_shape": "bounded call observer",
+                    "verify_command": "cargo test -p ripr missing_receipt",
+                    "verify_result": "not_run",
+                    "receipt_command": "cargo xtask receipts write",
+                    "receipt_path": null,
+                    "receipt_state": "receipt_missing",
+                    "actor_kind": "codex",
+                    "before_gap_state": "actionable",
+                    "after_gap_state": "actionable",
+                    "outcome": "attempted_no_receipt",
+                    "reason": "attempt stopped before receipt"
+                }
+            ]
+        });
+
+        let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+            "unix_ms:99".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("no prior ledger".to_string()),
+                value: None,
+            },
+            RiprSwarmReadinessInput {
+                path: "fixtures/real-repair-attempts/corpus.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&real_attempts),
+            },
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["attempts_total"], 3);
+        assert_eq!(value["summary"]["evidence_improved"], 1);
+        assert_eq!(value["summary"]["attempted_no_receipt"], 1);
+        assert_eq!(value["summary"]["not_attempted"], 0);
+        assert_eq!(
+            value["inputs"]["real_repair_attempts"]["state"],
+            serde_json::Value::from("read")
+        );
+        assert_eq!(
+            value["repair_route_quality"][0]["repair_kind"],
+            serde_json::Value::from("add_call_observer")
+        );
+        assert_eq!(
+            value["repair_route_quality"][0]["repair_kind_attempted_no_receipt"],
+            serde_json::Value::from(1)
+        );
+        assert!(
+            ripr_swarm_attempt_ledger_markdown(&report)
+                .contains("| real repair attempts | `read` |")
+        );
         Ok(())
     }
 
