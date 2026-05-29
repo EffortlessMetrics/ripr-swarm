@@ -15,3 +15,8 @@ The canonical boundary-gap case also carries a case-local story at
 `start-here` packet to the existing before/after targeted-test outcome receipt
 so the fixture proves the full first-useful loop without source edits,
 generated tests, provider calls, mutation execution, or gate changes.
+
+The `python-preview-gap` case pins the preview-language bridge: an explicit
+Python GapRecord from the gap decision ledger can become a `preview_limited`
+`start-here` packet for a Python project root without requiring Cargo or
+promoting Python beyond advisory preview status.

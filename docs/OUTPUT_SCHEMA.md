@@ -8423,11 +8423,11 @@ map.
 
 `ripr first-pr` writes the first successful PR front-door packet from explicit
 existing RIPR artifacts. `cargo xtask first-pr` remains a repo-local wrapper
-over the same public command. The packet selects one top repairable
-PR-local Rust gap when the gap decision ledger supplies one, or emits a bounded
-no-action or blocked recovery state. It does not rerun hidden analysis, edit
-source, generate tests, call providers, run mutation testing, change gate
-policy, or change CI blocking.
+over the same public command. The packet selects one top repairable PR-local
+stable Rust gap or preview Python gap when the gap decision ledger supplies
+one, or emits a bounded no-action or blocked recovery state. It does not rerun
+hidden analysis, edit source, generate tests, call providers, run mutation
+testing, change gate policy, or change CI blocking.
 
 Command shape:
 
@@ -8540,8 +8540,10 @@ Field contract:
 - `selected.canonical_gap_id` and `selected.gap_id` identify the repair unit
   when a top gap is selected. Generated CI and report indexes should prefer the
   canonical gap id when present.
-- `selected.language` and `selected.language_status` keep Rust stable evidence
-  distinct from preview evidence when a top gap is selected.
+- `selected.language` and `selected.language_status` keep stable Rust evidence
+  distinct from preview Python evidence when a top gap is selected. Preview
+  Python top gaps use `selected.output_state = "preview_limited"` and remain
+  advisory repair routing, not support-tier promotion.
 - `selected.current_evidence_strength`,
   `selected.missing_discriminator`, and `selected.focused_proof_intent`
   provide the one-screen recommendation contract. They are derived from typed
@@ -8579,9 +8581,10 @@ Field contract:
   produce a repair interruption.
 - `preflight` is present for the public `ripr first-pr` command path. It
   records read-only front-door checks for root, Git worktree, base/head refs,
-  diff presence, Cargo workspace, `ripr.toml` defaulting, output directory, and
-  write/check mode. It does not create analyzer facts and does not become gate
-  authority.
+  diff presence, supported project marker, `ripr.toml` defaulting, output
+  directory, and write/check mode. Supported project markers currently mean a
+  Cargo workspace or Python preview project root. Preflight does not create
+  analyzer facts and does not become gate authority.
 - `preflight.status` is `ready` when the command can proceed without setup
   attention, or `needs_attention` when a setup check has a recovery/no-action
   note. A `needs_attention` preflight can still accompany an explicit
@@ -10591,8 +10594,8 @@ JSON shape:
     "default_ci_blocking": false,
     "receipt_dir": "fixtures/first_successful_pr",
     "metrics": {
-      "first_run_packets_total": 4,
-      "first_run_top_gap_selected_total": 2,
+      "first_run_packets_total": 5,
+      "first_run_top_gap_selected_total": 3,
       "first_run_no_action_total": 1,
       "first_run_blocked_total": 1,
       "first_run_missing_artifact_total": 0,
@@ -10615,6 +10618,22 @@ JSON shape:
         "expected_status": "actionable",
         "expected_state": "top_gap",
         "description": "A repairable Rust boundary gap becomes the top first-run repair.",
+        "errors": []
+      },
+      {
+        "name": "python-preview-gap",
+        "expected_dir": "fixtures/first_successful_pr/python-preview-gap/expected",
+        "json_path": "fixtures/first_successful_pr/python-preview-gap/expected/start-here.json",
+        "markdown_path": "fixtures/first_successful_pr/python-preview-gap/expected/start-here.md",
+        "status": "actionable",
+        "state": "top_gap",
+        "output_state": "preview_limited",
+        "top_gap_kind": "MissingBoundaryAssertion",
+        "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+        "next_command": null,
+        "expected_status": "actionable",
+        "expected_state": "top_gap",
+        "description": "A repairable Python preview gap becomes a preview-limited first-run repair.",
         "errors": []
       }
     ]
