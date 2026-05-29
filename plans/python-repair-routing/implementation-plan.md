@@ -276,7 +276,7 @@ git diff --check
 
 ### Work item: analysis/python-project-detection
 
-Status: planned
+Status: done
 
 Blocked by:
 
@@ -297,6 +297,18 @@ a Cargo workspace.
 - Python-only and mixed repos fail closed with named limitations rather than
   Cargo-specific errors.
 - `ripr pilot --root fixtures/python/basic` works without Cargo.
+
+Delivered:
+
+- Missing `ripr.toml` now keeps Rust-only defaults unless Python project
+  markers are present.
+- Python project detection recognizes root marker files and Python files under
+  `src/` or `tests/`, while skipping virtualenv, cache, build, distribution,
+  and generated Python files.
+- Explicit `ripr.toml` remains authoritative, so `[languages] enabled =
+  ["rust"]` still disables Python preview even in Python-shaped repos.
+- `fixtures/python/basic` pins the no-config Python project path used by
+  `ripr pilot` and diff-scoped `ripr check`.
 
 ### Work item: analysis/python-source-facts
 

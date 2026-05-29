@@ -13,7 +13,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
 | TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.js`, and `.jsx`. |
-| Python | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.py`. |
+| Python | preview | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.py`. |
 
 The preview adapters feed the same output schema and review surfaces as Rust.
 Preview findings carry additive metadata such as `language`,
@@ -22,7 +22,8 @@ populate them.
 
 ## Enable Preview Adapters
 
-Add preview languages to the repo-root `ripr.toml`:
+Add preview languages to the repo-root `ripr.toml` when you want explicit
+control:
 
 ```toml
 [languages]
@@ -57,7 +58,19 @@ ripr doctor --root .
 ```
 
 `doctor` should show the loaded config and enabled languages. Missing
-`ripr.toml` remains healthy and means the built-in Rust-only default is active.
+`ripr.toml` remains healthy. With no Python project markers, the built-in
+Rust-only default is active. With Python project markers such as
+`pyproject.toml`, `setup.py`, `requirements.txt`, `pytest.ini`, `tox.ini`,
+`noxfile.py`, or Python files under `src/` or `tests/`, `ripr` enables Python
+preview analysis for that repository root.
+
+An explicit `ripr.toml` remains authoritative. To keep Python preview disabled
+in a Python-shaped repo, add:
+
+```toml
+[languages]
+enabled = ["rust"]
+```
 
 ## Run The Local Preview Loop
 
@@ -140,9 +153,10 @@ Useful references:
 ## Editor Workflow
 
 The VS Code extension can activate on TypeScript, TSX, JavaScript, JSX, and
-Python files, but analysis still follows repo configuration. If the repo does
-not enable a preview language in `[languages]`, that language should not produce
-preview diagnostics.
+Python files, but analysis still follows repo language selection. TypeScript
+and JavaScript require `[languages]`; Python may be selected by project
+detection when `ripr.toml` is absent. If an explicit repo config does not enable
+a preview language, that language should not produce preview diagnostics.
 
 When preview diagnostics appear:
 

@@ -893,11 +893,18 @@ fn classify_change(
         stop_reasons: Vec::new(),
         related_tests: related,
         recommended_next_step: Some(recommended),
-        language: Some(DomainLanguageId::TypeScript),
+        language: Some(output_language_for(file)),
         language_status: Some(LanguageStatus::Preview),
         owner_kind: None,
         static_limit_kind: (!mock_paths.is_empty()).then_some(StaticLimitKind::MockedModule),
     })
+}
+
+fn output_language_for(path: &Path) -> DomainLanguageId {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("js" | "jsx") => DomainLanguageId::JavaScript,
+        _ => DomainLanguageId::TypeScript,
+    }
 }
 
 fn collect_workspace_typescript_files(root: &Path) -> Vec<PathBuf> {
@@ -1246,6 +1253,37 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
         assert_eq!(finding.language, Some(DomainLanguageId::TypeScript));
         assert_eq!(finding.language_status, Some(LanguageStatus::Preview));
         assert_eq!(finding.related_tests.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_labels_javascript_sources_separately() -> Result<(), String> {
+        let owner = TypeScriptOwner {
+            name: "applyDiscount".to_string(),
+            file: PathBuf::from("src/lib.js"),
+            start_line: 1,
+            end_line: 5,
+        };
+        let test = TypeScriptTest {
+            name: "alpha".to_string(),
+            file: PathBuf::from("tests/lib.test.js"),
+            line: 1,
+            body_text: "applyDiscount(50, 100)".to_string(),
+            assertions: Vec::new(),
+            mocks_in_file: Vec::new(),
+        };
+
+        let finding = classify_change(
+            Path::new("src/lib.js"),
+            2,
+            "    if (amount >= threshold) {",
+            &[owner],
+            &[test],
+        )
+        .ok_or_else(|| "expected a JavaScript preview finding".to_string())?;
+
+        assert_eq!(finding.language, Some(DomainLanguageId::JavaScript));
+        assert_eq!(finding.language_status, Some(LanguageStatus::Preview));
         Ok(())
     }
 

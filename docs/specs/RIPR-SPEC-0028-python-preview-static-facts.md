@@ -29,6 +29,12 @@ When enabled, it routes `*.py` files. It emits the same RIPR fact
 families as the Rust adapter and tags each finding with
 `language = "python"` and `language_status = "preview"`.
 
+When `ripr.toml` is absent, Python project detection may also enable the
+adapter for roots with markers such as `pyproject.toml`, `setup.py`,
+`setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`, or
+Python files under `src/` or `tests/`. An explicit `ripr.toml` remains
+authoritative and can keep Python disabled.
+
 The adapter is syntax-first. It must not depend on `mypy`, `pyright`, a
 runtime test runner, or an import graph. When syntax-first analysis
 cannot classify, the adapter emits an explicit `static_limit_kind`
@@ -40,9 +46,12 @@ instead of silently coercing to `no_static_path`.
 - Diff spans inside those files.
 - Repo configuration including `[languages] enabled` and any future
   Python-specific options layered on top of this spec.
+- Python project marker filenames used only to decide whether missing-config
+  roots should select Python preview analysis.
 
-The adapter does not read `pyproject.toml` build metadata, requirements
-files, virtualenv contents, generated stubs, or runtime test output.
+The adapter may observe project marker filenames, but it does not parse
+`pyproject.toml` build metadata, install requirements, read virtualenv contents,
+read generated stubs, or consume runtime test output.
 
 ## Owner Facts
 
