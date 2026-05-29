@@ -1144,7 +1144,7 @@
         "value": 1
       },
       "static_limitation_category": "activation_owner_call_absent_assertion_target_affinity",
-      "expected_claim": "Specific call-target affinity is relation evidence only; without an owner call it remains a named activation limitation and not user test debt.",
+      "expected_claim": "Specific call-target affinity is medium-confidence relation evidence only; without an owner call it remains a named activation limitation and not user test debt.",
       "must_not_claim": [
         "Do not turn call-target token affinity into activation.",
         "Do not infer an owner call from assertion text alone.",

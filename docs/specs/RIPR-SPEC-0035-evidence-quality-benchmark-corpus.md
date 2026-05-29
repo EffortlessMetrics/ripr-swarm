@@ -193,8 +193,9 @@ affinity.
   `variant`, and `arm`.
 - `test_grip_evidence::tests::given_call_presence_when_assertion_mentions_short_specific_call_target_then_affinity_remains`
   pins that specific call targets remain eligible for assertion-target
-  affinity without satisfying activation by themselves. The benchmark records
-  this as `activation_owner_call_absent_assertion_target_affinity` routed to
+  affinity as medium-confidence relation evidence without satisfying activation
+  by themselves. The benchmark records this as
+  `activation_owner_call_absent_assertion_target_affinity` routed to
   `analysis/assertion-target-affinity-owner-call-tracing`, not as public test
   debt.
 - `test_grip_evidence::tests::given_full_evidence_when_one_hop_helper_calls_owner_then_value_insensitive_activation_is_yes`
