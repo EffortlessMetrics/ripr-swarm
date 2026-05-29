@@ -1,0 +1,136 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_ranking_noise_control/input
+
+Summary: 4 probe(s), 1 exposed, 1 weak, 0 unrevealed, 1 no path, 1 unknown
+
+WARNING src/c_discount.py:2
+
+Changed
+  after:      if amount >= threshold:
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:src/c_discount.py::calculate_discount
+  canonical gap: gap:python:src/c_discount.py:calculate_discount:predicate_boundary:predicate:amount>=threshold
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `calculate_discount`
+  - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.
+  - observation weak: Strongest extracted Python oracle kind: `smoke_only` (rank 2)
+  - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `amount == threshold`.
+  - local flow reaches unknown sink: if amount >= threshold: (line 2)
+  - related test tests/test_discount.py:4 test_calculate_discount_smoke uses smoke smoke only oracle: assert result
+
+Weakness
+  - Related Python test reaches `calculate_discount` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary.
+  - missing discriminator amount == threshold: changed Python equality-boundary at line 2 lacks a concrete repair discriminator
+
+Next step
+  Python preview: add a focused boundary assertion for missing discriminator `amount == threshold`.
+
+INFO src/b_observed.py:2
+
+Changed
+  after:      return amount + 5
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/b_observed.py::calculate_fee
+  canonical gap: gap:python:src/b_observed.py:calculate_fee:return_value:return_value:amount+5
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  exposed (info, confidence 0.60)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `calculate_fee`
+  - infection yes: Changed Python return expression can alter the owner return value: `return amount + 5`
+  - propagation yes: Changed Python return value is already at the owner output boundary.
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.
+  - local flow reaches returned value: return amount + 5 (line 2)
+  - related test tests/test_observed.py:4 test_calculate_fee_exact uses strong exact value oracle: assert calculate_fee(100) == 105
+
+Weakness
+  - Related Python test reaches `calculate_fee` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
+
+Next step
+  Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.
+
+WARNING src/d_isolated.py:2
+
+Changed
+  after:      return amount + 1
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/d_isolated.py::isolated_total
+  canonical gap: gap:python:src/d_isolated.py:isolated_total:return_value:return_value:amount+1
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  no_static_path (warning, confidence 0.40)
+
+Evidence
+  - reach no: 0 related Python test(s) found for owner `isolated_total`
+  - infection yes: Changed Python return expression can alter the owner return value: `return amount + 1`
+  - propagation yes: Changed Python return value is already at the owner output boundary.
+  - observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)
+  - discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.
+  - local flow reaches returned value: return amount + 1 (line 2)
+
+Weakness
+  - No Python test references `isolated_total(`; add a pytest or unittest test that calls the changed owner.
+
+NOTE src/a_dynamic.py:2
+
+Changed
+  after:      return getattr(client, method_name)()
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/a_dynamic.py::call_named
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `call_named`
+  - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.
+  - propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.
+  - related test tests/test_dynamic.py:9 test_call_named_exact uses strong exact value oracle: assert call_named(Client(), "total") == 5
+
+Weakness
+  - Static limit `dynamic_dispatch`: the Python preview adapter saw a dynamic call shape such as `getattr(...)` or `registry[key](...)`; syntax alone cannot resolve the called behavior.
+
+Stop reasons:
+  - dynamic_dispatch_unresolved

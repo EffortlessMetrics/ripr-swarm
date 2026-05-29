@@ -372,6 +372,7 @@ adapter contributes:
 - `language_adapter_python_repair_class_field_value`
 - `language_adapter_python_repair_class_output_or_call_effect`
 - `language_adapter_python_repair_guidance_suppressed_non_actionable`
+- `language_adapter_python_repair_ranking_noise_control`
 - `language_adapter_python_static_limit_stop_reasons`
 - `language_adapter_python_static_limit_dynamic_dispatch`
 - `language_adapter_python_static_limit_decorator_indirection`
