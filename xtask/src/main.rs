@@ -5373,6 +5373,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "python"
                     | "real-repair-attempts"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
@@ -7684,6 +7685,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_editor_first_pr_bridge_fixture_corpus(&mut violations)?;
     validate_editor_adoption_assurance_fixture_corpus(&mut violations)?;
     validate_editor_actionable_gap_queue_fixture_corpus(&mut violations)?;
+    validate_python_project_detection_fixture_corpus(&mut violations)?;
     validate_first_successful_pr_fixture_corpus(&mut violations)?;
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
     validate_gap_decision_ledger_fixture_corpus(&mut violations)?;
@@ -7756,6 +7758,47 @@ fn check_fixture_contracts() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+fn validate_python_project_detection_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/python");
+    for required in [
+        "SPEC.md",
+        "basic/pyproject.toml",
+        "basic/src/pricing.py",
+        "basic/tests/test_pricing.py",
+        "basic/diff.patch",
+    ] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "python project detection fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+
+    let spec = root.join("SPEC.md");
+    if spec.exists() {
+        let text = read_text_lossy(&spec)?;
+        if !text
+            .lines()
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-"))
+        {
+            violations.push(format!(
+                "{} is missing `Spec: RIPR-SPEC-NNNN`",
+                normalize_path(&spec)
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !has_markdown_heading(&text, heading) {
+                violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
+            }
+        }
+    }
+    Ok(())
 }
 
 const EVIDENCE_RECORD_CONTRACT_CORPUS: &str =
