@@ -88545,34 +88545,22 @@ covered_by = ["cargo xtask check-file-policy"]
             route_quality["repair_kind_failure_count"],
             serde_json::Value::from(0)
         );
-        let expected_unchanged_route = value["repair_route_quality"]
+        let weak_oracle_expected_unchanged = value["attempts"]
             .as_array()
-            .and_then(|rows| {
-                rows.iter()
-                    .find(|row| row["repair_kind"] == "preserve_preview_weak_oracle_boundary")
+            .and_then(|attempts| {
+                attempts.iter().find(|attempt| {
+                    attempt["canonical_gap_id"] == "gap:typescript-preview-weak-oracle-downgrade"
+                        && attempt["outcome"] == "evidence_unchanged"
+                })
             })
-            .ok_or_else(|| {
-                "expected preserve_preview_weak_oracle_boundary route-quality row".to_string()
-            })?;
+            .ok_or_else(|| "expected durable weak-oracle expected-unchanged attempt".to_string())?;
         assert_eq!(
-            expected_unchanged_route["repair_kind_unchanged"],
-            serde_json::Value::from(1)
-        );
-        assert_eq!(
-            expected_unchanged_route["repair_kind_expected_unchanged"],
-            serde_json::Value::from(1)
-        );
-        assert_eq!(
-            expected_unchanged_route["repair_kind_failure_count"],
-            serde_json::Value::from(0)
-        );
-        assert_eq!(
-            expected_unchanged_route["repair_kind_success_rate"],
-            serde_json::Value::from(1.0)
+            weak_oracle_expected_unchanged["route_quality_expectation"],
+            "expected_unchanged_negative_capability"
         );
         assert_eq!(
             value["summary"]["expected_unchanged"],
-            serde_json::Value::from(1)
+            serde_json::Value::from(0)
         );
         assert!(
             !value["top_failing_repair_routes"]
@@ -88626,6 +88614,10 @@ covered_by = ["cargo xtask check-file-policy"]
             })?;
         assert_eq!(
             weak_oracle_route_quality["repair_kind_unchanged"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            weak_oracle_route_quality["repair_kind_expected_unchanged"],
             serde_json::Value::from(0)
         );
         assert_eq!(
@@ -89138,6 +89130,19 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
             &expected_unchanged
         ));
+        let expected_unchanged_rows =
+            crate::ripr_swarm_attempt_ledger_repair_route_quality(&[expected_unchanged]);
+        assert_eq!(expected_unchanged_rows.len(), 1);
+        assert_eq!(expected_unchanged_rows[0].unchanged, 1);
+        assert_eq!(expected_unchanged_rows[0].expected_unchanged, 1);
+        assert_eq!(
+            crate::ripr_swarm_repair_route_quality_failure_count(&expected_unchanged_rows[0]),
+            0
+        );
+        assert_eq!(
+            crate::ripr_swarm_repair_route_quality_success_rate(&expected_unchanged_rows[0]),
+            serde_json::Value::from(1.0)
+        );
         assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
             &attempt("evidence_regressed", Some("fail"))
         ));

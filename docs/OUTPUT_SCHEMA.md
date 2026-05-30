@@ -3288,10 +3288,13 @@ Attempted rows with no `verify_result` contribute to
 `verify_result`.
 `route_quality_expectation = "expected_unchanged_negative_capability"` keeps an
 `evidence_unchanged` attempt visible while marking the unchanged result as the
-expected trust-boundary outcome. These rows increment `summary.expected_unchanged`
-and `repair_kind_expected_unchanged`; they do not contribute to
+expected trust-boundary outcome. When such an attempt is the latest row for its
+canonical gap, it increments `summary.expected_unchanged` and
+`repair_kind_expected_unchanged`; it does not contribute to
 `repair_kind_failure_count`, top failing repair routes, or route-quality backlog
-packets.
+packets. If a newer improved or resolved attempt supersedes it, the expected
+unchanged row remains in durable `attempts[]` history but no longer affects
+latest-route quality counts.
 
 Generated `attempt_id` values include a stable attempt-instance suffix when the
 outcome carries one, preferring explicit outcome `attempt_instance`, then
