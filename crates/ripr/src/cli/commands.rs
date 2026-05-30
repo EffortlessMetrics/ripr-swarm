@@ -61,6 +61,29 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
     }
 }
 
+pub(super) fn swarm(args: &[String]) -> Result<(), String> {
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_swarm_help();
+        return Ok(());
+    };
+    match subcommand.as_str() {
+        "--help" | "-h" => {
+            help::print_swarm_help();
+            Ok(())
+        }
+        "queue" => {
+            if rest.iter().any(|arg| arg == "--help" || arg == "-h") {
+                help::print_swarm_queue_help();
+                return Ok(());
+            }
+            run_swarm_queue(parse_swarm_queue_options(rest)?)
+        }
+        other => Err(format!(
+            "unknown swarm subcommand {other:?}; expected `queue`"
+        )),
+    }
+}
+
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
@@ -166,6 +189,100 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     }
 
     let rendered = output::agent_seam_packets::render_agent_seam_packet_json(entry);
+    print!("{rendered}");
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SwarmQueueOptions {
+    root: PathBuf,
+    gap_ledger: PathBuf,
+    language: String,
+    top: usize,
+}
+
+fn parse_swarm_queue_options(args: &[String]) -> Result<SwarmQueueOptions, String> {
+    let mut root = PathBuf::from(".");
+    let mut gap_ledger = PathBuf::from("target/ripr/reports/gap-decision-ledger.json");
+    let mut language = "python".to_string();
+    let mut top = 10usize;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                let value = expect_value(args, i, "--root")?;
+                if value.trim().is_empty() {
+                    return Err("swarm queue --root requires a non-empty path".to_string());
+                }
+                root = PathBuf::from(value);
+            }
+            "--gap-ledger" => {
+                i += 1;
+                let value = expect_value(args, i, "--gap-ledger")?;
+                if value.trim().is_empty() {
+                    return Err("swarm queue --gap-ledger requires a non-empty path".to_string());
+                }
+                gap_ledger = PathBuf::from(value);
+            }
+            "--language" => {
+                i += 1;
+                let value = expect_value(args, i, "--language")?;
+                if value.trim().is_empty() {
+                    return Err("swarm queue --language requires a non-empty language".to_string());
+                }
+                language = value.to_string();
+            }
+            "--top" => {
+                i += 1;
+                top = parse_positive_usize(expect_value(args, i, "--top")?, "swarm queue --top")?;
+            }
+            "--format" => {
+                i += 1;
+                let value = expect_value(args, i, "--format")?;
+                if value != "json" {
+                    return Err(format!(
+                        "unknown swarm queue format {value:?}; expected `json`"
+                    ));
+                }
+            }
+            "--json" => {}
+            other => return Err(format!("unknown swarm queue argument {other:?}")),
+        }
+        i += 1;
+    }
+
+    Ok(SwarmQueueOptions {
+        root,
+        gap_ledger,
+        language,
+        top,
+    })
+}
+
+fn run_swarm_queue(options: SwarmQueueOptions) -> Result<(), String> {
+    ensure_command_root(&options.root, "swarm queue")?;
+    let contents = std::fs::read_to_string(&options.gap_ledger).map_err(|err| {
+        format!(
+            "swarm queue --gap-ledger {} is invalid: read failed: {err}",
+            options.gap_ledger.display()
+        )
+    })?;
+    let records =
+        output::gap_decision_ledger::parse_gap_records_json(&contents).map_err(|err| {
+            format!(
+                "swarm queue --gap-ledger {} is invalid: {err}",
+                options.gap_ledger.display()
+            )
+        })?;
+    let rendered = output::agent_seam_packets::render_agent_gap_record_queue_json(
+        &output::outcome::display_path(&options.root),
+        &output::outcome::display_path(&options.gap_ledger),
+        &records,
+        &options.language,
+        options.top,
+    )?;
     print!("{rendered}");
     Ok(())
 }
@@ -10208,6 +10325,61 @@ language = "rust"
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_parses_gap_ledger_language_top_and_format() {
+        assert_eq!(
+            parse_swarm_queue_options(&args(&[
+                "--root",
+                ".",
+                "--gap-ledger",
+                "target/ripr/reports/gap-decision-ledger.json",
+                "--language",
+                "python",
+                "--top",
+                "3",
+                "--format",
+                "json",
+            ])),
+            Ok(SwarmQueueOptions {
+                root: PathBuf::from("."),
+                gap_ledger: PathBuf::from("target/ripr/reports/gap-decision-ledger.json"),
+                language: "python".to_string(),
+                top: 3,
+            })
+        );
+        assert_eq!(
+            parse_swarm_queue_options(&args(&["--format", "md"])),
+            Err("unknown swarm queue format \"md\"; expected `json`".to_string())
+        );
+        assert_eq!(
+            parse_swarm_queue_options(&args(&["--top", "0"])),
+            Err("invalid swarm queue --top: expected a positive integer".to_string())
+        );
+    }
+
+    #[test]
+    fn swarm_queue_rejects_unknown_subcommands_and_missing_root() {
+        assert_eq!(
+            swarm(&args(&["unknown"])),
+            Err("unknown swarm subcommand \"unknown\"; expected `queue`".to_string())
+        );
+        assert_eq!(swarm(&args(&[])), Ok(()));
+        assert_eq!(swarm(&args(&["queue", "--help"])), Ok(()));
+        assert_eq!(
+            swarm(&args(&[
+                "queue",
+                "--root",
+                "target/ripr/missing-swarm-queue-root",
+                "--language",
+                "python",
+            ])),
+            Err(
+                "swarm queue root target/ripr/missing-swarm-queue-root is not a directory"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
