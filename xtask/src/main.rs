@@ -21790,6 +21790,7 @@ struct RiprSwarmReadinessSummary {
     missing_repair_route: usize,
     missing_must_not_change: usize,
     missing_allowed_edit_surface: usize,
+    missing_confidence: usize,
     missing_raw_evidence_refs: usize,
     related_context_missing: usize,
     static_limitation_packets: usize,
@@ -23064,6 +23065,20 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                     .any(|field| field == "allowed_edit_surface")
             })
             .count(),
+        "missing_confidence": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "confidence_basis")
+                    || packet
+                        .projection_exclusion_reasons
+                        .iter()
+                        .any(|reason| reason == "missing_confidence")
+            })
+            .count(),
         "missing_raw_evidence_refs": report
             .packets
             .iter()
@@ -23247,6 +23262,21 @@ fn ripr_swarm_plan_blocked_state_examples_json(report: &RiprSwarmPlanReport) -> 
     ripr_swarm_plan_push_blocked_state_example(
         &mut rows,
         &report.packets,
+        "missing_confidence",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "confidence_basis")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_confidence")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
         "missing_raw_evidence_refs",
         |packet| {
             packet
@@ -23326,6 +23356,7 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "missing_repair_route",
         "missing_must_not_change",
         "missing_allowed_edit_surface",
+        "missing_confidence",
         "missing_raw_evidence_refs",
         "related_context_missing",
         "static_limitation_packets",
@@ -25243,6 +25274,8 @@ fn ripr_swarm_readiness_summary(
             audit_usize(plan, &["summary", "missing_must_not_change"]).unwrap_or_default();
         summary.missing_allowed_edit_surface =
             audit_usize(plan, &["summary", "missing_allowed_edit_surface"]).unwrap_or_default();
+        summary.missing_confidence =
+            audit_usize(plan, &["summary", "missing_confidence"]).unwrap_or_default();
         summary.missing_raw_evidence_refs =
             audit_usize(plan, &["summary", "missing_raw_evidence_refs"]).unwrap_or_default();
         summary.related_context_missing =
@@ -25428,6 +25461,7 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
         "missing_repair_route": summary.missing_repair_route,
         "missing_must_not_change": summary.missing_must_not_change,
         "missing_allowed_edit_surface": summary.missing_allowed_edit_surface,
+        "missing_confidence": summary.missing_confidence,
         "missing_raw_evidence_refs": summary.missing_raw_evidence_refs,
         "related_context_missing": summary.related_context_missing,
         "static_limitation_packets": summary.static_limitation_packets,
@@ -25616,6 +25650,18 @@ fn ripr_swarm_readiness_blocked_state_routes(
             "missing_allowed_edit_surface",
             |packet| ripr_swarm_readiness_packet_missing_context(packet, "allowed_edit_surface"),
         ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_confidence",
+        summary.missing_confidence,
+        "the packet has no usable confidence basis",
+        "fix_confidence_basis",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_confidence", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "confidence_basis")
+                || ripr_swarm_readiness_packet_projection_exclusion(packet, "missing_confidence")
+        }),
     );
     ripr_swarm_readiness_push_blocked_state_route(
         &mut routes,
@@ -26419,6 +26465,20 @@ fn ripr_swarm_readiness_next_actions(
             ),
         });
     }
+    if summary.missing_confidence > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_confidence_basis".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing confidence basis; repair canonical item confidence projection before delegating repair work",
+                summary.missing_confidence
+            ),
+        });
+    }
     if summary.missing_raw_evidence_refs > 0 {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "fix_raw_evidence_refs".to_string(),
@@ -26863,6 +26923,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "missing_repair_route",
         "missing_must_not_change",
         "missing_allowed_edit_surface",
+        "missing_confidence",
         "missing_raw_evidence_refs",
         "related_context_missing",
         "static_limitation_packets",
@@ -79553,6 +79614,35 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_actionable_gap_public_projection_requires_confidence_basis() {
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "gap:missing-confidence",
+                gap_state: "actionable",
+                actionability: "extend_related_test",
+                repair_kind: "add_boundary_assertion",
+                target_test_type: "boundary_discriminator",
+                assertion_shape: "assert_eq!(value, expected)",
+                target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: "cargo test missing_confidence",
+                verify_command_source: "canonical_item.verify_command",
+                receipt_command_or_path: Some("cargo xtask receipts check"),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                confidence_basis: "confidence_basis_unknown",
+                must_not_change_count: 1,
+                allowed_edit_surface_count: 1,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["missing_confidence"]);
+    }
+
+    #[test]
     fn lane1_actionable_gap_verify_command_uses_bounded_related_target_over_unbounded_snapshot() {
         let record = serde_json::json!({
             "recommendation": {
@@ -80860,6 +80950,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing_repair_route": 1,
                 "missing_must_not_change": 1,
                 "missing_allowed_edit_surface": 1,
+                "missing_confidence": 1,
                 "missing_raw_evidence_refs": 1,
                 "related_context_missing": 1,
                 "static_limitation_packets": 1,
@@ -80881,6 +80972,7 @@ covered_by = ["cargo xtask check-file-policy"]
                         "receipt_command",
                         "must_not_change",
                         "allowed_edit_surface",
+                        "confidence_basis",
                         "raw_evidence_refs"
                     ],
                     "projection_exclusion_reasons": [
@@ -81066,6 +81158,7 @@ covered_by = ["cargo xtask check-file-policy"]
             "missing_repair_route",
             "missing_must_not_change",
             "missing_allowed_edit_surface",
+            "missing_confidence",
             "missing_raw_evidence_refs",
             "related_context_missing",
             "attempted_no_receipt_packets",
@@ -81161,6 +81254,13 @@ covered_by = ["cargo xtask check-file-policy"]
                 "gap:missing-context",
             ),
             (
+                "missing_confidence",
+                "fix_confidence_basis",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
                 "missing_raw_evidence_refs",
                 "fix_raw_evidence_refs",
                 "cargo xtask lane1-evidence-audit",
@@ -81231,6 +81331,7 @@ covered_by = ["cargo xtask check-file-policy"]
             "fix_related_test_or_observer",
             "fix_must_not_change_boundaries",
             "fix_allowed_edit_surface",
+            "fix_confidence_basis",
             "fix_raw_evidence_refs",
             "collect_missing_attempt_receipts",
             "inspect_missing_verify_results",
@@ -82704,6 +82805,72 @@ covered_by = ["cargo xtask check-file-policy"]
         let markdown = ripr_swarm_plan_markdown(&report);
         assert!(markdown.contains("run `cargo xtask lane1-evidence-audit` first"));
         assert!(markdown.contains("No packets in this section."));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_routes_missing_confidence_basis() -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "packet_id": "packet:missing-confidence",
+                    "canonical_gap_id": "gap:missing-confidence",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(value, expected)"
+                    },
+                    "verify_command": "cargo test -p ripr missing_confidence",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": {"file": "tests/lib.rs", "name": "missing_confidence"},
+                    "confidence_basis": "confidence_basis_unknown",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "allowed_edit_surface": ["tests/lib.rs"],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": false,
+                    "projection_exclusion_reasons": ["missing_confidence"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["missing_confidence"],
+            serde_json::Value::from(1)
+        );
+        let example = value["blocked_state_examples"]
+            .as_array()
+            .and_then(|examples| {
+                examples
+                    .iter()
+                    .find(|example| example["state"] == "missing_confidence")
+            })
+            .ok_or("missing confidence blocked-state example")?;
+        assert_eq!(
+            example["example_packet_id"],
+            serde_json::Value::from("packet:missing-confidence")
+        );
+        assert_eq!(
+            example["example_canonical_gap_id"],
+            serde_json::Value::from("gap:missing-confidence")
+        );
+        let markdown = ripr_swarm_plan_markdown(&report);
+        assert!(markdown.contains("missing confidence"));
         Ok(())
     }
 

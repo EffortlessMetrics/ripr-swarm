@@ -452,7 +452,8 @@ must also route field-level blockers such as `not_actionable_gap_state`,
 `missing_verify_command`, `unbounded_verify_command`,
 `missing_receipt_command`, `missing_repair_route`,
 `missing_related_test_or_observer`, `missing_must_not_change`,
-`missing_allowed_edit_surface`, and `missing_raw_evidence_refs`, plus outcome
+`missing_allowed_edit_surface`, `missing_confidence`, and
+`missing_raw_evidence_refs`, plus outcome
 blockers such as `attempted_no_receipt`, `missing_verify_result`,
 `orphan_receipt`, `unchanged_attempt`, and `regressed_attempt`.
 `swarm-plan` must provide non-top-limited packet examples for plan-derived
@@ -734,6 +735,7 @@ Future reports should expose:
 - `swarm_missing_repair_route`;
 - `swarm_missing_must_not_change`;
 - `swarm_missing_allowed_edit_surface`;
+- `swarm_missing_confidence`;
 - `swarm_missing_raw_evidence_refs`;
 - `swarm_related_context_missing`;
 - `swarm_static_limitation_packets`;
