@@ -21723,6 +21723,7 @@ struct RiprSwarmRepairRouteQualityRow {
     unknown: usize,
     sample_packet_ids: Vec<String>,
     sample_canonical_gap_ids: Vec<String>,
+    sample_missing_receipt_reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -24269,6 +24270,9 @@ fn ripr_swarm_attempt_ledger_repair_route_quality(
                 &mut row.sample_canonical_gap_ids,
                 &attempt.canonical_gap_id,
             );
+            if let Some(reason) = attempt.missing_receipt_reason.as_deref() {
+                ripr_swarm_push_limited_unique(&mut row.sample_missing_receipt_reasons, reason);
+            }
         }
     }
     let mut rows = rows.into_values().collect::<Vec<_>>();
@@ -24419,6 +24423,7 @@ fn ripr_swarm_repair_route_quality_json(rows: &[RiprSwarmRepairRouteQualityRow])
                 "repair_kind_success_rate": ripr_swarm_repair_route_quality_success_rate(row),
                 "sample_packet_ids": row.sample_packet_ids,
                 "sample_canonical_gap_ids": row.sample_canonical_gap_ids,
+                "sample_missing_receipt_reasons": row.sample_missing_receipt_reasons,
             })
         })
         .collect()
@@ -24466,6 +24471,7 @@ fn ripr_swarm_repair_route_quality_backlog_json(
                 "dominant_failure_count": ripr_swarm_repair_route_quality_dominant_failure_count(row),
                 "sample_packet_ids": row.sample_packet_ids,
                 "sample_canonical_gap_ids": row.sample_canonical_gap_ids,
+                "sample_missing_receipt_reasons": row.sample_missing_receipt_reasons,
                 "why_action_required": ripr_swarm_repair_route_quality_why_action_required(
                     row,
                     dominant_failure
@@ -24804,8 +24810,10 @@ fn ripr_swarm_push_repair_route_quality_table(
         out.push_str("No repair-route quality rows are available.\n\n");
         return;
     }
-    out.push_str("| Repair kind | Attempted | Improved | Unchanged | Regressed | Resolved | Failure count | Dominant failure | Success rate | Sample packets | Sample gaps |\n");
-    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |\n");
+    out.push_str("| Repair kind | Attempted | Improved | Unchanged | Regressed | Resolved | Failure count | Dominant failure | Success rate | Sample packets | Sample gaps | Missing receipt reasons |\n");
+    out.push_str(
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- | --- |\n",
+    );
     for row in rows {
         let success_rate = match ripr_swarm_repair_route_quality_success_rate(row) {
             Value::Number(number) => number.to_string(),
@@ -24815,7 +24823,7 @@ fn ripr_swarm_push_repair_route_quality_table(
         let dominant_failure =
             ripr_swarm_repair_route_quality_dominant_failure_reason(row).unwrap_or("n/a");
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | `{}` | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | `{}` | {} | {} | {} | {} |\n",
             audit_markdown_cell(&row.repair_kind),
             row.attempted,
             row.improved,
@@ -24826,7 +24834,8 @@ fn ripr_swarm_push_repair_route_quality_table(
             audit_markdown_cell(dominant_failure),
             success_rate,
             audit_markdown_cell(&row.sample_packet_ids.join(", ")),
-            audit_markdown_cell(&row.sample_canonical_gap_ids.join(", "))
+            audit_markdown_cell(&row.sample_canonical_gap_ids.join(", ")),
+            audit_markdown_cell(&row.sample_missing_receipt_reasons.join(", "))
         ));
     }
     out.push('\n');
@@ -24841,11 +24850,11 @@ fn ripr_swarm_push_repair_route_quality_backlog_table(
         out.push_str("No repair-route quality backlog packets are available.\n\n");
         return;
     }
-    out.push_str("| Packet | Repair kind | Failures | Dominant failure | Improvement route | Sample packets | Sample gaps | Why action required | Unlock condition |\n");
-    out.push_str("| --- | --- | ---: | --- | --- | --- | --- | --- | --- |\n");
+    out.push_str("| Packet | Repair kind | Failures | Dominant failure | Improvement route | Sample packets | Sample gaps | Missing receipt reasons | Why action required | Unlock condition |\n");
+    out.push_str("| --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- |\n");
     for row in rows {
         out.push_str(&format!(
-            "| `{}` | `{}` | {} | `{}` | `{}` | {} | {} | {} | {} |\n",
+            "| `{}` | `{}` | {} | `{}` | `{}` | {} | {} | {} | {} | {} |\n",
             audit_markdown_cell(row["packet_id"].as_str().unwrap_or("")),
             audit_markdown_cell(row["repair_kind"].as_str().unwrap_or("")),
             row["failure_count"].as_u64().unwrap_or(0),
@@ -24858,6 +24867,11 @@ fn ripr_swarm_push_repair_route_quality_backlog_table(
             ),
             audit_markdown_cell(
                 &audit_string_array(&row, &["sample_canonical_gap_ids"])
+                    .unwrap_or_default()
+                    .join(", ")
+            ),
+            audit_markdown_cell(
+                &audit_string_array(&row, &["sample_missing_receipt_reasons"])
                     .unwrap_or_default()
                     .join(", ")
             ),
@@ -26122,6 +26136,11 @@ fn ripr_swarm_repair_route_quality_row_from_value(
         sample_packet_ids: audit_string_array(row, &["sample_packet_ids"]).unwrap_or_default(),
         sample_canonical_gap_ids: audit_string_array(row, &["sample_canonical_gap_ids"])
             .unwrap_or_default(),
+        sample_missing_receipt_reasons: audit_string_array(
+            row,
+            &["sample_missing_receipt_reasons"],
+        )
+        .unwrap_or_default(),
     })
 }
 
@@ -85000,6 +85019,17 @@ covered_by = ["cargo xtask check-file-policy"]
                     "assertion_shape": "assert!(rendered.contains(label))",
                     "verify_command": "cargo test -p ripr output_b",
                     "receipt_command": "cargo xtask receipts write --packet packet-output-002"
+                },
+                {
+                    "packet_id": "packet-call-001",
+                    "canonical_gap_id": "gap:call-a",
+                    "evidence_class": "call_presence",
+                    "source_file": "src/call.rs",
+                    "repair_kind": "add_call_observer",
+                    "target_test_type": "call_observer",
+                    "assertion_shape": "assert!(calls.contains(\"emit\"))",
+                    "verify_command": "cargo test -p ripr call_a",
+                    "receipt_command": "cargo xtask receipts write --packet packet-call-001"
                 }
             ]
         });
@@ -85043,6 +85073,13 @@ covered_by = ["cargo xtask check-file-policy"]
                     "receipt_state": "receipt_missing",
                     "outcome_state": "attempted_no_receipt",
                     "seam_id": "unknown-route"
+                },
+                {
+                    "canonical_gap_id": "gap:call-a",
+                    "receipt_state": "receipt_missing",
+                    "outcome_state": "attempted_no_receipt",
+                    "seam_id": "call-a",
+                    "missing_receipt_reason": "repo exposure verify timed out before receipt capture"
                 }
             ]
         });
@@ -85069,7 +85106,7 @@ covered_by = ["cargo xtask check-file-policy"]
             },
         );
 
-        assert_eq!(report.repair_route_quality.len(), 3);
+        assert_eq!(report.repair_route_quality.len(), 4);
         assert_eq!(
             report.repair_route_quality[0].repair_kind,
             "add_output_observer"
@@ -85127,6 +85164,28 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_failing_repair_routes"][0]["sample_canonical_gap_ids"][0],
             serde_json::Value::from("gap:output-a")
         );
+        let call_route = value["repair_route_quality"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["repair_kind"] == "add_call_observer")
+            })
+            .ok_or("missing add_call_observer route-quality row")?;
+        assert_eq!(
+            call_route["sample_missing_receipt_reasons"][0],
+            serde_json::Value::from("repo exposure verify timed out before receipt capture")
+        );
+        let call_backlog = value["repair_route_quality_backlog"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["repair_kind"] == "add_call_observer")
+            })
+            .ok_or("missing add_call_observer route-quality backlog row")?;
+        assert_eq!(
+            call_backlog["sample_missing_receipt_reasons"][0],
+            serde_json::Value::from("repo exposure verify timed out before receipt capture")
+        );
         assert_eq!(
             value["repair_route_quality_backlog"][0]["packet_id"],
             "route-quality:add-output-observer:missing-verify-result"
@@ -85139,7 +85198,7 @@ covered_by = ["cargo xtask check-file-policy"]
             value["repair_route_quality_backlog"][0]["non_claims"][0],
             "not a public repair packet"
         );
-        assert_eq!(value["summary"]["missing_verify_result"], 4);
+        assert_eq!(value["summary"]["missing_verify_result"], 5);
         assert!(
             value["top_missing_evidence_fields"]
                 .as_array()
@@ -85150,7 +85209,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 .as_array()
                 .is_some_and(|rows| rows
                     .iter()
-                    .any(|row| row["label"] == "verify_result" && row["count"] == 4))
+                    .any(|row| row["label"] == "verify_result" && row["count"] == 5))
         );
         assert!(
             value["top_missing_evidence_fields"]
@@ -85178,8 +85237,10 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("route-quality:add-output-observer:missing-verify-result"));
         assert!(markdown.contains("add_output_observer"));
         assert!(markdown.contains("Failure count | Dominant failure"));
+        assert!(markdown.contains("Missing receipt reasons"));
         assert!(markdown.contains("Why action required | Unlock condition"));
         assert!(markdown.contains("missing_verify_result"));
+        assert!(markdown.contains("repo exposure verify timed out before receipt capture"));
         assert!(markdown.contains(
             "`add_output_observer` attempts lack typed verify results; route quality cannot be trusted until receipts preserve pass/fail/not-run evidence"
         ));
