@@ -23142,9 +23142,9 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
         missing_context.push("related_test_or_observer".to_string());
     }
     if !has_verify_command
-        || projection_exclusion_reasons
-            .iter()
-            .any(|reason| reason == "missing_verify_command")
+        || projection_exclusion_reasons.iter().any(|reason| {
+            reason == "missing_verify_command" || reason == "unbounded_verify_command"
+        })
     {
         missing_context.push("verify_command".to_string());
     }
@@ -23528,10 +23528,9 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                     .missing_context
                     .iter()
                     .any(|field| field == "verify_command")
-                || packet
-                    .projection_exclusion_reasons
-                    .iter()
-                    .any(|reason| reason == "missing_verify_command")
+                || packet.projection_exclusion_reasons.iter().any(|reason| {
+                    reason == "missing_verify_command" || reason == "unbounded_verify_command"
+                })
         })
         .count();
     let missing_receipt = report
@@ -26315,6 +26314,10 @@ fn ripr_swarm_readiness_blocked_state_routes(
                 || ripr_swarm_readiness_packet_projection_exclusion(
                     packet,
                     "missing_verify_command",
+                )
+                || ripr_swarm_readiness_packet_projection_exclusion(
+                    packet,
+                    "unbounded_verify_command",
                 )
         }),
     );
@@ -82045,13 +82048,21 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(0)
         );
         assert_eq!(
-            value["summary"]["blocked_by_public_projection_exclusion_packets"],
+            value["summary"]["blocked_by_missing_context_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["summary"]["missing_verify_command"],
             serde_json::Value::from(1)
         );
         assert_eq!(value["top_ready_packets"].as_array().map(Vec::len), Some(0));
         assert_eq!(
             value["top_blocked_packets"][0]["swarm_state"],
-            "blocked_by_public_projection_exclusion"
+            "blocked_by_missing_context"
+        );
+        assert_eq!(
+            value["top_blocked_packets"][0]["missing_context"],
+            serde_json::json!(["verify_command"])
         );
         assert_eq!(
             value["top_blocked_packets"][0]["projection_exclusion_reasons"],
