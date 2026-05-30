@@ -2394,7 +2394,10 @@ Field contract:
   `missing_must_not_change`, `missing_allowed_edit_surface`,
   `missing_raw_evidence_refs`, `unbounded_verify_command`, and
   `static_limitation_present`. This is advisory report evidence only and does
-  not change public badge endpoint semantics.
+  not change public badge endpoint semantics. Swarm planning treats explicit
+  packet-field projection exclusions such as `missing_verify_command` as
+  field-level blocked states even if a stale command string is still present in
+  the packet artifact.
 - `finding_alignment.runtime_confidence_by_class` - runtime confidence coverage
   rows at the canonical evidence-class grain. Each row reports canonical item
   count, calibrated-supported, fixture-backed, static-only, unknown-confidence,

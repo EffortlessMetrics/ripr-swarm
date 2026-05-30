@@ -4210,6 +4210,7 @@ tests = [
   "xtask::tests::lane1_actionable_gap_packets_require_canonical_assertion_for_public_projection",
   "xtask::tests::lane1_actionable_gap_packets_keep_observed_gaps_out_of_public_projection",
   "xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context",
+  "xtask::tests::ripr_swarm_plan_routes_explicit_missing_verify_projection_exclusion",
   "xtask::tests::ripr_swarm_plan_blocks_missing_target_test_shape",
   "xtask::tests::ripr_swarm_plan_blocks_missing_raw_evidence_refs",
   "xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context",
