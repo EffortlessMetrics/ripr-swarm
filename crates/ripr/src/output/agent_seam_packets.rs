@@ -467,6 +467,75 @@ pub(crate) fn render_agent_gap_record_queue_wrong_root_json(
     Ok(rendered)
 }
 
+pub(crate) fn render_agent_gap_record_queue_missing_root_json(
+    root: &str,
+    gap_ledger_path: &str,
+    ledger_generated_at: Option<&str>,
+    records: &[GapRecord],
+    language: &str,
+    top: usize,
+) -> Result<String, String> {
+    let language_records_total = records
+        .iter()
+        .filter(|record| record.language == language)
+        .count();
+    let reason = format!(
+        "gap ledger {} is missing root metadata; regenerate the gap decision ledger for requested --root {root} before assigning swarm work",
+        gap_ledger_path
+    );
+    let envelope = json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-queue",
+        "scope": "repo",
+        "source": "gap_decision_ledger",
+        "status": "blocked",
+        "inputs": {
+            "root": root,
+            "gap_ledger": gap_ledger_path,
+            "gap_ledger_root": null,
+            "gap_ledger_generated_at": ledger_generated_at,
+            "language": language,
+            "top": top,
+        },
+        "blocker": {
+            "kind": "missing_root",
+            "reason": reason,
+            "requested_root": root,
+            "gap_ledger_root": null,
+            "next_action": "regenerate the gap decision ledger for the selected --root, then rerun ripr swarm queue",
+        },
+        "summary": {
+            "records_total": records.len(),
+            "language_records_total": language_records_total,
+            "queue_total": 0,
+            "returned": 0,
+            "excluded_records_total": language_records_total,
+            "blocked_records_total": language_records_total,
+            "conflict_groups_total": 0,
+        },
+        "conflict_groups": [],
+        "exclusion_reasons": [
+            {
+                "reason": "gap_ledger_missing_root",
+                "count": language_records_total,
+            }
+        ],
+        "packets": [],
+        "must_not_infer": [
+            "do not assign packets from a gap ledger without root provenance",
+            "do not consume raw findings as swarm work",
+            "do not queue static limitations, no-action records, or records without bounded edit surfaces",
+            "do not edit files outside allowed_edit_surface",
+            "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
+        ],
+    });
+    let mut rendered = serde_json::to_string_pretty(&envelope)
+        .map_err(|err| format!("render blocked agent gap queue JSON failed: {err}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
 #[derive(Clone, Debug)]
 struct GapRecordQueueCandidate {
     source_index: usize,
@@ -3009,6 +3078,83 @@ mod tests {
         assert!(
             json.contains("do not assign packets from a gap ledger generated for a different root"),
             "wrong-root queue should carry a scheduler stop rule: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_missing_root_blocks_packets() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "authority_boundary":"preview_static_advisory",
+              "anchor":{"file":"src/pricing.py","line":42,"owner":"calculate_discount","dedupe_fingerprint":"gap:python:pricing"},
+              "evidence_ids":["evidence:pricing-boundary"],
+              "repair_route":{
+                "route_kind":"StrengthenExistingTest",
+                "related_test":"tests/test_pricing.py::test_calculate_discount_smoke",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"amount >= threshold",
+                "stop_conditions":["Stop if expected value is ambiguous."]
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_smoke"]
+            }]}"#,
+        )?;
+
+        let json = render_agent_gap_record_queue_missing_root_json(
+            "fixtures/python/current",
+            "target/ripr/reports/gap-decision-ledger.json",
+            Some("unix_ms:1778240100000"),
+            &records,
+            "python",
+            10,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("missing_root")
+        );
+        assert_eq!(
+            value
+                .get("inputs")
+                .and_then(|inputs| inputs.get("gap_ledger_root")),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "missing-root queue emitted packets: {json}"
+        );
+        assert!(
+            json.contains("do not assign packets from a gap ledger without root provenance"),
+            "missing-root queue should carry a scheduler stop rule: {json}"
         );
         Ok(())
     }

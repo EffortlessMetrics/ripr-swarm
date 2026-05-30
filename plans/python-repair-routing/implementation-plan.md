@@ -965,9 +965,10 @@ Make multiple Python repair cards shardable.
 - `ripr swarm queue --language python` ranks packetable Python GapRecords into
   conflict-grouped advisory work and excludes no-action, static-limit, and
   non-packetable records.
-- Queue rendering now fails closed when a gap ledger declares a different root
-  from the selected `--root`, returning a blocked wrong-root queue with no
-  packets instead of assigning stale or wrong-workspace repair work.
+- Queue rendering now fails closed when a gap ledger omits root provenance or
+  declares a different root from the selected `--root`, returning a blocked
+  queue with no packets instead of assigning rootless, stale, or
+  wrong-workspace repair work.
 
 ### Work item: swarm/python-agent-result-ingestion
 

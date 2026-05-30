@@ -345,6 +345,16 @@ fn render_swarm_queue_from_gap_ledger_contents(
     let root_display = output::outcome::display_path(&options.root);
     let gap_ledger_display = output::outcome::display_path(&options.gap_ledger);
     let rendered = match gap_ledger_root_status(&options.root, source.root.as_deref()) {
+        GapLedgerRootStatus::Missing => {
+            output::agent_seam_packets::render_agent_gap_record_queue_missing_root_json(
+                &root_display,
+                &gap_ledger_display,
+                source.generated_at.as_deref(),
+                &source.records,
+                &options.language,
+                options.top,
+            )?
+        }
         GapLedgerRootStatus::Mismatch { ledger_root, .. } => {
             output::agent_seam_packets::render_agent_gap_record_queue_wrong_root_json(
                 &root_display,
@@ -356,7 +366,7 @@ fn render_swarm_queue_from_gap_ledger_contents(
                 options.top,
             )?
         }
-        GapLedgerRootStatus::Match | GapLedgerRootStatus::Unknown => {
+        GapLedgerRootStatus::Match => {
             output::agent_seam_packets::render_agent_gap_record_queue_json(
                 &root_display,
                 &gap_ledger_display,
@@ -372,13 +382,13 @@ fn render_swarm_queue_from_gap_ledger_contents(
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum GapLedgerRootStatus {
     Match,
+    Missing,
     Mismatch { ledger_root: String, reason: String },
-    Unknown,
 }
 
 fn gap_ledger_root_status(requested_root: &Path, ledger_root: Option<&str>) -> GapLedgerRootStatus {
     let Some(raw_ledger_root) = ledger_root.map(str::trim).filter(|root| !root.is_empty()) else {
-        return GapLedgerRootStatus::Unknown;
+        return GapLedgerRootStatus::Missing;
     };
     let requested_root_display = output::outcome::display_path(requested_root);
     let ledger_root_display = output::path::display_path_text(raw_ledger_root);
@@ -10683,6 +10693,57 @@ language = "rust"
     }
 
     #[test]
+    fn swarm_queue_render_blocks_gap_ledger_without_root() -> Result<(), String> {
+        let root = unique_command_test_dir("swarm-queue-render-missing-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let options = SwarmQueueOptions {
+            root: root.clone(),
+            gap_ledger: root.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+        let mut ledger =
+            serde_json::from_str::<serde_json::Value>(&python_swarm_queue_gap_ledger(&root))
+                .map_err(|err| format!("parse fixture ledger: {err}"))?;
+        ledger
+            .as_object_mut()
+            .ok_or_else(|| "fixture ledger should be an object".to_string())?
+            .remove("root");
+
+        let json = render_swarm_queue_from_gap_ledger_contents(&options, &ledger.to_string())?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("missing_root")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "missing-root queue should not emit packets: {json}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn swarm_queue_render_emits_packets_for_matching_root() -> Result<(), String> {
         let root = unique_command_test_dir("swarm-queue-render-matching-root");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
@@ -10751,7 +10812,7 @@ language = "rust"
         }
         assert_eq!(
             gap_ledger_root_status(&requested, None),
-            GapLedgerRootStatus::Unknown
+            GapLedgerRootStatus::Missing
         );
 
         std::fs::remove_dir_all(&temp).map_err(|err| format!("remove temp: {err}"))?;
