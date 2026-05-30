@@ -1012,7 +1012,7 @@ Make Python gap improvement durable.
 
 ### Work item: fixtures/python-false-positive-corpus
 
-Status: planned
+Status: in progress
 
 Blocked by:
 
@@ -1030,6 +1030,13 @@ Prevent Python support from becoming noisy.
   smoke tests, reach-without-observe, and duplicate raw signals.
 - Unsupported cases produce named limitations and do not enter the repair
   queue.
+
+#### Progress
+
+- Check-output-derived Python static-limit findings now become report-only
+  `StaticLimitation` GapRecords with `repairability = "analyzer_limitation"`.
+  The swarm queue excludes those records instead of turning preview limitations
+  into agent repair packets.
 
 ### Work item: dogfood/python-real-repo-evals
 
