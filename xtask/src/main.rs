@@ -22933,7 +22933,11 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     {
         missing_context.push("verify_command".to_string());
     }
-    if !has_receipt_command {
+    if !has_receipt_command
+        || projection_exclusion_reasons
+            .iter()
+            .any(|reason| reason == "missing_receipt_command")
+    {
         missing_context.push("receipt_command".to_string());
     }
     if must_not_change_count == 0 {
@@ -23204,6 +23208,10 @@ fn ripr_swarm_plan_missing_verify_or_receipt_packets(
                     .receipt_command_or_path
                     .as_deref()
                     .is_some_and(ripr_swarm_plan_field_missing)
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_receipt_command")
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -23307,6 +23315,10 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                 .missing_context
                 .iter()
                 .any(|field| field == "receipt_command")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_receipt_command")
         })
         .count();
     serde_json::json!({
@@ -23564,6 +23576,10 @@ fn ripr_swarm_plan_blocked_state_examples_json(report: &RiprSwarmPlanReport) -> 
                 .missing_context
                 .iter()
                 .any(|field| field == "receipt_command")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_receipt_command")
         },
     );
     ripr_swarm_plan_push_blocked_state_example(
@@ -26044,6 +26060,10 @@ fn ripr_swarm_readiness_blocked_state_routes(
         "cargo xtask lane1-evidence-audit",
         ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_receipt_command", |packet| {
             ripr_swarm_readiness_packet_missing_context(packet, "receipt_command")
+                || ripr_swarm_readiness_packet_projection_exclusion(
+                    packet,
+                    "missing_receipt_command",
+                )
         }),
     );
     ripr_swarm_readiness_push_blocked_state_route(
@@ -84939,6 +84959,84 @@ covered_by = ["cargo xtask check-file-policy"]
                     examples.iter().any(|example| {
                         example["state"] == "missing_verify_command"
                             && example["example_packet_id"] == "packet:explicit-missing-verify"
+                    })
+                })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_routes_explicit_missing_receipt_projection_exclusion() -> Result<(), String>
+    {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "packet_id": "packet:explicit-missing-receipt",
+                    "canonical_gap_id": "gap:explicit-missing-receipt",
+                    "evidence_class": "error_path",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant_observer",
+                        "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                    },
+                    "verify_command": "cargo test exact_error_variant",
+                    "receipt_command": "cargo xtask receipts stale",
+                    "related_test_or_observer": {
+                        "file": "tests/error.rs",
+                        "name": "exact_error_variant"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true,
+                    "projection_exclusion_reasons": ["missing_receipt_command"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        assert!(ready.is_empty());
+
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(blocked[0].missing_context, vec!["receipt_command"]);
+        assert_eq!(
+            blocked[0].projection_exclusion_reasons,
+            vec!["missing_receipt_command"]
+        );
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["missing_receipt_command"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["top_missing_verify_or_receipt"][0]["packet_id"],
+            "packet:explicit-missing-receipt"
+        );
+        assert!(
+            value["blocked_state_examples"]
+                .as_array()
+                .is_some_and(|examples| {
+                    examples.iter().any(|example| {
+                        example["state"] == "missing_receipt_command"
+                            && example["example_packet_id"] == "packet:explicit-missing-receipt"
                     })
                 })
         );
