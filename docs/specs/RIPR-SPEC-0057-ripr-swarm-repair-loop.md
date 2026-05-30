@@ -617,6 +617,9 @@ Current implementation coverage:
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
   validates `fixtures/actionable-gap-outcomes-corpus/corpus.json` against the
   same outcome joiner used by the report command;
+- `crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts`
+  validates the Python first-PR before/after check-output fixture and expected
+  `ripr outcome` JSON/Markdown receipts for a closed canonical gap;
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift`
   pins missing, malformed, and mismatched outcome-corpus guardrails;
 - `xtask::tests::ripr_swarm_command_parses_plan_args` pins the

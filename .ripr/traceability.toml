@@ -2106,6 +2106,7 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_repair_card_becomes_agent_packet_gap_record",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_packet_carries_shared_repair_route_and_stop_conditions",
   "crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_from_python_check_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/first_pr.rs::tests::python_preview_gap_ledger_is_selected_for_start_here",
   "crates/ripr/src/output/first_pr.rs::tests::python_check_output_materializes_gap_ledger_for_start_here",
   "crates/ripr/src/output/github.rs::tests::render_includes_python_repair_card_guidance",
@@ -3979,12 +3980,17 @@ tests = [
   "xtask::tests::dogfood_surface_projection_alignment_covers_missing_receipt_route_quality",
   "xtask::tests::dogfood_real_repair_attempt_receipts_are_checked",
   "xtask::tests::dogfood_real_repair_attempt_rejects_movement_contradictions",
+  "crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts",
 ]
 fixtures = [
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/actionable-gap-outcomes-corpus",
   "fixtures/surface-projection-alignment",
   "fixtures/real-repair-attempts",
+  "fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json",
+  "fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json",
+  "fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.json",
+  "fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.md",
 ]
 code = [
   "xtask/src/command.rs",
