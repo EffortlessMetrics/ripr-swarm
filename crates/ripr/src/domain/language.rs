@@ -119,6 +119,7 @@ pub enum StaticLimitKind {
     MockedModule,
     OpaqueCustomAssertionHelper,
     PropertyBasedTest,
+    UnresolvedPytestFixture,
     UnsupportedSyntax,
 }
 
@@ -134,6 +135,7 @@ impl StaticLimitKind {
             StaticLimitKind::MockedModule => "mocked_module",
             StaticLimitKind::OpaqueCustomAssertionHelper => "opaque_custom_assertion_helper",
             StaticLimitKind::PropertyBasedTest => "property_based_test",
+            StaticLimitKind::UnresolvedPytestFixture => "unresolved_pytest_fixture",
             StaticLimitKind::UnsupportedSyntax => "unsupported_syntax",
         }
     }
@@ -213,6 +215,10 @@ mod tests {
         assert_eq!(
             StaticLimitKind::PropertyBasedTest.as_str(),
             "property_based_test"
+        );
+        assert_eq!(
+            StaticLimitKind::UnresolvedPytestFixture.as_str(),
+            "unresolved_pytest_fixture"
         );
     }
 }

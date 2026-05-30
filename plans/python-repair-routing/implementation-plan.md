@@ -1054,6 +1054,13 @@ Prevent Python support from becoming noisy.
 - `python_property_based_limit` pins Hypothesis-style property-based tests as
   `property_based_test` static limitations so the adapter does not infer that
   generated inputs cover a concrete missing discriminator.
+- `python_unresolved_fixture_limit` pins pytest fixture-sourced inputs and
+  expected values as `unresolved_pytest_fixture` static limitations so the
+  adapter does not turn opaque fixture data into a repair packet or a
+  discriminator claim.
+- Static-limit findings now keep revealability/discriminator evidence
+  `unknown`, even when a related test has an exact-looking oracle, because the
+  named limitation prevents a safe discriminator claim.
 
 ### Work item: dogfood/python-real-repo-evals
 

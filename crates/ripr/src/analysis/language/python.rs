@@ -2364,6 +2364,15 @@ fn static_limit_for_change(
             missing: "Static limit `property_based_test`: a related Python test uses property-based generated inputs such as `@given(...)`; syntax-first preview evidence cannot prove whether the generated cases include the changed discriminator.".to_string(),
         });
     }
+    if related_candidates_have_unresolved_pytest_fixture_limit(owner, related_candidates) {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnresolvedPytestFixture,
+            evidence:
+                "static_limit unresolved_pytest_fixture: related test uses fixture-sourced values"
+                    .to_string(),
+            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
+        });
+    }
     if related_candidates_have_opaque_custom_assertion_limit(related_candidates) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
@@ -2436,6 +2445,87 @@ fn test_uses_property_based_inputs(test: &PythonTest) -> bool {
             || decorator == "example"
             || decorator.ends_with(".example")
     })
+}
+
+fn related_candidates_have_unresolved_pytest_fixture_limit(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> bool {
+    let mut has_unresolved_fixture_relation = false;
+    let mut has_concrete_oracle_relation = false;
+
+    for candidate in related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        if test_has_unresolved_pytest_fixture_inputs(candidate.test, owner) {
+            has_unresolved_fixture_relation = true;
+        } else {
+            has_concrete_oracle_relation = true;
+        }
+    }
+
+    has_unresolved_fixture_relation && !has_concrete_oracle_relation
+}
+
+fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.framework == "pytest"
+        && !test.parametrized
+        && body_calls_owner(&test.body_text, owner)
+        && test
+            .fixtures
+            .iter()
+            .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+            .any(|fixture| body_uses_identifier(&test.body_text, fixture))
+}
+
+fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
+    matches!(
+        fixture,
+        "capfd"
+            | "capfdbinary"
+            | "caplog"
+            | "capsys"
+            | "capsysbinary"
+            | "client"
+            | "monkeypatch"
+            | "mocker"
+            | "record_property"
+            | "record_testsuite_property"
+            | "recwarn"
+            | "test_client"
+            | "tmp_path"
+            | "tmp_path_factory"
+            | "tmpdir"
+            | "tmpdir_factory"
+    )
+}
+
+fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
+    let mut line_start = 0;
+    for line in body_text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('@')
+            && !trimmed.starts_with("def ")
+            && !trimmed.starts_with("async def ")
+            && line.match_indices(identifier).any(|(idx, _)| {
+                let body_idx = line_start + idx;
+                has_identifier_boundary(body_text, body_idx, identifier.len())
+                    && !line_prefix_looks_like_comment_or_string(body_text, body_idx)
+            })
+        {
+            return true;
+        }
+        line_start += line.len();
+    }
+    false
+}
+
+fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -> bool {
+    let before = body_text[..idx].chars().next_back();
+    let after = body_text[idx + len..].chars().next();
+    before.is_none_or(|ch| !is_python_identifier_char(ch))
+        && after.is_none_or(|ch| !is_python_identifier_char(ch))
 }
 
 fn related_candidates_have_opaque_custom_assertion_limit(
@@ -3128,10 +3218,8 @@ fn classify_change(
             },
             if related.is_empty() {
                 StageState::No
-            } else if strongest_strength >= OracleStrength::Strong.rank() {
-                StageState::Yes
             } else {
-                StageState::Weak
+                StageState::Unknown
             },
             Vec::new(),
         )
@@ -3257,7 +3345,12 @@ fn classify_change(
             strongest_strength
         ),
     );
-    let discriminate_summary = if strongest_strength >= OracleStrength::Strong.rank() {
+    let discriminate_summary = if let Some(limit) = &static_limit {
+        format!(
+            "Static limit `{}` prevents a safe Python discriminator claim.",
+            limit.kind.as_str()
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank() {
         format!(
             "Related Python test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
             strongest_kind.as_str()
@@ -4620,6 +4713,27 @@ def test_notifies_callback():
         };
         let property_based_with_exact_candidates =
             related_test_candidates(&plain_owner, &property_based_with_exact_tests);
+        let unresolved_fixture_tests = extract_tests(
+            Path::new("tests/test_service.py"),
+            "from src.service import total\n\ndef test_total_fixture_case(case):\n    assert total(case.value) == case.expected\n",
+        );
+        let unresolved_fixture_candidates =
+            related_test_candidates(&plain_owner, &unresolved_fixture_tests);
+        let unresolved_fixture_with_exact_tests = {
+            let mut tests = unresolved_fixture_tests.clone();
+            tests.extend(extract_tests(
+                Path::new("tests/test_service_exact.py"),
+                "from src.service import total\n\ndef test_total_exact():\n    assert total(1) == 1\n",
+            ));
+            tests
+        };
+        let unresolved_fixture_with_exact_candidates =
+            related_test_candidates(&plain_owner, &unresolved_fixture_with_exact_tests);
+        let parametrized_tests = extract_tests(
+            Path::new("tests/test_service.py"),
+            "import pytest\nfrom src.service import total\n\n@pytest.mark.parametrize(\"value, expected\", [(1, 1)])\ndef test_total_parametrized(value, expected):\n    assert total(value) == expected\n",
+        );
+        let parametrized_candidates = related_test_candidates(&plain_owner, &parametrized_tests);
         let property_based_with_same_test_exact_tests = extract_tests(
             Path::new("tests/test_service.py"),
             "from hypothesis import given, strategies as st\nfrom src.service import total\n\n@given(st.integers())\ndef test_total_property_based(value):\n    assert total(1) == 1\n",
@@ -4683,6 +4797,25 @@ def test_notifies_callback():
                 &property_based_with_same_test_exact_candidates
             )
             .map(|limit| limit.kind),
+            None
+        );
+        assert_eq!(
+            static_limit_for_change("    return 1", &plain_owner, &unresolved_fixture_candidates)
+                .map(|limit| limit.kind),
+            Some(StaticLimitKind::UnresolvedPytestFixture)
+        );
+        assert_eq!(
+            static_limit_for_change(
+                "    return 1",
+                &plain_owner,
+                &unresolved_fixture_with_exact_candidates
+            )
+            .map(|limit| limit.kind),
+            None
+        );
+        assert_eq!(
+            static_limit_for_change("    return 1", &plain_owner, &parametrized_candidates)
+                .map(|limit| limit.kind),
             None
         );
         assert_eq!(
@@ -4759,6 +4892,7 @@ def test_notifies_callback():
         assert!(finding.canonical_gap.is_none());
         assert_eq!(finding.ripr.infect.state, StageState::Unknown);
         assert_eq!(finding.ripr.propagate.state, StageState::Unknown);
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
         assert!(
             finding
                 .evidence
@@ -4804,6 +4938,7 @@ def test_notifies_callback():
         assert!(finding.canonical_gap.is_none());
         assert!(finding.recommended_next_step.is_none());
         assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
         assert!(
             finding
                 .evidence
@@ -4815,6 +4950,52 @@ def test_notifies_callback():
                 .missing
                 .iter()
                 .any(|entry| entry.contains("Static limit `property_based_test`"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_unresolved_pytest_fixture_fails_closed() -> Result<(), String> {
+        let owners = extract_owners(
+            Path::new("src/pricing.py"),
+            "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        );
+        let tests = extract_tests(
+            Path::new("tests/test_pricing.py"),
+            "from src.pricing import apply_discount\n\ndef test_apply_discount_fixture_case(discount_case):\n    assert apply_discount(discount_case.amount, discount_case.threshold) == discount_case.expected\n",
+        );
+
+        let Some(finding) = classify_change(
+            Path::new("src/pricing.py"),
+            2,
+            "    if amount >= threshold:",
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed predicate inside owner should classify".to_string());
+        };
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture)
+        );
+        assert_eq!(finding.stop_reasons, vec![StopReason::StaticProbeUnknown]);
+        assert!(finding.canonical_gap.is_none());
+        assert!(finding.recommended_next_step.is_none());
+        assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|entry| entry.starts_with("static_limit unresolved_pytest_fixture:"))
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|entry| entry.contains("Static limit `unresolved_pytest_fixture`"))
         );
         Ok(())
     }
@@ -4849,6 +5030,7 @@ def test_notifies_callback():
         assert!(finding.canonical_gap.is_none());
         assert!(finding.recommended_next_step.is_none());
         assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
         assert!(
             finding
                 .evidence
