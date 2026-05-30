@@ -24513,11 +24513,23 @@ fn ripr_swarm_repair_route_quality_improvement_route(
             format!("report/repair-route-verify-result-capture/{repair_kind}")
         }
         "unchanged" => format!("analysis/repair-route-guidance/{repair_kind}"),
+        "attempted_no_receipt" if ripr_swarm_repair_route_quality_has_timeout_receipt(row) => {
+            format!("report/repair-route-receipt-reliability/bounded-verify-route/{repair_kind}")
+        }
         "attempted_no_receipt" => {
             format!("report/repair-route-receipt-reliability/{repair_kind}")
         }
         _ => format!("analysis/repair-route-outcome-classification/{repair_kind}"),
     }
+}
+
+fn ripr_swarm_repair_route_quality_has_timeout_receipt(
+    row: &RiprSwarmRepairRouteQualityRow,
+) -> bool {
+    row.sample_missing_receipt_reasons.iter().any(|reason| {
+        let normalized = reason.to_ascii_lowercase();
+        normalized.contains("timed out") || normalized.contains("timeout")
+    })
 }
 
 fn ripr_swarm_repair_route_quality_why_action_required(
@@ -24537,6 +24549,12 @@ fn ripr_swarm_repair_route_quality_why_action_required(
             "`{}` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
             row.repair_kind
         ),
+        "attempted_no_receipt" if ripr_swarm_repair_route_quality_has_timeout_receipt(row) => {
+            format!(
+                "`{}` attempts timed out before receipt capture; repair guidance needs a bounded verify route before outcomes can be trusted",
+                row.repair_kind
+            )
+        }
         "attempted_no_receipt" => format!(
             "`{}` attempts are missing receipts; repair guidance is not receiptable enough to claim outcomes",
             row.repair_kind
@@ -24565,6 +24583,12 @@ fn ripr_swarm_repair_route_quality_unlock_condition(
             "update `{}` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
             row.repair_kind
         ),
+        "attempted_no_receipt" if ripr_swarm_repair_route_quality_has_timeout_receipt(row) => {
+            format!(
+                "replace broad `{}` verify or receipt routes with a bounded command that can complete and emit a receipt inside the runtime budget",
+                row.repair_kind
+            )
+        }
         "attempted_no_receipt" => format!(
             "make `{}` packets produce a runnable receipt command/path before treating the route as reliable",
             row.repair_kind
@@ -85079,6 +85103,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "receipt_state": "receipt_missing",
                     "outcome_state": "attempted_no_receipt",
                     "seam_id": "call-a",
+                    "verify_result": "timed_out",
                     "missing_receipt_reason": "repo exposure verify timed out before receipt capture"
                 }
             ]
@@ -85187,6 +85212,18 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from("repo exposure verify timed out before receipt capture")
         );
         assert_eq!(
+            call_backlog["improvement_route"],
+            "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+        );
+        assert_eq!(
+            call_backlog["why_action_required"],
+            "`add_call_observer` attempts timed out before receipt capture; repair guidance needs a bounded verify route before outcomes can be trusted"
+        );
+        assert_eq!(
+            call_backlog["unlock_condition"],
+            "replace broad `add_call_observer` verify or receipt routes with a bounded command that can complete and emit a receipt inside the runtime budget"
+        );
+        assert_eq!(
             value["repair_route_quality_backlog"][0]["packet_id"],
             "route-quality:add-output-observer:missing-verify-result"
         );
@@ -85198,7 +85235,7 @@ covered_by = ["cargo xtask check-file-policy"]
             value["repair_route_quality_backlog"][0]["non_claims"][0],
             "not a public repair packet"
         );
-        assert_eq!(value["summary"]["missing_verify_result"], 5);
+        assert_eq!(value["summary"]["missing_verify_result"], 4);
         assert!(
             value["top_missing_evidence_fields"]
                 .as_array()
@@ -85209,7 +85246,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 .as_array()
                 .is_some_and(|rows| rows
                     .iter()
-                    .any(|row| row["label"] == "verify_result" && row["count"] == 5))
+                    .any(|row| row["label"] == "verify_result" && row["count"] == 4))
         );
         assert!(
             value["top_missing_evidence_fields"]
@@ -85241,6 +85278,15 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("Why action required | Unlock condition"));
         assert!(markdown.contains("missing_verify_result"));
         assert!(markdown.contains("repo exposure verify timed out before receipt capture"));
+        assert!(markdown.contains(
+            "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+        ));
+        assert!(markdown.contains(
+            "`add_call_observer` attempts timed out before receipt capture; repair guidance needs a bounded verify route before outcomes can be trusted"
+        ));
+        assert!(markdown.contains(
+            "replace broad `add_call_observer` verify or receipt routes with a bounded command that can complete and emit a receipt inside the runtime budget"
+        ));
         assert!(markdown.contains(
             "`add_output_observer` attempts lack typed verify results; route quality cannot be trusted until receipts preserve pass/fail/not-run evidence"
         ));
