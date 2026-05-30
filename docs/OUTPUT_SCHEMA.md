@@ -3094,10 +3094,26 @@ actionable operator evidence instead of only route-quality counts.
     "missing_verify_result": 0,
     "evidence_improved": 2,
     "evidence_unchanged": 1,
+    "expected_unchanged": 0,
     "evidence_regressed": 0,
     "resolved": 0,
     "unknown": 0,
     "orphaned_receipts": 1
+  },
+  "attempt_history_summary": {
+    "attempts_total": 5,
+    "durable_attempts_total": 4,
+    "canonical_gaps_total": 3,
+    "not_attempted": 1,
+    "attempted_no_receipt": 1,
+    "receipt_present": 0,
+    "missing_verify_result": 0,
+    "evidence_improved": 2,
+    "evidence_unchanged": 1,
+    "expected_unchanged": 0,
+    "evidence_regressed": 0,
+    "resolved": 0,
+    "unknown": 0
   },
   "repair_route_quality": [
     {
@@ -3111,6 +3127,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
@@ -3132,6 +3149,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 0,
       "repair_kind_dominant_failure_reason": null,
@@ -3153,6 +3171,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
@@ -3214,6 +3233,7 @@ actionable operator evidence instead of only route-quality counts.
       "timestamp": "unix_ms:1778240100000",
       "receipt_state": "receipt_movement_improved",
       "movement_source": "agent_receipt",
+      "route_quality_expectation": null,
       "reason": "Matched agent receipt artifact."
     }
   ],
@@ -3239,6 +3259,7 @@ actionable operator evidence instead of only route-quality counts.
       "timestamp": "unix_ms:1778240100000",
       "receipt_state": "receipt_movement_improved",
       "movement_source": "agent_receipt",
+      "route_quality_expectation": null,
       "reason": "Matched agent receipt artifact."
     }
   ],
@@ -3268,6 +3289,12 @@ current `top_ready_packets[]` as synthetic `not_attempted` queue placeholders
 until a receipt or outcome row replaces them. It preserves
 `attempted_no_receipt`, `receipt_present`, `evidence_improved`,
 `evidence_unchanged`, `evidence_regressed`, `resolved`, and `unknown` outcomes.
+`summary` is the latest-projection state used for current routing, except
+`summary.attempts_total`, which reports the durable row count for operator
+visibility. `attempt_history_summary` counts full durable `attempts[]` history
+before latest-attempt collapse and is the place to inspect prior unchanged,
+no-receipt, regressed, or expected-unchanged outcomes that were superseded by a
+newer current attempt.
 It preserves prior `not_attempted` rows only when they remain tied to the current
 swarm plan or carry durable receipt/verification evidence; stale synthetic
 `not_attempted` placeholders are dropped so retired packets do not create
@@ -3280,6 +3307,16 @@ less complete.
 Attempted rows with no `verify_result` contribute to
 `summary.missing_verify_result` and to `top_missing_evidence_fields[]` as
 `verify_result`.
+`route_quality_expectation = "expected_unchanged_negative_capability"` keeps an
+`evidence_unchanged` attempt visible while marking the unchanged result as the
+expected trust-boundary outcome. When such an attempt is the latest row for its
+canonical gap, it increments `summary.expected_unchanged` and
+`repair_kind_expected_unchanged`; it does not contribute to
+`repair_kind_failure_count`, top failing repair routes, or route-quality backlog
+packets. If a newer improved or resolved attempt supersedes it, the expected
+unchanged row remains in durable `attempts[]` history but no longer affects
+latest-route quality counts. It still contributes to
+`attempt_history_summary.expected_unchanged`.
 
 Generated `attempt_id` values include a stable attempt-instance suffix when the
 outcome carries one, preferring explicit outcome `attempt_instance`, then
@@ -3289,14 +3326,15 @@ a new history row from a plain ledger rerun over the same artifacts.
 
 `repair_route_quality[]` is grouped from latest attempts by `repair_kind` and
 reports attempted, improved, unchanged, regressed, resolved, no-receipt,
-receipt-only, missing-verify-result, unknown, and success-rate counts.
+receipt-only, missing-verify-result, expected-unchanged, unknown, and
+success-rate counts.
 Rows include `language = null` because they are repo-level repair-kind rollups.
 `language_repair_route_quality[]` is the additive language-scoped projection
 grouped by `language` and `repair_kind` for attempts that carry a known language
 field. It lets TypeScript/JavaScript preview route outcomes be measured without
 promoting preview evidence into public repair packets, badge inputs, or gates.
-`top_failing_repair_routes[]` is the subset with unchanged, regressed,
-no-receipt, missing-verify-result, or unknown outcomes,
+`top_failing_repair_routes[]` is the subset with unexpected unchanged,
+regressed, no-receipt, missing-verify-result, or unknown outcomes,
 ordered for analyzer-improvement routing. Repair-route quality rows include
 sample packet IDs and canonical gap IDs for failing attempts when available, so
 readiness can route `improve_repair_route_quality` to the derived
@@ -3315,8 +3353,10 @@ counts missing route/verify/receipt fields that prevent route-quality analysis
 and includes sample packet IDs, canonical gap IDs, and repair kinds when the
 row is derived from attempts. Legacy label/count-only rows remain readable and
 default sample arrays to empty.
-`repair_kind_failure_count` is the sum of unchanged, regressed, no-receipt,
-missing-verify-result, and unknown latest attempts.
+`repair_kind_failure_count` is the sum of unexpected unchanged, regressed,
+no-receipt, missing-verify-result, and unknown latest attempts. Expected
+unchanged negative-capability rows remain counted in `repair_kind_unchanged`
+and `repair_kind_expected_unchanged`, but are excluded from failure routing.
 `repair_kind_dominant_failure_reason` is the highest-count failing bucket, with
 deterministic tie preference for regressed, missing-verify-result, unchanged,
 no-receipt, then unknown.
@@ -3460,6 +3500,7 @@ limits.
     "receipt_present_packets": 0,
     "improved_packets": 2,
     "unchanged_packets": 1,
+    "expected_unchanged_packets": 0,
     "regressed_packets": 0,
     "resolved_packets": 1,
     "orphaned_receipts": 0
@@ -3549,6 +3590,7 @@ limits.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
@@ -3570,6 +3612,7 @@ limits.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 0,
       "repair_kind_dominant_failure_reason": null,
@@ -3591,6 +3634,7 @@ limits.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
