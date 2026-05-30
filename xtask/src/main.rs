@@ -22,6 +22,7 @@ mod cache;
 mod command;
 mod dispatch;
 mod policy;
+mod repo_readiness;
 mod reports;
 mod run;
 mod verification_contracts;
@@ -36,6 +37,12 @@ use policy::{
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_positioning_language, check_process_policy, check_product_copy,
     check_static_language, check_workflows,
+};
+#[cfg(test)]
+use repo_readiness::{PrReadyStep, pr_ready_next_action, pr_ready_status_from_report_status};
+use repo_readiness::{
+    cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown, pr_ready_status,
+    run_readiness_step,
 };
 use reports::{
     dogfood, fixtures, metrics_report, pr_summary, receipts_write, reports_index,
@@ -188,16 +195,6 @@ struct GhPrStatusReadiness {
     droid_checks: Vec<String>,
     safe_next_action: String,
     warnings: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PrReadyStep {
-    id: &'static str,
-    command: &'static str,
-    report: &'static str,
-    required: bool,
-    status: String,
-    summary: String,
 }
 
 #[derive(Debug, Default)]
@@ -2212,56 +2209,56 @@ fn commands_report() -> Result<(), String> {
 
 fn pr_ready() -> Result<(), String> {
     let steps = vec![
-        pr_ready_step(
+        run_readiness_step(
             "worktree_doctor",
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
             worktree_doctor,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
             commands_report,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "pr_summary",
             "cargo xtask pr-summary",
             "target/ripr/reports/pr-summary.md",
             false,
             pr_summary,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "critic",
             "cargo xtask critic",
             "target/ripr/reports/critic.md",
             false,
             critic_impl,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "receipts_check",
             "cargo xtask receipts check",
             "target/ripr/reports/receipts.md",
             false,
             receipts_check,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "suggested_fixes",
             "cargo xtask suggested-fixes",
             "target/ripr/reports/suggested-fixes.md",
             false,
             suggested_fixes,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
             check_generated_clean,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
@@ -2287,56 +2284,56 @@ fn pr_ready() -> Result<(), String> {
 
 fn cockpit() -> Result<(), String> {
     let steps = vec![
-        pr_ready_step(
+        run_readiness_step(
             "worktree_doctor",
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
             worktree_doctor,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
             commands_report,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "command_catalog_check",
             "cargo xtask check-command-catalog",
             "target/ripr/reports/command-catalog.md",
             true,
             check_command_catalog,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "spec_numbering",
             "cargo xtask check-spec-numbering",
             "target/ripr/reports/spec-numbering.md",
             true,
             check_spec_numbering,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "campaign_status",
             "cargo xtask check-campaign",
             "target/ripr/reports/campaign.md",
             false,
             check_campaign,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "pr_triage",
             "cargo xtask pr-triage-report",
             "target/ripr/reports/pr-triage.md",
             false,
             reports::pr_triage_report,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
             check_generated_clean,
         ),
-        pr_ready_step(
+        run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
@@ -2357,434 +2354,6 @@ fn cockpit() -> Result<(), String> {
     } else {
         Ok(())
     }
-}
-
-fn pr_ready_step(
-    id: &'static str,
-    command: &'static str,
-    report: &'static str,
-    required: bool,
-    run_step: fn() -> Result<(), String>,
-) -> PrReadyStep {
-    match run_step() {
-        Ok(()) => {
-            let (status, summary) = pr_ready_report_outcome(report)
-                .unwrap_or_else(|| ("pass".to_string(), "completed".to_string()));
-            PrReadyStep {
-                id,
-                command,
-                report,
-                required,
-                status,
-                summary,
-            }
-        }
-        Err(err) => PrReadyStep {
-            id,
-            command,
-            report,
-            required,
-            status: if required { "fail" } else { "needs_attention" }.to_string(),
-            summary: first_error_line(&err),
-        },
-    }
-}
-
-fn pr_ready_report_outcome(report: &str) -> Option<(String, String)> {
-    let contents = fs::read_to_string(report).ok()?;
-    let status = markdown_status_value(&contents)?;
-    pr_ready_status_from_report_status(status).map(|step_status| {
-        (
-            step_status.to_string(),
-            format!("report status: {status}; see {report}"),
-        )
-    })
-}
-
-fn markdown_status_value(contents: &str) -> Option<&str> {
-    contents.lines().find_map(|line| {
-        line.strip_prefix("Status:")
-            .map(str::trim)
-            .filter(|status| !status.is_empty())
-    })
-}
-
-fn pr_ready_status_from_report_status(status: &str) -> Option<&'static str> {
-    match status {
-        "pass" => None,
-        "fail" | "error" => Some("fail"),
-        "warn" | "actionable" | "incomplete" | "blocked" | "needs_attention" => {
-            Some("needs_attention")
-        }
-        _ => None,
-    }
-}
-
-fn first_error_line(err: &str) -> String {
-    err.lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or(err)
-        .trim()
-        .to_string()
-}
-
-fn pr_ready_status(steps: &[PrReadyStep]) -> &'static str {
-    if steps.iter().any(|step| step.status == "fail") {
-        "fail"
-    } else if steps.iter().any(|step| step.status != "pass") {
-        "actionable"
-    } else {
-        "pass"
-    }
-}
-
-fn pr_ready_next_action(steps: &[PrReadyStep]) -> &'static str {
-    match pr_ready_status(steps) {
-        "fail" => {
-            "repair blocking generated-evidence or worktree hygiene issues before opening or updating a PR"
-        }
-        "actionable" => {
-            "review the attention items, then run cargo xtask check-pr for full gate receipts"
-        }
-        _ => "run cargo xtask check-pr",
-    }
-}
-
-fn pr_ready_markdown(steps: &[PrReadyStep]) -> String {
-    let status = pr_ready_status(steps);
-    let mut body = format!("# ripr PR Ready\n\nStatus: {status}\nMode: advisory\n\n");
-    body.push_str("## Next Action\n\n");
-    body.push_str("- ");
-    body.push_str(pr_ready_next_action(steps));
-    body.push_str("\n\n");
-
-    let attention = steps
-        .iter()
-        .filter(|step| step.status != "pass")
-        .collect::<Vec<_>>();
-    body.push_str("## Current Risks\n\n");
-    if attention.is_empty() {
-        body.push_str("- none detected\n\n");
-    } else {
-        for step in attention {
-            body.push_str(&format!(
-                "- `{}`: {} ({})\n",
-                step.id, step.summary, step.status
-            ));
-        }
-        body.push('\n');
-    }
-
-    body.push_str("## Step Summary\n\n");
-    body.push_str("| Step | Status | Required | Command | Report |\n");
-    body.push_str("| --- | --- | --- | --- | --- |\n");
-    for step in steps {
-        body.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` |\n",
-            step.id, step.status, step.required, step.command, step.report
-        ));
-    }
-
-    body.push_str("\n## Safe Repairs\n\n");
-    for repair in pr_ready_safe_repairs() {
-        body.push_str("- ");
-        body.push_str(repair);
-        body.push('\n');
-    }
-
-    body.push_str("\n## Generated Only\n\n");
-    for artifact in pr_ready_generated_only() {
-        body.push_str("- `");
-        body.push_str(artifact);
-        body.push_str("`\n");
-    }
-
-    body.push_str("\n## Stop / Judgment Required\n\n");
-    for item in pr_ready_judgment_required() {
-        body.push_str("- ");
-        body.push_str(item);
-        body.push('\n');
-    }
-
-    push_start_here_language_section(&mut body);
-
-    body.push_str("\n## Next Commands\n\n```bash\ncargo xtask check-pr\n```\n");
-    body
-}
-
-fn pr_ready_json(steps: &[PrReadyStep]) -> String {
-    let mut body = "{\n".to_string();
-    body.push_str("  \"schema_version\": \"0.1\",\n");
-    body.push_str("  \"mode\": \"advisory\",\n");
-    body.push_str(&format!(
-        "  \"status\": \"{}\",\n",
-        json_escape(pr_ready_status(steps))
-    ));
-    body.push_str(&format!(
-        "  \"next_action\": \"{}\",\n",
-        json_escape(pr_ready_next_action(steps))
-    ));
-    body.push_str("  \"steps\": [\n");
-    for (index, step) in steps.iter().enumerate() {
-        if index > 0 {
-            body.push_str(",\n");
-        }
-        body.push_str("    {\n");
-        body.push_str(&format!("      \"id\": \"{}\",\n", json_escape(step.id)));
-        body.push_str(&format!(
-            "      \"command\": \"{}\",\n",
-            json_escape(step.command)
-        ));
-        body.push_str(&format!(
-            "      \"status\": \"{}\",\n",
-            json_escape(&step.status)
-        ));
-        body.push_str(&format!("      \"required\": {},\n", step.required));
-        body.push_str(&format!(
-            "      \"report\": \"{}\",\n",
-            json_escape(step.report)
-        ));
-        body.push_str(&format!(
-            "      \"summary\": \"{}\"\n",
-            json_escape(&step.summary)
-        ));
-        body.push_str("    }");
-    }
-    body.push_str("\n  ],\n");
-    body.push_str("  \"safe_repairs\": [");
-    write_json_string_array_from_strs(&mut body, pr_ready_safe_repairs());
-    body.push_str("],\n");
-    body.push_str("  \"generated_only\": [");
-    write_json_string_array_from_strs(&mut body, pr_ready_generated_only());
-    body.push_str("],\n");
-    body.push_str("  \"judgment_required\": [");
-    write_json_string_array_from_strs(&mut body, pr_ready_judgment_required());
-    body.push_str("],\n");
-    body.push_str("  \"next_commands\": [\"cargo xtask check-pr\"]\n");
-    body.push_str("}\n");
-    body
-}
-
-fn write_json_string_array_from_strs(body: &mut String, values: &[&str]) {
-    for (index, value) in values.iter().enumerate() {
-        if index > 0 {
-            body.push_str(", ");
-        }
-        body.push('"');
-        body.push_str(&json_escape(value));
-        body.push('"');
-    }
-}
-
-fn pr_ready_safe_repairs() -> &'static [&'static str] {
-    &[
-        "run cargo xtask fix-pr",
-        "restore generated badge endpoint residue in ordinary PRs",
-        "review target/ripr/reports/suggested-fixes.patch before applying deterministic fixes",
-    ]
-}
-
-fn pr_ready_generated_only() -> &'static [&'static str] {
-    &[
-        "badges/*.json",
-        "target/ripr/**",
-        "crates/ripr/examples/sample/target/**",
-        "target/ripr/receipts/**",
-    ]
-}
-
-fn pr_ready_judgment_required() -> &'static [&'static str] {
-    &[
-        "badge endpoint refresh",
-        "golden blessing",
-        "suppression",
-        "baseline adoption",
-        "dependency exception",
-        "branch protection",
-        "policy authority change",
-    ]
-}
-
-fn start_here_language_terms() -> &'static [&'static str] {
-    &[
-        "start here: open target/ripr/reports/start-here.md first when it exists",
-        "safe next action: repair one named gap, regenerate missing evidence, or stop on no-action",
-        "missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work",
-        "no actionable gap: advisory no-action, not runtime adequacy or mutation proof",
-        "preview-limited evidence: syntax-first and advisory, with static limits before repair language",
-        "verify command / receipt command / receipt path: static movement proof rail",
-    ]
-}
-
-fn push_start_here_language_section(body: &mut String) {
-    body.push_str("\n## Start-Here Language\n\n");
-    for term in start_here_language_terms() {
-        body.push_str("- ");
-        body.push_str(term);
-        body.push('\n');
-    }
-}
-
-fn cockpit_next_action(steps: &[PrReadyStep]) -> &'static str {
-    match pr_ready_status(steps) {
-        "fail" => "repair blocking repo-ops issues before merging or opening more work",
-        "actionable" => {
-            "review the action queue, then run cargo xtask pr-ready or cargo xtask check-pr for the active PR"
-        }
-        _ => {
-            "use cargo xtask pr-ready for the active PR or cargo xtask gh-pr-status --pr <number> before merging"
-        }
-    }
-}
-
-fn cockpit_action_queue(steps: &[PrReadyStep]) -> Vec<String> {
-    let mut actions = Vec::new();
-    for step in steps.iter().filter(|step| step.status != "pass") {
-        let action = match step.id {
-            "worktree_doctor" => "repair or acknowledge local worktree hygiene findings",
-            "command_catalog_check" => {
-                "update the command mutability catalog before adding new xtask commands"
-            }
-            "spec_numbering" => "repair spec numbering or README/traceability references",
-            "campaign_status" => {
-                "review campaign/source-of-truth drift before continuing broad work"
-            }
-            "pr_triage" => {
-                "review stale, duplicate, behind, policy-sensitive, or generated-artifact PRs"
-            }
-            "generated_clean" => "remove generated residue before ordinary PR work",
-            "badge_diff_policy" => "move badge endpoint JSON changes to a badge refresh PR",
-            _ => "review the linked repo-ops report",
-        };
-        actions.push(action.to_string());
-    }
-    if actions.is_empty() {
-        actions.push("run cargo xtask pr-ready for the active PR".to_string());
-        actions.push("run cargo xtask gh-pr-status --pr <number> before merging".to_string());
-    }
-    actions
-}
-
-fn cockpit_markdown(steps: &[PrReadyStep]) -> String {
-    let status = pr_ready_status(steps);
-    let mut body = format!("# ripr Repo Cockpit\n\nStatus: {status}\nMode: advisory\n\n");
-    body.push_str("## Next Action\n\n");
-    body.push_str("- ");
-    body.push_str(cockpit_next_action(steps));
-    body.push_str("\n\n");
-
-    body.push_str("## Action Queue\n\n");
-    for action in cockpit_action_queue(steps) {
-        body.push_str(&format!("- {action}\n"));
-    }
-    body.push('\n');
-
-    let attention = steps
-        .iter()
-        .filter(|step| step.status != "pass")
-        .collect::<Vec<_>>();
-    body.push_str("## Current Risks\n\n");
-    if attention.is_empty() {
-        body.push_str("- none detected\n\n");
-    } else {
-        for step in attention {
-            body.push_str(&format!(
-                "- `{}`: {} ({})\n",
-                step.id, step.summary, step.status
-            ));
-        }
-        body.push('\n');
-    }
-
-    body.push_str("## Step Summary\n\n");
-    body.push_str("| Step | Status | Required | Report |\n");
-    body.push_str("| --- | --- | --- | --- |\n");
-    for step in steps {
-        body.push_str(&format!(
-            "| `{}` | `{}` | {} | `{}` |\n",
-            step.id, step.status, step.required, step.report
-        ));
-    }
-    body.push('\n');
-
-    body.push_str("## Safe Repairs\n\n");
-    for item in pr_ready_safe_repairs() {
-        body.push_str(&format!("- {item}\n"));
-    }
-    body.push('\n');
-
-    body.push_str("## Generated Only\n\n");
-    for item in pr_ready_generated_only() {
-        body.push_str(&format!("- `{item}`\n"));
-    }
-    body.push('\n');
-
-    body.push_str("## Stop / Judgment Required\n\n");
-    for item in pr_ready_judgment_required() {
-        body.push_str(&format!("- {item}\n"));
-    }
-
-    push_start_here_language_section(&mut body);
-
-    body.push_str("## Next Commands\n\n```bash\ncargo xtask pr-ready\ncargo xtask check-pr\n```\n");
-    body
-}
-
-fn cockpit_json(steps: &[PrReadyStep]) -> String {
-    let action_queue = cockpit_action_queue(steps);
-    let mut body = "{\n".to_string();
-    body.push_str("  \"schema_version\": \"0.1\",\n");
-    body.push_str("  \"mode\": \"advisory\",\n");
-    body.push_str(&format!(
-        "  \"status\": \"{}\",\n",
-        json_escape(pr_ready_status(steps))
-    ));
-    body.push_str(&format!(
-        "  \"next_action\": \"{}\",\n",
-        json_escape(cockpit_next_action(steps))
-    ));
-    body.push_str("  \"action_queue\": [");
-    write_json_string_array(&mut body, &action_queue);
-    body.push_str("],\n");
-    body.push_str("  \"steps\": [\n");
-    for (index, step) in steps.iter().enumerate() {
-        if index > 0 {
-            body.push_str(",\n");
-        }
-        body.push_str("    {\n");
-        body.push_str(&format!("      \"id\": \"{}\",\n", json_escape(step.id)));
-        body.push_str(&format!(
-            "      \"command\": \"{}\",\n",
-            json_escape(step.command)
-        ));
-        body.push_str(&format!(
-            "      \"status\": \"{}\",\n",
-            json_escape(&step.status)
-        ));
-        body.push_str(&format!("      \"required\": {},\n", step.required));
-        body.push_str(&format!(
-            "      \"report\": \"{}\",\n",
-            json_escape(step.report)
-        ));
-        body.push_str(&format!(
-            "      \"summary\": \"{}\"\n",
-            json_escape(&step.summary)
-        ));
-        body.push_str("    }");
-    }
-    body.push_str("\n  ],\n");
-    body.push_str("  \"safe_repairs\": [");
-    write_json_string_array_from_strs(&mut body, pr_ready_safe_repairs());
-    body.push_str("],\n");
-    body.push_str("  \"generated_only\": [");
-    write_json_string_array_from_strs(&mut body, pr_ready_generated_only());
-    body.push_str("],\n");
-    body.push_str("  \"judgment_required\": [");
-    write_json_string_array_from_strs(&mut body, pr_ready_judgment_required());
-    body.push_str("],\n");
-    body.push_str("  \"next_commands\": [\"cargo xtask pr-ready\", \"cargo xtask check-pr\"]\n");
-    body.push_str("}\n");
-    body
 }
 
 fn check_command_catalog() -> Result<(), String> {
