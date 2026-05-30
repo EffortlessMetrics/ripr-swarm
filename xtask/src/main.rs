@@ -18422,6 +18422,9 @@ struct Lane1StaticLimitationBacklogSample {
     canonical_gap_id: Option<String>,
     evidence_class: String,
     source_file: String,
+    line: Option<usize>,
+    expression: Option<String>,
+    limitation_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -19825,6 +19828,15 @@ impl Lane1EvidenceAuditBuilder {
         let sample_canonical_gap_id = canonical_item
             .and_then(|item| audit_non_empty_string(item, &["canonical_gap_id"]))
             .or_else(|| canonical_gap_id.clone());
+        let raw_findings = audit_array(record, &["raw_findings"]);
+        let sample_line = audit_usize(record, &["location", "line"]).or_else(|| {
+            raw_findings
+                .first()
+                .and_then(|raw| audit_usize(raw, &["line"]))
+        });
+        let sample_expression = raw_findings
+            .first()
+            .and_then(|raw| audit_non_empty_string(raw, &["expression"]));
         let mut static_limitation_backlog_samples = Vec::new();
         self.summary.static_limitations_total += static_limitations.len();
         debt.debt_score += static_limitations.len();
@@ -19844,7 +19856,7 @@ impl Lane1EvidenceAuditBuilder {
             audit_increment(&mut self.static_stage_counts, &stage);
             audit_increment(&mut self.static_category_counts, &category);
             audit_increment(&mut self.static_repair_route_counts, &repair_route);
-            static_limitation_backlog_samples.push((category, repair_route));
+            static_limitation_backlog_samples.push((category, repair_route, reason));
         }
 
         let unknown_stage_count = audit_unknown_stage_count(record);
@@ -19889,13 +19901,18 @@ impl Lane1EvidenceAuditBuilder {
             );
         }
 
-        for (category, repair_route) in static_limitation_backlog_samples {
+        for (category, repair_route, reason) in static_limitation_backlog_samples {
             self.ingest_static_limitation_backlog_packet_sample(
                 &category,
                 &repair_route,
-                sample_canonical_gap_id.as_deref(),
-                &evidence_class,
-                &file,
+                Lane1StaticLimitationBacklogSample {
+                    canonical_gap_id: sample_canonical_gap_id.clone(),
+                    evidence_class: evidence_class.clone(),
+                    source_file: file.clone(),
+                    line: sample_line,
+                    expression: sample_expression.clone(),
+                    limitation_reason: Some(reason),
+                },
             );
         }
 
@@ -20079,9 +20096,7 @@ impl Lane1EvidenceAuditBuilder {
         &mut self,
         category: &str,
         repair_route: &str,
-        canonical_gap_id: Option<&str>,
-        evidence_class: &str,
-        source_file: &str,
+        sample: Lane1StaticLimitationBacklogSample,
     ) {
         let entry = self
             .static_limitation_backlog_packet_builders
@@ -20092,8 +20107,8 @@ impl Lane1EvidenceAuditBuilder {
             });
         entry.signal_count += 1;
         audit_increment(&mut entry.repair_route_counts, repair_route);
-        audit_increment(&mut entry.evidence_class_counts, evidence_class);
-        if let Some(canonical_gap_id) = canonical_gap_id
+        audit_increment(&mut entry.evidence_class_counts, &sample.evidence_class);
+        if let Some(canonical_gap_id) = sample.canonical_gap_id.as_deref()
             && entry.sample_canonical_gap_ids.len() < 3
         {
             entry
@@ -20101,13 +20116,7 @@ impl Lane1EvidenceAuditBuilder {
                 .insert(canonical_gap_id.to_string());
         }
         if entry.sample_sources.len() < 3 {
-            entry
-                .sample_sources
-                .push(Lane1StaticLimitationBacklogSample {
-                    canonical_gap_id: canonical_gap_id.map(ToOwned::to_owned),
-                    evidence_class: evidence_class.to_string(),
-                    source_file: source_file.to_string(),
-                });
+            entry.sample_sources.push(sample);
         }
     }
 
@@ -21494,6 +21503,9 @@ fn lane1_static_limitation_backlog_sample_json(
         "canonical_gap_id": sample.canonical_gap_id,
         "evidence_class": sample.evidence_class,
         "source_file": sample.source_file,
+        "line": sample.line,
+        "expression": sample.expression,
+        "limitation_reason": sample.limitation_reason,
     })
 }
 
@@ -26323,6 +26335,9 @@ fn ripr_swarm_limitation_route_sample_sources(
                 evidence_class: audit_non_empty_string(sample, &["evidence_class"])
                     .unwrap_or_else(|| "unknown".to_string()),
                 source_file,
+                line: audit_usize(sample, &["line"]),
+                expression: audit_non_empty_string(sample, &["expression"]),
+                limitation_reason: audit_non_empty_string(sample, &["limitation_reason"]),
             })
         })
         .take(3)
@@ -27399,7 +27414,16 @@ fn ripr_swarm_limitation_route_sample_sources_markdown(
         .iter()
         .map(|sample| {
             let gap = sample.canonical_gap_id.as_deref().unwrap_or("unknown");
-            format!("{} ({gap})", sample.source_file)
+            let location = sample
+                .line
+                .map(|line| format!("{}:{line}", sample.source_file))
+                .unwrap_or_else(|| sample.source_file.clone());
+            let expression = sample.expression.as_deref().unwrap_or("unknown expression");
+            let reason = sample
+                .limitation_reason
+                .as_deref()
+                .unwrap_or("unknown limitation");
+            format!("{location} ({gap}; {expression}; {reason})")
         })
         .collect::<Vec<_>>()
         .join("<br>")
@@ -80138,6 +80162,22 @@ covered_by = ["cargo xtask check-file-policy"]
             packet["sample_canonical_gap_ids"][0],
             "gap:idx-offset-local"
         );
+        assert_eq!(
+            packet["sample_sources"][0]["source_file"],
+            serde_json::Value::from("src/window.rs")
+        );
+        assert_eq!(
+            packet["sample_sources"][0]["line"],
+            serde_json::Value::from(44)
+        );
+        assert_eq!(
+            packet["sample_sources"][0]["expression"],
+            serde_json::Value::from("idx >= offset")
+        );
+        assert_eq!(
+            packet["sample_sources"][0]["limitation_reason"],
+            serde_json::Value::from("local/computed operand cannot be mapped to a safe test input")
+        );
         assert!(
             packet["why_not_actionable"]
                 .as_str()
@@ -83674,7 +83714,10 @@ covered_by = ["cargo xtask check-file-policy"]
                             {
                                 "canonical_gap_id": "gap:affinity-owner-call",
                                 "source_file": "src/lib.rs",
-                                "evidence_class": "call_presence"
+                                "evidence_class": "call_presence",
+                                "line": 42,
+                                "expression": "target.call()",
+                                "limitation_reason": "related tests are affinity-ranked but not tied to direct owner calls"
                             }
                         ]
                     }
@@ -83779,12 +83822,25 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_limitation_routes"][0]["sample_sources"][0]["canonical_gap_id"],
             "gap:affinity-owner-call"
         );
+        assert_eq!(
+            value["top_limitation_routes"][0]["sample_sources"][0]["line"],
+            serde_json::Value::from(42)
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["sample_sources"][0]["expression"],
+            "target.call()"
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["sample_sources"][0]["limitation_reason"],
+            "related tests are affinity-ranked but not tied to direct owner calls"
+        );
         let markdown = ripr_swarm_readiness_markdown(&report);
         assert!(markdown.contains("## Top Limitation Routes"));
         assert!(markdown.contains("route_static_limitation_backlog"));
         assert!(markdown.contains("analysis/related-test-affinity-owner-call-tracing"));
-        assert!(markdown.contains("src/lib.rs"));
+        assert!(markdown.contains("src/lib.rs:42"));
         assert!(markdown.contains("gap:affinity-owner-call"));
+        assert!(markdown.contains("target.call()"));
         Ok(())
     }
 

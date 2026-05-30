@@ -2519,7 +2519,10 @@ otherwise it uses the category fallback route.
           {
             "canonical_gap_id": "gap:idx-offset-local",
             "evidence_class": "predicate_boundary",
-            "source_file": "src/window.rs"
+            "source_file": "src/window.rs",
+            "line": 44,
+            "expression": "idx >= offset",
+            "limitation_reason": "local/computed operand cannot be mapped to a safe test input"
           }
         ],
         "dominant_evidence_class": "predicate_boundary",
@@ -2642,11 +2645,11 @@ operators can see which named analyzer limitations are blocking routeable
 packets. It is backlog routing evidence only; it must not be counted as
 repair-ready packet work.
 `static_limitation_backlog.limitation_backlog_packets[]` turns top limitation
-routes into analyzer work packets with sample IDs, dominant evidence class,
-unlock condition, and non-claims. Packet identity is route-grained:
-the same limitation category can emit separate backlog packets for separate
-analyzer repair routes. These packets are not public repair packets and must not
-enter the swarm-ready queue.
+routes into analyzer work packets with sample IDs, source file, optional line,
+expression, limitation reason, dominant evidence class, unlock condition, and
+non-claims. Packet identity is route-grained: the same limitation category can
+emit separate backlog packets for separate analyzer repair routes. These packets
+are not public repair packets and must not enter the swarm-ready queue.
 
 ```json
 {
@@ -3442,7 +3445,10 @@ limits.
         {
           "canonical_gap_id": "gap:value-resolution",
           "evidence_class": "predicate_boundary",
-          "source_file": "crates/ripr/src/analysis/value_resolution.rs"
+          "source_file": "crates/ripr/src/analysis/value_resolution.rs",
+          "line": 88,
+          "expression": "idx >= offset",
+          "limitation_reason": "activation value cannot be safely mapped to a test input"
         }
       ],
       "dominant_evidence_class": "predicate_boundary",
