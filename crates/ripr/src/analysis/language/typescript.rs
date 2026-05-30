@@ -1490,6 +1490,204 @@ struct TypeScriptStaticLimit {
     repair_route: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TypeScriptActionability {
+    gap_state: &'static str,
+    category: &'static str,
+    why_not_actionable: String,
+    repair_route: String,
+    missing_fields: Vec<&'static str>,
+    evidence_needed: &'static str,
+}
+
+impl TypeScriptActionability {
+    fn evidence(&self, raw_evidence_ref: String) -> Vec<String> {
+        let mut evidence = vec![
+            format!("gap_state: {}", self.gap_state),
+            format!("actionability_category: {}", self.category),
+            format!("why_not_actionable: {}", self.why_not_actionable),
+            format!("repair_route: {}", self.repair_route),
+        ];
+        if !self.missing_fields.is_empty() {
+            evidence.push(format!(
+                "missing_actionability_fields: {}",
+                self.missing_fields.join(", ")
+            ));
+        }
+        evidence.push(format!(
+            "evidence_needed_to_promote: {}",
+            self.evidence_needed
+        ));
+        evidence.push(raw_evidence_ref);
+        evidence
+    }
+
+    fn missing_summary(&self) -> String {
+        format!(
+            "TypeScript preview actionability `{}` / `{}`: {}. Repair route: {}",
+            self.gap_state, self.category, self.why_not_actionable, self.repair_route
+        )
+    }
+}
+
+fn typescript_actionability_for(
+    class: &ExposureClass,
+    static_limit: Option<&TypeScriptStaticLimit>,
+    has_oracle_eligible_relation: bool,
+    missing_discriminators: &[MissingDiscriminatorFact],
+) -> TypeScriptActionability {
+    if let Some(limit) = static_limit {
+        return TypeScriptActionability {
+            gap_state: "static_limitation",
+            category: limit.kind.as_str(),
+            why_not_actionable: format!(
+                "static limit `{}` prevents bounded TypeScript repair guidance",
+                limit.kind.as_str()
+            ),
+            repair_route: normalize_repair_route(&limit.repair_route),
+            missing_fields: Vec::new(),
+            evidence_needed: "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        };
+    }
+
+    if matches!(class, ExposureClass::Exposed) {
+        return TypeScriptActionability {
+            gap_state: "already_observed",
+            category: "strong_oracle_observed",
+            why_not_actionable:
+                "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+                    .to_string(),
+            repair_route:
+                "keep the finding advisory preview and verify the existing assertion still targets the changed behavior"
+                    .to_string(),
+            missing_fields: Vec::new(),
+            evidence_needed:
+                "none for a repair packet; retain strong related-test evidence as non-actionable context",
+        };
+    }
+
+    if matches!(class, ExposureClass::NoStaticPath) {
+        return TypeScriptActionability {
+            gap_state: "advisory",
+            category: "missing_context",
+            why_not_actionable:
+                "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
+                    .to_string(),
+            repair_route:
+                "add trusted related-test matching for this owner shape before emitting a repair packet"
+                    .to_string(),
+            missing_fields: vec![
+                "related_test_or_observer",
+                "target_test_shape",
+                "verify_command",
+                "receipt_command",
+                "must_not_change",
+                "allowed_edit_surface",
+                "raw_evidence_refs",
+            ],
+            evidence_needed:
+                "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
+        };
+    }
+
+    if !has_oracle_eligible_relation {
+        return TypeScriptActionability {
+            gap_state: "advisory",
+            category: "ambiguous_related_test",
+            why_not_actionable:
+                "related-test link is heuristic-only and cannot safely borrow extracted assertions as proof"
+                    .to_string(),
+            repair_route:
+                "add a direct owner-call, import-aware, or receiver-aware relation before repair packet projection"
+                    .to_string(),
+            missing_fields: vec![
+                "related_test_or_observer",
+                "verify_command",
+                "receipt_command",
+                "must_not_change",
+                "allowed_edit_surface",
+                "raw_evidence_refs",
+            ],
+            evidence_needed:
+                "trusted token-aware relation plus complete verify, receipt, and edit-boundary fields",
+        };
+    }
+
+    if missing_discriminators.is_empty() {
+        return TypeScriptActionability {
+            gap_state: "advisory",
+            category: "missing_target_shape",
+            why_not_actionable:
+                "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+                    .to_string(),
+            repair_route:
+                "add probe-specific discriminator extraction for this expression before repair packet projection"
+                    .to_string(),
+            missing_fields: vec![
+                "repair_kind",
+                "target_test_shape",
+                "verify_command",
+                "receipt_command",
+                "must_not_change",
+                "allowed_edit_surface",
+                "raw_evidence_refs",
+            ],
+            evidence_needed:
+                "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        };
+    }
+
+    TypeScriptActionability {
+        gap_state: "advisory",
+        category: "incomplete_repair_packet",
+        why_not_actionable:
+            "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+                .to_string(),
+        repair_route:
+            "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"
+                .to_string(),
+        missing_fields: vec![
+            "canonical_gap_id",
+            "repair_kind",
+            "target_test_shape",
+            "related_test_or_observer",
+            "verify_command",
+            "receipt_command",
+            "must_not_change",
+            "allowed_edit_surface",
+            "raw_evidence_refs",
+        ],
+        evidence_needed:
+            "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+    }
+}
+
+fn normalize_repair_route(route: &str) -> String {
+    route
+        .strip_prefix("Repair route: ")
+        .unwrap_or(route)
+        .trim_end_matches('.')
+        .to_string()
+}
+
+fn typescript_raw_evidence_ref(
+    file: &Path,
+    line: usize,
+    owner: Option<&TypeScriptOwner>,
+    source_id: &str,
+) -> String {
+    let mut parts = vec![
+        format!("file={}", normalized_path(file)),
+        format!("line={line}"),
+        "kind=typescript_preview_probe".to_string(),
+        format!("source_id={source_id}"),
+    ];
+    if let Some(owner) = owner {
+        parts.push(format!("owner={}", owner.name));
+    }
+    format!("raw_evidence_ref: {}", parts.join(";"))
+}
+
 fn static_limit_for_change(
     line_text: &str,
     owner: &TypeScriptOwner,
@@ -2316,6 +2514,13 @@ fn classify_change(
         expected_sinks,
         required_oracles,
     };
+    let actionability = typescript_actionability_for(
+        &class,
+        static_limit.as_ref(),
+        has_oracle_eligible_relation,
+        &missing_discriminators,
+    );
+    missing.push(actionability.missing_summary());
 
     let related_count = related.len();
     let reach_summary = format!(
@@ -2357,29 +2562,29 @@ fn classify_change(
 
     let recommended = if let Some(limit) = &static_limit {
         format!(
-            "TypeScript preview: static limit `{}`; {}",
+            "TypeScript preview advisory: static limit `{}`; {}; no actionable repair packet is emitted.",
             limit.kind.as_str(),
             limit.repair_route
         )
     } else {
         match &class {
         ExposureClass::Exposed => {
-            "TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
+            "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
         }
         ExposureClass::NoStaticPath => {
             no_static_path_recommendation(owner)
         }
         _ if !has_oracle_eligible_relation => {
-            "TypeScript preview: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
+            "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
         _ if let Some(discriminator) = missing_discriminators.first() => {
             format!(
-                "TypeScript preview: add or strengthen a focused assertion for missing discriminator `{}`.",
+                "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
                 discriminator.value
             )
         }
         _ => {
-            "TypeScript preview: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`).".to_string()
+            "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
         }
         }
     };
@@ -2399,6 +2604,12 @@ fn classify_change(
     if let Some(limit) = &static_limit {
         evidence.extend(limit.evidence.iter().cloned());
     }
+    evidence.extend(actionability.evidence(typescript_raw_evidence_ref(
+        file,
+        line,
+        Some(owner),
+        &probe.id.0,
+    )));
     for candidate in related_candidates
         .iter()
         .filter(|candidate| candidate.relation.is_uncertain())
@@ -2466,13 +2677,13 @@ fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
 fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
         OwnerKind::Method | OwnerKind::ClassMethod => {
-            "TypeScript preview: method owner relation is missing context; add an exact method observer only after the adapter can safely relate the receiver shape.".to_string()
+            "TypeScript preview advisory: method owner relation is missing context; add an exact method observer only after the adapter can safely relate the receiver shape.".to_string()
         }
         OwnerKind::ModuleFunction => {
-            "TypeScript preview: module initializer relation is missing context; add an exact value observer and keep the finding advisory until identifier-reference matching lands.".to_string()
+            "TypeScript preview advisory: module initializer relation is missing context; add an exact value observer and keep the finding advisory until identifier-reference matching lands.".to_string()
         }
         _ => {
-            "TypeScript preview: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual`.".to_string()
+            "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
         }
     }
 }
@@ -2530,7 +2741,13 @@ fn unsupported_syntax_finding(
         "Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `{}`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance.",
         normalized_path(file)
     );
-    let recommended = "TypeScript preview: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.".to_string();
+    let why_not_actionable = format!(
+        "static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: {}",
+        limit.reason
+    );
+    let repair_route =
+        "fix or isolate the unsupported syntax before relying on repair guidance".to_string();
+    let recommended = "TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.".to_string();
 
     Finding {
         id: probe.id.0.clone(),
@@ -2547,8 +2764,25 @@ fn unsupported_syntax_finding(
             },
         },
         confidence: 0.2,
-        evidence: vec![format!("static_limit unsupported_syntax: {}", limit.reason)],
-        missing: vec![missing],
+        evidence: vec![
+            format!("static_limit unsupported_syntax: {}", limit.reason),
+            "gap_state: static_limitation".to_string(),
+            "actionability_category: unsupported_syntax".to_string(),
+            format!("why_not_actionable: {why_not_actionable}"),
+            format!("repair_route: {repair_route}"),
+            typescript_raw_evidence_ref(
+                file,
+                line,
+                None,
+                &format!("probe:{id_path}:{line}:typescript_preview_unsupported_syntax"),
+            ),
+        ],
+        missing: vec![
+            missing,
+            format!(
+                "TypeScript preview actionability `static_limitation` / `unsupported_syntax`: {why_not_actionable}. Repair route: {repair_route}"
+            ),
+        ],
         flow_sinks: Vec::new(),
         activation: Default::default(),
         stop_reasons: vec![StopReason::StaticProbeUnknown],
@@ -2810,6 +3044,23 @@ mod tests {
             "expected limitation-oriented next step for {expected_text:?}, got {recommended:?}"
         );
         assert!(finding.activation.missing_discriminators.is_empty());
+        assert_evidence_contains(finding, "gap_state: static_limitation");
+        assert_evidence_contains(
+            finding,
+            &format!("actionability_category: {}", kind.as_str()),
+        );
+        assert_evidence_contains(finding, "why_not_actionable: static limit");
+    }
+
+    fn assert_evidence_contains(finding: &Finding, expected_text: &str) {
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains(expected_text)),
+            "expected evidence containing {expected_text:?}, got {:?}",
+            finding.evidence
+        );
     }
 
     #[test]
@@ -3425,6 +3676,41 @@ test("type only import", () => {
     }
 
     #[test]
+    fn classify_change_marks_weak_direct_typescript_candidate_advisory() -> Result<(), String> {
+        let finding = classify_weak_direct_line("    if (amount >= threshold) {")?;
+
+        assert!(finding.canonical_gap.is_none());
+        assert_evidence_contains(&finding, "gap_state: advisory");
+        assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
+        assert_evidence_contains(
+            &finding,
+            "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract",
+        );
+        assert_evidence_contains(&finding, "missing_actionability_fields: canonical_gap_id");
+        assert_evidence_contains(&finding, "verify_command");
+        assert_evidence_contains(&finding, "receipt_command");
+        assert_evidence_contains(
+            &finding,
+            "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe",
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("incomplete_repair_packet")),
+            "expected actionability summary in missing text, got {:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("no actionable repair packet is emitted"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn classify_change_labels_javascript_sources_separately() -> Result<(), String> {
         let owner = TypeScriptOwner {
             name: "applyDiscount".to_string(),
@@ -3872,6 +4158,13 @@ test("type only import", () => {
             finding.related_tests[0].oracle_strength,
             OracleStrength::Strong
         );
+        assert!(finding.canonical_gap.is_none());
+        assert_evidence_contains(&finding, "gap_state: already_observed");
+        assert_evidence_contains(&finding, "actionability_category: strong_oracle_observed");
+        assert_evidence_contains(
+            &finding,
+            "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle",
+        );
         Ok(())
     }
 
@@ -3896,6 +4189,10 @@ test("type only import", () => {
         .ok_or_else(|| "expected a finding when an owner contains the changed line".to_string())?;
         assert!(matches!(finding.class, ExposureClass::NoStaticPath));
         assert!(finding.related_tests.is_empty());
+        assert!(finding.canonical_gap.is_none());
+        assert_evidence_contains(&finding, "gap_state: advisory");
+        assert_evidence_contains(&finding, "actionability_category: missing_context");
+        assert_evidence_contains(&finding, "related_test_or_observer");
         Ok(())
     }
 

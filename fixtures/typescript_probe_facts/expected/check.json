@@ -30,8 +30,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `summarize`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "related test tests/ambiguous.test.ts:1 summarize smoke uses smoke smoke only oracle: expect(...).toBeTruthy(...)"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: summarize", "probe_fact: ambiguous_fallback"],
-      "missing": ["Related test reaches `summarize` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: summarize", "probe_fact: ambiguous_fallback", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/ambiguous.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_ambiguous.ts:4:typescript_preview;owner=summarize"],
+      "missing": ["Related test reaches `summarize` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "activation": {
         "observed_values": [
         ],
@@ -55,8 +55,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`).",
-      "suggested_next_action": "TypeScript preview: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`).",
+      "recommended_next_step": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
+      "suggested_next_action": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -85,8 +85,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `summarize`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "related test tests/ambiguous.test.ts:1 summarize smoke uses smoke smoke only oracle: expect(...).toBeTruthy(...)"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: summarize", "static_limit dynamic_dispatch: changed line uses computed member invocation"],
-      "missing": ["Related test reaches `summarize` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "Static limit `dynamic_dispatch`: the TypeScript preview adapter saw a computed member call such as `obj[name](...)`; syntax alone cannot resolve the called behavior. Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet."],
+      "evidence": ["owner: summarize", "static_limit dynamic_dispatch: changed line uses computed member invocation", "gap_state: static_limitation", "actionability_category: dynamic_dispatch", "why_not_actionable: static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance", "repair_route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet", "evidence_needed_to_promote: resolve the named static limit and re-run TypeScript preview evidence extraction", "raw_evidence_ref: file=src/ambiguous.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_ambiguous.ts:5:typescript_preview;owner=summarize"],
+      "missing": ["Related test reaches `summarize` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "Static limit `dynamic_dispatch`: the TypeScript preview adapter saw a computed member call such as `obj[name](...)`; syntax alone cannot resolve the called behavior. Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.", "TypeScript preview actionability `static_limitation` / `dynamic_dispatch`: static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance. Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet"],
       "activation": {
         "observed_values": [
         ],
@@ -110,8 +110,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.",
-      "suggested_next_action": "TypeScript preview: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.",
+      "recommended_next_step": "TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.; no actionable repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.; no actionable repair packet is emitted.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
@@ -142,8 +142,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"throw new RangeError(\"missing token\");","line":3}
       ],
-      "evidence": ["owner: parseToken", "missing_discriminator: throws RangeError matching \"missing token\""],
-      "missing": ["Related test reaches `parseToken` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: parseToken", "missing_discriminator: throws RangeError matching \"missing token\"", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/errors.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_errors.ts:3:typescript_preview;owner=parseToken"],
+      "missing": ["Related test reaches `parseToken` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -177,8 +177,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `throws RangeError matching \"missing token\"`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `throws RangeError matching \"missing token\"`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws RangeError matching \"missing token\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws RangeError matching \"missing token\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -208,8 +208,8 @@
       "flow_sinks": [
         {"kind":"call_effect","text":"mockSend(payload);","line":2}
       ],
-      "evidence": ["owner: notify", "missing_discriminator: mock interaction mockSend called with payload"],
-      "missing": ["Related test reaches `notify` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: notify", "missing_discriminator: mock interaction mockSend called with payload", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/notify.js;line=2;kind=typescript_preview_probe;source_id=probe:src_notify.js:2:typescript_preview;owner=notify"],
+      "missing": ["Related test reaches `notify` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -243,8 +243,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `mock interaction mockSend called with payload`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `mock interaction mockSend called with payload`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `mock interaction mockSend called with payload`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `mock interaction mockSend called with payload`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "javascript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -273,8 +273,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `discountedTotal`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `amount == threshold`.", "related test tests/pricing.test.ts:1 discountedTotal smoke uses smoke smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator amount == threshold: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: discountedTotal", "missing_discriminator: amount == threshold"],
-      "missing": ["Related test reaches `discountedTotal` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: discountedTotal", "missing_discriminator: amount == threshold", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/pricing.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:2:typescript_preview;owner=discountedTotal"],
+      "missing": ["Related test reaches `discountedTotal` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -308,8 +308,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `amount == threshold`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `amount == threshold`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -339,8 +339,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return amount - discount;","line":3}
       ],
-      "evidence": ["owner: discountedTotal", "missing_discriminator: return value == amount - discount"],
-      "missing": ["Related test reaches `discountedTotal` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: discountedTotal", "missing_discriminator: return value == amount - discount", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/pricing.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:3:typescript_preview;owner=discountedTotal"],
+      "missing": ["Related test reaches `discountedTotal` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -374,8 +374,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `return value == amount - discount`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `return value == amount - discount`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == amount - discount`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == amount - discount`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -405,8 +405,8 @@
       "flow_sinks": [
         {"kind":"struct_field","text":"profile.status = status;","line":4}
       ],
-      "evidence": ["owner: updateProfile", "missing_discriminator: profile.status == status"],
-      "missing": ["Related test reaches `updateProfile` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: updateProfile", "missing_discriminator: profile.status == status", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/profile.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_profile.ts:4:typescript_preview;owner=updateProfile"],
+      "missing": ["Related test reaches `updateProfile` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -440,8 +440,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `profile.status == status`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `profile.status == status`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `profile.status == status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `profile.status == status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -471,8 +471,8 @@
       "flow_sinks": [
         {"kind":"call_effect","text":"audit.record(status);","line":5}
       ],
-      "evidence": ["owner: updateProfile", "missing_discriminator: call audit.record includes status"],
-      "missing": ["Related test reaches `updateProfile` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: updateProfile", "missing_discriminator: call audit.record includes status", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/profile.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_profile.ts:5:typescript_preview;owner=updateProfile"],
+      "missing": ["Related test reaches `updateProfile` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -506,8 +506,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `call audit.record includes status`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `call audit.record includes status`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `call audit.record includes status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `call audit.record includes status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"
@@ -537,8 +537,8 @@
       "flow_sinks": [
         {"kind":"call_effect","text":"console.log(\"status-ready\");","line":2}
       ],
-      "evidence": ["owner: StatusView", "missing_discriminator: log contains \"status-ready\""],
-      "missing": ["Related test reaches `StatusView` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: StatusView", "missing_discriminator: log contains \"status-ready\"", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/view.jsx;line=2;kind=typescript_preview_probe;source_id=probe:src_view.jsx:2:typescript_preview;owner=StatusView"],
+      "missing": ["Related test reaches `StatusView` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -572,8 +572,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `log contains \"status-ready\"`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `log contains \"status-ready\"`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"status-ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"status-ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "javascript",
       "language_status": "preview",
       "owner_kind": "component"
@@ -603,8 +603,8 @@
       "flow_sinks": [
         {"kind":"struct_field","text":"return { status: \"ready\", label, amount };","line":4}
       ],
-      "evidence": ["owner: PriceBadge", "missing_discriminator: status == \"ready\""],
-      "missing": ["Related test reaches `PriceBadge` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
+      "evidence": ["owner: PriceBadge", "missing_discriminator: status == \"ready\"", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/widget.tsx;line=4;kind=typescript_preview_probe;source_id=probe:src_widget.tsx:4:typescript_preview;owner=PriceBadge"],
+      "missing": ["Related test reaches `PriceBadge` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "activation": {
         "observed_values": [
         ],
@@ -638,8 +638,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `status == \"ready\"`.",
-      "suggested_next_action": "TypeScript preview: add or strengthen a focused assertion for missing discriminator `status == \"ready\"`.",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `status == \"ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `status == \"ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function"

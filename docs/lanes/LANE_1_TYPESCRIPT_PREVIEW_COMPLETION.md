@@ -236,25 +236,29 @@ Completed after the initial audit:
    - Static limitations are emitted as evidence and missing context only; they
      do not promote TypeScript/JavaScript beyond advisory preview.
 
-7. Repo-mode and output projection
+7. Strict TypeScript actionability
+   - Status: done for the fail-closed PR 9 scope.
+   - TypeScript/JavaScript preview findings now emit explicit
+     `gap_state`, `actionability_category`, `why_not_actionable`,
+     `repair_route`, missing actionability fields, evidence needed to promote,
+     and raw preview evidence refs in the existing evidence stream.
+   - Strong related Jest/Vitest evidence is marked `already_observed`, static
+     limits are marked `static_limitation`, no-path and heuristic-only
+     relations stay advisory, and weak direct findings stay
+     `incomplete_repair_packet` until canonical repair-packet fields exist.
+   - The fixture family `typescript_strict_actionability` pins advisory
+     incomplete-packet, already-observed, and missing-context states.
+   - No TypeScript repair packet, default gate, badge, baseline, or RIPR Zero
+     authority is emitted by this slice.
+
+8. Repo-mode and output projection
    - TypeScript `analyze_repo` currently returns no findings.
-   - Check output carries preview metadata, but current TypeScript findings do
-     not yet become complete canonical repair packets with strict
-     actionability fields.
+   - Check output carries preview metadata and fail-closed actionability
+     evidence, but TypeScript findings do not yet project complete canonical
+     repair packets.
    - Next step: project TS/JS preview metadata through repo exposure, agent,
      first-pr/pilot, PR summary, and any SARIF-supported path without a schema
      fork.
-
-8. Strict TypeScript actionability
-   - Current TypeScript findings carry `recommended_next_step`, but not a
-     complete repair packet.
-    - Missing required actionability fields: `canonical_gap_id`, `gap_state`,
-      `repair_kind`, `target_test_or_observer_shape`, `verify_command`,
-      `receipt_command`, `confidence`, `evidence_refs`, and
-      `must_not_change`.
-    - Next step: no TypeScript item should become actionable unless every
-      required field is present; otherwise emit a named limitation or
-      `missing_context` route.
 
 9. LSP / VS Code repair packet UX
    - Current LSP projection carries preview metadata and static limits.

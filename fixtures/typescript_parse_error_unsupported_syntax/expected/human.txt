@@ -27,12 +27,18 @@ Evidence
   - observation unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
   - discriminator unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)
   - static_limit unsupported_syntax: 1 parser error(s)
+  - gap_state: static_limitation
+  - actionability_category: unsupported_syntax
+  - why_not_actionable: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s)
+  - repair_route: fix or isolate the unsupported syntax before relying on repair guidance
+  - raw_evidence_ref: file=src/broken.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_broken.ts:2:typescript_preview_unsupported_syntax
 
 Weakness
   - Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance.
+  - TypeScript preview actionability `static_limitation` / `unsupported_syntax`: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s). Repair route: fix or isolate the unsupported syntax before relying on repair guidance
 
 Stop reasons:
   - static_probe_unknown
 
 Next step
-  TypeScript preview: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.
+  TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.
