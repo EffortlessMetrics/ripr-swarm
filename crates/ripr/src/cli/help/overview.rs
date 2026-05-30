@@ -37,6 +37,7 @@ Usage:
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json
   ripr agent status --root . [--json]
   ripr agent review-summary --root . [--json]
+  ripr swarm queue [--root .] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--language python] [--top 10]
   ripr check [--base origin/main] [--diff PATH] [--mode draft] [--format FORMAT]
   ripr explain [--base REV|--diff PATH] <finding-id|file:line>
   ripr context [--base REV|--diff PATH] --at <finding-id|file:line>
@@ -85,6 +86,7 @@ Quick start:
   ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id f3c9e4d21a0b7c88 --json
   ripr agent status --root .
   ripr agent review-summary --root .
+  ripr swarm queue --language python --top 10
   ripr check --diff crates/ripr/examples/sample/example.diff
   ripr check --diff crates/ripr/examples/sample/example.diff --json
   ripr explain --diff crates/ripr/examples/sample/example.diff <finding-id>

@@ -27,6 +27,7 @@ use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute, projection_e
 use crate::output::json::escape as json_escape;
 use crate::output::path::{display_path, display_path_text};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.3";
 
@@ -221,6 +222,235 @@ pub(crate) fn render_agent_gap_record_packet_json(
         .map_err(|err| format!("render agent gap packet JSON failed: {err}"))?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+/// Render a deterministic queue over explicit GapRecords that are already
+/// eligible for bounded agent-packet projection.
+pub(crate) fn render_agent_gap_record_queue_json(
+    root: &str,
+    gap_ledger_path: &str,
+    records: &[GapRecord],
+    language: &str,
+    top: usize,
+) -> Result<String, String> {
+    let mut candidates = Vec::new();
+    let mut excluded_by_reason = BTreeMap::<String, usize>::new();
+    let mut language_records_total = 0usize;
+
+    for (source_index, record) in records.iter().enumerate() {
+        if record.language != language {
+            continue;
+        }
+        language_records_total += 1;
+        if let Err(reason) = validate_agent_gap_record_packet(record) {
+            *excluded_by_reason.entry(reason).or_default() += 1;
+            continue;
+        }
+        let Some(route) = record.repair_route.as_ref() else {
+            *excluded_by_reason
+                .entry("requires a repair_route".to_string())
+                .or_default() += 1;
+            continue;
+        };
+        let Some(verify_command) = record.verification_commands.first() else {
+            *excluded_by_reason
+                .entry("requires verification_commands".to_string())
+                .or_default() += 1;
+            continue;
+        };
+        let allowed_edit_surface = allowed_edit_surface_for_gap_route(route);
+        let conflict_group = conflict_group_for_gap_record(record, &allowed_edit_surface);
+        candidates.push(GapRecordQueueCandidate {
+            source_index,
+            gap_id: gap_record_id(record),
+            canonical_gap_id: non_empty(&record.canonical_gap_id),
+            gap_kind: record.kind.clone(),
+            language: record.language.clone(),
+            language_status: record.language_status.clone(),
+            policy_state: record.policy_state.clone(),
+            evidence_class: record.evidence_class.clone(),
+            repair_kind: route.route_kind.clone(),
+            suggested_test_file: allowed_edit_surface.first().cloned(),
+            suggested_test_name: route.related_test.clone(),
+            verify_command: verify_command.clone(),
+            receipt_command: record.receipt_command.clone(),
+            conflict_group,
+            allowed_edit_surface: allowed_edit_surface.clone(),
+            forbidden_files: forbidden_files_for_gap_record(record, &allowed_edit_surface),
+            changed_owner: record
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.owner.as_ref())
+                .cloned(),
+            changed_file: record
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.file.as_deref())
+                .map(display_path_text),
+            changed_line: record.anchor.as_ref().and_then(|anchor| anchor.line),
+            changed_behavior: route.changed_behavior.clone(),
+            missing_discriminator: missing_discriminator_for_gap_route(route)
+                .map(ToString::to_string),
+        });
+    }
+
+    let conflict_counts = gap_record_queue_conflict_counts(&candidates);
+    let selected: Vec<_> = candidates.iter().take(top).collect();
+    let conflict_groups = gap_record_queue_conflict_groups(&candidates);
+    let excluded_records_total: usize = excluded_by_reason.values().sum();
+    let exclusion_reasons: Vec<_> = excluded_by_reason
+        .iter()
+        .map(|(reason, count)| {
+            json!({
+                "reason": reason,
+                "count": count,
+            })
+        })
+        .collect();
+    let packets: Vec<_> = selected
+        .iter()
+        .enumerate()
+        .map(|(selected_index, candidate)| {
+            let conflict_group_size = conflict_counts
+                .get(&candidate.conflict_group)
+                .copied()
+                .unwrap_or(1);
+            json!({
+                "priority": selected_index + 1,
+                "source_index": candidate.source_index,
+                "queue_state": "queued",
+                "staleness_status": "not_evaluated",
+                "staleness_reason": "GapRecord queue rendering does not compare the ledger with current git state yet.",
+                "gap_id": candidate.gap_id.as_str(),
+                "canonical_gap_id": candidate.canonical_gap_id.as_ref(),
+                "gap_kind": candidate.gap_kind.as_str(),
+                "language": candidate.language.as_str(),
+                "language_status": candidate.language_status.as_str(),
+                "policy_state": candidate.policy_state.as_str(),
+                "evidence_class": candidate.evidence_class.as_str(),
+                "repair_kind": candidate.repair_kind.as_str(),
+                "changed_owner": candidate.changed_owner.as_ref(),
+                "changed_file": candidate.changed_file.as_ref(),
+                "changed_line": candidate.changed_line,
+                "changed_behavior": candidate.changed_behavior.as_ref(),
+                "missing_discriminator": candidate.missing_discriminator.as_ref(),
+                "suggested_test_file": candidate.suggested_test_file.as_ref(),
+                "suggested_test_name": candidate.suggested_test_name.as_ref(),
+                "verify_command": candidate.verify_command.as_str(),
+                "receipt_command": candidate.receipt_command.as_ref(),
+                "conflict_group": candidate.conflict_group.as_str(),
+                "conflict_group_size": conflict_group_size,
+                "allowed_edit_surface": &candidate.allowed_edit_surface,
+                "allowed_files": &candidate.allowed_edit_surface,
+                "forbidden_files": &candidate.forbidden_files,
+                "packet_command_args": [
+                    "ripr",
+                    "agent",
+                    "packet",
+                    "--root",
+                    root,
+                    "--gap-ledger",
+                    gap_ledger_path,
+                    "--gap-id",
+                    candidate.gap_id.as_str(),
+                    "--json"
+                ],
+            })
+        })
+        .collect();
+    let envelope = json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-queue",
+        "scope": "repo",
+        "source": "gap_decision_ledger",
+        "status": "advisory",
+        "inputs": {
+            "root": root,
+            "gap_ledger": gap_ledger_path,
+            "language": language,
+            "top": top,
+        },
+        "summary": {
+            "records_total": records.len(),
+            "language_records_total": language_records_total,
+            "queue_total": candidates.len(),
+            "returned": packets.len(),
+            "excluded_records_total": excluded_records_total,
+            "conflict_groups_total": conflict_groups.len(),
+        },
+        "conflict_groups": conflict_groups,
+        "exclusion_reasons": exclusion_reasons,
+        "packets": packets,
+        "must_not_infer": [
+            "do not consume raw findings as swarm work",
+            "do not queue static limitations, no-action records, or records without bounded edit surfaces",
+            "do not edit files outside allowed_edit_surface",
+            "do not treat staleness_status=not_evaluated as freshness proof",
+            "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
+        ],
+    });
+    let mut rendered = serde_json::to_string_pretty(&envelope)
+        .map_err(|err| format!("render agent gap queue JSON failed: {err}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
+#[derive(Clone, Debug)]
+struct GapRecordQueueCandidate {
+    source_index: usize,
+    gap_id: String,
+    canonical_gap_id: Option<String>,
+    gap_kind: String,
+    language: String,
+    language_status: String,
+    policy_state: String,
+    evidence_class: String,
+    repair_kind: String,
+    suggested_test_file: Option<String>,
+    suggested_test_name: Option<String>,
+    verify_command: String,
+    receipt_command: Option<String>,
+    conflict_group: String,
+    allowed_edit_surface: Vec<String>,
+    forbidden_files: Vec<String>,
+    changed_owner: Option<String>,
+    changed_file: Option<String>,
+    changed_line: Option<u64>,
+    changed_behavior: Option<String>,
+    missing_discriminator: Option<String>,
+}
+
+fn gap_record_queue_conflict_counts(
+    candidates: &[GapRecordQueueCandidate],
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for candidate in candidates {
+        *counts.entry(candidate.conflict_group.clone()).or_default() += 1;
+    }
+    counts
+}
+
+fn gap_record_queue_conflict_groups(
+    candidates: &[GapRecordQueueCandidate],
+) -> Vec<serde_json::Value> {
+    let mut grouped = BTreeMap::<String, Vec<String>>::new();
+    for candidate in candidates {
+        grouped
+            .entry(candidate.conflict_group.clone())
+            .or_default()
+            .push(candidate.gap_id.clone());
+    }
+    grouped
+        .into_iter()
+        .map(|(conflict_group, gap_ids)| {
+            json!({
+                "conflict_group": conflict_group,
+                "size": gap_ids.len(),
+                "gap_ids": gap_ids,
+            })
+        })
+        .collect()
 }
 
 /// Return the first concrete assertion example carried by the agent
@@ -2418,6 +2648,187 @@ mod tests {
                 "- Do not edit production code unless the focused proof exposes a real product defect."
             ),
             "copyable packet should preserve the production-code boundary: {copyable_markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_groups_python_packets_by_allowed_edit_surface() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[
+            {
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":7,"owner":"calculate_discount"},
+              "repair_route":{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"if amount >= threshold:"
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"],
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            },
+            {
+              "gap_id":"gap:python:pricing-return",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:return_value:expected_discount",
+              "kind":"MissingValueAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"return_value",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":8,"owner":"calculate_discount"},
+              "repair_route":{
+                "route_kind":"AddValueAssertion",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_exact_value",
+                "missing_discriminator":"expected_discount",
+                "assertion_shape":"assert result == expected_discount",
+                "changed_behavior":"return expected_discount"
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_exact_value"],
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            },
+            {
+              "gap_id":"gap:python:already-observed",
+              "kind":"NoActionAlreadyObserved",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "gap_state":"resolved",
+              "policy_state":"resolved",
+              "repairability":"no_action",
+              "repair_route":{"route_kind":"NoAction"},
+              "verification_commands":["pytest tests/test_pricing.py"],
+              "projection_eligibility":{"agent_packet":{"eligible":false,"reason":"already_observed"}}
+            },
+            {
+              "gap_id":"gap:rust:pricing",
+              "kind":"MissingBoundaryAssertion",
+              "language":"rust",
+              "language_status":"stable",
+              "scope":"pr_local",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"tests/pricing.rs"},
+              "verification_commands":["cargo test pricing"],
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            }
+          ]}"#,
+        )?;
+
+        let json = render_agent_gap_record_queue_json(
+            ".",
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+            "python",
+            10,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        let packets = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("missing packets in: {json}"))?;
+        assert_eq!(packets.len(), 2);
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("language_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("queue_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("excluded_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        let first = packets
+            .first()
+            .ok_or_else(|| format!("missing first packet in: {json}"))?;
+        assert_eq!(
+            first
+                .get("suggested_test_file")
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_pricing.py")
+        );
+        assert_eq!(
+            first
+                .get("forbidden_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("src/pricing.py")
+        );
+        assert_eq!(
+            first
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/test_pricing.py")
+        );
+        assert_eq!(
+            first
+                .get("conflict_group_size")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            first
+                .get("staleness_status")
+                .and_then(serde_json::Value::as_str),
+            Some("not_evaluated")
+        );
+        assert_eq!(
+            first
+                .get("packet_command_args")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|args| args.get(1))
+                .and_then(serde_json::Value::as_str),
+            Some("agent")
+        );
+        let conflict_group = value
+            .get("conflict_groups")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|groups| groups.first())
+            .ok_or_else(|| format!("missing conflict group in: {json}"))?;
+        assert_eq!(
+            conflict_group
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/test_pricing.py")
+        );
+        assert_eq!(
+            conflict_group
+                .get("size")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert!(
+            json.contains("is not agent-packet eligible: already_observed"),
+            "queue should explain excluded no-action records: {json}"
         );
         Ok(())
     }
