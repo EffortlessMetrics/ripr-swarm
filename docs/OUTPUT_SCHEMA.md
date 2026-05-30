@@ -499,8 +499,8 @@ The evidence-first fields are additive in schema `0.1`:
   discriminator. It is omitted when no structured static limit is known. Values
   are `dynamic_dispatch`, `metaprogramming`, `missing_import_graph`,
   `decorator_indirection`, `mocked_module`,
-  `opaque_custom_assertion_helper`, `property_based_test`, or
-  `unsupported_syntax`.
+  `opaque_custom_assertion_helper`, `property_based_test`,
+  `unresolved_pytest_fixture`, or `unsupported_syntax`.
 
 ## Enums
 
@@ -547,6 +547,7 @@ The evidence-first fields are additive in schema `0.1`:
 - `mocked_module`
 - `opaque_custom_assertion_helper`
 - `property_based_test`
+- `unresolved_pytest_fixture`
 - `unsupported_syntax`
 
 Reserved `flow_sink` values:

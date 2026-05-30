@@ -27,7 +27,7 @@ Evidence
   - infection unknown: Static limit `property_based_test` prevents a safe Python infection claim.
   - propagation unknown: Static limit `property_based_test` prevents a safe Python propagation claim.
   - observation yes: Strongest extracted Python oracle kind: `relational_check` (rank 3)
-  - discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.
+  - discriminator unknown: Static limit `property_based_test` prevents a safe Python discriminator claim.
   - related test tests/test_pricing.py:6 test_apply_discount_property uses weak relational check oracle: assert apply_discount(amount, threshold) <= amount
 
 Weakness

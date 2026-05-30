@@ -27,7 +27,7 @@ Evidence
   - infection unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python infection claim.
   - propagation unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python propagation claim.
   - observation yes: Strongest extracted Python oracle kind: `unknown` (rank 1)
-  - discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.
+  - discriminator unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python discriminator claim.
   - related test tests/test_pricing.py:8 test_apply_discount_custom_helper uses unknown unknown oracle: assert_discounted(result)
 
 Weakness

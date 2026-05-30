@@ -118,6 +118,7 @@ interpretation guide and integration rules.
 | `mocked_module` | A test replaces or mocks the module or symbol under review. |
 | `opaque_custom_assertion_helper` | A Python test uses a custom assertion helper whose body is not inspected. |
 | `property_based_test` | A Python test uses generated inputs, such as Hypothesis `@given(...)`, whose concrete cases are not known statically. |
+| `unresolved_pytest_fixture` | A Python pytest test depends on fixture-sourced values whose concrete inputs or expected values are not known statically. |
 | `unsupported_syntax` | The parser or preview adapter found syntax outside the current preview contract. |
 
 A static limit does not automatically erase a useful related test or strong
