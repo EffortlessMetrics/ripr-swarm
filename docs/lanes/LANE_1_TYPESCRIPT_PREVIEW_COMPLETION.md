@@ -1,6 +1,6 @@
 # Lane 1: TypeScript Preview Completion
 
-Status: TypeScript preview static-limit taxonomy landed; strict actionability next
+Status: TypeScript preview output metadata projection landed; LSP repair context next
 
 Date: 2026-05-29
 
@@ -116,6 +116,10 @@ Projection and proof:
 - Human and JSON check output carry `language = "typescript"` or
   `language = "javascript"` and `language_status = "preview"` for
   TypeScript-family findings.
+- Check JSON and diff-scoped SARIF now carry structured
+  `preview_actionability` for TypeScript/JavaScript preview findings. Human
+  output shows the same state in a dedicated Preview actionability section, and
+  GitHub annotations preserve the advisory preview/no-packet boundary.
 - LSP diagnostics preserve preview metadata and `static_limit_kind` when
   present.
 - Generated CI has language grouping support for configured preview languages.
@@ -252,21 +256,26 @@ Completed after the initial audit:
      authority is emitted by this slice.
 
 8. Repo-mode and output projection
-   - TypeScript `analyze_repo` currently returns no findings.
-   - Check output carries preview metadata and fail-closed actionability
-     evidence, but TypeScript findings do not yet project complete canonical
-     repair packets.
-   - Next step: project TS/JS preview metadata through repo exposure, agent,
-     first-pr/pilot, PR summary, and any SARIF-supported path without a schema
-     fork.
+   - Status: done for the current TS-bearing output surfaces.
+   - Check JSON and diff-scoped SARIF now carry structured
+     `preview_actionability` with gap state, category, why-not-actionable,
+     repair route, missing fields, promotion evidence needs, raw evidence refs,
+     `authority_boundary = "preview_advisory_only"`, and
+     `repair_packet_ready = false`.
+   - Human output renders a Preview actionability section instead of relying on
+     raw actionability strings in the Evidence and Weakness sections.
+   - GitHub annotations include the advisory preview/no-packet boundary.
+   - Repo exposure, agent packet, first-pr/pilot repair packet, PR summary,
+     gate, badge, baseline, and RIPR Zero surfaces remain unchanged because
+     TypeScript still has no complete repair packets or GapRecords.
 
 9. LSP / VS Code repair packet UX
    - Current LSP projection carries preview metadata and static limits.
     - Missing TypeScript proof: enabled/disabled TS e2e with a complete repair
       packet, hover boundary, code action packet, verify command, receipt
       command, and constraints.
-    - Next step: keep editor actions projection-only and suppress repair code
-      actions unless the packet is complete.
+    - Next step: project `preview_actionability` into hover/status context and
+      keep editor actions suppressed unless a complete repair packet exists.
 
 10. Generated CI grouping proof
    - Generated CI grouping exists for configured preview languages.
@@ -328,10 +337,13 @@ and parser-error unsupported syntax without support-tier promotion, runtime
 execution, generated tests, source edits, default gates, badge contribution,
 baseline authority, or RIPR Zero contribution.
 
+PR 9 landed fail-closed TypeScript strict actionability, and PR 10 landed the
+current output metadata projection.
+
 The next safe PR is:
 
 ```text
-PR 9: analysis(ts): require complete repair packets for TypeScript actionability
+PR 11: lsp(ts): show TypeScript preview evidence without noisy diagnostics
 ```
 
 ## Validation

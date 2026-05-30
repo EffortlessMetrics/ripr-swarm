@@ -1,5 +1,6 @@
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
+use crate::output::preview_actionability::preview_actionability_for;
 
 /// Render findings as GitHub Actions workflow command annotations.
 ///
@@ -39,6 +40,13 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(" Canonical gap: ");
             message.push_str(&gap.id);
         }
+        if let Some(actionability) = preview_actionability_for(finding) {
+            message.push_str(" Preview actionability: ");
+            message.push_str(&actionability.gap_state);
+            message.push('/');
+            message.push_str(&actionability.actionability_category);
+            message.push_str(" (advisory preview; no repair packet).");
+        }
         out.push_str(&format!(
             "::{annotation_level} file={},line={},title={}::{}\n",
             finding.probe.location.file.display(),
@@ -67,8 +75,9 @@ mod tests {
     use super::render;
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, Probe, ProbeFamily,
-        ProbeId, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, Summary,
+        Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId,
+        LanguageStatus, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation,
+        StageEvidence, StageState, Summary,
     };
     use std::path::PathBuf;
 
@@ -230,6 +239,29 @@ mod tests {
 
         assert!(rendered.contains(
             "Canonical gap%3A gap%3Apython%3Asrc/pricing.py%3Adiscount%3Apredicate_boundary%3Apredicate%3Aamount>=threshold"
+        ));
+    }
+
+    #[test]
+    fn render_includes_preview_actionability_boundary() {
+        let mut output = output_with_unknown_finding();
+        let finding = &mut output.findings[0];
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.evidence = vec![
+            "gap_state: advisory".to_string(),
+            "actionability_category: incomplete_repair_packet".to_string(),
+            "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
+                .to_string(),
+            "repair_route: project canonical TypeScript repair packet fields later".to_string(),
+            "evidence_needed_to_promote: canonical gap identity and verify command".to_string(),
+            "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
+        ];
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains(
+            "Preview actionability%3A advisory/incomplete_repair_packet (advisory preview; no repair packet)."
         ));
     }
 

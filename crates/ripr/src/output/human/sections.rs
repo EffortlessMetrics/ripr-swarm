@@ -1,5 +1,8 @@
 use crate::config::RiprConfig;
 use crate::domain::{Finding, LanguageId, LanguageStatus};
+use crate::output::preview_actionability::{
+    PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
+};
 use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
 
 use super::evidence_lines::{evidence_path_lines, weakness_lines};
@@ -48,6 +51,10 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
         if let Some(owner_kind) = finding.owner_kind {
             out.push_str(&format!("  owner kind: {}\n", owner_kind.as_str()));
         }
+    }
+
+    if let Some(actionability) = preview_actionability_for(finding) {
+        push_preview_actionability(&mut out, &actionability);
     }
 
     out.push_str("\nStatic exposure\n");
@@ -100,6 +107,60 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
     }
 
     out
+}
+
+fn push_preview_actionability(out: &mut String, actionability: &PreviewActionability) {
+    out.push_str("\nPreview actionability\n");
+    out.push_str(&format!(
+        "  authority: {}\n",
+        actionability.authority_boundary
+    ));
+    out.push_str(&format!("  gap state: {}\n", actionability.gap_state));
+    out.push_str(&format!(
+        "  category: {}\n",
+        actionability.actionability_category
+    ));
+    out.push_str(&format!(
+        "  repair packet ready: {}\n",
+        actionability.repair_packet_ready
+    ));
+    out.push_str(&format!(
+        "  why not actionable: {}\n",
+        actionability.why_not_actionable
+    ));
+    out.push_str(&format!("  repair route: {}\n", actionability.repair_route));
+    if !actionability.missing_actionability_fields.is_empty() {
+        out.push_str(&format!(
+            "  missing fields: {}\n",
+            actionability.missing_actionability_fields.join(", ")
+        ));
+    }
+    out.push_str(&format!(
+        "  evidence needed: {}\n",
+        actionability.evidence_needed_to_promote
+    ));
+    for raw_ref in &actionability.raw_evidence_refs {
+        out.push_str("  raw evidence: ");
+        push_raw_ref(out, raw_ref);
+        out.push('\n');
+    }
+}
+
+fn push_raw_ref(out: &mut String, raw_ref: &PreviewRawEvidenceRef) {
+    if let (Some(file), Some(line)) = (raw_ref.file.as_deref(), raw_ref.line) {
+        out.push_str(&format!("{file}:{line}"));
+        if let Some(kind) = &raw_ref.kind {
+            out.push_str(&format!(" ({kind})"));
+        }
+        if let Some(source_id) = &raw_ref.source_id {
+            out.push_str(&format!(" source={source_id}"));
+        }
+        if let Some(owner) = &raw_ref.owner {
+            out.push_str(&format!(" owner={owner}"));
+        }
+    } else {
+        out.push_str(&raw_ref.raw);
+    }
 }
 
 fn push_python_repair_card(out: &mut String, card: &PythonRepairCard) {

@@ -11,6 +11,9 @@ use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
     ExposureClass, Finding, MissingDiscriminatorFact, RelatedTest, StageEvidence, ValueFact,
 };
+use crate::output::preview_actionability::{
+    preview_actionability_for, preview_actionability_json_value,
+};
 use crate::output::suppressions::{
     SuppressionEntry, SuppressionKind, current_iso_date, is_expired,
 };
@@ -229,6 +232,24 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
     properties.insert("confidence".to_string(), json!(finding.confidence));
     if let Some(owner) = &finding.probe.owner {
         properties.insert("owner".to_string(), json!(owner.0.as_str()));
+    }
+    if let Some(language) = finding.language {
+        properties.insert("language".to_string(), json!(language.as_str()));
+    }
+    if let Some(status) = finding.language_status {
+        properties.insert("language_status".to_string(), json!(status.as_str()));
+    }
+    if let Some(kind) = finding.owner_kind {
+        properties.insert("owner_kind".to_string(), json!(kind.as_str()));
+    }
+    if let Some(kind) = finding.static_limit_kind {
+        properties.insert("static_limit_kind".to_string(), json!(kind.as_str()));
+    }
+    if let Some(actionability) = preview_actionability_for(finding) {
+        properties.insert(
+            "preview_actionability".to_string(),
+            preview_actionability_json_value(&actionability),
+        );
     }
     properties.insert(
         "changed_expression".to_string(),
@@ -545,8 +566,9 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
-        RiprEvidence, SourceLocation, StageEvidence, StageState, Summary, SymbolId, ValueContext,
+        LanguageId, LanguageStatus, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
+        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+        StageState, StaticLimitKind, Summary, SymbolId, ValueContext,
     };
     use serde_json::Value;
     use std::path::PathBuf;
@@ -614,6 +636,48 @@ mod tests {
         assert_eq!(
             result["properties"]["canonical_gap"]["normalized_discriminator"],
             "amount>=threshold"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_preserves_preview_actionability_properties() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = &mut output.findings[0];
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.owner_kind = Some(OwnerKind::Function);
+        finding.static_limit_kind = Some(StaticLimitKind::MockedModule);
+        finding.evidence = vec![
+            "gap_state: advisory".to_string(),
+            "actionability_category: incomplete_repair_packet".to_string(),
+            "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
+                .to_string(),
+            "repair_route: project canonical TypeScript repair packet fields later".to_string(),
+            "missing_actionability_fields: canonical_gap_id, verify_command".to_string(),
+            "evidence_needed_to_promote: canonical gap identity and verify command".to_string(),
+            "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
+        ];
+
+        let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
+        let sarif = parse_json(&rendered)?;
+        let result = first_result(&sarif)?;
+
+        assert_eq!(result["properties"]["language"], "typescript");
+        assert_eq!(result["properties"]["language_status"], "preview");
+        assert_eq!(result["properties"]["owner_kind"], "function");
+        assert_eq!(result["properties"]["static_limit_kind"], "mocked_module");
+        assert_eq!(
+            result["properties"]["preview_actionability"]["authority_boundary"],
+            "preview_advisory_only"
+        );
+        assert_eq!(
+            result["properties"]["preview_actionability"]["repair_packet_ready"],
+            false
+        );
+        assert_eq!(
+            result["properties"]["preview_actionability"]["raw_evidence_refs"][0]["file"],
+            "src/lib.ts"
         );
         Ok(())
     }

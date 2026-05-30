@@ -19,6 +19,17 @@ Language
   status: preview
   owner kind: function
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: advisory
+  category: ambiguous_related_test
+  repair packet ready: false
+  why not actionable: related-test link is heuristic-only and cannot safely borrow extracted assertions as proof
+  repair route: add a direct owner-call, import-aware, or receiver-aware relation before repair packet projection
+  missing fields: related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: trusted token-aware relation plus complete verify, receipt, and edit-boundary fields
+  raw evidence: src/pricing.ts:2 (typescript_preview_probe) source=probe:src_pricing.ts:2:typescript_preview owner=applyDiscount
+
 Static exposure
   weakly_exposed (warning, confidence 0.40)
 
@@ -34,7 +45,6 @@ Evidence
 
 Weakness
   - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
-  - TypeScript preview actionability `advisory` / `ambiguous_related_test`: related-test link is heuristic-only and cannot safely borrow extracted assertions as proof. Repair route: add a direct owner-call, import-aware, or receiver-aware relation before repair packet projection
 
 Next step
   TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.

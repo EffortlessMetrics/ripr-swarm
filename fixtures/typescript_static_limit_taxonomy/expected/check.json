@@ -45,6 +45,26 @@
       ],
       "related_tests": [
       ],
+      "preview_actionability": {
+        "actionability_category": "decorator_indirection",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "gap_state": "static_limitation",
+        "missing_actionability_fields": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/decorated.tsx",
+            "kind": "typescript_preview_probe",
+            "line": 7,
+            "owner": "save",
+            "raw": "file=src/decorated.tsx;line=7;kind=typescript_preview_probe;source_id=probe:src_decorated.tsx:7:typescript_preview;owner=save",
+            "source_id": "probe:src_decorated.tsx:7:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet",
+        "why_not_actionable": "static limit `decorator_indirection` prevents bounded TypeScript repair guidance"
+      },
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
@@ -101,6 +121,26 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "dynamic_dispatch",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "gap_state": "static_limitation",
+        "missing_actionability_fields": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/dispatch.ts",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": "dispatch",
+            "raw": "file=src/dispatch.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_dispatch.ts:2:typescript_preview;owner=dispatch",
+            "source_id": "probe:src_dispatch.ts:2:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet",
+        "why_not_actionable": "static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -158,6 +198,26 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "missing_import_graph",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "gap_state": "static_limitation",
+        "missing_actionability_fields": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/label.jsx",
+            "kind": "typescript_preview_probe",
+            "line": 3,
+            "owner": "LabelView",
+            "raw": "file=src/label.jsx;line=3;kind=typescript_preview_probe;source_id=probe:src_label.jsx:3:typescript_preview;owner=LabelView",
+            "source_id": "probe:src_label.jsx:3:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add import graph support or inspect the imported implementation before issuing a repair packet",
+        "why_not_actionable": "static limit `missing_import_graph` prevents bounded TypeScript repair guidance"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -215,6 +275,26 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "metaprogramming",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "gap_state": "static_limitation",
+        "missing_actionability_fields": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/proxy.js",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": "wrap",
+            "raw": "file=src/proxy.js;line=2;kind=typescript_preview_probe;source_id=probe:src_proxy.js:2:typescript_preview;owner=wrap",
+            "source_id": "probe:src_proxy.js:2:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet",
+        "why_not_actionable": "static limit `metaprogramming` prevents bounded TypeScript repair guidance"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",

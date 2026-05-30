@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+project TypeScript preview actionability metadata through check JSON and human output
+
+Command:
+`cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

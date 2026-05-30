@@ -19,6 +19,16 @@ Language
   status: preview
   owner kind: arrow_function
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: already_observed
+  category: strong_oracle_observed
+  repair packet ready: false
+  why not actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted
+  repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior
+  evidence needed: none for a repair packet; retain strong related-test evidence as non-actionable context
+  raw evidence: src/owners.ts:2 (typescript_preview_probe) source=probe:src_owners.ts:2:typescript_preview owner=formatPrice
+
 Static exposure
   exposed (info, confidence 0.60)
 
@@ -33,7 +43,6 @@ Evidence
 
 Weakness
   - Related test reaches `formatPrice` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
-  - TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior
 
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
@@ -53,6 +62,17 @@ Language
   status: preview
   owner kind: method
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: advisory
+  category: missing_context
+  repair packet ready: false
+  why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
+  repair route: add trusted related-test matching for this owner shape before emitting a repair packet
+  missing fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
+  raw evidence: src/owners.ts:7 (typescript_preview_probe) source=probe:src_owners.ts:7:typescript_preview owner=total
+
 Static exposure
   no_static_path (warning, confidence 0.40)
 
@@ -66,7 +86,6 @@ Evidence
 
 Weakness
   - No trusted TypeScript method relation for `total`. Object method calls stay ambiguous in preview until method related-test matching lands.
-  - TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet
 
 Next step
   TypeScript preview advisory: method owner relation is missing context; add an exact method observer only after the adapter can safely relate the receiver shape.
@@ -86,6 +105,17 @@ Language
   status: preview
   owner kind: class_method
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: advisory
+  category: missing_context
+  repair packet ready: false
+  why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
+  repair route: add trusted related-test matching for this owner shape before emitting a repair packet
+  missing fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
+  raw evidence: src/owners.ts:11 (typescript_preview_probe) source=probe:src_owners.ts:11:typescript_preview owner=build
+
 Static exposure
   no_static_path (warning, confidence 0.40)
 
@@ -99,7 +129,6 @@ Evidence
 
 Weakness
   - No trusted TypeScript method relation for `build`. Object method calls stay ambiguous in preview until method related-test matching lands.
-  - TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet
 
 Next step
   TypeScript preview advisory: method owner relation is missing context; add an exact method observer only after the adapter can safely relate the receiver shape.
@@ -119,6 +148,17 @@ Language
   status: preview
   owner kind: module_function
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: advisory
+  category: missing_context
+  repair packet ready: false
+  why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
+  repair route: add trusted related-test matching for this owner shape before emitting a repair packet
+  missing fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
+  raw evidence: src/owners.ts:15 (typescript_preview_probe) source=probe:src_owners.ts:15:typescript_preview owner=DEFAULT_RATE
+
 Static exposure
   no_static_path (warning, confidence 0.40)
 
@@ -130,17 +170,9 @@ Evidence
   - discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
   - owner: DEFAULT_RATE
   - probe_fact: ambiguous_fallback
-  - gap_state: advisory
-  - actionability_category: missing_context
-  - why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
-  - repair_route: add trusted related-test matching for this owner shape before emitting a repair packet
-  - missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
-  - evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
-  - raw_evidence_ref: file=src/owners.ts;line=15;kind=typescript_preview_probe;source_id=probe:src_owners.ts:15:typescript_preview;owner=DEFAULT_RATE
 
 Weakness
   - No trusted TypeScript module-initializer relation for `DEFAULT_RATE`. Identifier-reference observers stay missing context until module-value related-test matching lands.
-  - TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet
 
 Next step
   TypeScript preview advisory: module initializer relation is missing context; add an exact value observer and keep the finding advisory until identifier-reference matching lands.

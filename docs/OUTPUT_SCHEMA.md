@@ -441,6 +441,17 @@ The evidence-first fields are additive in schema `0.1`:
   In this preview slice, `receipt.command` is `null` and `receipt.status`
   explains that Python gap-ledger receipts are unavailable until the dedicated
   outcome work item.
+- `preview_actionability` is an additive optional object for TypeScript and
+  JavaScript preview findings. It projects the preview adapter's fail-closed
+  actionability state as structured data while preserving the original
+  `findings[].evidence` strings for compatibility. It is not a repair packet
+  and is not gate, badge, baseline, RIPR Zero, or agent-packet authority.
+  Current fields are `authority_boundary` (`"preview_advisory_only"`),
+  `repair_packet_ready` (`false` for this preview slice), `gap_state`,
+  `actionability_category`, `why_not_actionable`, `repair_route`,
+  `missing_actionability_fields[]`, `evidence_needed_to_promote`, and
+  `raw_evidence_refs[]`. Raw evidence refs carry the original raw string plus
+  parsed `file`, `line`, `kind`, `source_id`, and optional `owner` when present.
 - `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
   Python `GapRecord` entries from findings that carry `python_repair_card`.
   Those records are advisory preview inputs for `ripr agent packet
@@ -892,6 +903,11 @@ Every result carries:
 - stable IDs (`finding_id`, `probe_id`, or `seam_id`) when available;
 - class metadata (`classification`, `probe_family`, `grip_class`, or
   `seam_kind`) when available.
+- diff-scoped preview-language Finding results may also carry additive
+  `properties.language`, `properties.language_status`, `properties.owner_kind`,
+  `properties.static_limit_kind`, and `properties.preview_actionability`. The
+  `preview_actionability` shape matches `ripr check --format json` and remains
+  advisory preview context, not a SARIF policy decision or repair packet.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
 when their configured severity is visible. Results whose configured severity is
