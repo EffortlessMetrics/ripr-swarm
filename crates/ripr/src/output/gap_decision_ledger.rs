@@ -389,7 +389,9 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     }
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
-            let Some(record) = gap_record_from_python_repair_finding(finding, index) else {
+            let Some(record) = gap_record_from_python_repair_finding(finding, index)
+                .or_else(|| gap_record_from_python_static_limit_finding(finding, index))
+            else {
                 continue;
             };
             if record.gap_id.is_empty() {
@@ -715,6 +717,148 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
             .unwrap_or("preview_advisory_only")
             .to_string(),
     })
+}
+
+fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) -> Option<GapRecord> {
+    if string_at(finding, &["language"]) != Some("python") {
+        return None;
+    }
+    let static_limit_kind = string_at(finding, &["static_limit_kind"])?;
+    let behavior_kind = string_at(finding, &["canonical_gap", "behavior_kind"])
+        .or_else(|| string_at(finding, &["probe", "family"]))
+        .unwrap_or("python_static_limit");
+    let source_file = string_at(finding, &["canonical_gap", "file"])
+        .or_else(|| string_at(finding, &["probe", "file"]))
+        .map(ToString::to_string);
+    let source_line = u64_at(finding, &["probe", "line"]);
+    let changed_owner = string_at(finding, &["canonical_gap", "owner"])
+        .or_else(|| string_at(finding, &["probe", "owner"]))
+        .map(ToString::to_string);
+    let canonical_gap_id = string_at(finding, &["canonical_gap_id"])
+        .or_else(|| string_at(finding, &["canonical_gap", "id"]))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            python_static_limit_gap_id(
+                source_file.as_deref(),
+                changed_owner.as_deref(),
+                behavior_kind,
+                static_limit_kind,
+                index,
+            )
+        });
+    let static_limit_detail = python_static_limit_detail(finding, static_limit_kind);
+    let has_local_anchor = source_file.is_some() && source_line.is_some();
+    let anchor = GapAnchor {
+        file: source_file,
+        line: source_line,
+        owner: changed_owner,
+        dedupe_fingerprint: Some(canonical_gap_id.clone()),
+    };
+    let mut evidence_ids = Vec::new();
+    if let Some(id) = string_at(finding, &["id"]) {
+        evidence_ids.push(id.to_string());
+    }
+    if !evidence_ids.iter().any(|id| id == &canonical_gap_id) {
+        evidence_ids.push(canonical_gap_id.clone());
+    }
+
+    Some(GapRecord {
+        gap_id: format!("gap:pr:{canonical_gap_id}"),
+        canonical_gap_id,
+        kind: "StaticLimitation".to_string(),
+        language: "python".to_string(),
+        language_status: string_at(finding, &["language_status"])
+            .unwrap_or("preview")
+            .to_string(),
+        scope: "pr_local".to_string(),
+        evidence_class: static_limit_kind.to_string(),
+        gap_state: "static_limitation".to_string(),
+        policy_state: "not_policy_targeted".to_string(),
+        repairability: "analyzer_limitation".to_string(),
+        repair_route: None,
+        static_limit_kind: Some(static_limit_kind.to_string()),
+        static_limit_detail: Some(static_limit_detail.clone()),
+        static_limits: vec![serde_json::json!({
+            "kind": static_limit_kind,
+            "detail": static_limit_detail,
+        })],
+        anchor: Some(anchor),
+        evidence_ids,
+        projection_eligibility: projection_eligibility_from_pr_evidence(
+            "analyzer_limitation",
+            false,
+            false,
+            has_local_anchor,
+            "static_limitation",
+        ),
+        verification_commands: Vec::new(),
+        receipt_command: None,
+        regeneration_commands: Vec::new(),
+        receipt: None,
+        safe_gate_predicate: None,
+        authority_boundary: "preview_advisory_only".to_string(),
+    })
+}
+
+fn python_static_limit_gap_id(
+    source_file: Option<&str>,
+    changed_owner: Option<&str>,
+    behavior_kind: &str,
+    static_limit_kind: &str,
+    index: usize,
+) -> String {
+    let file = source_file
+        .map(|file| file.replace('\\', "/"))
+        .filter(|file| !file.trim().is_empty())
+        .unwrap_or_else(|| format!("check-output-item-{index}"));
+    let owner = changed_owner
+        .and_then(non_empty)
+        .and_then(|owner| owner.rsplit("::").next())
+        .map(python_static_limit_gap_component)
+        .unwrap_or_else(|| "module".to_string());
+    format!(
+        "gap:python:{}:{}:static_limit:{}:{}",
+        file,
+        owner,
+        python_static_limit_gap_component(behavior_kind),
+        python_static_limit_gap_component(static_limit_kind)
+    )
+}
+
+fn python_static_limit_gap_component(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_separator = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.') {
+            out.push(ch.to_ascii_lowercase());
+            last_separator = false;
+        } else if !last_separator {
+            out.push('_');
+            last_separator = true;
+        }
+    }
+    let component = out.trim_matches('_');
+    if component.is_empty() {
+        "unknown".to_string()
+    } else {
+        component.to_string()
+    }
+}
+
+fn python_static_limit_detail(finding: &Value, static_limit_kind: &str) -> String {
+    string_array_at(finding, &["missing"])
+        .into_iter()
+        .find_map(|detail| non_empty(&detail).map(ToString::to_string))
+        .or_else(|| {
+            string_array_at(finding, &["evidence"])
+                .into_iter()
+                .find(|detail| detail.contains("static_limit"))
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "Python preview reported static limit `{static_limit_kind}` without a bounded repair route."
+            )
+        })
 }
 
 fn attach_check_output_python_receipt_routes(
@@ -1493,6 +1637,11 @@ mod tests {
 
     fn corpus() -> String {
         include_str!("../../../../fixtures/gap-decision-ledger/corpus.json").to_string()
+    }
+
+    fn python_static_limit_check_output() -> String {
+        include_str!("../../../../fixtures/python_dynamic_dispatch_limit/expected/check.json")
+            .to_string()
     }
 
     fn minimal_record() -> Value {
@@ -3268,6 +3417,98 @@ mod tests {
     }
 
     // ── repair_route_from_evidence uses assertion_shape example fallback ─────
+
+    #[test]
+    fn check_output_python_static_limit_becomes_report_only_gap_record() -> Result<(), String> {
+        let payload = python_static_limit_check_output();
+        let records = gap_records_from_check_output_json(&payload)
+            .map_err(|e| format!("parse failed: {e}"))?;
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.kind, "StaticLimitation");
+        assert_eq!(record.language, "python");
+        assert_eq!(record.language_status, "preview");
+        assert_eq!(record.gap_state, "static_limitation");
+        assert_eq!(record.policy_state, "not_policy_targeted");
+        assert_eq!(record.repairability, "analyzer_limitation");
+        assert!(record.repair_route.is_none());
+        assert!(record.verification_commands.is_empty());
+        assert_eq!(
+            record.static_limit_kind.as_deref(),
+            Some("dynamic_dispatch")
+        );
+        assert!(
+            record
+                .static_limit_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("syntax alone cannot resolve"))
+        );
+        assert_eq!(
+            record.canonical_gap_id,
+            "gap:python:src/dispatch.py:call_named:static_limit:return_value:dynamic_dispatch"
+        );
+        assert_eq!(
+            record
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.file.as_deref()),
+            Some("src/dispatch.py")
+        );
+        assert_eq!(
+            record.anchor.as_ref().and_then(|anchor| anchor.line),
+            Some(2)
+        );
+        assert!(!projection_eligible(record, "agent_packet"));
+        assert!(!projection_eligible(record, "pr_comment"));
+        assert!(!projection_eligible(record, "gate_candidate"));
+        assert!(!projection_eligible(record, "ripr_zero_count"));
+        assert!(!projection_eligible(record, "ripr_plus_count"));
+
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_dynamic_dispatch_limit/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "before-check.json".to_string(),
+            records_json: Ok(payload),
+        });
+        assert_eq!(report.status, "advisory");
+        assert_eq!(report.summary.records_total, 1);
+        assert_eq!(report.summary.static_limitation_total, 1);
+        assert_eq!(report.summary.preview_ineligible_total, 1);
+        assert_eq!(report.summary.projection_agent_packet_eligible, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_excludes_python_static_limit_gap_records() -> Result<(), String> {
+        let payload = python_static_limit_check_output();
+        let records = gap_records_from_check_output_json(&payload)
+            .map_err(|e| format!("parse failed: {e}"))?;
+
+        let rendered = crate::output::agent_seam_packets::render_agent_gap_record_queue_json(
+            ".",
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+            "python",
+            10,
+        )?;
+        let queue: Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(queue["summary"]["language_records_total"], 1);
+        assert_eq!(queue["summary"]["queue_total"], 0);
+        assert_eq!(queue["summary"]["excluded_records_total"], 1);
+        assert!(
+            queue["exclusion_reasons"]
+                .as_array()
+                .is_some_and(|reasons| reasons.iter().any(|reason| {
+                    reason["reason"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("not_repairable"))
+                }))
+        );
+        assert!(queue["packets"].as_array().is_some_and(Vec::is_empty));
+        Ok(())
+    }
 
     #[test]
     fn repo_repair_route_uses_assertion_example_and_recommended_repair_fallback()

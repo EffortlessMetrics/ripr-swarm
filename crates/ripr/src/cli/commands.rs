@@ -7647,6 +7647,48 @@ mod tests {
     }
 
     #[test]
+    fn reports_gap_ledger_derives_python_static_limit_as_report_only() -> Result<(), String> {
+        let dir = unique_command_test_dir("gap-ledger-python-static-limit");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create python static-limit gap ledger dir: {err}"))?;
+        let check_output =
+            repo_root().join("fixtures/python_dynamic_dispatch_limit/expected/check.json");
+        let out = dir.join("gap-decision-ledger.json");
+        let out_md = dir.join("gap-decision-ledger.md");
+
+        reports(&args(&[
+            "gap-ledger",
+            "--check-output",
+            &check_output.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+
+        let json_text = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read python static-limit gap ledger JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json_text)
+            .map_err(|err| format!("parse python static-limit gap ledger JSON: {err}"))?;
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["summary"]["records_total"], 1);
+        assert_eq!(value["summary"]["static_limitation_total"], 1);
+        assert_eq!(value["summary"]["projection_agent_packet_eligible"], 0);
+        assert_eq!(value["records"][0]["kind"], "StaticLimitation");
+        assert_eq!(value["records"][0]["repairability"], "analyzer_limitation");
+        assert_eq!(value["records"][0]["static_limit_kind"], "dynamic_dispatch");
+        assert_eq!(
+            value["records"][0]["projection_eligibility"]["agent_packet"]["eligible"],
+            false
+        );
+        assert!(value["records"][0].get("repair_route").is_none());
+
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove python static-limit gap ledger dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn reports_gap_ledger_derives_repo_scoped_records_from_repo_exposure() -> Result<(), String> {
         let dir = unique_command_test_dir("gap-ledger-repo-exposure");
         std::fs::create_dir_all(&dir)
