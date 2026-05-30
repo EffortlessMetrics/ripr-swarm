@@ -86,11 +86,11 @@ Evidence
   - related test tests/signals.test.ts:24 renders summary snapshot uses medium snapshot oracle: expect(...).toMatchSnapshot(...)
 
 Weakness
-  - Related test reaches `renderSummary` but the strongest extracted oracle is `snapshot`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - Related test reaches `renderSummary` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a repair packet.
   - missing discriminator return value == `summary:${status.trim()}`: changed TypeScript returned-value at line 9 lacks a concrete preview discriminator
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 
 WARNING src/signals.ts:13
 
@@ -131,11 +131,11 @@ Evidence
   - related test tests/signals.test.ts:28 smoke readiness uses smoke smoke only oracle: expect(...).toBeTruthy(...)
 
 Weakness
-  - Related test reaches `isReady` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - Related test reaches `isReady` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet.
   - missing discriminator return value == count >= 1: changed TypeScript returned-value at line 13 lacks a concrete preview discriminator
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == count >= 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == count >= 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 
 WARNING src/signals.ts:17
 
@@ -176,11 +176,11 @@ Evidence
   - related test tests/signals.test.ts:32 records status %s uses medium mock expectation oracle: expect(...).toHaveBeenCalledWith(...)
 
 Weakness
-  - Related test reaches `notifyStatus` but the strongest extracted oracle is `mock_expectation`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - Related test reaches `notifyStatus` with a mock interaction oracle, but TypeScript preview does not yet establish the changed call payload; keep the item advisory until mock-shape actionability can name the callee, expected arguments, verify command, receipt command, and edit boundaries.
   - missing discriminator call sink.record includes status: changed TypeScript call side effect at line 17 lacks a concrete preview discriminator
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `call sink.record includes status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `call sink.record includes status`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries.
 
 INFO src/signals.ts:21
 
