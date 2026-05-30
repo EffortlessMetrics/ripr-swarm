@@ -501,7 +501,7 @@ cargo test -p xtask dogfood_language_preview_run_checks_static_limit_receipt --b
 
 ## Work Item: dogfood/typescript-preview-repair-loop
 
-Status: ready
+Status: done
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027
 Linked ADR: n/a
@@ -513,6 +513,18 @@ Blocked by: none
 Record real TS/JS repair-loop receipts for at least one improved/resolved case,
 one limitation, one weak-oracle downgrade, and unchanged or skipped cases.
 
+### Result
+
+`fixtures/typescript-preview-repair-loop/corpus.json` records TypeScript and
+JavaScript preview repair-loop receipts for boundary predicate advisory proof,
+smoke and snapshot weak-oracle downgrades, async broad-error evidence, a
+JavaScript mock-interaction skipped route, a mocked-module static limitation,
+and an already-observed JavaScript unchanged case. `cargo xtask dogfood`
+projects those receipts while preserving `repair_packet_ready = false`,
+`preview_advisory_only`, no runtime Jest/Vitest execution, no source edits, no
+generated tests, and no gate, badge, baseline, RIPR Zero, or support-tier
+promotion authority.
+
 ## Work Item: metrics/typescript-preview-route-quality
 
 Status: ready
@@ -520,7 +532,7 @@ Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027
 Linked ADR: n/a
 Blocks: campaign/typescript-preview-completion-closeout
-Blocked by: dogfood/typescript-preview-repair-loop
+Blocked by: none
 
 ### Goal
 
