@@ -2697,6 +2697,7 @@ mod tests {
                 "changed_behavior":"if amount >= threshold:"
               },
               "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
               "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
             },
             {
@@ -2720,6 +2721,7 @@ mod tests {
                 "changed_behavior":"return expected_discount"
               },
               "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_exact_value"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-return.targeted-test-outcome.json",
               "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
             },
             {
