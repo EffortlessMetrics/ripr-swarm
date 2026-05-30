@@ -52,9 +52,10 @@ The behavior is intentionally narrow:
 - timeout-backed missing receipt reasons route to a bounded verify-route
   improvement backlog instead of generic receipt collection, because broad
   verify commands that cannot finish are not safe repair guidance;
-- attempted packets without receipts route to `collect_missing_attempt_receipts`
-  with a sample packet/gap/repair-kind when one is available, so downstream
-  surfaces cannot claim improvement from verify evidence alone;
+- ordinary attempted packets without receipts route to
+  `collect_missing_attempt_receipts` with a sample packet/gap/repair-kind when
+  one is available, so downstream surfaces cannot claim improvement from verify
+  evidence alone;
 - default operation is dry-run and human-reviewable.
 
 ## Scope
@@ -382,9 +383,12 @@ The explicit `missing_verify_result` summary count is the closeout counter for
 attempted rows whose verification command is known but whose typed pass/fail or
 not-run result was not preserved.
 Readiness must route `attempted_no_receipt` and `receipt_present` separately:
-no-receipt attempts require collecting the packet receipt, while receipt-present
-attempts require joining before/after evidence movement before route quality can
-claim improvement, regression, or unchanged evidence.
+ordinary no-receipt attempts require collecting the packet receipt, while
+timeout-backed no-receipt attempts require an `improve_repair_route_quality`
+action against the bounded verify-route backlog before operators retry broad
+receipt collection. Receipt-present attempts require joining before/after
+evidence movement before route quality can claim improvement, regression, or
+unchanged evidence.
 When `latest_attempts[]` includes a `receipt_present` sample, readiness should
 copy the first sample packet ID, canonical gap ID, and repair kind into the
 `join_receipt_evidence_movement` next action.
@@ -396,10 +400,13 @@ samples, readiness should copy the first matching sample packet ID, canonical
 gap ID, and repair kind into the matching `inspect_unchanged_attempts` or
 `inspect_regressed_attempts` next action.
 When `top_missing_evidence_fields[]` includes `attempt_receipt` or
-`verify_result` samples, readiness should copy the first sample packet ID,
-canonical gap ID, and repair kind into the matching
-`collect_missing_attempt_receipts` or `inspect_missing_verify_results` next
-action.
+`verify_result` samples, readiness should copy the first ordinary
+`attempt_receipt` sample packet ID, canonical gap ID, and repair kind into
+`collect_missing_attempt_receipts`, and copy the first `verify_result` sample
+into `inspect_missing_verify_results`. If the no-receipt sample is explained by
+a timeout-backed route-quality row, readiness should route the sample to
+`improve_repair_route_quality` for the bounded verify-route backlog instead of
+generic receipt collection.
 
 ## Dry-Run Commands
 
