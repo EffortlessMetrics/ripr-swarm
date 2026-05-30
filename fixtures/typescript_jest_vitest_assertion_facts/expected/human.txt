@@ -33,9 +33,10 @@ Evidence
 
 Weakness
   - Related test reaches `applyDiscount` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+  - TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior
 
 Next step
-  TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+  TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 
 WARNING src/signals.ts:9
 
@@ -66,10 +67,11 @@ Evidence
 
 Weakness
   - Related test reaches `renderSummary` but the strongest extracted oracle is `snapshot`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   - missing discriminator return value == `summary:${status.trim()}`: changed TypeScript returned-value at line 9 lacks a concrete preview discriminator
 
 Next step
-  TypeScript preview: add or strengthen a focused assertion for missing discriminator `return value == `summary:${status.trim()}``.
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 
 WARNING src/signals.ts:13
 
@@ -100,10 +102,11 @@ Evidence
 
 Weakness
   - Related test reaches `isReady` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   - missing discriminator return value == count >= 1: changed TypeScript returned-value at line 13 lacks a concrete preview discriminator
 
 Next step
-  TypeScript preview: add or strengthen a focused assertion for missing discriminator `return value == count >= 1`.
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == count >= 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 
 WARNING src/signals.ts:17
 
@@ -134,10 +137,11 @@ Evidence
 
 Weakness
   - Related test reaches `notifyStatus` but the strongest extracted oracle is `mock_expectation`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
+  - TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   - missing discriminator call sink.record includes status: changed TypeScript call side effect at line 17 lacks a concrete preview discriminator
 
 Next step
-  TypeScript preview: add or strengthen a focused assertion for missing discriminator `call sink.record includes status`.
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `call sink.record includes status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 
 INFO src/signals.ts:21
 
@@ -168,6 +172,7 @@ Evidence
 
 Weakness
   - Related test reaches `loadProfile` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+  - TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior
 
 Next step
-  TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+  TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.

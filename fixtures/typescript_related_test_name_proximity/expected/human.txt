@@ -34,6 +34,7 @@ Evidence
 
 Weakness
   - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  - TypeScript preview actionability `advisory` / `ambiguous_related_test`: related-test link is heuristic-only and cannot safely borrow extracted assertions as proof. Repair route: add a direct owner-call, import-aware, or receiver-aware relation before repair packet projection
 
 Next step
-  TypeScript preview: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.
+  TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.
