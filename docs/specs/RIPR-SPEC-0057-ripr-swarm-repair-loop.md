@@ -337,7 +337,10 @@ queue changes.
 The attempt ledger must preserve typed route context for each attempt when it
 is available: `evidence_class`, `source_file`, `repair_kind`,
 `target_test_type`, `assertion_shape`, `verify_command`, `verify_result`, and
-`receipt_command`. It must summarize latest attempts by `repair_kind` so
+`receipt_command`. `attempted_no_receipt` rows should also preserve
+`missing_receipt_reason` when the dogfood or outcome source provides one, so
+receipt reliability failures can be routed instead of collapsed into counts.
+It must summarize latest attempts by `repair_kind` so
 repeated unchanged, regressed, no-receipt, missing-verify-result, or unknown
 outcomes become analyzer-improvement signals instead of disappearing into
 aggregate attempt counts.
