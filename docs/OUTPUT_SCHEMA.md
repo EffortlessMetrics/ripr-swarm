@@ -2974,7 +2974,9 @@ latest attempt per `canonical_gap_id`. It does not execute repairs, edit files,
 run tests, create receipts, call providers, run mutation testing, change PR/CI
 rendering, change editor/LSP behavior, change gates, or change public badges.
 The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON before listing ledger inputs.
+completeness fields as JSON before listing ledger inputs. `attempted_no_receipt`
+entries may carry `missing_receipt_reason` so receipt reliability failures remain
+actionable operator evidence instead of only route-quality counts.
 
 ```json
 {
@@ -3114,6 +3116,7 @@ completeness fields as JSON before listing ledger inputs.
       "verify_command": "cargo test -p ripr boundary_gap",
       "verify_result": "pass",
       "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+      "missing_receipt_reason": null,
       "before_gap_state": "weakly_gripped",
       "after_gap_state": "strongly_gripped",
       "outcome": "evidence_improved",
@@ -3138,6 +3141,7 @@ completeness fields as JSON before listing ledger inputs.
       "verify_command": "cargo test -p ripr boundary_gap",
       "verify_result": "pass",
       "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+      "missing_receipt_reason": null,
       "before_gap_state": "weakly_gripped",
       "after_gap_state": "strongly_gripped",
       "outcome": "evidence_improved",
