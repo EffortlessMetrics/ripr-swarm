@@ -2392,9 +2392,16 @@ mod tests {
             &workspace,
             "python script.py --do-anything"
         ));
+        assert!(!command_payload_is_safe(&workspace, "tox -e py"));
         assert!(!command_payload_is_safe(
             &workspace,
             "pytest ../outside/test_pricing.py"
+        ));
+        assert!(looks_like_command_payload(
+            " pytest tests/test_pricing.py::test_discount_boundary"
+        ));
+        assert!(looks_like_command_payload(
+            "python -m unittest tests.test_pricing.TestDiscount.test_boundary"
         ));
     }
 

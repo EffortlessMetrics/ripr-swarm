@@ -1193,6 +1193,9 @@ fn absolute_related_test_path(snapshot: &AnalysisSnapshot, related: &RelatedTest
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Mode;
+    use crate::lsp::state::RefreshMetadata;
+    use std::collections::BTreeMap;
     use tower_lsp_server::ls_types::{
         CodeActionContext, DiagnosticSeverity, Position, Range, TextDocumentIdentifier, Uri,
     };
@@ -1232,6 +1235,54 @@ mod tests {
             "target/ripr/reports/gap-decision-ledger.json"
         );
         Ok(())
+    }
+
+    #[test]
+    fn python_pytest_skeleton_rejects_non_python_or_unsafe_targets() {
+        let snapshot = python_snapshot();
+        let mut data = serde_json::json!({
+            "language": "rust",
+            "canonical_gap_id": "gap:rust:pricing:threshold-boundary",
+            "repair_route": {
+                "target_file": "tests/test_pricing.py",
+                "assertion_shape": "assert result == expected"
+            },
+            "verification_commands": ["pytest tests/test_pricing.py::test_boundary"]
+        });
+
+        assert!(python_pytest_skeleton_target(&snapshot, &data).is_none());
+
+        data["language"] = serde_json::json!("python");
+        data["repair_route"]["target_file"] = serde_json::json!("../outside/test_pricing.py");
+
+        assert!(python_pytest_skeleton_target(&snapshot, &data).is_none());
+    }
+
+    #[test]
+    fn python_pytest_name_helpers_cover_node_ids_and_fallbacks() {
+        assert_eq!(
+            pytest_node_id_test_name("pytest tests/test_pricing.py::TestPricing::test_boundary"),
+            Some("test_boundary")
+        );
+        assert_eq!(
+            pytest_node_id_test_name("pytest tests/test_pricing.py::"),
+            None
+        );
+        assert_eq!(sanitize_python_test_name(""), "test_ripr_gap");
+        assert_eq!(
+            sanitize_python_test_name("Discount Boundary!"),
+            "test_discount_boundary"
+        );
+
+        let data = serde_json::json!({
+            "canonical_gap_id": "python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold"
+        });
+        let route = serde_json::json!({});
+
+        assert_eq!(
+            python_test_name_for_skeleton(&data, &route, "pytest tests/test_pricing.py"),
+            "test_python_app_pricing_py_calculate_discount_predicate_boundary_amount_threshold"
+        );
     }
 
     fn code_action_params(diagnostics: Vec<Diagnostic>) -> Result<CodeActionParams, String> {
@@ -1285,6 +1336,20 @@ mod tests {
                 "gap_kind": "MissingBoundaryAssertion",
                 "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
             })),
+        }
+    }
+
+    fn python_snapshot() -> AnalysisSnapshot {
+        AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            base: None,
+            mode: Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            classified_seams: Vec::new(),
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            diagnostics_by_uri: BTreeMap::new(),
         }
     }
 
