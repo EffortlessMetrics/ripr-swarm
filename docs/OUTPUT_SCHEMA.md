@@ -11430,8 +11430,11 @@ without a checked observer becomes `MissingOutputContract` with
 repair cards become preview-language records with bounded test edit surfaces,
 verify commands, and a synthesized `ripr outcome` command that compares the
 supplied before check JSON with `target/ripr/reports/after-check.json`.
-Visibility-unknown presentation text and Python static limits remain
-limitations and do not become generic `static_unknown` repair instructions.
+Python static-limit findings with `static_limit_kind` become report-only
+`StaticLimitation` records with `repairability = "analyzer_limitation"` and no
+agent-packet projection. Visibility-unknown presentation text and Python static
+limits remain limitations and do not become generic `static_unknown` repair
+instructions.
 
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does
