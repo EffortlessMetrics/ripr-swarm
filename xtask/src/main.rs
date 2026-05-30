@@ -21680,6 +21680,7 @@ struct RiprSwarmReadinessReport {
     top_limitation_routes: Vec<RiprSwarmLimitationRouteRow>,
     blocked_state_routes: Vec<RiprSwarmReadinessBlockedStateRoute>,
     repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
+    language_repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
     top_failing_repair_routes: Vec<RiprSwarmRepairRouteQualityRow>,
     top_missing_evidence_fields: Vec<RiprSwarmMissingEvidenceFieldRow>,
     next_actions: Vec<RiprSwarmReadinessNextAction>,
@@ -21705,6 +21706,7 @@ struct RiprSwarmAttemptLedgerReport {
     attempts: Vec<RiprSwarmAttemptLedgerEntry>,
     latest_attempts: Vec<RiprSwarmAttemptLedgerEntry>,
     repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
+    language_repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
     top_missing_evidence_fields: Vec<RiprSwarmMissingEvidenceFieldRow>,
     orphaned_receipts: Vec<Value>,
 }
@@ -21727,6 +21729,7 @@ struct RiprSwarmAttemptLedgerSummary {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RiprSwarmRepairRouteQualityRow {
+    language: Option<String>,
     repair_kind: String,
     attempted: usize,
     improved: usize,
@@ -21768,6 +21771,7 @@ struct RiprSwarmAttemptLedgerEntry {
     packet_id: String,
     canonical_gap_id: String,
     attempt_id: String,
+    language: Option<String>,
     evidence_class: Option<String>,
     source_file: Option<String>,
     repair_kind: Option<String>,
@@ -23648,6 +23652,8 @@ fn ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
     attempts = ripr_swarm_attempt_ledger_dedupe_attempts(attempts);
     let latest_attempts = ripr_swarm_attempt_ledger_latest_attempts(&attempts);
     let repair_route_quality = ripr_swarm_attempt_ledger_repair_route_quality(&latest_attempts);
+    let language_repair_route_quality =
+        ripr_swarm_attempt_ledger_language_repair_route_quality(&latest_attempts);
     let top_missing_evidence_fields =
         ripr_swarm_attempt_ledger_top_missing_evidence_fields(&latest_attempts);
     let orphaned_receipts = actionable_gap_outcomes
@@ -23682,6 +23688,7 @@ fn ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
         attempts,
         latest_attempts,
         repair_route_quality,
+        language_repair_route_quality,
         top_missing_evidence_fields,
         orphaned_receipts,
     }
@@ -23810,6 +23817,7 @@ fn ripr_swarm_attempt_ledger_current_plan_not_attempted_entries(
                 None,
                 None,
             ),
+            language: audit_non_empty_string(packet, &["language"]),
             evidence_class: audit_non_empty_string(packet, &["evidence_class"]),
             source_file: audit_non_empty_string(packet, &["source_file"]),
             repair_kind: audit_non_empty_string(packet, &["repair_kind"]),
@@ -23848,6 +23856,7 @@ fn ripr_swarm_attempt_ledger_entries_from_value(
                 canonical_gap_id,
                 attempt_id: audit_non_empty_string(entry, &["attempt_id"])
                     .unwrap_or_else(|| "attempt:unknown".to_string()),
+                language: audit_non_empty_string(entry, &["language"]),
                 evidence_class: audit_non_empty_string(entry, &["evidence_class"]),
                 source_file: audit_non_empty_string(entry, &["source_file"]),
                 repair_kind: audit_non_empty_string(entry, &["repair_kind"]),
@@ -23904,6 +23913,7 @@ fn ripr_swarm_attempt_ledger_entries_from_real_repair_attempts(
                     None,
                     Some(&case_id),
                 ),
+                language: audit_non_empty_string(case, &["language"]),
                 evidence_class: audit_non_empty_string(case, &["evidence_class"]),
                 source_file: audit_non_empty_string(case, &["source_file"]),
                 repair_kind: audit_non_empty_string(case, &["repair_kind"]),
@@ -24059,6 +24069,8 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
             audit_non_empty_string(outcome, &["seam_id"]).as_deref(),
             attempt_instance.as_deref(),
         ),
+        language: audit_non_empty_string(outcome, &["language"])
+            .or_else(|| packet.and_then(|packet| audit_non_empty_string(packet, &["language"]))),
         evidence_class,
         source_file,
         repair_kind,
@@ -24280,6 +24292,19 @@ fn actionable_gap_outcome_state_counts_from_entries(
 fn ripr_swarm_attempt_ledger_repair_route_quality(
     attempts: &[RiprSwarmAttemptLedgerEntry],
 ) -> Vec<RiprSwarmRepairRouteQualityRow> {
+    ripr_swarm_attempt_ledger_repair_route_quality_grouped(attempts, false)
+}
+
+fn ripr_swarm_attempt_ledger_language_repair_route_quality(
+    attempts: &[RiprSwarmAttemptLedgerEntry],
+) -> Vec<RiprSwarmRepairRouteQualityRow> {
+    ripr_swarm_attempt_ledger_repair_route_quality_grouped(attempts, true)
+}
+
+fn ripr_swarm_attempt_ledger_repair_route_quality_grouped(
+    attempts: &[RiprSwarmAttemptLedgerEntry],
+    group_by_language: bool,
+) -> Vec<RiprSwarmRepairRouteQualityRow> {
     let mut rows = BTreeMap::<String, RiprSwarmRepairRouteQualityRow>::new();
     for attempt in attempts {
         let repair_kind = attempt
@@ -24288,12 +24313,29 @@ fn ripr_swarm_attempt_ledger_repair_route_quality(
             .filter(|kind| !ripr_swarm_plan_field_missing(kind))
             .unwrap_or("repair_kind_unknown")
             .to_string();
-        let row =
-            rows.entry(repair_kind.clone())
-                .or_insert_with(|| RiprSwarmRepairRouteQualityRow {
-                    repair_kind,
-                    ..RiprSwarmRepairRouteQualityRow::default()
-                });
+        let language = if group_by_language {
+            let Some(language) = attempt
+                .language
+                .as_deref()
+                .filter(|language| !ripr_swarm_plan_field_missing(language))
+            else {
+                continue;
+            };
+            Some(language.to_string())
+        } else {
+            None
+        };
+        let key = match language.as_deref() {
+            Some(language) => format!("{language}\u{1f}{repair_kind}"),
+            None => repair_kind.clone(),
+        };
+        let row = rows
+            .entry(key)
+            .or_insert_with(|| RiprSwarmRepairRouteQualityRow {
+                language: language.clone(),
+                repair_kind,
+                ..RiprSwarmRepairRouteQualityRow::default()
+            });
         if attempt.outcome != "not_attempted" {
             row.attempted += 1;
         }
@@ -24329,6 +24371,7 @@ fn ripr_swarm_attempt_ledger_repair_route_quality(
             .cmp(&left.attempted)
             .then_with(|| right.regressed.cmp(&left.regressed))
             .then_with(|| right.unchanged.cmp(&left.unchanged))
+            .then_with(|| left.language.cmp(&right.language))
             .then_with(|| left.repair_kind.cmp(&right.repair_kind))
     });
     rows
@@ -24455,6 +24498,7 @@ fn ripr_swarm_repair_route_quality_json(rows: &[RiprSwarmRepairRouteQualityRow])
     rows.iter()
         .map(|row| {
             serde_json::json!({
+                "language": row.language,
                 "repair_kind": row.repair_kind,
                 "repair_kind_attempted": row.attempted,
                 "repair_kind_improved": row.improved,
@@ -24698,6 +24742,9 @@ fn ripr_swarm_attempt_ledger_json(report: &RiprSwarmAttemptLedgerReport) -> Resu
         },
         "summary": ripr_swarm_attempt_ledger_summary_json(&summary),
         "repair_route_quality": ripr_swarm_repair_route_quality_json(&report.repair_route_quality),
+        "language_repair_route_quality": ripr_swarm_repair_route_quality_json(
+            &report.language_repair_route_quality
+        ),
         "top_failing_repair_routes": ripr_swarm_top_failing_repair_routes_json(
             &report.repair_route_quality
         ),
@@ -24748,6 +24795,7 @@ fn ripr_swarm_attempt_ledger_entry_json(entry: &RiprSwarmAttemptLedgerEntry) -> 
         "packet_id": entry.packet_id,
         "canonical_gap_id": entry.canonical_gap_id,
         "attempt_id": entry.attempt_id,
+        "language": entry.language,
         "evidence_class": entry.evidence_class,
         "source_file": entry.source_file,
         "repair_kind": entry.repair_kind,
@@ -24838,6 +24886,8 @@ fn ripr_swarm_attempt_ledger_markdown(report: &RiprSwarmAttemptLedgerReport) -> 
     out.push('\n');
     out.push_str("## Repair Route Quality\n\n");
     ripr_swarm_push_repair_route_quality_table(&mut out, &report.repair_route_quality);
+    out.push_str("## Repair Route Quality By Language\n\n");
+    ripr_swarm_push_repair_route_quality_table(&mut out, &report.language_repair_route_quality);
     out.push_str("## Repair Route Quality Backlog\n\n");
     ripr_swarm_push_repair_route_quality_backlog_table(
         &mut out,
@@ -24881,9 +24931,9 @@ fn ripr_swarm_push_repair_route_quality_table(
         out.push_str("No repair-route quality rows are available.\n\n");
         return;
     }
-    out.push_str("| Repair kind | Attempted | Improved | Unchanged | Regressed | Resolved | Failure count | Dominant failure | Success rate | Sample packets | Sample gaps | Missing receipt reasons |\n");
+    out.push_str("| Language | Repair kind | Attempted | Improved | Unchanged | Regressed | Resolved | Failure count | Dominant failure | Success rate | Sample packets | Sample gaps | Missing receipt reasons |\n");
     out.push_str(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- | --- |\n",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- | --- |\n",
     );
     for row in rows {
         let success_rate = match ripr_swarm_repair_route_quality_success_rate(row) {
@@ -24894,7 +24944,8 @@ fn ripr_swarm_push_repair_route_quality_table(
         let dominant_failure =
             ripr_swarm_repair_route_quality_dominant_failure_reason(row).unwrap_or("n/a");
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | `{}` | {} | {} | {} | {} |\n",
+            "| {} | `{}` | {} | {} | {} | {} | {} | {} | `{}` | {} | {} | {} | {} |\n",
+            audit_markdown_cell(row.language.as_deref().unwrap_or("n/a")),
             audit_markdown_cell(&row.repair_kind),
             row.attempted,
             row.improved,
@@ -25074,6 +25125,10 @@ fn ripr_swarm_readiness_from_values(
         .value
         .map(ripr_swarm_readiness_repair_route_quality)
         .unwrap_or_default();
+    let language_repair_route_quality = attempt_ledger
+        .value
+        .map(ripr_swarm_readiness_language_repair_route_quality)
+        .unwrap_or_default();
     let top_failing_repair_routes =
         ripr_swarm_readiness_top_failing_repair_routes(&repair_route_quality);
     let top_missing_evidence_fields = attempt_ledger
@@ -25134,6 +25189,7 @@ fn ripr_swarm_readiness_from_values(
         top_limitation_routes,
         blocked_state_routes,
         repair_route_quality,
+        language_repair_route_quality,
         top_failing_repair_routes,
         top_missing_evidence_fields,
         next_actions,
@@ -25426,6 +25482,9 @@ fn ripr_swarm_readiness_json(report: &RiprSwarmReadinessReport) -> Result<String
             &report.blocked_state_routes
         ),
         "repair_route_quality": ripr_swarm_repair_route_quality_json(&report.repair_route_quality),
+        "language_repair_route_quality": ripr_swarm_repair_route_quality_json(
+            &report.language_repair_route_quality
+        ),
         "top_failing_repair_routes": ripr_swarm_repair_route_quality_json(
             &report.top_failing_repair_routes
         ),
@@ -25924,6 +25983,20 @@ fn ripr_swarm_readiness_repair_route_quality(
         .collect::<Vec<_>>()
 }
 
+fn ripr_swarm_readiness_language_repair_route_quality(
+    attempt_ledger: &Value,
+) -> Vec<RiprSwarmRepairRouteQualityRow> {
+    let attempts = ripr_swarm_attempt_ledger_entries_from_value(attempt_ledger);
+    if !attempts.is_empty() {
+        let latest_attempts = ripr_swarm_attempt_ledger_latest_attempts(&attempts);
+        return ripr_swarm_attempt_ledger_language_repair_route_quality(&latest_attempts);
+    }
+    audit_array(attempt_ledger, &["language_repair_route_quality"])
+        .iter()
+        .filter_map(ripr_swarm_repair_route_quality_row_from_value)
+        .collect::<Vec<_>>()
+}
+
 fn ripr_swarm_readiness_top_limitation_routes(backlog: &Value) -> Vec<RiprSwarmLimitationRouteRow> {
     let mut rows = BTreeMap::<String, RiprSwarmLimitationRouteRow>::new();
     for row in audit_array(backlog, &["top_repair_routes"]) {
@@ -26284,6 +26357,7 @@ fn ripr_swarm_repair_route_quality_row_from_value(
 ) -> Option<RiprSwarmRepairRouteQualityRow> {
     let repair_kind = audit_non_empty_string(row, &["repair_kind"])?;
     Some(RiprSwarmRepairRouteQualityRow {
+        language: audit_non_empty_string(row, &["language"]),
         repair_kind,
         attempted: audit_usize(row, &["repair_kind_attempted"]).unwrap_or_default(),
         improved: audit_usize(row, &["repair_kind_improved"]).unwrap_or_default(),
@@ -26965,6 +27039,8 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
     ripr_swarm_readiness_push_top_limitation_routes_table(&mut out, &report.top_limitation_routes);
     out.push_str("\n## Repair Route Quality\n\n");
     ripr_swarm_push_repair_route_quality_table(&mut out, &report.repair_route_quality);
+    out.push_str("## Repair Route Quality By Language\n\n");
+    ripr_swarm_push_repair_route_quality_table(&mut out, &report.language_repair_route_quality);
     out.push_str("## Repair Route Quality Backlog\n\n");
     ripr_swarm_push_repair_route_quality_backlog_table(&mut out, &report.top_failing_repair_routes);
     if !report.top_missing_evidence_fields.is_empty() {
@@ -85187,6 +85263,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "id": "route-improved",
                     "canonical_gap_id": "gap:route-improved",
                     "packet_id": "limitation:route-improved",
+                    "language": "typescript",
                     "repair_kind": "sharpen_static_limitation_route",
                     "target_test_or_observer_shape": "fixture-backed analyzer route split",
                     "verify_command": "cargo test -p ripr route_improved",
@@ -85204,6 +85281,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "id": "missing-receipt",
                     "canonical_gap_id": "gap:missing-receipt",
                     "packet_id": "gap:missing-receipt",
+                    "language": "javascript",
                     "repair_kind": "add_call_observer",
                     "target_test_or_observer_shape": "bounded call observer",
                     "verify_command": "cargo test -p ripr missing_receipt",
@@ -85268,6 +85346,19 @@ covered_by = ["cargo xtask check-file-policy"]
             value["repair_route_quality"][0]["repair_kind_attempted_no_receipt"],
             serde_json::Value::from(1)
         );
+        let language_rows = value["language_repair_route_quality"]
+            .as_array()
+            .ok_or_else(|| "expected language repair-route quality rows".to_string())?;
+        assert!(language_rows.iter().any(|row| {
+            row["language"] == "javascript"
+                && row["repair_kind"] == "add_call_observer"
+                && row["repair_kind_attempted_no_receipt"] == 1
+        }));
+        assert!(language_rows.iter().any(|row| {
+            row["language"] == "typescript"
+                && row["repair_kind"] == "sharpen_static_limitation_route"
+                && row["repair_kind_improved"] == 1
+        }));
         let missing_receipt_attempt = value["attempts"]
             .as_array()
             .and_then(|attempts| {
@@ -85280,8 +85371,13 @@ covered_by = ["cargo xtask check-file-policy"]
             missing_receipt_attempt["missing_receipt_reason"],
             serde_json::Value::from("receipt command was not run after verify timed out")
         );
+        assert_eq!(
+            missing_receipt_attempt["language"],
+            serde_json::Value::from("javascript")
+        );
         let markdown = ripr_swarm_attempt_ledger_markdown(&report);
         assert!(markdown.contains("| real repair attempts | `read` |"));
+        assert!(markdown.contains("## Repair Route Quality By Language"));
         assert!(markdown.contains("Missing receipt reason"));
         assert!(markdown.contains("receipt command was not run after verify timed out"));
         Ok(())
@@ -85741,6 +85837,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 packet_id: format!("packet-{outcome}"),
                 canonical_gap_id: format!("gap:{outcome}"),
                 attempt_id: format!("attempt:{outcome}"),
+                language: None,
                 evidence_class: Some("output_observer".to_string()),
                 source_file: Some("crates/ripr/src/lib.rs".to_string()),
                 repair_kind: Some("add_output_observer".to_string()),
@@ -86066,6 +86163,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "canonical_gap_id": "gap:output-observer",
                     "attempt_id": "attempt:older-unchanged",
                     "actor_kind": "agent",
+                    "language": "typescript",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
                     "verify_result": "pass",
@@ -86078,6 +86176,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "canonical_gap_id": "gap:output-observer",
                     "attempt_id": "attempt:newer-improved",
                     "actor_kind": "agent",
+                    "language": "typescript",
                     "repair_kind": "add_output_observer",
                     "verify_command": "cargo test -p ripr output_observer",
                     "verify_result": "pass",
@@ -86131,6 +86230,18 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             value["repair_route_quality"][0]["repair_kind_unchanged"],
             serde_json::Value::from(0)
+        );
+        assert_eq!(
+            value["language_repair_route_quality"][0]["language"],
+            serde_json::Value::from("typescript")
+        );
+        assert_eq!(
+            value["language_repair_route_quality"][0]["repair_kind"],
+            serde_json::Value::from("add_output_observer")
+        );
+        assert_eq!(
+            value["language_repair_route_quality"][0]["repair_kind_improved"],
+            serde_json::Value::from(1)
         );
         assert_eq!(
             value["top_failing_repair_routes"],

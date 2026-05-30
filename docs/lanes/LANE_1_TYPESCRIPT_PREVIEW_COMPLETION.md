@@ -1,6 +1,6 @@
 # Lane 1: TypeScript Preview Completion
 
-Status: TypeScript preview repair-loop dogfood receipts landed; route-quality metrics next
+Status: TypeScript preview route-quality metrics landed; closeout decision next
 
 Date: 2026-05-29
 
@@ -304,13 +304,14 @@ Completed after the initial audit:
      and RIPR Zero.
 
 11. Dogfood, route-quality metrics, and support-tier decision
-   - Current dogfood covers TypeScript mocked-module preview and a small
-     projection boundary, plus generated-CI TypeScript-family language grouping.
-    - Missing proof: real TS/JS repair-loop receipts, weak-oracle downgrades,
-      limitation examples, false-actionable review, and route-quality metrics
-      by repair kind and language.
-    - Next step: only after those receipts and metrics should support tiers be
-      reviewed. The default decision remains `preview`.
+   - Current dogfood covers TypeScript mocked-module preview, generated-CI
+     TypeScript-family language grouping, real TS/JS repair-loop receipts,
+     weak-oracle downgrade/non-promotion, limitation examples, and
+     route-quality metrics by language and repair kind.
+   - Missing proof: closeout has not decided whether the evidence remains
+     `preview` or supports a narrow support-tier move.
+   - Next step: review support tiers with proof links, deferred work, and
+     explicit non-claims. The default decision remains `preview`.
 
 ## PR Sequence
 
@@ -366,7 +367,7 @@ and `gate_impact = none` while preserving advisory-only default behavior.
 The next safe PR is:
 
 ```text
-PR 14: metrics(ts): add TypeScript preview route-quality metrics
+PR 15: campaign(ts): close TypeScript preview completion lane
 ```
 
 ## Validation
@@ -406,4 +407,14 @@ The TypeScript preview repair-loop dogfood slice now records four real receipt c
 
 These receipts are dogfood evidence for the repair loop only. They do not promote TypeScript or JavaScript preview evidence to public repair packets, swarm-ready work, blocking CI gates, or badge inputs.
 
-Next slice: add route-quality metrics by repair kind and language so TypeScript preview outcomes are measured instead of treated as generic repair guidance.
+## Latest route-quality metric proof
+
+Attempt-ledger and readiness reports now emit `language_repair_route_quality[]`
+from latest attempts that carry a known `language`. The projection is grouped by
+language and repair kind, so TypeScript and JavaScript preview outcomes can be
+measured without treating preview evidence as public repair packets, swarm-ready
+work, badge input, or blocking CI authority.
+
+Next slice: close the TypeScript preview completion lane by deciding whether
+the current evidence remains `preview` or supports a narrow, explicitly scoped
+support-tier move.
