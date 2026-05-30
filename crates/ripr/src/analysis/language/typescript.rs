@@ -218,6 +218,51 @@ fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) {
     }
 }
 
+fn weak_oracle_missing_summary(
+    owner_name: &str,
+    oracle_kind: &OracleKind,
+    probe_family: &ProbeFamily,
+) -> String {
+    match oracle_kind {
+        OracleKind::Snapshot => format!(
+            "Related test reaches `{owner_name}` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a repair packet."
+        ),
+        OracleKind::SmokeOnly => format!(
+            "Related test reaches `{owner_name}` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet."
+        ),
+        OracleKind::MockExpectation if matches!(probe_family, ProbeFamily::SideEffect) => format!(
+            "Related test reaches `{owner_name}` with a mock interaction oracle, but TypeScript preview does not yet establish the changed call payload; keep the item advisory until mock-shape actionability can name the callee, expected arguments, verify command, receipt command, and edit boundaries."
+        ),
+        OracleKind::BroadError => format!(
+            "Related test reaches `{owner_name}` with broad error evidence; keep it weak until TypeScript preview can establish the thrown or rejected payload and emit a bounded error-path repair packet."
+        ),
+        _ => format!(
+            "Related test reaches `{owner_name}` but the strongest extracted oracle is `{}`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.",
+            oracle_kind.as_str()
+        ),
+    }
+}
+
+fn weak_oracle_recommendation(oracle_kind: &OracleKind, discriminator: &str) -> String {
+    match oracle_kind {
+        OracleKind::Snapshot => format!(
+            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+        ),
+        OracleKind::SmokeOnly => format!(
+            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+        ),
+        OracleKind::MockExpectation => format!(
+            "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
+        ),
+        OracleKind::BroadError => format!(
+            "TypeScript preview advisory: broad error evidence does not establish missing discriminator `{discriminator}`; no actionable repair packet is emitted until error payload/variant support can name verify, receipt, and edit-boundary fields."
+        ),
+        _ => format!(
+            "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+        ),
+    }
+}
+
 /// Whether a path is a test file by convention (`*.test.ts`, `*.spec.ts`,
 /// and `.tsx` / `.js` / `.jsx` variants).
 fn is_test_file(path: &Path) -> bool {
@@ -2492,10 +2537,10 @@ fn classify_change(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "Related test reaches `{}` but the strongest extracted oracle is `{}`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.",
-                owner.name,
-                strongest_kind.as_str()
+            vec![weak_oracle_missing_summary(
+                &owner.name,
+                &strongest_kind,
+                &probe_shape.family,
             )],
         )
     };
@@ -2607,10 +2652,7 @@ fn classify_change(
             "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
         _ if let Some(discriminator) = missing_discriminators.first() => {
-            format!(
-                "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
-                discriminator.value
-            )
+            weak_oracle_recommendation(&strongest_kind, &discriminator.value)
         }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
@@ -3009,6 +3051,28 @@ mod tests {
                 "const result = {owner_name}(50, 100);\nexpect(result).toBeTruthy();"
             ),
             assertions: vec![smoke_assertion()],
+            mocks_in_file: Vec::new(),
+            imports_in_file: Vec::new(),
+        }
+    }
+
+    fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
+        TypeScriptTest {
+            name: format!("{owner_name} records status"),
+            local_name: format!("{owner_name} records status"),
+            describe_names: Vec::new(),
+            file: PathBuf::from("tests/lib.test.ts"),
+            line: 1,
+            body_text: format!(
+                "const sink = {{ record: vi.fn() }};\n{owner_name}(status, sink);\nexpect(sink.record).toHaveBeenCalledWith(status);"
+            ),
+            assertions: vec![TypeScriptAssertion {
+                matcher: "toHaveBeenCalledWith".to_string(),
+                argument_count: 1,
+                line: 3,
+                oracle_kind: OracleKind::MockExpectation,
+                oracle_strength: OracleStrength::Medium,
+            }],
             mocks_in_file: Vec::new(),
             imports_in_file: Vec::new(),
         }
@@ -3737,9 +3801,66 @@ test("type only import", () => {
         );
         assert!(
             finding
+                .missing
+                .iter()
+                .any(|line| line.contains("smoke-only oracle")),
+            "expected weak smoke oracle guidance, got {:?}",
+            finding.missing
+        );
+        assert!(
+            finding
                 .recommended_next_step
                 .as_deref()
-                .is_some_and(|step| step.contains("no actionable repair packet is emitted"))
+                .is_some_and(|step| step.contains("smoke-only assertion")
+                    && step.contains("no actionable repair packet is emitted"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits()
+    -> Result<(), String> {
+        let owner = test_owner("notifyStatus", "src/lib.ts");
+        let test = mock_interaction_test_for("notifyStatus");
+        let finding = classify_change(
+            Path::new("src/lib.ts"),
+            2,
+            "    sink.record(status);",
+            &[owner],
+            &[test],
+        )
+        .ok_or_else(|| "expected TypeScript preview finding".to_string())?;
+
+        assert!(matches!(finding.class, ExposureClass::WeaklyExposed));
+        assert_eq!(
+            finding.related_tests[0].oracle_kind,
+            OracleKind::MockExpectation
+        );
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Medium
+        );
+        assert!(finding.canonical_gap.is_none());
+        assert_evidence_contains(&finding, "gap_state: advisory");
+        assert_evidence_contains(&finding, "actionability_category: incomplete_repair_packet");
+        assert!(
+            finding.missing.iter().any(|line| line.contains(
+                "mock interaction oracle, but TypeScript preview does not yet establish the changed call payload"
+            )),
+            "expected mock-payload limitation in missing text, got {:?}",
+            finding.missing
+        );
+        let recommended = finding
+            .recommended_next_step
+            .as_deref()
+            .ok_or_else(|| "expected recommended next step".to_string())?;
+        assert!(
+            recommended.contains("mock payloads are not yet a safe discriminator"),
+            "expected mock-payload recommendation, got {recommended:?}"
+        );
+        assert!(
+            !recommended.contains("exact-value assertion"),
+            "mock interaction preview guidance should not ask for an exact-value assertion: {recommended:?}"
         );
         Ok(())
     }

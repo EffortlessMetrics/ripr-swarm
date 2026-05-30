@@ -651,6 +651,40 @@
       ],
       "missing_receipt_reason": null,
       "reason": "The unchanged outcome documents the trust boundary for weak TypeScript preview oracle evidence."
+    },
+    {
+      "id": "typescript_preview_weak_oracle_guidance_improved",
+      "source_ref": "local:typescript-preview-weak-oracle-route-guidance-2026-05-30",
+      "canonical_gap_id": "gap:typescript-preview-weak-oracle-downgrade",
+      "packet_id": "limitation:typescript-preview-weak-oracle-downgrade",
+      "language": "typescript",
+      "repair_kind": "preserve_preview_weak_oracle_boundary",
+      "target_test_or_observer_shape": "Weak TypeScript preview oracle guidance is oracle-specific: snapshot and smoke evidence name exact-value assertion shape, while mock interaction evidence stays advisory until mock payload support can name callee, expected arguments, verify command, receipt command, and edit boundaries.",
+      "verify_command": "cargo test -p ripr typescript_preview_weak_oracle --lib",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask fixtures typescript_jest_vitest_assertion_facts",
+      "receipt_path": "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "advisory",
+      "after_gap_state": "advisory",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Refined TypeScript weak-oracle guidance so the route preserves the preview boundary without telling agents to add the wrong assertion shape.",
+      "evidence_movement": "improved: snapshot, smoke-only, and mock-interaction weak oracles now produce distinct advisory guidance while still withholding actionable repair packets.",
+      "operator_note": "The useful movement is sharper routing language, not support-tier promotion. The mock interaction case remains non-actionable because payload-level evidence and strict packet fields are still absent.",
+      "must_not_change": [
+        "do not promote weak TypeScript preview oracles to actionable repair packets",
+        "do not treat mock expectations as payload-safe discriminators",
+        "do not emit generated tests",
+        "do not change gate or badge semantics"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json",
+        "fixtures/typescript_jest_vitest_assertion_facts/expected/human.txt",
+        "crates/ripr/src/analysis/language/typescript.rs"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "The improved outcome documents a more precise preview boundary for weak TypeScript oracle evidence."
     }
   ]
 }

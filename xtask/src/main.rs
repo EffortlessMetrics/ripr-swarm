@@ -8004,6 +8004,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
         "typescript_preview_weak_oracle_downgrade_unchanged",
         "evidence_unchanged",
     ),
+    (
+        "typescript_preview_weak_oracle_guidance_improved",
+        "evidence_improved",
+    ),
 ];
 
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -88221,8 +88225,7 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
-    fn ripr_swarm_attempt_ledger_real_corpus_supersedes_exact_error_variant_unchanged()
-    -> Result<(), String> {
+    fn ripr_swarm_attempt_ledger_real_corpus_supersedes_unchanged_attempts() -> Result<(), String> {
         let swarm_plan = serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -88326,6 +88329,61 @@ covered_by = ["cargo xtask check-file-policy"]
                 .into_iter()
                 .flatten()
                 .any(|row| row["repair_kind"] == "add_exact_error_variant")
+        );
+
+        let weak_oracle_latest = value["latest_attempts"]
+            .as_array()
+            .and_then(|attempts| {
+                attempts.iter().find(|attempt| {
+                    attempt["canonical_gap_id"] == "gap:typescript-preview-weak-oracle-downgrade"
+                })
+            })
+            .ok_or_else(|| "expected latest TypeScript weak-oracle attempt".to_string())?;
+        assert_eq!(weak_oracle_latest["outcome"], "evidence_improved");
+        assert_eq!(
+            weak_oracle_latest["repair_kind"],
+            "preserve_preview_weak_oracle_boundary"
+        );
+        assert_eq!(
+            weak_oracle_latest["verify_command"],
+            "cargo test -p ripr typescript_preview_weak_oracle --lib"
+        );
+        assert_eq!(
+            weak_oracle_latest["receipt_command"],
+            "cargo xtask fixtures typescript_jest_vitest_assertion_facts"
+        );
+        assert_eq!(
+            weak_oracle_latest["receipt_path"],
+            "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json"
+        );
+
+        let weak_oracle_route_quality = value["repair_route_quality"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["repair_kind"] == "preserve_preview_weak_oracle_boundary")
+            })
+            .ok_or_else(|| {
+                "expected preserve_preview_weak_oracle_boundary route-quality row".to_string()
+            })?;
+        assert_eq!(
+            weak_oracle_route_quality["repair_kind_unchanged"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            weak_oracle_route_quality["repair_kind_improved"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            weak_oracle_route_quality["repair_kind_failure_count"],
+            serde_json::Value::from(0)
+        );
+        assert!(
+            !value["repair_route_quality_backlog"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|row| row["repair_kind"] == "preserve_preview_weak_oracle_boundary")
         );
         Ok(())
     }
