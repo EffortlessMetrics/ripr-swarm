@@ -345,7 +345,10 @@ generated CI behavior and LSP smoke coverage. The CLI first-use path also
 checks that `ripr pilot` can surface a top Python repair card from diff-scoped
 preview evidence without requiring a Cargo workspace, and that `ripr first-pr`
 can route an existing Python preview GapRecord into a preview-limited
-start-here packet for a Python project root.
+start-here packet for a Python project root. The first-PR mapping also covers
+the direct `--check-output <check.json>` bridge that materializes the
+check-output-derived gap decision ledger before selecting the same preview
+Python repair card.
 
 ## Implementation Mapping
 
