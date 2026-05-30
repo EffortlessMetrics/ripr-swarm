@@ -38,6 +38,7 @@ struct FirstPrOptions {
     root: String,
     base: String,
     head: String,
+    check_output: Option<String>,
     gap_ledger: String,
     first_action: String,
     review_comments: String,
@@ -55,6 +56,7 @@ impl Default for FirstPrOptions {
             root: DEFAULT_ROOT.to_string(),
             base: DEFAULT_BASE.to_string(),
             head: DEFAULT_HEAD.to_string(),
+            check_output: None,
             gap_ledger: DEFAULT_GAP_LEDGER.to_string(),
             first_action: DEFAULT_FIRST_ACTION.to_string(),
             review_comments: DEFAULT_REVIEW_COMMENTS.to_string(),
@@ -101,6 +103,10 @@ fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
             "--head" => {
                 i += 1;
                 options.head = non_empty_arg(args, i, "--head")?.to_string();
+            }
+            "--check-output" => {
+                i += 1;
+                options.check_output = Some(non_empty_arg(args, i, "--check-output")?.to_string());
             }
             "--gap-ledger" => {
                 i += 1;
@@ -153,7 +159,7 @@ fn print_help() {
 }
 
 fn first_pr_help_text() -> &'static str {
-    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable\n  - verify command / receipt command / receipt path: static movement proof rail"
+    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable\n  - verify command / receipt command / receipt path: static movement proof rail"
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -163,6 +169,9 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         .clone()
         .or_else(|| git_preflight_recovery(&root, options));
     let output_root = if root_recovery.is_some() { repo } else { &root };
+    if preflight_recovery.is_none() {
+        materialize_check_output_gap_ledger(&root, options)?;
+    }
     let packet = match preflight_recovery {
         Some(selection) => render_start_here_recovery_packet(&root, options, selection),
         None => render_start_here_packet(&root, options),
@@ -275,7 +284,20 @@ fn render_start_here_packet_with_selection(
     warnings: Vec<String>,
     preflight: Option<FirstPrPreflight>,
 ) -> Value {
-    let artifacts = vec![
+    let mut artifacts = Vec::new();
+    if let Some(check_output) = options.check_output.as_deref() {
+        artifacts.push(artifact_status(
+            root,
+            "check_output",
+            "Check output",
+            check_output,
+            Some(format!(
+                "ripr check --root {} --base {} --json > {}",
+                options.root, options.base, check_output
+            )),
+        ));
+    }
+    artifacts.extend([
         artifact_status(
             root,
             "gap_ledger",
@@ -334,7 +356,26 @@ fn render_start_here_packet_with_selection(
                 with_extension(&options.gate_decision, "md")
             )),
         ),
-    ];
+    ]);
+
+    let mut inputs = json!({
+        "gap_ledger": options.gap_ledger,
+        "base": options.base,
+        "head": options.head,
+        "first_action": options.first_action,
+        "review_comments": options.review_comments,
+        "agent_packet": options.agent_packet,
+        "gate_decision": options.gate_decision,
+        "receipts_dir": options.receipts_dir
+    });
+    if let Some(check_output) = options.check_output.as_deref()
+        && let Some(inputs) = inputs.as_object_mut()
+    {
+        inputs.insert(
+            "check_output".to_string(),
+            Value::String(check_output.to_string()),
+        );
+    }
 
     let mut packet = json!({
         "schema_version": SCHEMA_VERSION,
@@ -343,16 +384,7 @@ fn render_start_here_packet_with_selection(
         "status": selection.status(),
         "posture": "advisory",
         "root": options.root,
-        "inputs": {
-            "gap_ledger": options.gap_ledger,
-            "base": options.base,
-            "head": options.head,
-            "first_action": options.first_action,
-            "review_comments": options.review_comments,
-            "agent_packet": options.agent_packet,
-            "gate_decision": options.gate_decision,
-            "receipts_dir": options.receipts_dir
-        },
+        "inputs": inputs,
         "selected": selection.to_json(),
         "commands": selection.commands_json(root, options),
         "artifacts": artifacts,
@@ -374,6 +406,49 @@ fn render_start_here_packet_with_selection(
         packet["preflight"] = preflight.to_json();
     }
     packet
+}
+
+fn materialize_check_output_gap_ledger(
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Result<(), String> {
+    let Some(check_output) = options.check_output.as_deref() else {
+        return Ok(());
+    };
+    let check_output_path = resolve_path(root, check_output);
+    let contents = fs::read_to_string(&check_output_path).map_err(|err| {
+        format!(
+            "first-pr --check-output {} is invalid: read failed: {err}",
+            check_output_path.display()
+        )
+    })?;
+    let report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: options.root.clone(),
+            generated_at: "first-pr-check-output".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: check_output.to_string(),
+            records_json: Ok(contents),
+        },
+    );
+    let json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
+    let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
+    let gap_ledger_path = resolve_path(root, &options.gap_ledger);
+    if let Some(parent) = gap_ledger_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    fs::write(&gap_ledger_path, json)
+        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_path.display()))?;
+    let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
+    if let Some(parent) = gap_ledger_markdown.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    fs::write(&gap_ledger_markdown, markdown)
+        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_markdown.display()))?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1846,12 +1921,23 @@ fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
 fn regenerate_python_gap_ledger_command(options: &FirstPrOptions) -> String {
     let root = shell_arg(&options.root);
     let base = shell_arg(&options.base);
-    let check_output = shell_arg(DEFAULT_CHECK_OUTPUT);
+    let check_output = shell_arg(
+        options
+            .check_output
+            .as_deref()
+            .unwrap_or(DEFAULT_CHECK_OUTPUT),
+    );
     let out = shell_arg(&options.gap_ledger);
     let out_md = shell_arg(&with_extension(&options.gap_ledger, "md"));
-    format!(
-        "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
-    )
+    if options.check_output.is_some() {
+        format!(
+            "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+        )
+    } else {
+        format!(
+            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+        )
+    }
 }
 
 fn regenerate_repo_exposure_command(root: &str) -> String {
@@ -2598,6 +2684,8 @@ mod tests {
             "origin/main".to_string(),
             "--head".to_string(),
             "HEAD".to_string(),
+            "--check-output".to_string(),
+            "check.json".to_string(),
             "--gap-ledger".to_string(),
             "gap.json".to_string(),
             "--out-dir".to_string(),
@@ -2607,6 +2695,7 @@ mod tests {
         assert_eq!(parsed.root, "repo");
         assert_eq!(parsed.base, "origin/main");
         assert_eq!(parsed.head, "HEAD");
+        assert_eq!(parsed.check_output.as_deref(), Some("check.json"));
         assert_eq!(parsed.gap_ledger, "gap.json");
         assert_eq!(parsed.out_dir, "out");
         assert!(parsed.check);
@@ -2623,6 +2712,7 @@ mod tests {
     fn first_pr_help_pins_start_here_language() {
         let help = first_pr_help_text();
         assert!(help.contains("ripr first-pr|start-here"));
+        assert!(help.contains("--check-output <path>"));
         assert!(help.contains("Start-here language:"));
         assert!(help.contains("safe next action"));
         assert!(
@@ -3517,6 +3607,62 @@ mod tests {
     }
 
     #[test]
+    fn python_check_output_materializes_gap_ledger_for_start_here() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-check-output")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        fs::write(
+            repo.join("app/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        write_json(
+            &repo.join(DEFAULT_CHECK_OUTPUT),
+            check_output_with_python_repair_card(),
+        )?;
+
+        let options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            preflight: true,
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+
+        let ledger = read_packet(&repo.join(DEFAULT_GAP_LEDGER))?;
+        assert_eq!(ledger["inputs"]["source_kind"], "check_output");
+        assert_eq!(ledger["inputs"]["records"], DEFAULT_CHECK_OUTPUT);
+        assert_eq!(
+            ledger["records"][0]["receipt_command"],
+            "ripr outcome --before target/ripr/reports/check.json --after target/ripr/reports/after-check.json --format json --out target/ripr/receipts/gap-python-app-pricing.py-calculate_discount-predicate_boundary-amount-threshold.json"
+        );
+
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "actionable");
+        assert_eq!(packet["inputs"]["check_output"], DEFAULT_CHECK_OUTPUT);
+        assert_eq!(packet["selected"]["source_artifact"], DEFAULT_GAP_LEDGER);
+        assert_eq!(
+            packet["selected"]["receipt_command_source"],
+            "gap_ledger.receipt_command"
+        );
+        assert_eq!(
+            packet["selected"]["receipt_command"],
+            "ripr outcome --before target/ripr/reports/check.json --after target/ripr/reports/after-check.json --format json --out target/ripr/receipts/gap-python-app-pricing.py-calculate_discount-predicate_boundary-amount-threshold.json"
+        );
+        assert_eq!(
+            packet["selected"]["agent_packet_command"],
+            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json"
+        );
+        assert!(repo.join(DEFAULT_GAP_LEDGER).is_file());
+        assert!(
+            repo.join(with_extension(DEFAULT_GAP_LEDGER, "md"))
+                .is_file()
+        );
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
     fn preflight_reports_missing_git_base_and_config_defaults() -> Result<(), String> {
         let repo = temp_repo("first-pr-preflight-missing-base")?;
         fs::write(repo.join("Cargo.toml"), "[workspace]\n")
@@ -3681,6 +3827,72 @@ mod tests {
                         "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"
                     ],
                     "receipt_command": "ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json"
+                }
+            ]
+        })
+    }
+
+    fn check_output_with_python_repair_card() -> Value {
+        json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "findings": [
+                {
+                    "id": "probe:app_pricing.py:2:python_preview",
+                    "classification": "weakly_exposed",
+                    "probe": {
+                        "file": "app/pricing.py",
+                        "line": 2,
+                        "family": "predicate_boundary"
+                    },
+                    "canonical_gap": {
+                        "id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                        "file": "app/pricing.py",
+                        "owner": "python:app/pricing.py::calculate_discount",
+                        "behavior_kind": "predicate_boundary"
+                    },
+                    "related_tests": [
+                        {
+                            "file": "tests/test_pricing.py",
+                            "line": 4,
+                            "name": "test_calculate_discount"
+                        }
+                    ],
+                    "python_repair_card": {
+                        "language": "python",
+                        "language_status": "preview",
+                        "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                        "changed_owner": "python:app/pricing.py::calculate_discount",
+                        "changed_behavior": "if amount >= threshold:",
+                        "current_test_evidence": [
+                            "tests/test_pricing.py reaches calculate_discount",
+                            "existing test asserts broad success"
+                        ],
+                        "missing_discriminator": "amount == threshold",
+                        "test_shape": "pytest exact boundary assertion",
+                        "suggested_assertion": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                        "suggested_location": {
+                            "source_file": "app/pricing.py",
+                            "test_file": "tests/test_pricing.py",
+                            "test_name": "test_calculate_discount_threshold_boundary"
+                        },
+                        "verify": {
+                            "command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+                            "confidence": "high"
+                        },
+                        "receipt": {
+                            "status": "unavailable_until_saved_check_output"
+                        },
+                        "stop_conditions": [
+                            "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+                            "Stop if the expected value for the missing discriminator is ambiguous.",
+                            "Stop if adding the test appears to require a production-code edit."
+                        ],
+                        "limits": [
+                            "static advisory evidence only"
+                        ],
+                        "authority_boundary": "preview_advisory_only"
+                    }
                 }
             ]
         })

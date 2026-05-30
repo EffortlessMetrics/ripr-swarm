@@ -2084,6 +2084,7 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::gap_record_packet_carries_shared_repair_route_and_stop_conditions",
   "crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_from_python_check_json_matches_canonical_gap_ids",
   "crates/ripr/src/output/first_pr.rs::tests::python_preview_gap_ledger_is_selected_for_start_here",
+  "crates/ripr/src/output/first_pr.rs::tests::python_check_output_materializes_gap_ledger_for_start_here",
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
 ]
 fixtures = [
