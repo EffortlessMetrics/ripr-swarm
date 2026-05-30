@@ -2835,6 +2835,12 @@ and also applies this exclusion when reading older artifacts that predate the
 reason, so legacy packets do not remain swarm-ready solely because they carry
 the old broad verify command.
 
+`summary.public_projection_exclusion_reasons[]` is a stable reason-count
+breakdown for packets routed through `blocked_by_public_projection_exclusion`.
+Readiness preserves the same rows so operators can inspect the dominant
+projection policy reason instead of treating all public-projection exclusions as
+one generic blocked bucket.
+
 ## RIPR Swarm Attempt Dry Run
 
 `cargo xtask ripr-swarm attempt --packet <id> --dry-run` reads

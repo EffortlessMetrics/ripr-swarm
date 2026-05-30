@@ -22270,6 +22270,7 @@ struct RiprSwarmReadinessSummary {
     blocked_by_public_projection_exclusion_packets: usize,
     blocked_by_operator_judgment_packets: usize,
     public_projection_excluded_packets: usize,
+    public_projection_exclusion_reasons: BTreeMap<String, usize>,
     missing_canonical_gap_id: usize,
     not_actionable_gap_state: usize,
     missing_verify_command: usize,
@@ -23603,6 +23604,9 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
             .iter()
             .filter(|packet| packet.swarm_state == "blocked_by_public_projection_exclusion")
             .count(),
+        "public_projection_exclusion_reasons": audit_count_rows_json(
+            &ripr_swarm_plan_public_projection_exclusion_reason_counts(report)
+        ),
         "missing_canonical_gap_id": report
             .packets
             .iter()
@@ -23757,6 +23761,26 @@ fn ripr_swarm_plan_packet_state_count(report: &RiprSwarmPlanReport, state: &str)
         .iter()
         .filter(|packet| packet.swarm_state == state)
         .count()
+}
+
+fn ripr_swarm_plan_public_projection_exclusion_reason_counts(
+    report: &RiprSwarmPlanReport,
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for packet in report
+        .packets
+        .iter()
+        .filter(|packet| packet.swarm_state == "blocked_by_public_projection_exclusion")
+    {
+        if packet.projection_exclusion_reasons.is_empty() {
+            audit_increment(&mut counts, "public_projection_eligible_false");
+        } else {
+            for reason in &packet.projection_exclusion_reasons {
+                audit_increment(&mut counts, reason);
+            }
+        }
+    }
+    counts
 }
 
 fn ripr_swarm_plan_packets_json(packets: &[RiprSwarmPlanPacket]) -> Vec<Value> {
@@ -24061,6 +24085,15 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         ));
     }
     out.push('\n');
+    let public_projection_exclusion_reasons = summary["public_projection_exclusion_reasons"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    ripr_swarm_push_count_rows_markdown(
+        &mut out,
+        "Public Projection Exclusion Reasons",
+        &public_projection_exclusion_reasons,
+    );
     ripr_swarm_push_static_limitation_backlog_markdown(&mut out, &report.static_limitation_backlog);
     ripr_swarm_plan_push_packet_table(
         &mut out,
@@ -24087,6 +24120,27 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
     out.push_str("- Do not rank packets without `verify_command` as high confidence.\n");
     out.push_str("- Do not edit files, call providers, generate tests, run mutation testing, or create receipts from this plan.\n");
     out
+}
+
+fn ripr_swarm_push_count_rows_markdown(out: &mut String, title: &str, rows: &[Value]) {
+    if rows.is_empty() {
+        return;
+    }
+    out.push_str(&format!("## {}\n\n", audit_markdown_cell(title)));
+    out.push_str("| Reason | Count |\n");
+    out.push_str("| --- | ---: |\n");
+    for row in rows {
+        let Some(label) = audit_non_empty_string(row, &["label"]) else {
+            continue;
+        };
+        let count = audit_usize(row, &["count"]).unwrap_or_default();
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            audit_markdown_cell(&label),
+            count
+        ));
+    }
+    out.push('\n');
 }
 
 fn ripr_swarm_push_static_limitation_backlog_markdown(out: &mut String, backlog: &Value) {
@@ -26017,6 +26071,8 @@ fn ripr_swarm_readiness_summary(
         summary.public_projection_excluded_packets =
             audit_usize(plan, &["summary", "public_projection_excluded_packets"])
                 .unwrap_or_default();
+        summary.public_projection_exclusion_reasons =
+            audit_count_rows_map(plan, &["summary", "public_projection_exclusion_reasons"]);
         summary.missing_canonical_gap_id =
             audit_usize(plan, &["summary", "missing_canonical_gap_id"]).unwrap_or_default();
         summary.not_actionable_gap_state =
@@ -26216,6 +26272,9 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
             .blocked_by_public_projection_exclusion_packets,
         "blocked_by_operator_judgment_packets": summary.blocked_by_operator_judgment_packets,
         "public_projection_excluded_packets": summary.public_projection_excluded_packets,
+        "public_projection_exclusion_reasons": audit_count_rows_json(
+            &summary.public_projection_exclusion_reasons
+        ),
         "missing_canonical_gap_id": summary.missing_canonical_gap_id,
         "not_actionable_gap_state": summary.not_actionable_gap_state,
         "missing_verify_command": summary.missing_verify_command,
@@ -26296,7 +26355,7 @@ fn ripr_swarm_readiness_blocked_state_routes(
         &mut routes,
         "blocked_by_public_projection_exclusion",
         summary.blocked_by_public_projection_exclusion_packets,
-        "public projection eligibility is false or projection_exclusion_reasons are present",
+        &ripr_swarm_readiness_public_projection_exclusion_reason(summary),
         "inspect_public_projection_exclusions",
         "cargo xtask lane1-evidence-audit",
         ripr_swarm_readiness_plan_packet_sample(
@@ -26559,6 +26618,33 @@ fn ripr_swarm_readiness_blocked_state_routes(
         }),
     );
     routes
+}
+
+fn ripr_swarm_readiness_public_projection_exclusion_reason(
+    summary: &RiprSwarmReadinessSummary,
+) -> String {
+    format!(
+        "public projection eligibility is false or projection_exclusion_reasons are present{}",
+        ripr_swarm_readiness_public_projection_exclusion_detail(summary)
+    )
+}
+
+fn ripr_swarm_readiness_public_projection_exclusion_detail(
+    summary: &RiprSwarmReadinessSummary,
+) -> String {
+    ripr_swarm_readiness_top_public_projection_exclusion_reason(summary)
+        .map(|(label, count)| format!("; top reason: {label} ({count})"))
+        .unwrap_or_default()
+}
+
+fn ripr_swarm_readiness_top_public_projection_exclusion_reason(
+    summary: &RiprSwarmReadinessSummary,
+) -> Option<(&str, usize)> {
+    summary
+        .public_projection_exclusion_reasons
+        .iter()
+        .max_by(|left, right| left.1.cmp(right.1).then_with(|| right.0.cmp(left.0)))
+        .map(|(label, count)| (label.as_str(), *count))
 }
 
 fn ripr_swarm_readiness_push_blocked_state_route(
@@ -27413,8 +27499,9 @@ fn ripr_swarm_readiness_next_actions(
             repair_kind: None,
             command: Some("cargo xtask lane1-evidence-audit".to_string()),
             reason: format!(
-                "{} packet(s) are excluded from public projection; inspect projection_exclusion_reasons before attempting swarm work",
-                summary.public_projection_excluded_packets
+                "{} packet(s) are excluded from public projection; inspect projection_exclusion_reasons before attempting swarm work{}",
+                summary.public_projection_excluded_packets,
+                ripr_swarm_readiness_public_projection_exclusion_detail(summary)
             ),
         });
     }
@@ -27843,6 +27930,15 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         ));
     }
     out.push('\n');
+    let public_projection_exclusion_reasons = summary["public_projection_exclusion_reasons"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    ripr_swarm_push_count_rows_markdown(
+        &mut out,
+        "Public Projection Exclusion Reasons",
+        &public_projection_exclusion_reasons,
+    );
     ripr_swarm_readiness_push_blocked_state_routes_table(&mut out, &report.blocked_state_routes);
     ripr_swarm_push_static_limitation_backlog_markdown(&mut out, &report.static_limitation_backlog);
     ripr_swarm_readiness_push_top_limitation_routes_table(&mut out, &report.top_limitation_routes);
@@ -28948,6 +29044,20 @@ fn audit_count_rows_json(counts: &BTreeMap<String, usize>) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+fn audit_count_rows_map(value: &Value, path: &[&str]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for row in audit_array(value, path) {
+        let Some(label) = audit_non_empty_string(row, &["label"]) else {
+            continue;
+        };
+        let count = audit_usize(row, &["count"]).unwrap_or_default();
+        if count > 0 {
+            counts.insert(label, count);
+        }
+    }
+    counts
 }
 
 fn audit_finding_alignment_summary_json(
@@ -83246,7 +83356,13 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing_raw_evidence_refs": 1,
                 "related_context_missing": 1,
                 "static_limitation_packets": 1,
-                "high_confidence_packets": 0
+                "high_confidence_packets": 0,
+                "public_projection_exclusion_reasons": [
+                    {
+                        "label": "suppressed_by_public_projection_policy",
+                        "count": 1
+                    }
+                ]
             },
             "top_ready_packets": [],
             "top_blocked_packets": [
@@ -83292,7 +83408,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "repair_kind": "add_boundary_assertion",
                     "swarm_state": "blocked_by_public_projection_exclusion",
                     "projection_exclusion_reasons": [
-                        "missing_allowed_edit_surface"
+                        "suppressed_by_public_projection_policy"
                     ],
                     "blocked_reasons": [
                         "public_projection_exclusion"
@@ -83440,6 +83556,14 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["summary"]["blocked_by_operator_judgment_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["summary"]["public_projection_exclusion_reasons"][0]["label"],
+            "suppressed_by_public_projection_policy"
+        );
+        assert_eq!(
+            value["summary"]["public_projection_exclusion_reasons"][0]["count"],
             serde_json::Value::from(1)
         );
         for key in [
@@ -83636,6 +83760,15 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing next action {kind}"
             );
         }
+        let projection_action = actions
+            .iter()
+            .find(|action| action["kind"] == "inspect_public_projection_exclusions")
+            .ok_or("missing public projection next action")?;
+        assert!(
+            projection_action["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("suppressed_by_public_projection_policy"))
+        );
         let orphan_action = actions
             .iter()
             .find(|action| action["kind"] == "reconcile_orphaned_receipts")
@@ -83691,6 +83824,8 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("packet:missing-context"));
         assert!(markdown.contains("gap:missing-context"));
         assert!(markdown.contains("fix_allowed_edit_surface"));
+        assert!(markdown.contains("## Public Projection Exclusion Reasons"));
+        assert!(markdown.contains("suppressed_by_public_projection_policy"));
         assert!(markdown.contains("target/ripr/receipts/orphan.json"));
         assert!(markdown.contains("cargo xtask lane1-evidence-audit"));
         Ok(())
@@ -85325,9 +85460,20 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(1)
         );
         assert_eq!(
+            value["summary"]["public_projection_exclusion_reasons"][0]["label"],
+            "suppressed_by_public_projection_policy"
+        );
+        assert_eq!(
+            value["summary"]["public_projection_exclusion_reasons"][0]["count"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
             value["top_blocked_packets"][0]["projection_exclusion_reasons"][0],
             "suppressed_by_public_projection_policy"
         );
+        let markdown = ripr_swarm_plan_markdown(&report);
+        assert!(markdown.contains("## Public Projection Exclusion Reasons"));
+        assert!(markdown.contains("suppressed_by_public_projection_policy"));
         Ok(())
     }
 
