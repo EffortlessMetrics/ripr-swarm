@@ -10609,6 +10609,9 @@ fn validate_first_successful_pr_outcome_receipt(
 
 fn first_successful_pr_outcome_input_path(root: &Path, relative: &str) -> String {
     let path = root.join(relative);
+    if let Some(stable) = first_successful_pr_fixture_relative_path(&path) {
+        return stable;
+    }
     if let Ok(current_dir) = std::env::current_dir() {
         if let Ok(stripped) = path.strip_prefix(&current_dir) {
             return normalize_path(stripped);
@@ -10620,6 +10623,25 @@ fn first_successful_pr_outcome_input_path(root: &Path, relative: &str) -> String
         }
     }
     normalize_path(&path)
+}
+
+fn first_successful_pr_fixture_relative_path(path: &Path) -> Option<String> {
+    let parts = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
+    for index in 0..parts.len().saturating_sub(1) {
+        if parts[index] == "fixtures" && parts[index + 1] == "first_successful_pr" {
+            let mut stable = PathBuf::new();
+            for part in &parts[index..] {
+                stable.push(part);
+            }
+            return Some(normalize_path(&stable));
+        }
+    }
+
+    None
 }
 
 fn validate_first_successful_pr_actionable_json(
@@ -61799,6 +61821,27 @@ mod tests {
         super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
 
         assert_eq!(violations, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn first_successful_pr_outcome_input_path_is_stable_outside_repo_cwd() -> Result<(), String> {
+        let corpus = first_successful_pr_corpus_path()?;
+        let root = corpus
+            .parent()
+            .ok_or_else(|| "first successful PR corpus must have parent".to_string())?;
+
+        with_temp_cwd("first-successful-pr-outcome-input-cwd", |_| {
+            let input = super::first_successful_pr_outcome_input_path(
+                root,
+                "python-preview-gap/inputs/reports/after-check.json",
+            );
+            assert_eq!(
+                input,
+                "fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json"
+            );
+        });
+
         Ok(())
     }
 
