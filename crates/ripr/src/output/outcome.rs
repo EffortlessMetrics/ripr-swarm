@@ -1876,6 +1876,41 @@ mod tests {
     }
 
     #[test]
+    fn targeted_test_outcome_python_preview_fixture_matches_expected_receipts() -> Result<(), String>
+    {
+        let before = include_str!(
+            "../../../../fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json"
+        );
+        let after = include_str!(
+            "../../../../fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json"
+        );
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json"
+                .to_string(),
+            "fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json"
+                .to_string(),
+        )?;
+
+        assert_eq!(report.moved.len(), 1);
+        assert_eq!(report.moved[0].gap_movement, "closed");
+        assert_eq!(
+            render_targeted_test_outcome_json(&report)?,
+            include_str!(
+                "../../../../fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.json"
+            )
+        );
+        assert_eq!(
+            render_targeted_test_outcome_md(&report),
+            include_str!(
+                "../../../../fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.md"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn targeted_test_outcome_prefers_evidence_record_movement() -> Result<(), String> {
         let before = r#"{
   "schema_version": "0.3",

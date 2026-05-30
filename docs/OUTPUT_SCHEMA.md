@@ -4477,6 +4477,13 @@ gap that moves from `weakly_exposed` to `exposed` is rendered as
 `weakly_gripped -> strongly_gripped` with `gap_movement = "closed"`. This is
 still static/advisory evidence: verify success and a closed gap movement are
 receipt signals, not runtime mutation proof or correctness proof.
+The Python first-PR fixture pins this path with before/after check-output
+snapshots and expected receipts at
+`fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.md`.
 
 Field contract:
 
