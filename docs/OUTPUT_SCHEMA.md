@@ -8460,6 +8460,7 @@ ripr first-pr \
   --root . \
   --base origin/main \
   --head HEAD \
+  --check-output target/ripr/reports/check.json \
   --gap-ledger target/ripr/reports/gap-decision-ledger.json \
   --first-action target/ripr/reports/first-useful-action.json \
   --review-comments target/ripr/review/comments.json \
@@ -8475,6 +8476,14 @@ The command writes:
 target/ripr/reports/start-here.json
 target/ripr/reports/start-here.md
 ```
+
+When `--check-output` is supplied, `ripr first-pr` treats the saved check JSON
+as an explicit input artifact and materializes
+`target/ripr/reports/gap-decision-ledger.{json,md}` before selecting the
+start-here repair. This is the direct Python preview path for actionable
+`python_repair_card` records that already came from `ripr check`; it does not
+rerun hidden analysis, run tests, import Python code, generate tests, or change
+gate authority.
 
 JSON shape:
 
@@ -8609,6 +8618,10 @@ Field contract:
   directory, and write/check mode. Supported project markers currently mean a
   Cargo workspace or Python preview project root. Preflight does not create
   analyzer facts and does not become gate authority.
+- `inputs.check_output` is present only when `--check-output` was supplied.
+  In that mode, the start-here packet can include a `check_output` artifact and
+  the `gap_ledger` artifact is the ledger materialized from that saved check
+  JSON rather than from repo-exposure evidence.
 - `preflight.status` is `ready` when the command can proceed without setup
   attention, or `needs_attention` when a setup check has a recovery/no-action
   note. A `needs_attention` preflight can still accompany an explicit

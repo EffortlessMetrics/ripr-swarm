@@ -778,9 +778,12 @@ Make first Python runs useful in CLI.
 - Python before/after outcome receipts can now compare check-output JSON by
   canonical gap ID, and the check-output gap-ledger bridge now supplies the
   packet receipt command.
-- A follow-up slice still needs, if useful, a direct `first-pr` producer flag
-  for supplied check-output JSON and more contextual raw `ripr check` / `pilot`
-  receipt guidance.
+- `ripr first-pr --check-output <check.json>` now accepts saved Python check
+  JSON directly, materializes the check-output-derived
+  `gap-decision-ledger.{json,md}`, and then selects the preview Python
+  start-here repair through the normal GapRecord path.
+- A follow-up slice still needs, if useful, more contextual raw `ripr check` /
+  `pilot` receipt guidance.
 
 ### Work item: output/python-surface-projection
 

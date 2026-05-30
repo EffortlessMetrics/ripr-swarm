@@ -96,6 +96,18 @@ ripr reports gap-ledger \
   --out-md target/ripr/reports/gap-decision-ledger.md
 ```
 
+For Python preview repair cards, the public first-PR front door can take the
+same saved check JSON directly and materialize the derived ledger before it
+selects the top repair:
+
+```bash
+ripr first-pr \
+  --root . \
+  --base origin/main \
+  --head HEAD \
+  --check-output target/ripr/reports/check.json
+```
+
 That path should produce `MissingOutputContract` with an `AddOutputGolden`
 repair route when user-facing output changed without checked output evidence,
 or a preview Python repair record with a verify command and check-output
