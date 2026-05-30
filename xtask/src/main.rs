@@ -59273,13 +59273,14 @@ mod tests {
         GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
         Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
         LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink, PrTriageCheck,
-        PrTriageFinding, PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
-        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord,
-        RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
-        RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
-        ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH,
-        SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
-        StaticLanguageMatcher, TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
+        PrTriageFinding, PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS,
+        REAL_REPAIR_ATTEMPTS_REQUIRED_CASES, REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS,
+        REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord, RepoBadgeArtifactOptions,
+        RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace,
+        ReportIndexCampaign, ReportIndexEntry, ReportIndexRepoOpsArtifact,
+        RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH, SarifPolicyMode,
+        SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
+        TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
         USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
         WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
         actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
@@ -59359,12 +59360,13 @@ mod tests {
         pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
         pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
         pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-        public_contract_rows, read_lsp_cockpit_json_value, read_mutation_input_json, receipt_json,
-        receipt_specs, receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
-        render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
-        repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-        repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-        repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+        public_contract_rows, read_json_value, read_lsp_cockpit_json_value,
+        read_mutation_input_json, receipt_json, receipt_specs, receipt_status_from_reports,
+        render_no_panic_allowlist_proposals_markdown, render_no_panic_allowlist_proposals_toml,
+        repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+        repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+        repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
+        repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
         repo_exposure_latency_trace, repo_root, repo_seam_inventory_command_args_for_root,
         report_index_json, report_index_lane1_overall_status, report_index_lane1_readiness_packets,
@@ -87808,6 +87810,122 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("## Repair Route Quality By Language"));
         assert!(markdown.contains("Missing receipt reason"));
         assert!(markdown.contains("receipt command was not run after verify timed out"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_real_corpus_supersedes_add_call_observer_timeout()
+    -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "outcomes": []
+        });
+        let corpus_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(REAL_REPAIR_ATTEMPTS_CORPUS);
+        let real_attempts = read_json_value(&corpus_path)?;
+
+        let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+            "unix_ms:100".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("no prior ledger".to_string()),
+                value: None,
+            },
+            RiprSwarmReadinessInput {
+                path: REAL_REPAIR_ATTEMPTS_CORPUS.to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&real_attempts),
+            },
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+                .map_err(|err| err.to_string())?;
+        let latest = value["latest_attempts"]
+            .as_array()
+            .and_then(|attempts| {
+                attempts
+                    .iter()
+                    .find(|attempt| attempt["canonical_gap_id"] == "gap:54970c87c8f8ca9d")
+            })
+            .ok_or_else(|| "expected latest add_call_observer attempt".to_string())?;
+        assert_eq!(latest["outcome"], "evidence_improved");
+        assert_eq!(
+            latest["verify_command"],
+            "cargo test -p ripr serve_stdio_call_presence_observer"
+        );
+        assert_eq!(
+            latest["receipt_path"],
+            serde_json::Value::from(REAL_REPAIR_ATTEMPTS_CORPUS)
+        );
+
+        let route_quality = value["repair_route_quality"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["repair_kind"] == "add_call_observer")
+            })
+            .ok_or_else(|| "expected add_call_observer route-quality row".to_string())?;
+        assert_eq!(
+            route_quality["repair_kind_attempted_no_receipt"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            route_quality["repair_kind_improved"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["repair_kind_failure_count"],
+            serde_json::Value::from(0)
+        );
+        assert!(
+            value["top_missing_evidence_fields"]
+                .as_array()
+                .is_none_or(|rows| {
+                    !rows
+                        .iter()
+                        .flat_map(|row| {
+                            row["sample_canonical_gap_ids"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                        })
+                        .any(|gap| gap == "gap:54970c87c8f8ca9d")
+                })
+        );
         Ok(())
     }
 
