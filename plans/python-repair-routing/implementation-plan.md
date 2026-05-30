@@ -1030,6 +1030,11 @@ Make Python gap improvement durable.
 
 - `ripr outcome` can compare Python check-output JSON snapshots by canonical
   gap ID and report weak-to-strong evidence movement as closed.
+- `fixtures/first_successful_pr/python-preview-gap` now pins the same closure
+  path with before/after check-output snapshots plus expected `ripr outcome`
+  JSON and Markdown receipts, proving the first-PR Python preview gap can move
+  from weak evidence to a closed canonical gap without a Python-only receipt
+  command.
 - `ripr reports gap-ledger --check-output` now carries the corresponding
   receipt command into repairable Python GapRecords, which makes bounded
   packet delegation receipt-ready.
