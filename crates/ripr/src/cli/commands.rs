@@ -326,22 +326,74 @@ fn run_swarm_queue(options: SwarmQueueOptions) -> Result<(), String> {
             options.gap_ledger.display()
         )
     })?;
-    let records =
-        output::gap_decision_ledger::parse_gap_records_json(&contents).map_err(|err| {
+    let source =
+        output::gap_decision_ledger::parse_gap_record_source_json(&contents).map_err(|err| {
             format!(
                 "swarm queue --gap-ledger {} is invalid: {err}",
                 options.gap_ledger.display()
             )
         })?;
-    let rendered = output::agent_seam_packets::render_agent_gap_record_queue_json(
-        &output::outcome::display_path(&options.root),
-        &output::outcome::display_path(&options.gap_ledger),
-        &records,
-        &options.language,
-        options.top,
-    )?;
+    let root_display = output::outcome::display_path(&options.root);
+    let gap_ledger_display = output::outcome::display_path(&options.gap_ledger);
+    let rendered = match gap_ledger_root_status(&options.root, source.root.as_deref()) {
+        GapLedgerRootStatus::Mismatch { ledger_root, .. } => {
+            output::agent_seam_packets::render_agent_gap_record_queue_wrong_root_json(
+                &root_display,
+                &gap_ledger_display,
+                &ledger_root,
+                source.generated_at.as_deref(),
+                &source.records,
+                &options.language,
+                options.top,
+            )?
+        }
+        GapLedgerRootStatus::Match | GapLedgerRootStatus::Unknown => {
+            output::agent_seam_packets::render_agent_gap_record_queue_json(
+                &root_display,
+                &gap_ledger_display,
+                &source.records,
+                &options.language,
+                options.top,
+            )?
+        }
+    };
     print!("{rendered}");
     Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum GapLedgerRootStatus {
+    Match,
+    Mismatch { ledger_root: String, reason: String },
+    Unknown,
+}
+
+fn gap_ledger_root_status(requested_root: &Path, ledger_root: Option<&str>) -> GapLedgerRootStatus {
+    let Some(raw_ledger_root) = ledger_root.map(str::trim).filter(|root| !root.is_empty()) else {
+        return GapLedgerRootStatus::Unknown;
+    };
+    let requested_root_display = output::outcome::display_path(requested_root);
+    let ledger_root_display = output::path::display_path_text(raw_ledger_root);
+    if requested_root_display == ledger_root_display {
+        return GapLedgerRootStatus::Match;
+    }
+
+    let requested_canonical = requested_root.canonicalize().ok();
+    let ledger_root_path = Path::new(raw_ledger_root);
+    let ledger_canonical = ledger_root_path.canonicalize().ok();
+    if requested_canonical.is_some()
+        && ledger_canonical.is_some()
+        && requested_canonical == ledger_canonical
+    {
+        return GapLedgerRootStatus::Match;
+    }
+
+    GapLedgerRootStatus::Mismatch {
+        ledger_root: ledger_root_display.clone(),
+        reason: format!(
+            "gap ledger root {ledger_root_display} does not match requested --root {requested_root_display}; regenerate the gap decision ledger for the selected root before assigning swarm work"
+        ),
+    }
 }
 
 fn run_swarm_ingest(options: SwarmIngestOptions) -> Result<(), String> {
@@ -10525,6 +10577,38 @@ language = "rust"
             parse_swarm_queue_options(&args(&["--top", "0"])),
             Err("invalid swarm queue --top: expected a positive integer".to_string())
         );
+    }
+
+    #[test]
+    fn swarm_queue_root_status_detects_wrong_ledger_root() -> Result<(), String> {
+        let temp = unique_command_test_dir("swarm-queue-root-status");
+        let requested = temp.join("requested");
+        let other = temp.join("other");
+        std::fs::create_dir_all(&requested).map_err(|err| format!("create requested: {err}"))?;
+        std::fs::create_dir_all(&other).map_err(|err| format!("create other: {err}"))?;
+
+        assert_eq!(
+            gap_ledger_root_status(&requested, Some(&requested.display().to_string())),
+            GapLedgerRootStatus::Match
+        );
+        let mismatch = gap_ledger_root_status(&requested, Some(&other.display().to_string()));
+        match mismatch {
+            GapLedgerRootStatus::Mismatch {
+                ledger_root,
+                reason,
+            } => {
+                assert!(ledger_root.contains("other"));
+                assert!(reason.contains("does not match requested --root"));
+            }
+            other_status => return Err(format!("expected mismatch, got {other_status:?}")),
+        }
+        assert_eq!(
+            gap_ledger_root_status(&requested, None),
+            GapLedgerRootStatus::Unknown
+        );
+
+        std::fs::remove_dir_all(&temp).map_err(|err| format!("remove temp: {err}"))?;
+        Ok(())
     }
 
     #[test]
