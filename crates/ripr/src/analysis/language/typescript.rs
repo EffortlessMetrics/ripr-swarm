@@ -2020,7 +2020,12 @@ fn typescript_flow_sink_for(
     let kind = match probe_shape.family {
         ProbeFamily::ReturnValue => FlowSinkKind::ReturnValue,
         ProbeFamily::ErrorPath => FlowSinkKind::ErrorVariant,
-        ProbeFamily::FieldConstruction => FlowSinkKind::StructField,
+        ProbeFamily::FieldConstruction => {
+            if is_computed_field_construction(line_text) {
+                return None;
+            }
+            FlowSinkKind::StructField
+        }
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
             if is_computed_member_call(line_text) {
                 return None;
@@ -2153,14 +2158,23 @@ fn promise_reject_argument(text: &str) -> Option<&str> {
 }
 
 fn typescript_error_value(prefix: &str, expression: &str) -> Option<String> {
-    let raw_error_type = expression
-        .split_once('(')
-        .map(|(ty, _)| ty.trim())
-        .unwrap_or(expression)
-        .trim();
-    let error_type = raw_error_type
-        .strip_prefix("new ")
-        .unwrap_or(raw_error_type);
+    let expression = expression.trim();
+    let error_type = if let Some(constructed) = expression.strip_prefix("new ") {
+        constructed
+            .split_once('(')
+            .map(|(ty, _)| ty.trim())
+            .unwrap_or(constructed.trim())
+    } else if let Some((callee, _)) = expression.split_once('(') {
+        let callee = callee.trim();
+        if !starts_with_uppercase(callee) && !callee.ends_with("Error") {
+            return None;
+        }
+        callee
+    } else if let Some(message) = first_typescript_string_literal(expression) {
+        return Some(format!("{prefix} error matching {message}"));
+    } else {
+        return None;
+    };
     if error_type.is_empty() {
         return None;
     }
@@ -2180,7 +2194,7 @@ fn typescript_field_value_discriminator(line_text: &str) -> Option<String> {
         return Some(discriminator);
     }
     let (lhs, rhs) = split_typescript_assignment(text)?;
-    if lhs.is_empty() || rhs.is_empty() {
+    if lhs.is_empty() || rhs.is_empty() || lhs.contains('[') || lhs.contains(']') {
         None
     } else {
         Some(format!("{lhs} == {rhs}"))
@@ -2214,7 +2228,7 @@ fn typescript_object_field_discriminator(line_text: &str) -> Option<String> {
         .trim()
         .trim_end_matches('}')
         .trim();
-    if key.is_empty() || value.is_empty() {
+    if !is_simple_typescript_object_key(key) || value.is_empty() {
         None
     } else {
         Some(format!("{key} == {value}"))
@@ -2258,6 +2272,14 @@ fn split_typescript_assignment(text: &str) -> Option<(&str, &str)> {
     }
     let (lhs, rhs) = text.split_once(" = ")?;
     Some((lhs.trim(), rhs.trim().trim_end_matches(';').trim()))
+}
+
+fn is_computed_field_construction(line_text: &str) -> bool {
+    let text = line_text.trim();
+    if let Some((lhs, _)) = split_typescript_assignment(text) {
+        return lhs.contains('[') || lhs.contains(']');
+    }
+    contains_unquoted_shape(text, "{[") || contains_unquoted_shape(text, "{ [")
 }
 
 fn strip_typescript_control_prefix(line_text: &str) -> String {
@@ -2313,6 +2335,13 @@ fn is_simple_typescript_discriminator_operand(value: &str) -> bool {
         && value.chars().all(|ch| {
             ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '"' || ch == '\''
         })
+}
+
+fn is_simple_typescript_object_key(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
 }
 
 fn operand_looks_like_call(value: &str) -> bool {
@@ -4414,6 +4443,22 @@ test("type only import", () => {
     }
 
     #[test]
+    fn classify_change_omits_return_value_discriminator_for_bare_return() -> Result<(), String> {
+        let finding = classify_weak_direct_line("    return;")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
+        assert_eq!(finding.flow_sinks.len(), 1);
+        assert!(finding.activation.missing_discriminators.is_empty());
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|entry| !entry.starts_with("missing_discriminator:"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn classify_change_emits_error_path_probe_fact_discriminator() -> Result<(), String> {
         let finding = classify_weak_direct_line("    throw new RangeError(\"too low\");")?;
 
@@ -4424,6 +4469,28 @@ test("type only import", () => {
             missing_discriminator_values(&finding),
             vec!["throws RangeError matching \"too low\""]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_omits_error_discriminator_for_generic_throw_identifier() -> Result<(), String>
+    {
+        let finding = classify_weak_direct_line("    throw err;")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::ErrorPath);
+        assert_eq!(finding.flow_sinks.len(), 1);
+        assert!(finding.activation.missing_discriminators.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_omits_error_discriminator_for_generic_rejected_identifier()
+    -> Result<(), String> {
+        let finding = classify_weak_direct_line("    return Promise.reject(err);")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::ErrorPath);
+        assert_eq!(finding.flow_sinks.len(), 1);
+        assert!(finding.activation.missing_discriminators.is_empty());
         Ok(())
     }
 
@@ -4442,6 +4509,17 @@ test("type only import", () => {
     }
 
     #[test]
+    fn classify_change_omits_field_discriminator_for_computed_field_assignment()
+    -> Result<(), String> {
+        let finding = classify_weak_direct_line("    profile[key] = nextStatus;")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+        assert!(finding.flow_sinks.is_empty());
+        assert!(finding.activation.missing_discriminators.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn classify_change_emits_object_literal_field_probe_fact_discriminator() -> Result<(), String> {
         let finding = classify_weak_direct_line("    return { status: nextStatus, total };")?;
 
@@ -4456,6 +4534,17 @@ test("type only import", () => {
     }
 
     #[test]
+    fn classify_change_omits_object_field_discriminator_for_computed_object_key()
+    -> Result<(), String> {
+        let finding = classify_weak_direct_line("    return { [key]: nextStatus, total };")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+        assert!(finding.flow_sinks.is_empty());
+        assert!(finding.activation.missing_discriminators.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn classify_change_emits_call_side_effect_probe_fact_discriminator() -> Result<(), String> {
         let finding = classify_weak_direct_line("    audit.record(status);")?;
 
@@ -4465,6 +4554,11 @@ test("type only import", () => {
         assert_eq!(
             missing_discriminator_values(&finding),
             vec!["call audit.record includes status"]
+        );
+        assert!(
+            missing_discriminator_values(&finding)
+                .iter()
+                .all(|value| !value.contains("mock interaction"))
         );
         Ok(())
     }
@@ -4479,6 +4573,24 @@ test("type only import", () => {
         assert_eq!(
             missing_discriminator_values(&finding),
             vec!["mock interaction mockSend called with payload"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_uses_call_effect_wording_for_console_log_without_literal()
+    -> Result<(), String> {
+        let finding = classify_weak_direct_line("    console.log(status);")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::SideEffect);
+        assert_eq!(
+            missing_discriminator_values(&finding),
+            vec!["call console.log includes status"]
+        );
+        assert!(
+            missing_discriminator_values(&finding)
+                .iter()
+                .all(|value| !value.contains("log contains"))
         );
         Ok(())
     }
