@@ -303,11 +303,11 @@ git diff --check
 
 ## Work Item: analysis/typescript-static-limit-taxonomy
 
-Status: ready
+Status: done
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027
 Linked ADR: ADR-0008
-Blocks: output/typescript-preview-metadata
+Blocks: analysis/typescript-strict-actionability
 Blocked by: analysis/typescript-probe-facts
 
 ### Goal
@@ -316,14 +316,36 @@ Surface `dynamic_dispatch`, `metaprogramming`, `missing_import_graph`,
 `mocked_module`, `unsupported_syntax`, and `decorator_indirection` as named
 limitations with human reasons and repair routes, not actionable packets.
 
+### Current Delta
+
+The TypeScript-family preview classifier now emits structured static-limit
+metadata for computed member calls, metaprogramming syntax, decorated owners,
+production calls through imported symbols, related mocked modules, and
+parser-error unsupported syntax. Static limits are exposed as evidence and
+missing context only; TypeScript/JavaScript remain opt-in advisory preview.
+
+### Proof Commands
+
+```bash
+cargo test -p ripr typescript --lib
+cargo xtask fixtures typescript_static_limit_taxonomy
+cargo xtask fixtures typescript_mocked_module_limit
+cargo xtask fixtures typescript_parse_error_unsupported_syntax
+cargo xtask goldens check
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-static-language
+git diff --check
+```
+
 ## Work Item: output/typescript-preview-metadata
 
 Status: ready
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0026, RIPR-SPEC-0027
 Linked ADR: n/a
-Blocks: analysis/typescript-strict-actionability
-Blocked by: analysis/typescript-static-limit-taxonomy
+Blocks: lsp/typescript-preview-repair-context
+Blocked by: analysis/typescript-strict-actionability
 
 ### Goal
 
@@ -337,8 +359,8 @@ Status: ready
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027, RIPR-SPEC-0061
 Linked ADR: n/a
-Blocks: lsp/typescript-preview-repair-context
-Blocked by: output/typescript-preview-metadata
+Blocks: output/typescript-preview-metadata
+Blocked by: analysis/typescript-static-limit-taxonomy
 
 ### Goal
 
