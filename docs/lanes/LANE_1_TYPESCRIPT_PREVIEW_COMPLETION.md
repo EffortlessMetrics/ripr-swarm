@@ -306,8 +306,10 @@ Completed after the initial audit:
 11. Dogfood, route-quality metrics, and support-tier decision
    - Current dogfood covers TypeScript mocked-module preview, generated-CI
      TypeScript-family language grouping, real TS/JS repair-loop receipts,
-     weak-oracle downgrade/non-promotion, limitation examples, and
-     route-quality metrics by language and repair kind.
+     weak-oracle downgrade/non-promotion, limitation examples, unchanged
+     already-observed evidence, intentionally skipped incomplete-packet cases,
+     and route-quality metrics by language and repair kind while preserving
+     `repair_packet_ready = false` and advisory preview authority.
    - Missing proof: closeout has not decided whether the evidence remains
      `preview` or supports a narrow support-tier move.
    - Next step: review support tiers with proof links, deferred work, and
@@ -363,6 +365,14 @@ context without noisy diagnostics or repair-packet actions for incomplete
 preview findings. PR 12 landed generated-CI TypeScript-family language grouping
 with separate TypeScript and JavaScript preview labels, actionability summaries,
 and `gate_impact = none` while preserving advisory-only default behavior.
+
+PR 13 landed TypeScript-family repair-loop dogfood receipts for boundary
+predicate advisory proof, smoke and snapshot weak-oracle downgrades, async
+broad-error evidence, a JavaScript mock-interaction skipped route, mocked-module
+static limitation, and already-observed JavaScript unchanged evidence without
+support-tier promotion, complete repair-packet claims, runtime Jest/Vitest
+execution, generated tests, source edits, default gates, badge contribution,
+baseline authority, or RIPR Zero contribution.
 
 The next safe PR is:
 
