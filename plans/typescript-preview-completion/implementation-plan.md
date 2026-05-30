@@ -515,6 +515,13 @@ one limitation, one weak-oracle downgrade, and unchanged or skipped cases.
 
 ### Result
 
+`fixtures/real-repair-attempts/corpus.json` records TypeScript and JavaScript
+preview dogfood receipts for LSP preview context, generated-CI preview
+grouping, mocked-module static-limitation routing, and weak-oracle
+non-promotion. Those receipts remain repair-loop evidence only: they do not make
+preview evidence public repair packets, swarm-ready work, badge inputs, or CI
+gates.
+
 `fixtures/typescript-preview-repair-loop/corpus.json` records TypeScript and
 JavaScript preview repair-loop receipts for boundary predicate advisory proof,
 smoke and snapshot weak-oracle downgrades, async broad-error evidence, a
@@ -524,6 +531,22 @@ projects those receipts while preserving `repair_packet_ready = false`,
 `preview_advisory_only`, no runtime Jest/Vitest execution, no source edits, no
 generated tests, and no gate, badge, baseline, RIPR Zero, or support-tier
 promotion authority.
+
+### Proof Commands
+
+```bash
+cargo test -p xtask dogfood_typescript_preview_repair_loop --bin xtask
+cargo test -p xtask dogfood_real_repair_attempt_receipts_are_checked -- --test-threads=1
+cargo xtask dogfood
+cargo xtask ripr-swarm attempt-ledger
+cargo xtask ripr-swarm readiness
+cargo xtask check-fixture-contracts
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-static-language
+cargo xtask check-pr
+git diff --check
+```
 
 ## Work Item: metrics/typescript-preview-route-quality
 

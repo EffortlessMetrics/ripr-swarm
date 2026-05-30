@@ -405,3 +405,16 @@ cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-pr
 ```
+
+## Latest dogfood receipt proof
+
+The TypeScript preview repair-loop dogfood slice now records four real receipt cases in `fixtures/real-repair-attempts/corpus.json`:
+
+- `typescript_preview_lsp_repair_context_improved`: advisory LSP context became inspectable without becoming a public repair packet.
+- `javascript_preview_generated_ci_grouping_improved`: generated CI grouping is receipted as advisory preview evidence with no gate or badge claim.
+- `typescript_preview_mocked_module_limitation_improved`: mocked-module evidence remains a static limitation with analyzer-backlog value.
+- `typescript_preview_weak_oracle_downgrade_unchanged`: weak-oracle preview evidence intentionally remains advisory and unchanged.
+
+These receipts are dogfood evidence for the repair loop only. They do not promote TypeScript or JavaScript preview evidence to public repair packets, swarm-ready work, blocking CI gates, or badge inputs.
+
+Next slice: add route-quality metrics by repair kind and language so TypeScript preview outcomes are measured instead of treated as generic repair guidance.
