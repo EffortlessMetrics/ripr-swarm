@@ -38398,6 +38398,153 @@ fn build_badge_basis_report(
     })
 }
 
+pub(crate) fn ripr_plus_impl(args: &[String]) -> Result<(), String> {
+    let options = parse_repo_badge_artifact_options(args, "ripr-plus")?;
+    run_with_repo_root_cwd(|| {
+        let repo_badge_json =
+            run_repo_badge_artifact_job("repo-badge-json", options.gap_ledger.as_deref())?;
+        let head = git_value(&["rev-parse", "HEAD"]);
+        let receipt = ripr_plus_receipt_from_repo_badge_json(
+            &repo_badge_json,
+            &head,
+            options.gap_ledger.as_deref(),
+        )?;
+        let json = serde_json::to_string_pretty(&receipt)
+            .map_err(|err| format!("failed to serialize ripr-plus receipt: {err}"))?;
+        write_report("ripr-plus.json", &format!("{json}\n"))?;
+        write_report("ripr-plus.md", &ripr_plus_receipt_markdown(&receipt))
+    })
+}
+
+fn ripr_plus_receipt_from_repo_badge_json(
+    json: &str,
+    head: &str,
+    gap_ledger: Option<&Path>,
+) -> Result<Value, String> {
+    let badge = badge_native_audit_snapshot(json)?;
+    ripr_plus_receipt_from_badge(&badge, head, gap_ledger)
+}
+
+fn ripr_plus_receipt_from_badge(
+    badge: &BadgeNativeAuditSnapshot,
+    head: &str,
+    gap_ledger: Option<&Path>,
+) -> Result<Value, String> {
+    if !ripr_plus_accepts_badge_basis(&badge.basis) {
+        return Err(format!(
+            "ripr-plus requires repo-badge-json with canonical actionable or gap decision ledger basis, got {:?}",
+            badge.basis
+        ));
+    }
+    let unresolved = badge
+        .counts
+        .get("unsuppressed_exposure_gaps")
+        .copied()
+        .ok_or_else(|| {
+            "repo-badge-json counts are missing unsuppressed_exposure_gaps".to_string()
+        })?;
+    let suppressed = badge
+        .counts
+        .get("suppressed_exposure_gaps")
+        .copied()
+        .unwrap_or(0)
+        + badge
+            .counts
+            .get("suppressed_test_efficiency_findings")
+            .copied()
+            .unwrap_or(0);
+    let raw_seams = badge
+        .counts
+        .get("raw_seams")
+        .or_else(|| badge.counts.get("analyzed_seams"))
+        .copied();
+    let status = if unresolved == 0 { "pass" } else { "warn" };
+
+    let source_command = if let Some(gap_ledger) = gap_ledger {
+        format!(
+            "ripr check --root . --format repo-badge-json --gap-ledger {}",
+            normalize_path(gap_ledger)
+        )
+    } else {
+        "ripr check --root . --format repo-badge-json".to_string()
+    };
+
+    Ok(serde_json::json!({
+        "schema_version": "0.1",
+        "status": status,
+        "basis": &badge.basis,
+        "source_format": "repo-badge-json",
+        "source_command": source_command,
+        "unresolved": unresolved,
+        "top_files": [],
+        "suppressed": suppressed,
+        "head": head,
+        "counts": &badge.counts,
+        "reason_counts": &badge.reason_counts,
+        "raw_inventory": {
+            "raw_seams": raw_seams,
+            "debt_basis": false,
+            "note": "Raw seam inventory is supporting analyzer pressure only; it is not the RIPR+ unresolved debt counter."
+        },
+        "basis_note": "RIPR+ unresolved is sourced from counts.unsuppressed_exposure_gaps in repo-badge-json when the badge basis is canonical_actionable_gap or gap_decision_ledger. top_files is intentionally empty because bounded repo-badge-json does not expose per-file debt and this command must not run full repo-exposure-json.",
+        "warnings": &badge.warnings,
+        "non_claims": [
+            "not raw seam inventory",
+            "not runtime mutation confirmation",
+            "not coverage",
+            "not badge endpoint regeneration"
+        ]
+    }))
+}
+
+fn ripr_plus_accepts_badge_basis(basis: &str) -> bool {
+    matches!(basis, "canonical_actionable_gap" | "gap_decision_ledger")
+}
+
+fn ripr_plus_receipt_markdown(receipt: &Value) -> String {
+    let mut body = String::from("# ripr+ Repo Receipt\n\n");
+    body.push_str("This report is the repo-wide RIPR+ quality-gate input. It uses the public canonical actionable gap basis and does not count raw seam inventory as unresolved debt.\n\n");
+    body.push_str("## Basis\n\n");
+    body.push_str("| Field | Value |\n");
+    body.push_str("| --- | --- |\n");
+    body.push_str(&format!(
+        "| Status | `{}` |\n",
+        markdown_cell(&json_string_field_value(receipt, "status"))
+    ));
+    body.push_str(&format!(
+        "| Basis | `{}` |\n",
+        markdown_cell(&json_string_field_value(receipt, "basis"))
+    ));
+    body.push_str(&format!(
+        "| Source format | `{}` |\n",
+        markdown_cell(&json_string_field_value(receipt, "source_format"))
+    ));
+    body.push_str(&format!(
+        "| Unresolved | {} |\n",
+        receipt
+            .get("unresolved")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    ));
+    body.push_str(&format!(
+        "| Suppressed | {} |\n",
+        receipt
+            .get("suppressed")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    ));
+    body.push_str(&format!(
+        "| Head | `{}` |\n",
+        markdown_cell(&json_string_field_value(receipt, "head"))
+    ));
+    body.push_str("\n## Reason Counts\n\n");
+    let reason_counts = json_object_usize_map(receipt, "reason_counts");
+    append_count_table(&mut body, &reason_counts);
+    body.push_str("\n## Top Files\n\n");
+    body.push_str("No bounded top-file summary is available from `repo-badge-json`; this command intentionally does not run full `repo-exposure-json`.\n");
+    body
+}
+
 fn write_repo_badge_artifacts(options: &RepoBadgeArtifactOptions) -> Result<(), String> {
     test_efficiency_report_impl()?;
 
@@ -54597,6 +54744,7 @@ fn pr_actionable_delta_front_panel_from_inputs(
 
     write_pr_actionable_delta_movement(&mut body, outcomes, front_panel);
     write_pr_actionable_top_packet(&mut body, changes, actionable);
+    write_pr_python_top_repair_card(&mut body, changes, actionable);
 
     body.push_str("\nBoundary:\n");
     body.push_str("- Static RIPR evidence only.\n");
@@ -54721,6 +54869,237 @@ fn write_pr_actionable_top_packet(
     {
         body.push_str(&format!("- receipt: `{}`\n", md_escape(&receipt)));
     }
+}
+
+fn write_pr_python_top_repair_card(
+    body: &mut String,
+    changes: &[ChangedPath],
+    actionable: &PrActionableInput,
+) {
+    let Some(report) = actionable.value() else {
+        return;
+    };
+    let packets = pr_actionable_packets(report);
+    let changed_paths = pr_changed_path_set(changes);
+    let selected = packets
+        .iter()
+        .copied()
+        .find(|packet| {
+            pr_packet_is_python(packet) && pr_packet_touches_changed_path(packet, &changed_paths)
+        })
+        .or_else(|| {
+            packets
+                .iter()
+                .copied()
+                .find(|packet| pr_packet_is_python(packet))
+        });
+    let Some(packet) = selected else {
+        return;
+    };
+
+    body.push_str("\nTop Python repair card:\n");
+    body.push_str("- language: `python` (`preview`)\n");
+    if let Some(authority) = pr_python_packet_authority_boundary(packet) {
+        body.push_str(&format!(
+            "- authority boundary: `{}`\n",
+            md_escape(&authority)
+        ));
+    }
+    body.push_str(&format!(
+        "- canonical gap: `{}`\n",
+        pr_string_path(packet, &["canonical_gap_id"]).unwrap_or_else(|| "unknown".to_string())
+    ));
+    if let Some(owner) = pr_python_packet_changed_owner(packet) {
+        body.push_str(&format!("- Changed owner: `{}`\n", md_escape(&owner)));
+    }
+    if let Some(changed) = pr_python_packet_changed_behavior(packet) {
+        body.push_str(&format!("- Changed behavior: {}\n", md_escape(&changed)));
+    }
+    if let Some(evidence) = pr_python_packet_current_test_evidence(packet) {
+        body.push_str(&format!(
+            "- Current test evidence: {}\n",
+            md_escape(&evidence)
+        ));
+    }
+    if let Some(missing) = pr_packet_missing_discriminator(packet) {
+        body.push_str(&format!(
+            "- Missing discriminator: {}\n",
+            md_escape(&missing)
+        ));
+    }
+    if let Some(action) = pr_python_packet_repair_action(packet) {
+        body.push_str(&format!("- repair action: `{}`\n", md_escape(&action)));
+    }
+    if let Some(shape) = pr_python_packet_test_shape(packet) {
+        body.push_str(&format!("- test shape: {}\n", md_escape(&shape)));
+    }
+    if let Some(assertion) = pr_python_packet_suggested_assertion(packet) {
+        body.push_str(&format!(
+            "- Suggested assertion: {}\n",
+            md_escape(&assertion)
+        ));
+    }
+    match (
+        pr_python_packet_suggested_test_name(packet),
+        pr_python_packet_suggested_test_file(packet),
+    ) {
+        (Some(name), Some(file)) => body.push_str(&format!(
+            "- Suggested test target: `{}` in `{}`\n",
+            md_escape(&name),
+            md_escape(&file)
+        )),
+        (Some(name), None) => {
+            body.push_str(&format!("- Suggested test: `{}`\n", md_escape(&name)));
+        }
+        (None, Some(file)) => {
+            body.push_str(&format!("- Suggested file: `{}`\n", md_escape(&file)));
+        }
+        (None, None) => {}
+    }
+    if let Some(verify) = pr_string_path(packet, &["verify_command"]) {
+        body.push_str(&format!("- Verify: `{}`\n", md_escape(&verify)));
+    }
+    if let Some(receipt) = pr_string_path(packet, &["receipt_command_or_path"])
+        .or_else(|| pr_string_path(packet, &["receipt_command"]))
+    {
+        body.push_str(&format!("- Receipt: `{}`\n", md_escape(&receipt)));
+    }
+    let stop_conditions = pr_python_packet_stop_conditions(packet);
+    if !stop_conditions.is_empty() {
+        body.push_str("- stop if:\n");
+        for condition in stop_conditions.iter().take(3) {
+            body.push_str(&format!("  - {}\n", md_escape(condition)));
+        }
+    }
+}
+
+fn pr_packet_is_python(packet: &Value) -> bool {
+    pr_first_string_path(packet, &[&["language"], &["repair_card", "language"]]).as_deref()
+        == Some("python")
+}
+
+fn pr_python_packet_authority_boundary(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["authority_boundary"],
+            &["repair_card", "authority_boundary"],
+            &["repair_card", "authority_boundary", "kind"],
+        ],
+    )
+}
+
+fn pr_python_packet_changed_owner(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["changed_owner"],
+            &["repair_card", "changed_owner"],
+            &["anchor", "owner"],
+            &["primary_anchor", "owner"],
+        ],
+    )
+}
+
+fn pr_python_packet_changed_behavior(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["changed_behavior"],
+            &["repair_card", "changed_behavior"],
+            &["repair_route", "changed_behavior"],
+        ],
+    )
+}
+
+fn pr_python_packet_current_test_evidence(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["current_test_evidence"],
+            &["repair_card", "current_test_evidence"],
+            &["evidence_summary"],
+        ],
+    )
+}
+
+fn pr_python_packet_repair_action(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["repair_action"],
+            &["repair_card", "repair_action"],
+            &["repair_route", "repair_kind"],
+            &["repair_route", "route_kind"],
+            &["repair_kind"],
+        ],
+    )
+}
+
+fn pr_python_packet_test_shape(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["recommended_test_shape"],
+            &["repair_card", "recommended_test_shape"],
+            &["repair_route", "target_test_type"],
+        ],
+    )
+}
+
+fn pr_python_packet_suggested_assertion(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["suggested_assertion"],
+            &["repair_card", "suggested_assertion"],
+            &["repair_route", "assertion_shape"],
+        ],
+    )
+}
+
+fn pr_python_packet_suggested_test_file(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["suggested_test_file"],
+            &["repair_card", "suggested_test_file"],
+            &["repair_route", "target_file"],
+        ],
+    )
+    .or_else(|| pr_first_string_array_path(packet, &["allowed_files"]))
+    .or_else(|| pr_first_string_array_path(packet, &["allowed_edit_surface"]))
+}
+
+fn pr_python_packet_suggested_test_name(packet: &Value) -> Option<String> {
+    pr_first_string_path(
+        packet,
+        &[
+            &["suggested_test_name"],
+            &["repair_card", "suggested_test_name"],
+            &["repair_route", "related_test"],
+            &["related_test_or_observer", "name"],
+        ],
+    )
+}
+
+fn pr_python_packet_stop_conditions(packet: &Value) -> Vec<String> {
+    audit_string_array(packet, &["stop_if"])
+        .or_else(|| audit_string_array(packet, &["stop_conditions"]))
+        .or_else(|| audit_string_array(packet, &["repair_card", "stop_conditions"]))
+        .or_else(|| audit_string_array(packet, &["repair_route", "stop_conditions"]))
+        .unwrap_or_default()
+}
+
+fn pr_first_string_path(value: &Value, paths: &[&[&str]]) -> Option<String> {
+    paths.iter().find_map(|path| pr_string_path(value, path))
+}
+
+fn pr_first_string_array_path(value: &Value, path: &[&str]) -> Option<String> {
+    audit_get(value, path)
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(json_scalar_as_string)
 }
 
 fn pr_packet_missing_discriminator(packet: &Value) -> Option<String> {
@@ -59770,7 +60149,8 @@ mod tests {
         report_index_markdown, report_index_missing_artifact_count, report_index_missing_expected,
         report_index_next_commands, report_index_repo_ops_packets, report_index_repo_ops_status,
         report_status_from_text, ripr_command_literals_in_text, ripr_debug_binary,
-        ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
+        ripr_plus_receipt_from_badge, ripr_plus_receipt_from_repo_badge_json,
+        ripr_plus_receipt_markdown, ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
         ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
         ripr_swarm_attempt_ledger_from_values,
         ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts,
@@ -66307,6 +66687,78 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             body.contains("- related test or observer: `tests/pricing.rs:42` `discount_boundary`")
         );
         assert!(body.contains("- verify: `ripr agent verify --root . --json`"));
+        assert!(body.contains("Does not run mutation testing"));
+    }
+
+    #[test]
+    fn pr_actionable_front_panel_highlights_top_python_repair_card() {
+        let changes = vec![ChangedPath {
+            path: "app/pricing.py".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        }];
+        let actionable = PrActionableInput::Read(serde_json::json!({
+            "report": "actionable-gaps",
+            "summary": {
+                "actionable_gaps": 1,
+                "packets_emitted": 1,
+                "public_projection_eligible_packets": 1,
+                "static_limitations": 0
+            },
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                    "gap_state": "actionable",
+                    "public_projection_eligible": true,
+                    "language": "python",
+                    "language_status": "preview",
+                    "authority_boundary": "Python repair cards are preview advisory evidence.",
+                    "source_file": "app/pricing.py",
+                    "changed_owner": "calculate_discount",
+                    "changed_behavior": "if amount >= threshold:",
+                    "repair_kind": "add_boundary_assertion",
+                    "missing_discriminator": "amount == threshold",
+                    "current_test_evidence": "tests/test_pricing.py reaches calculate_discount but only asserts broad success.",
+                    "recommended_test_shape": "pytest exact boundary assertion",
+                    "suggested_assertion": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                    "suggested_test_file": "tests/test_pricing.py",
+                    "suggested_test_name": "test_calculate_discount_threshold_boundary",
+                    "allowed_files": ["tests/test_pricing.py"],
+                    "forbidden_files": ["app/pricing.py"],
+                    "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+                    "receipt_command": "ripr outcome --before target/ripr/reports/before-check.json --after target/ripr/reports/after-check.json --out target/ripr/receipts/python-pricing-boundary.json",
+                    "stop_if": [
+                        "import cannot be resolved",
+                        "expected value is ambiguous",
+                        "production code edit appears necessary"
+                    ]
+                }
+            ]
+        }));
+
+        let body = pr_actionable_delta_front_panel_from_inputs(
+            &changes,
+            &actionable,
+            &PrActionableInput::Missing,
+            &PrActionableInput::Missing,
+        );
+
+        assert!(body.contains("Top Python repair card:"));
+        assert!(body.contains("- language: `python` (`preview`)"));
+        assert!(body.contains("Python repair cards are preview advisory evidence."));
+        assert!(body.contains(
+            "- canonical gap: `gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold`"
+        ));
+        assert!(body.contains("- Changed owner: `calculate_discount`"));
+        assert!(body.contains("- Missing discriminator: amount == threshold"));
+        assert!(body.contains("- test shape: pytest exact boundary assertion"));
+        assert!(body.contains(
+            "- Suggested test target: `test_calculate_discount_threshold_boundary` in `tests/test_pricing.py`"
+        ));
+        assert!(body.contains(
+            "- Verify: `pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary`"
+        ));
+        assert!(body.contains("- Receipt: `ripr outcome --before"));
+        assert!(body.contains("  - production code edit appears necessary"));
         assert!(body.contains("Does not run mutation testing"));
     }
 
@@ -75905,6 +76357,154 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
                 ));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_plus_receipt_counts_canonical_gaps_not_raw_inventory() -> Result<(), String> {
+        let fixture = r#"{
+            "schema_version": "0.5",
+            "label": "ripr",
+            "kind": "ripr",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "message": "2",
+            "status": "warn",
+            "color": "orange",
+            "counts": {
+                "raw_seams": 5,
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 1
+            },
+            "reason_counts": {
+                "no_assertion_detected": 1,
+                "smoke_oracle_only": 1
+            },
+            "warnings": []
+        }"#;
+        let receipt = ripr_plus_receipt_from_repo_badge_json(fixture, "HEAD", None)?;
+
+        assert_eq!(receipt["basis"], "canonical_actionable_gap");
+        assert_eq!(receipt["source_format"], "repo-badge-json");
+        assert_eq!(receipt["unresolved"], 2);
+        assert_ne!(receipt["unresolved"], receipt["raw_inventory"]["raw_seams"]);
+        assert_eq!(receipt["raw_inventory"]["raw_seams"], 5);
+        assert_eq!(receipt["raw_inventory"]["debt_basis"], false);
+        assert_eq!(receipt["suppressed"], 1);
+        assert_eq!(receipt["top_files"].as_array().map(Vec::len), Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_plus_receipt_rejects_non_canonical_basis() {
+        let badge = BadgeNativeAuditSnapshot {
+            label: "ripr".to_string(),
+            kind: "ripr".to_string(),
+            scope: "repo".to_string(),
+            basis: "seam_native".to_string(),
+            message: "5".to_string(),
+            status: "warn".to_string(),
+            color: "orange".to_string(),
+            counts: BTreeMap::from([
+                ("raw_seams".to_string(), 5),
+                ("unsuppressed_exposure_gaps".to_string(), 2),
+            ]),
+            reason_counts: BTreeMap::new(),
+            warnings: Vec::new(),
+        };
+
+        let err = ripr_plus_receipt_from_badge(&badge, "HEAD", None)
+            .expect_err("seam-native inventory must not become RIPR+ debt");
+        assert!(err.contains("canonical actionable or gap decision ledger basis"));
+    }
+
+    #[test]
+    fn ripr_plus_receipt_accepts_gap_decision_ledger_basis() -> Result<(), String> {
+        let badge = BadgeNativeAuditSnapshot {
+            label: "ripr".to_string(),
+            kind: "ripr".to_string(),
+            scope: "repo".to_string(),
+            basis: "gap_decision_ledger".to_string(),
+            message: "1".to_string(),
+            status: "warn".to_string(),
+            color: "yellow".to_string(),
+            counts: BTreeMap::from([
+                ("analyzed_gap_records".to_string(), 18),
+                ("unsuppressed_exposure_gaps".to_string(), 1),
+            ]),
+            reason_counts: BTreeMap::new(),
+            warnings: Vec::new(),
+        };
+
+        let receipt = ripr_plus_receipt_from_badge(
+            &badge,
+            "HEAD",
+            Some(Path::new("fixtures/gap-decision-ledger/corpus.json")),
+        )?;
+        assert_eq!(receipt["basis"], "gap_decision_ledger");
+        assert_eq!(receipt["unresolved"], 1);
+        assert_eq!(receipt["counts"]["analyzed_gap_records"], 18);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_plus_receipt_markdown_names_bounded_top_file_behavior() -> Result<(), String> {
+        let fixture = r#"{
+            "schema_version": "0.5",
+            "label": "ripr",
+            "kind": "ripr",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "message": "2",
+            "status": "warn",
+            "color": "orange",
+            "counts": {
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_counts": {
+                "smoke_oracle_only": 2
+            },
+            "warnings": []
+        }"#;
+        let receipt = ripr_plus_receipt_from_repo_badge_json(fixture, "HEAD", None)?;
+        let markdown = ripr_plus_receipt_markdown(&receipt);
+
+        assert!(markdown.contains("canonical_actionable_gap"));
+        assert!(markdown.contains("| Unresolved | 2 |"));
+        assert!(markdown.contains("repo-badge-json"));
+        assert!(markdown.contains("does not run full `repo-exposure-json`"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_plus_receipt_source_command_names_gap_ledger() -> Result<(), String> {
+        let fixture = r#"{
+            "schema_version": "0.5",
+            "label": "ripr",
+            "kind": "ripr",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "message": "2",
+            "status": "warn",
+            "color": "orange",
+            "counts": {
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_counts": {},
+            "warnings": []
+        }"#;
+        let receipt = ripr_plus_receipt_from_repo_badge_json(
+            fixture,
+            "HEAD",
+            Some(Path::new("target/ripr/reports/gap-decision-ledger.json")),
+        )?;
+
+        assert_eq!(
+            receipt["source_command"],
+            "ripr check --root . --format repo-badge-json --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+        );
         Ok(())
     }
 
