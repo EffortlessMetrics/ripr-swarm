@@ -375,6 +375,40 @@
       "reason": "A real queued packet attempt exposed that the default repo-exposure verify route can be too broad for a bounded test-only repair handoff."
     },
     {
+      "id": "lsp_call_observer_bounded_receipt_improved",
+      "source_ref": "local:bounded-add-call-observer-receipt-2026-05-30",
+      "canonical_gap_id": "gap:54970c87c8f8ca9d",
+      "packet_id": "gap:54970c87c8f8ca9d",
+      "repair_kind": "add_call_observer",
+      "target_test_or_observer_shape": "bounded serve_stdio call-presence observer verified by the focused LSP test filter",
+      "verify_command": "cargo test -p ripr serve_stdio_call_presence_observer",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask dogfood",
+      "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Re-ran the call-observer route through the bounded related-test verify command instead of the broad repo-exposure snapshot comparison.",
+      "evidence_movement": "improved: the add_call_observer route now has a focused verify command and a durable dogfood receipt instead of only an attempted_no_receipt timeout.",
+      "operator_note": "The original timed-out attempt stays in the corpus as historical evidence; this follow-up only proves the bounded receipt route, not closure of the original static gap.",
+      "must_not_change": [
+        "crates/ripr/src/lsp.rs",
+        "public badge semantics",
+        "CI gate defaults",
+        "provider integration",
+        "mutation execution"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/real-repair-attempts/corpus.json:lsp_call_observer_attempted_no_receipt_timeout",
+        "crates/ripr/src/lsp/tests.rs:serve_stdio_call_presence_observer",
+        "xtask/src/main.rs:lane1_actionable_gap_verify_command_uses_bounded_related_target_over_unbounded_snapshot"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real follow-up run proved that the add_call_observer route can be receipted with a bounded focused verify command rather than a broad repo-exposure after snapshot."
+    },
+    {
       "id": "repair_route_quality_sample_actions_improved",
       "source_ref": "EffortlessMetrics/ripr-swarm#575",
       "canonical_gap_id": "gap:repair-route-quality-sample-actions",
