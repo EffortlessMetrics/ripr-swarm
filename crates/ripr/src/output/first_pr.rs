@@ -23,6 +23,7 @@ const START_HERE_MD: &str = "start-here.md";
 const DEFAULT_REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_JSON: &str = "target/ripr/reports/repo-exposure-latency.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_REPORT: &str = "target/ripr/reports/repo-exposure-latency.md";
+const DEFAULT_CHECK_OUTPUT: &str = "target/ripr/reports/check.json";
 const DEFAULT_GAP_LEDGER: &str = "target/ripr/reports/gap-decision-ledger.json";
 const DEFAULT_FIRST_ACTION: &str = "target/ripr/reports/first-useful-action.json";
 const DEFAULT_REVIEW_COMMENTS: &str = "target/ripr/review/comments.json";
@@ -239,7 +240,7 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
             format!("The gap decision ledger could not be parsed: {message}"),
             Some(format!(
                 "Regenerate the gap ledger with `{}` before assigning repair work.",
-                regenerate_gap_ledger_command(&options.gap_ledger)
+                regenerate_gap_ledger_command(root, options)
             )),
         ),
     };
@@ -280,7 +281,7 @@ fn render_start_here_packet_with_selection(
             "gap_ledger",
             "Gap decision ledger",
             &options.gap_ledger,
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         ),
         artifact_status(
             root,
@@ -353,7 +354,7 @@ fn render_start_here_packet_with_selection(
             "receipts_dir": options.receipts_dir
         },
         "selected": selection.to_json(),
-        "commands": selection.commands_json(options),
+        "commands": selection.commands_json(root, options),
         "artifacts": artifacts,
         "authority": {
             "status": "advisory",
@@ -1059,11 +1060,11 @@ impl Selection {
         Some(top_gap.agent_packet_command.clone())
     }
 
-    fn commands_json(&self, options: &FirstPrOptions) -> Value {
+    fn commands_json(&self, root: &Path, options: &FirstPrOptions) -> Value {
         let mut commands = Map::new();
         commands.insert(
             "regenerate_gap_ledger".to_string(),
-            Value::String(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Value::String(regenerate_gap_ledger_command(root, options)),
         );
         match self {
             Self::TopGap(top_gap) => {
@@ -1228,14 +1229,14 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         return Selection::blocked(
             "timeout",
             "The gap decision ledger reports a timeout; refresh the first-run evidence before assigning repair work.".to_string(),
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if ledger_reports_stale(gap_ledger) {
         return Selection::blocked(
             "stale_artifact",
             "The gap decision ledger is stale; refresh the first-run evidence before assigning repair work.".to_string(),
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if let Some(observed_root) = string_path(gap_ledger, &["root"])
@@ -1247,7 +1248,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
                 "The gap decision ledger was generated for root `{observed_root}`, but first-pr is running for `{}`.",
                 options.root
             ),
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if ledger_reports_blocked(gap_ledger) {
@@ -1264,7 +1265,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         return Selection::blocked(
             "blocked_artifact",
             message,
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if ledger_reports_empty_diff(gap_ledger) {
@@ -1275,7 +1276,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         );
     }
     if let Some(record) = records.iter().copied().find(is_first_run_repairable_gap) {
-        return Selection::TopGap(Box::new(top_gap_from_record(record, options)));
+        return Selection::TopGap(Box::new(top_gap_from_record(record, root, options)));
     }
     Selection::no_action(
         "no_action",
@@ -1286,6 +1287,15 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
 }
 
 fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Selection {
+    if uses_python_check_output_gap_ledger(root) {
+        return Selection::missing_artifact(
+            "gap_ledger",
+            "Gap decision ledger",
+            &options.gap_ledger,
+            regenerate_gap_ledger_command(root, options),
+        );
+    }
+
     let repo_exposure = resolve_path(root, DEFAULT_REPO_EXPOSURE);
     if !repo_exposure.exists() {
         return missing_repo_exposure_selection(root, options);
@@ -1294,7 +1304,7 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
         "gap_ledger",
         "Gap decision ledger",
         &options.gap_ledger,
-        regenerate_gap_ledger_command(&options.gap_ledger),
+        regenerate_gap_ledger_command(root, options),
     )
 }
 
@@ -1469,7 +1479,7 @@ fn first_pr_language_is_supported(record: &Value) -> bool {
     )
 }
 
-fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelection {
+fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) -> TopGapSelection {
     let repair_route = record.get("repair_route");
     let anchor = record.get("anchor");
     let gap_id = string_path(record, &["gap_id"]).unwrap_or_else(|| "unknown-gap".to_string());
@@ -1481,7 +1491,7 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
         (Some(record), &["changed_behavior"]),
     ]);
     let verify_command = first_string_array_item(record, &["verification_commands"])
-        .unwrap_or_else(|| regenerate_gap_ledger_command(&options.gap_ledger));
+        .unwrap_or_else(|| regenerate_gap_ledger_command(root, options));
     let receipt_path = string_path(record, &["receipt_path"])
         .or_else(|| string_path(record, &["receipt", "path"]))
         .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
@@ -1815,10 +1825,32 @@ fn bool_path(value: &Value, path: &[&str]) -> Option<bool> {
     path_value(value, path)?.as_bool()
 }
 
-fn regenerate_gap_ledger_command(out: &str) -> String {
+fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> String {
+    if uses_python_check_output_gap_ledger(root) {
+        return regenerate_python_gap_ledger_command(options);
+    }
+    regenerate_repo_exposure_gap_ledger_command(&options.gap_ledger)
+}
+
+fn uses_python_check_output_gap_ledger(root: &Path) -> bool {
+    detect_python_project(root) && !root.join("Cargo.toml").is_file()
+}
+
+fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
     format!(
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out {out} --out-md {}",
         with_extension(out, "md")
+    )
+}
+
+fn regenerate_python_gap_ledger_command(options: &FirstPrOptions) -> String {
+    let root = shell_arg(&options.root);
+    let base = shell_arg(&options.base);
+    let check_output = shell_arg(DEFAULT_CHECK_OUTPUT);
+    let out = shell_arg(&options.gap_ledger);
+    let out_md = shell_arg(&with_extension(&options.gap_ledger, "md"));
+    format!(
+        "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
     )
 }
 
@@ -3026,6 +3058,34 @@ mod tests {
             "Missing artifact: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Regeneration command: `ripr reports gap-ledger"));
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn missing_python_gap_ledger_uses_check_output_bridge() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-missing-gap-ledger")?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert_eq!(packet["selected"]["artifact"]["path"], DEFAULT_GAP_LEDGER);
+        let command = packet["selected"]["regeneration_command"]
+            .as_str()
+            .ok_or_else(|| "selected regeneration command missing".to_string())?;
+        assert!(command.contains(
+            "ripr check --root . --base origin/main --json > target/ripr/reports/check.json"
+        ));
+        assert!(command.contains(
+            "ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
+        ));
+        assert!(!command.contains("--repo-exposure"));
+        assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
+        assert_eq!(packet["artifacts"][0]["regeneration_command"], command);
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
     }
