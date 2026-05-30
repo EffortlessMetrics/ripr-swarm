@@ -52,6 +52,34 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/ambiguous.ts",
+            "kind": "typescript_preview_probe",
+            "line": 4,
+            "owner": "summarize",
+            "raw": "file=src/ambiguous.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_ambiguous.ts:4:typescript_preview;owner=summarize",
+            "source_id": "probe:src_ambiguous.ts:4:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -107,6 +135,26 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "dynamic_dispatch",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "gap_state": "static_limitation",
+        "missing_actionability_fields": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/ambiguous.ts",
+            "kind": "typescript_preview_probe",
+            "line": 5,
+            "owner": "summarize",
+            "raw": "file=src/ambiguous.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_ambiguous.ts:5:typescript_preview;owner=summarize",
+            "source_id": "probe:src_ambiguous.ts:5:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet",
+        "why_not_actionable": "static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -174,6 +222,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/errors.ts",
+            "kind": "typescript_preview_probe",
+            "line": 3,
+            "owner": "parseToken",
+            "raw": "file=src/errors.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_errors.ts:3:typescript_preview;owner=parseToken",
+            "source_id": "probe:src_errors.ts:3:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -240,6 +318,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/notify.js",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": "notify",
+            "raw": "file=src/notify.js;line=2;kind=typescript_preview_probe;source_id=probe:src_notify.js:2:typescript_preview;owner=notify",
+            "source_id": "probe:src_notify.js:2:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -305,6 +413,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": "discountedTotal",
+            "raw": "file=src/pricing.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:2:typescript_preview;owner=discountedTotal",
+            "source_id": "probe:src_pricing.ts:2:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -371,6 +509,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "line": 3,
+            "owner": "discountedTotal",
+            "raw": "file=src/pricing.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:3:typescript_preview;owner=discountedTotal",
+            "source_id": "probe:src_pricing.ts:3:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -437,6 +605,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/profile.ts",
+            "kind": "typescript_preview_probe",
+            "line": 4,
+            "owner": "updateProfile",
+            "raw": "file=src/profile.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_profile.ts:4:typescript_preview;owner=updateProfile",
+            "source_id": "probe:src_profile.ts:4:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -503,6 +701,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/profile.ts",
+            "kind": "typescript_preview_probe",
+            "line": 5,
+            "owner": "updateProfile",
+            "raw": "file=src/profile.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_profile.ts:5:typescript_preview;owner=updateProfile",
+            "source_id": "probe:src_profile.ts:5:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -569,6 +797,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/view.jsx",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": "StatusView",
+            "raw": "file=src/view.jsx;line=2;kind=typescript_preview_probe;source_id=probe:src_view.jsx:2:typescript_preview;owner=StatusView",
+            "source_id": "probe:src_view.jsx:2:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
@@ -635,6 +893,36 @@
           "oracle": "expect(...).toBeTruthy(...)"
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/widget.tsx",
+            "kind": "typescript_preview_probe",
+            "line": 4,
+            "owner": "PriceBadge",
+            "raw": "file=src/widget.tsx;line=4;kind=typescript_preview_probe;source_id=probe:src_widget.tsx:4:typescript_preview;owner=PriceBadge",
+            "source_id": "probe:src_widget.tsx:4:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",

@@ -340,7 +340,7 @@ git diff --check
 
 ## Work Item: output/typescript-preview-metadata
 
-Status: ready
+Status: done
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0026, RIPR-SPEC-0027
 Linked ADR: n/a
@@ -352,6 +352,45 @@ Blocked by: none
 Project TypeScript/JavaScript preview metadata through human, JSON,
 repo-exposure, agent, first-pr/pilot, PR summary, and SARIF-supported surfaces
 without a schema fork or Rust behavior change.
+
+### Current Delta
+
+TypeScript/JavaScript preview findings now project fail-closed actionability
+metadata as structured `preview_actionability` in the current TypeScript-bearing
+surfaces: check JSON and diff-scoped SARIF properties. Human output shows a
+dedicated Preview actionability section, and GitHub annotations preserve the
+advisory preview/no-packet boundary. The projection carries `gap_state`,
+`actionability_category`, `why_not_actionable`, `repair_route`, missing
+actionability fields, evidence needed to promote, parsed raw evidence refs,
+`authority_boundary = "preview_advisory_only"`, and
+`repair_packet_ready = false`.
+
+Repo-exposure, agent packet, first-pr/pilot repair packet, PR summary, gate,
+badge, baseline, and RIPR Zero surfaces are intentionally unchanged here because
+TypeScript still has no complete repair packets or GapRecords. Those surfaces
+continue to fail closed until the later repair-packet/LSP/CI slices explicitly
+add bounded TS packet eligibility.
+
+### Proof Commands
+
+```bash
+cargo test -p ripr output::preview_actionability --lib
+cargo test -p ripr finding_json_projects_typescript_preview_actionability --lib
+cargo test -p ripr render_finding_includes_preview_actionability_without_raw_string_spam --lib
+cargo test -p ripr sarif_preserves_preview_actionability_properties --lib
+cargo test -p ripr render_includes_preview_actionability_boundary --lib
+cargo xtask fixtures typescript_strict_actionability
+cargo xtask fixtures typescript_probe_facts
+cargo xtask fixtures typescript_static_limit_taxonomy
+cargo xtask fixtures typescript_parse_error_unsupported_syntax
+cargo xtask fixtures typescript_mocked_module_limit
+cargo xtask goldens check
+cargo xtask check-output-contracts
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-static-language
+git diff --check
+```
 
 ## Work Item: analysis/typescript-strict-actionability
 
@@ -400,7 +439,7 @@ Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027
 Linked ADR: ADR-0011
 Blocks: ci/typescript-preview-language-grouping-proof
-Blocked by: analysis/typescript-strict-actionability
+Blocked by: none
 
 ### Goal
 

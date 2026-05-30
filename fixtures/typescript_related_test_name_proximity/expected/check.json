@@ -68,6 +68,33 @@
           "oracle": ""
         }
       ],
+      "preview_actionability": {
+        "actionability_category": "ambiguous_related_test",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "trusted token-aware relation plus complete verify, receipt, and edit-boundary fields",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": "applyDiscount",
+            "raw": "file=src/pricing.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:2:typescript_preview;owner=applyDiscount",
+            "source_id": "probe:src_pricing.ts:2:typescript_preview"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add a direct owner-call, import-aware, or receiver-aware relation before repair packet projection",
+        "why_not_actionable": "related-test link is heuristic-only and cannot safely borrow extracted assertions as proof"
+      },
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",

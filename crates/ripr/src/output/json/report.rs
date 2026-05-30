@@ -4,7 +4,11 @@ use crate::domain::{
     Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, RelatedTest,
     StageEvidence, ValueFact,
 };
+use crate::output::preview_actionability::{
+    preview_actionability_for, preview_actionability_json_value,
+};
 use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 use super::finding_alignment;
@@ -212,6 +216,15 @@ fn finding_json_with_config_and_counts(
     }
     if let Some(card) = python_repair_card(finding) {
         python_repair_card_json(out, &card, indent + 1);
+        out.push_str(",\n");
+    }
+    if let Some(actionability) = preview_actionability_for(finding) {
+        json_value_field(
+            out,
+            indent + 1,
+            "preview_actionability",
+            &preview_actionability_json_value(&actionability),
+        );
         out.push_str(",\n");
     }
     let stop_reasons = stop_reason_values(finding);
@@ -576,6 +589,23 @@ fn repair_placement_json(out: &mut String, placement: &RepairPlacement, indent: 
         false,
     );
     out.push_str(&format!("{} }}", "  ".repeat(indent)));
+}
+
+fn json_value_field(out: &mut String, indent: usize, name: &str, value: &Value) {
+    let sp = "  ".repeat(indent);
+    out.push_str(&format!("{sp}\"{name}\": "));
+    match serde_json::to_string_pretty(value) {
+        Ok(rendered) => {
+            for (idx, line) in rendered.lines().enumerate() {
+                if idx > 0 {
+                    out.push('\n');
+                    out.push_str(&sp);
+                }
+                out.push_str(line);
+            }
+        }
+        Err(_) => out.push_str("null"),
+    }
 }
 
 fn python_repair_card_json(out: &mut String, card: &PythonRepairCard, indent: usize) {

@@ -717,6 +717,51 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn finding_json_projects_typescript_preview_actionability() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        let mut out = String::new();
+
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+
+        let actionability = &value["preview_actionability"];
+        assert_eq!(actionability["authority_boundary"], "preview_advisory_only");
+        assert_eq!(actionability["repair_packet_ready"], false);
+        assert_eq!(actionability["gap_state"], "advisory");
+        assert_eq!(
+            actionability["actionability_category"],
+            "incomplete_repair_packet"
+        );
+        assert_eq!(
+            actionability["missing_actionability_fields"][0],
+            "canonical_gap_id"
+        );
+        assert_eq!(actionability["raw_evidence_refs"][0]["file"], "src/lib.ts");
+        assert_eq!(actionability["raw_evidence_refs"][0]["line"], 2);
+        assert!(value.get("repair_placement").is_none());
+        assert!(value.get("python_repair_card").is_none());
+        Ok(())
+    }
+
+    fn add_typescript_preview_actionability(finding: &mut Finding) {
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.owner_kind = Some(OwnerKind::Function);
+        finding.evidence = vec![
+            "owner: discountedTotal".to_string(),
+            "gap_state: advisory".to_string(),
+            "actionability_category: incomplete_repair_packet".to_string(),
+            "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
+            "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
+            "missing_actionability_fields: canonical_gap_id, verify_command".to_string(),
+            "evidence_needed_to_promote: canonical gap identity and verify command".to_string(),
+            "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
+        ];
+    }
+
     fn unknown_finding() -> Finding {
         Finding {
             id: "probe:src_lib_rs:1:static_unknown".to_string(),

@@ -29,7 +29,7 @@
       "evidence_path": ["reach unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)", "infection unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)", "propagation unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)", "observation unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)", "discriminator unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s)"],
       "flow_sinks": [
       ],
-      "evidence": ["static_limit unsupported_syntax: 1 parser error(s)", "gap_state: static_limitation", "actionability_category: unsupported_syntax", "why_not_actionable: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s)", "repair_route: fix or isolate the unsupported syntax before relying on repair guidance", "raw_evidence_ref: file=src/broken.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_broken.ts:2:typescript_preview_unsupported_syntax"],
+      "evidence": ["static_limit unsupported_syntax: 1 parser error(s)", "gap_state: static_limitation", "actionability_category: unsupported_syntax", "why_not_actionable: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s)", "repair_route: fix or isolate the unsupported syntax before relying on repair guidance", "evidence_needed_to_promote: resolve the named static limit and re-run TypeScript preview evidence extraction", "raw_evidence_ref: file=src/broken.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_broken.ts:2:typescript_preview_unsupported_syntax"],
       "missing": ["Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance.", "TypeScript preview actionability `static_limitation` / `unsupported_syntax`: static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s). Repair route: fix or isolate the unsupported syntax before relying on repair guidance"],
       "activation": {
         "observed_values": [
@@ -43,6 +43,26 @@
       ],
       "related_tests": [
       ],
+      "preview_actionability": {
+        "actionability_category": "unsupported_syntax",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        "gap_state": "static_limitation",
+        "missing_actionability_fields": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/broken.ts",
+            "kind": "typescript_preview_probe",
+            "line": 2,
+            "owner": null,
+            "raw": "file=src/broken.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_broken.ts:2:typescript_preview_unsupported_syntax",
+            "source_id": "probe:src_broken.ts:2:typescript_preview_unsupported_syntax"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "fix or isolate the unsupported syntax before relying on repair guidance",
+        "why_not_actionable": "static limit `unsupported_syntax` prevents bounded TypeScript repair guidance: 1 parser error(s)"
+      },
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",

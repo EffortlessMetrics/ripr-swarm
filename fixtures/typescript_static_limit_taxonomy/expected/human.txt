@@ -19,6 +19,16 @@ Language
   status: preview
   owner kind: method
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: static_limitation
+  category: decorator_indirection
+  repair packet ready: false
+  why not actionable: static limit `decorator_indirection` prevents bounded TypeScript repair guidance
+  repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet
+  evidence needed: resolve the named static limit and re-run TypeScript preview evidence extraction
+  raw evidence: src/decorated.tsx:7 (typescript_preview_probe) source=probe:src_decorated.tsx:7:typescript_preview owner=save
+
 Static exposure
   no_static_path (warning, confidence 0.40)
 
@@ -33,7 +43,6 @@ Evidence
 Weakness
   - No trusted TypeScript method relation for `save`. Object method calls stay ambiguous in preview until method related-test matching lands.
   - Static limit `decorator_indirection`: owner `save` uses TypeScript decorators; syntax-first preview evidence does not resolve decorator-modified call behavior. Repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet.
-  - TypeScript preview actionability `static_limitation` / `decorator_indirection`: static limit `decorator_indirection` prevents bounded TypeScript repair guidance. Repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet
 
 Next step
   TypeScript preview advisory: static limit `decorator_indirection`; Repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet.; no actionable repair packet is emitted.
@@ -53,6 +62,16 @@ Language
   status: preview
   owner kind: function
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: static_limitation
+  category: dynamic_dispatch
+  repair packet ready: false
+  why not actionable: static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance
+  repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet
+  evidence needed: resolve the named static limit and re-run TypeScript preview evidence extraction
+  raw evidence: src/dispatch.ts:2 (typescript_preview_probe) source=probe:src_dispatch.ts:2:typescript_preview owner=dispatch
+
 Static exposure
   weakly_exposed (warning, confidence 0.40)
 
@@ -67,7 +86,6 @@ Evidence
 Weakness
   - Related test reaches `dispatch` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
   - Static limit `dynamic_dispatch`: the TypeScript preview adapter saw a computed member call such as `obj[name](...)`; syntax alone cannot resolve the called behavior. Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.
-  - TypeScript preview actionability `static_limitation` / `dynamic_dispatch`: static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance. Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet
 
 Next step
   TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.; no actionable repair packet is emitted.
@@ -87,6 +105,16 @@ Language
   status: preview
   owner kind: function
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: static_limitation
+  category: missing_import_graph
+  repair packet ready: false
+  why not actionable: static limit `missing_import_graph` prevents bounded TypeScript repair guidance
+  repair route: add import graph support or inspect the imported implementation before issuing a repair packet
+  evidence needed: resolve the named static limit and re-run TypeScript preview evidence extraction
+  raw evidence: src/label.jsx:3 (typescript_preview_probe) source=probe:src_label.jsx:3:typescript_preview owner=LabelView
+
 Static exposure
   weakly_exposed (warning, confidence 0.40)
 
@@ -102,7 +130,6 @@ Evidence
 Weakness
   - Related test reaches `LabelView` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
   - Static limit `missing_import_graph`: the changed line calls imported symbol `normalizeLabel` from `./labels`; the TypeScript preview adapter does not build a package or import graph for production implementation semantics. Repair route: add import graph support or inspect the imported implementation before issuing a repair packet.
-  - TypeScript preview actionability `static_limitation` / `missing_import_graph`: static limit `missing_import_graph` prevents bounded TypeScript repair guidance. Repair route: add import graph support or inspect the imported implementation before issuing a repair packet
 
 Next step
   TypeScript preview advisory: static limit `missing_import_graph`; Repair route: add import graph support or inspect the imported implementation before issuing a repair packet.; no actionable repair packet is emitted.
@@ -122,6 +149,16 @@ Language
   status: preview
   owner kind: function
 
+Preview actionability
+  authority: preview_advisory_only
+  gap state: static_limitation
+  category: metaprogramming
+  repair packet ready: false
+  why not actionable: static limit `metaprogramming` prevents bounded TypeScript repair guidance
+  repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet
+  evidence needed: resolve the named static limit and re-run TypeScript preview evidence extraction
+  raw evidence: src/proxy.js:2 (typescript_preview_probe) source=probe:src_proxy.js:2:typescript_preview owner=wrap
+
 Static exposure
   weakly_exposed (warning, confidence 0.40)
 
@@ -137,7 +174,6 @@ Evidence
 Weakness
   - Related test reaches `wrap` but the strongest extracted oracle is `smoke_only`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.
   - Static limit `metaprogramming`: the TypeScript preview adapter saw Proxy, Reflect, or property-definition metaprogramming syntax and does not infer runtime-created behavior. Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet.
-  - TypeScript preview actionability `static_limitation` / `metaprogramming`: static limit `metaprogramming` prevents bounded TypeScript repair guidance. Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet
 
 Next step
   TypeScript preview advisory: static limit `metaprogramming`; Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet.; no actionable repair packet is emitted.

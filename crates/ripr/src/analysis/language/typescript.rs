@@ -2770,6 +2770,7 @@ fn unsupported_syntax_finding(
             "actionability_category: unsupported_syntax".to_string(),
             format!("why_not_actionable: {why_not_actionable}"),
             format!("repair_route: {repair_route}"),
+            "evidence_needed_to_promote: resolve the named static limit and re-run TypeScript preview evidence extraction".to_string(),
             typescript_raw_evidence_ref(
                 file,
                 line,
@@ -3112,6 +3113,10 @@ mod tests {
         assert_eq!(finding.language, Some(DomainLanguageId::TypeScript));
         assert_eq!(finding.language_status, Some(LanguageStatus::Preview));
         assert_eq!(finding.stop_reasons, vec![StopReason::StaticProbeUnknown]);
+        assert_evidence_contains(
+            &finding,
+            "evidence_needed_to_promote: resolve the named static limit and re-run TypeScript preview evidence extraction",
+        );
     }
 
     #[test]
