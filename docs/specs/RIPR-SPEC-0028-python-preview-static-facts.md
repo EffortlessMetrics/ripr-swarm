@@ -166,6 +166,9 @@ values defined in RIPR-SPEC-0026:
 - `property_based_test` (e.g., a related test uses Hypothesis `@given(...)`
   generated inputs whose concrete discriminator coverage is not statically
   known)
+- `unresolved_pytest_fixture` (e.g., a related pytest test uses fixture-sourced
+  input or expected values whose concrete discriminator coverage is not
+  statically known)
 - `unsupported_syntax`
 
 ## Canonical Gap Identity
@@ -409,4 +412,5 @@ adapter contributes:
 - `language_adapter_python_static_limit_mocked_module`
 - `language_adapter_python_static_limit_opaque_custom_assertion_helper`
 - `language_adapter_python_static_limit_property_based_test`
+- `language_adapter_python_static_limit_unresolved_pytest_fixture`
 - `language_adapter_python_static_limit_unsupported_syntax`

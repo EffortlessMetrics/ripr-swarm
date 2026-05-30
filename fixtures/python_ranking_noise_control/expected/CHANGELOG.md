@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+Refresh static-limit discriminator evidence as unknown
+
+Command:
+`cargo xtask goldens bless python_ranking_noise_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
