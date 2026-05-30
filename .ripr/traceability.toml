@@ -1987,6 +1987,7 @@ fixtures = [
   "fixtures/typescript_related_test_name_proximity",
   "fixtures/typescript_probe_facts",
   "fixtures/typescript_static_limit_taxonomy",
+  "fixtures/typescript_strict_actionability",
   "fixtures/mixed_rust_typescript_preview",
 ]
 code = [
@@ -2014,6 +2015,7 @@ outputs = [
   "fixtures/typescript_related_test_name_proximity/expected/check.json",
   "fixtures/typescript_probe_facts/expected/check.json",
   "fixtures/typescript_static_limit_taxonomy/expected/check.json",
+  "fixtures/typescript_strict_actionability/expected/check.json",
   "docs/handoffs/2026-05-13-language-adapter-preview-receipts.md",
   "docs/handoffs/2026-05-13-campaign-27-closeout.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
@@ -2048,6 +2050,9 @@ metrics = [
   "language_adapter_typescript_static_limit_decorator_indirection",
   "language_adapter_typescript_static_limit_mocked_module",
   "language_adapter_typescript_static_limit_unsupported_syntax",
+  "language_adapter_typescript_actionability_advisory",
+  "language_adapter_typescript_actionability_static_limitation",
+  "language_adapter_typescript_actionability_already_observed",
 ]
 
 [[behavior]]
@@ -4164,14 +4169,19 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_missing_repair_guidance",
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_missing_receipt_command_or_path",
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_missing_verify_command",
+  "crates/ripr/src/analysis/language/typescript.rs::tests::classify_change_marks_weak_direct_typescript_candidate_advisory",
+  "crates/ripr/src/analysis/language/typescript.rs::tests::classify_change_returns_exposed_when_related_test_has_strong_oracle",
+  "crates/ripr/src/analysis/language/typescript.rs::tests::classify_change_returns_no_static_path_when_no_related_test",
 ]
 fixtures = [
   "fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json",
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/editor_actionable_gap_queue",
+  "fixtures/typescript_strict_actionability",
 ]
 code = [
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/language/typescript.rs",
   "crates/ripr/src/output/evidence_record.rs",
   "crates/ripr/src/lsp/gap_artifacts.rs",
   "xtask/src/main.rs",

@@ -345,7 +345,7 @@ Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0026, RIPR-SPEC-0027
 Linked ADR: n/a
 Blocks: lsp/typescript-preview-repair-context
-Blocked by: analysis/typescript-strict-actionability
+Blocked by: none
 
 ### Goal
 
@@ -355,7 +355,7 @@ without a schema fork or Rust behavior change.
 
 ## Work Item: analysis/typescript-strict-actionability
 
-Status: ready
+Status: done
 Linked proposal: RIPR-PROP-0001
 Linked spec: RIPR-SPEC-0027, RIPR-SPEC-0061
 Linked ADR: n/a
@@ -368,6 +368,30 @@ Make a TS/JS gap actionable only when it has `canonical_gap_id`, `gap_state`,
 `repair_kind`, target test/observer shape, verify command, receipt command,
 confidence, evidence refs, and `must_not_change`; otherwise emit a named
 limitation, advisory, or missing-context route.
+
+### Current Delta
+
+TypeScript/JavaScript preview findings now fail closed with explicit
+`gap_state`, `actionability_category`, `why_not_actionable`, `repair_route`,
+missing actionability fields, evidence needed to promote, and raw preview
+evidence refs in the existing finding evidence. Static limits become
+`static_limitation`, strong exact-oracle evidence becomes `already_observed`,
+and incomplete weak candidates remain advisory instead of repair-packet
+eligible.
+
+### Proof Commands
+
+```bash
+cargo test -p ripr typescript --lib
+cargo xtask fixtures typescript_strict_actionability
+cargo xtask fixtures typescript_static_limit_taxonomy
+cargo xtask goldens check
+cargo xtask check-output-contracts
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-static-language
+git diff --check
+```
 
 ## Work Item: lsp/typescript-preview-repair-context
 

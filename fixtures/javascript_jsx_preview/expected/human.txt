@@ -32,6 +32,7 @@ Evidence
 
 Weakness
   - Related test reaches `PriceLabel` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+  - TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior
 
 Next step
-  TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+  TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
