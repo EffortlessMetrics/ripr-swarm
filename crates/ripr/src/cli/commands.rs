@@ -326,8 +326,17 @@ fn run_swarm_queue(options: SwarmQueueOptions) -> Result<(), String> {
             options.gap_ledger.display()
         )
     })?;
+    let rendered = render_swarm_queue_from_gap_ledger_contents(&options, &contents)?;
+    print!("{rendered}");
+    Ok(())
+}
+
+fn render_swarm_queue_from_gap_ledger_contents(
+    options: &SwarmQueueOptions,
+    contents: &str,
+) -> Result<String, String> {
     let source =
-        output::gap_decision_ledger::parse_gap_record_source_json(&contents).map_err(|err| {
+        output::gap_decision_ledger::parse_gap_record_source_json(contents).map_err(|err| {
             format!(
                 "swarm queue --gap-ledger {} is invalid: {err}",
                 options.gap_ledger.display()
@@ -357,8 +366,7 @@ fn run_swarm_queue(options: SwarmQueueOptions) -> Result<(), String> {
             )?
         }
     };
-    print!("{rendered}");
-    Ok(())
+    Ok(rendered)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -10577,6 +10585,145 @@ language = "rust"
             parse_swarm_queue_options(&args(&["--top", "0"])),
             Err("invalid swarm queue --top: expected a positive integer".to_string())
         );
+    }
+
+    fn python_swarm_queue_gap_ledger(root: &Path) -> String {
+        serde_json::json!({
+            "root": output::outcome::display_path(root),
+            "generated_at": "unix_ms:1778240100000",
+            "records": [{
+                "gap_id": "gap:python:pricing-boundary",
+                "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                "kind": "MissingBoundaryAssertion",
+                "language": "python",
+                "language_status": "preview",
+                "scope": "pr_local",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "repairable",
+                "authority_boundary": "preview_static_advisory",
+                "anchor": {
+                    "file": "src/pricing.py",
+                    "line": 42,
+                    "owner": "calculate_discount",
+                    "dedupe_fingerprint": "gap:python:pricing"
+                },
+                "evidence_ids": ["evidence:pricing-boundary"],
+                "projection_eligibility": {
+                    "agent_packet": {
+                        "eligible": true,
+                        "reason": "repairable"
+                    }
+                },
+                "repair_route": {
+                    "route_kind": "StrengthenExistingTest",
+                    "target_file": "tests/test_pricing.py",
+                    "related_test": "tests/test_pricing.py::test_calculate_discount_smoke",
+                    "missing_discriminator": "amount == threshold",
+                    "assertion_shape": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                    "changed_behavior": "amount >= threshold",
+                    "stop_conditions": ["Stop if expected value is ambiguous."]
+                },
+                "verification_commands": ["pytest tests/test_pricing.py::test_calculate_discount_smoke"],
+                "receipt_command": "ripr outcome --before before.json --after after.json"
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn swarm_queue_render_blocks_gap_ledger_from_wrong_root() -> Result<(), String> {
+        let temp = unique_command_test_dir("swarm-queue-render-wrong-root");
+        let requested = temp.join("requested");
+        let other = temp.join("other");
+        std::fs::create_dir_all(&requested).map_err(|err| format!("create requested: {err}"))?;
+        std::fs::create_dir_all(&other).map_err(|err| format!("create other: {err}"))?;
+        let options = SwarmQueueOptions {
+            root: requested.clone(),
+            gap_ledger: requested.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+
+        let json = render_swarm_queue_from_gap_ledger_contents(
+            &options,
+            &python_swarm_queue_gap_ledger(&other),
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("wrong_root")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "wrong-root queue should not emit packets: {json}"
+        );
+
+        std::fs::remove_dir_all(&temp).map_err(|err| format!("remove temp: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_render_emits_packets_for_matching_root() -> Result<(), String> {
+        let root = unique_command_test_dir("swarm-queue-render-matching-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let options = SwarmQueueOptions {
+            root: root.clone(),
+            gap_ledger: root.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+
+        let json = render_swarm_queue_from_gap_ledger_contents(
+            &options,
+            &python_swarm_queue_gap_ledger(&root),
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("advisory")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("returned"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|packets| packets.first())
+                .and_then(|packet| packet.get("allowed_files"))
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_pricing.py")
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
     }
 
     #[test]
