@@ -26076,6 +26076,83 @@ fn ripr_swarm_missing_evidence_field_sample(
     )
 }
 
+fn ripr_swarm_readiness_missing_receipt_action_from_route(
+    route: &RiprSwarmRepairRouteQualityRow,
+) -> RiprSwarmReadinessNextAction {
+    ripr_swarm_readiness_missing_receipt_action(
+        route.attempted_no_receipt,
+        route.sample_packet_ids.first().cloned(),
+        route.sample_canonical_gap_ids.first().cloned(),
+        Some(route.repair_kind.clone()),
+    )
+}
+
+fn ripr_swarm_readiness_missing_receipt_action(
+    count: usize,
+    packet_id: Option<String>,
+    canonical_gap_id: Option<String>,
+    repair_kind: Option<String>,
+) -> RiprSwarmReadinessNextAction {
+    RiprSwarmReadinessNextAction {
+        kind: "collect_missing_attempt_receipts".to_string(),
+        packet_id,
+        canonical_gap_id,
+        evidence_class: None,
+        repair_kind,
+        command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
+        reason: format!(
+            "{count} attempted packet(s) have no matching receipt; run the packet receipt command and refresh the attempt ledger before claiming outcomes"
+        ),
+    }
+}
+
+fn ripr_swarm_readiness_repair_route_quality_action(
+    route: &RiprSwarmRepairRouteQualityRow,
+) -> RiprSwarmReadinessNextAction {
+    let failures = ripr_swarm_repair_route_quality_failure_count(route);
+    let dominant_reason =
+        ripr_swarm_repair_route_quality_dominant_failure_reason(route).unwrap_or("unknown");
+    let dominant_count = ripr_swarm_repair_route_quality_dominant_failure_count(route);
+    let backlog_packet_id =
+        ripr_swarm_repair_route_quality_backlog_packet_id(route, dominant_reason);
+    let improvement_route =
+        ripr_swarm_repair_route_quality_improvement_route(route, dominant_reason);
+    let sample_packet = route
+        .sample_packet_ids
+        .first()
+        .map_or("unknown", String::as_str);
+    RiprSwarmReadinessNextAction {
+        kind: "improve_repair_route_quality".to_string(),
+        packet_id: Some(backlog_packet_id.clone()),
+        canonical_gap_id: route.sample_canonical_gap_ids.first().cloned(),
+        evidence_class: None,
+        repair_kind: Some(route.repair_kind.clone()),
+        command: Some("cargo xtask ripr-swarm readiness".to_string()),
+        reason: format!(
+            "`{}` has {} failing latest attempt(s); dominant reason `{}` appears {} time(s); route backlog packet `{}` through `{}` before increasing packet volume; sample failed packet `{}`",
+            route.repair_kind,
+            failures,
+            dominant_reason,
+            dominant_count,
+            backlog_packet_id,
+            improvement_route,
+            sample_packet
+        ),
+    }
+}
+
+fn ripr_swarm_readiness_has_next_action_packet(
+    actions: &[RiprSwarmReadinessNextAction],
+    packet_id: Option<&str>,
+) -> bool {
+    let Some(packet_id) = packet_id else {
+        return false;
+    };
+    actions
+        .iter()
+        .any(|action| action.packet_id.as_deref() == Some(packet_id))
+}
+
 fn ripr_swarm_json_string(row: &Value, path: &[&str]) -> Option<String> {
     audit_get(row, path)
         .and_then(Value::as_str)
@@ -26385,22 +26462,33 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     if summary.attempted_no_receipt_packets > 0 {
-        let (packet_id, canonical_gap_id, repair_kind) = ripr_swarm_missing_evidence_field_sample(
-            sources.top_missing_evidence_fields,
-            "attempt_receipt",
-        );
-        actions.push(RiprSwarmReadinessNextAction {
-            kind: "collect_missing_attempt_receipts".to_string(),
-            packet_id,
-            canonical_gap_id,
-            evidence_class: None,
-            repair_kind,
-            command: Some("cargo xtask ripr-swarm attempt-ledger".to_string()),
-            reason: format!(
-                "{} attempted packet(s) have no matching receipt; run the packet receipt command and refresh the attempt ledger before claiming outcomes",
-                summary.attempted_no_receipt_packets
-            ),
+        let timeout_receipt_route = sources.top_failing_repair_routes.iter().find(|route| {
+            route.attempted_no_receipt > 0
+                && ripr_swarm_repair_route_quality_has_timeout_receipt(route)
         });
+        if let Some(route) = timeout_receipt_route {
+            actions.push(ripr_swarm_readiness_repair_route_quality_action(route));
+        }
+        if let Some(route) = sources.top_failing_repair_routes.iter().find(|route| {
+            route.attempted_no_receipt > 0
+                && !ripr_swarm_repair_route_quality_has_timeout_receipt(route)
+        }) {
+            actions.push(ripr_swarm_readiness_missing_receipt_action_from_route(
+                route,
+            ));
+        } else if timeout_receipt_route.is_none() {
+            let (packet_id, canonical_gap_id, repair_kind) =
+                ripr_swarm_missing_evidence_field_sample(
+                    sources.top_missing_evidence_fields,
+                    "attempt_receipt",
+                );
+            actions.push(ripr_swarm_readiness_missing_receipt_action(
+                summary.attempted_no_receipt_packets,
+                packet_id,
+                canonical_gap_id,
+                repair_kind,
+            ));
+        }
     }
     if summary.missing_verify_result > 0 {
         let (packet_id, canonical_gap_id, repair_kind) = ripr_swarm_missing_evidence_field_sample(
@@ -26471,36 +26559,10 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     if let Some(route) = sources.top_failing_repair_routes.first() {
-        let failures = ripr_swarm_repair_route_quality_failure_count(route);
-        let dominant_reason =
-            ripr_swarm_repair_route_quality_dominant_failure_reason(route).unwrap_or("unknown");
-        let dominant_count = ripr_swarm_repair_route_quality_dominant_failure_count(route);
-        let backlog_packet_id =
-            ripr_swarm_repair_route_quality_backlog_packet_id(route, dominant_reason);
-        let improvement_route =
-            ripr_swarm_repair_route_quality_improvement_route(route, dominant_reason);
-        let sample_packet = route
-            .sample_packet_ids
-            .first()
-            .map_or("unknown", String::as_str);
-        actions.push(RiprSwarmReadinessNextAction {
-            kind: "improve_repair_route_quality".to_string(),
-            packet_id: Some(backlog_packet_id.clone()),
-            canonical_gap_id: route.sample_canonical_gap_ids.first().cloned(),
-            evidence_class: None,
-            repair_kind: Some(route.repair_kind.clone()),
-            command: Some("cargo xtask ripr-swarm readiness".to_string()),
-            reason: format!(
-                "`{}` has {} failing latest attempt(s); dominant reason `{}` appears {} time(s); route backlog packet `{}` through `{}` before increasing packet volume; sample failed packet `{}`",
-                route.repair_kind,
-                failures,
-                dominant_reason,
-                dominant_count,
-                backlog_packet_id,
-                improvement_route,
-                sample_packet
-            ),
-        });
+        let action = ripr_swarm_readiness_repair_route_quality_action(route);
+        if !ripr_swarm_readiness_has_next_action_packet(&actions, action.packet_id.as_deref()) {
+            actions.push(action);
+        }
     }
     if summary.unchanged_packets > 0 {
         let (packet_id, canonical_gap_id, repair_kind) = ripr_swarm_attempt_ledger_outcome_sample(
@@ -81723,6 +81785,161 @@ covered_by = ["cargo xtask check-file-policy"]
             value["next_actions"][1]["kind"],
             serde_json::Value::from("inspect_missing_verify_results")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_routes_timeout_receipts_to_bounded_verify_backlog() -> Result<(), String>
+    {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "swarm_ready_packets": 2
+            }
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "outcomes_total": 2,
+                "not_attempted": 0,
+                "attempted_no_receipt": 2,
+                "evidence_improved": 0,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "attempts": [
+                {
+                    "packet_id": "packet-timeout",
+                    "canonical_gap_id": "gap:timeout",
+                    "attempt_id": "attempt:gap-timeout:attempted-no-receipt",
+                    "repair_kind": "add_call_observer",
+                    "actor_kind": "agent",
+                    "verify_command": "cargo xtask lane1-evidence-audit",
+                    "verify_result": "timed_out",
+                    "receipt_command": "cargo xtask receipts write --packet packet-timeout",
+                    "missing_receipt_reason": "repo exposure verify timed out before receipt capture",
+                    "outcome": "attempted_no_receipt",
+                    "timestamp": "unix_ms:1000",
+                    "receipt_state": "missing"
+                },
+                {
+                    "packet_id": "packet-missing-receipt",
+                    "canonical_gap_id": "gap:missing-receipt",
+                    "attempt_id": "attempt:gap-missing-receipt:attempted-no-receipt",
+                    "repair_kind": "add_output_observer",
+                    "actor_kind": "agent",
+                    "verify_command": "cargo test -p ripr output_observer",
+                    "verify_result": "pass",
+                    "receipt_command": "cargo xtask receipts write --packet packet-missing-receipt",
+                    "missing_receipt_reason": "receipt command reported required local receipts were absent",
+                    "outcome": "attempted_no_receipt",
+                    "timestamp": "unix_ms:1001",
+                    "receipt_state": "missing"
+                }
+            ]
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        let actions = value["next_actions"]
+            .as_array()
+            .ok_or("next_actions must be an array")?;
+        let timeout_action = actions
+            .iter()
+            .find(|action| {
+                action["packet_id"].as_str()
+                    == Some("route-quality:add-call-observer:attempted-no-receipt")
+            })
+            .ok_or("missing bounded verify route-quality action")?;
+        assert_eq!(
+            timeout_action["kind"],
+            serde_json::Value::from("improve_repair_route_quality")
+        );
+        assert_eq!(
+            timeout_action["canonical_gap_id"],
+            serde_json::Value::from("gap:timeout")
+        );
+        assert_eq!(
+            timeout_action["repair_kind"],
+            serde_json::Value::from("add_call_observer")
+        );
+        let timeout_reason = timeout_action["reason"]
+            .as_str()
+            .ok_or("timeout action must include reason")?;
+        assert!(timeout_reason.contains(
+            "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+        ));
+        assert!(timeout_reason.contains("packet-timeout"));
+
+        let collect_action = actions
+            .iter()
+            .find(|action| action["kind"] == "collect_missing_attempt_receipts")
+            .ok_or("missing ordinary receipt collection action")?;
+        assert_eq!(
+            collect_action["packet_id"],
+            serde_json::Value::from("packet-missing-receipt")
+        );
+        assert_eq!(
+            collect_action["canonical_gap_id"],
+            serde_json::Value::from("gap:missing-receipt")
+        );
+        assert_eq!(
+            collect_action["repair_kind"],
+            serde_json::Value::from("add_output_observer")
+        );
+        assert!(
+            actions.iter().all(|action| {
+                action["kind"] != "collect_missing_attempt_receipts"
+                    || action["packet_id"].as_str() != Some("packet-timeout")
+            }),
+            "timeout-backed missing receipts must not route to generic collection"
+        );
+        let markdown = ripr_swarm_readiness_markdown(&report);
+        assert!(markdown.contains("route-quality:add-call-observer:attempted-no-receipt"));
+        assert!(markdown.contains(
+            "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+        ));
         Ok(())
     }
 

@@ -3212,6 +3212,11 @@ sample in the reason text. `repair_route_quality_backlog[]` converts
 top failing repair routes into analyzer/report backlog packets with stable
 packet IDs, improvement routes, unlock conditions, samples, and non-claims; the
 rows are not public repair packets and are not swarm-ready work.
+When `sample_missing_receipt_reasons[]` shows that no-receipt attempts timed
+out before receipt capture, readiness routes that sample to the bounded
+verify-route `improve_repair_route_quality` action instead of generic
+`collect_missing_attempt_receipts`. Ordinary missing receipts still route to
+receipt collection.
 `top_missing_evidence_fields[]`
 counts missing route/verify/receipt fields that prevent route-quality analysis
 and includes sample packet IDs, canonical gap IDs, and repair kinds when the
