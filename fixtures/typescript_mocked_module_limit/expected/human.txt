@@ -32,7 +32,7 @@ Evidence
 
 Weakness
   - Related test reaches `applyDiscount` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
-  - Static limit `mocked_module`: related test file mocks `./api` via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence.
+  - Static limit `mocked_module`: related test file mocks `./api` via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.
 
 Next step
-  TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
+  TypeScript preview: static limit `mocked_module`; Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.

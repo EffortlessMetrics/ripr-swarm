@@ -29,10 +29,10 @@ Evidence
   - static_limit unsupported_syntax: 1 parser error(s)
 
 Weakness
-  - Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`.
+  - Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance.
 
 Stop reasons:
   - static_probe_unknown
 
 Next step
-  TypeScript preview: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.
+  TypeScript preview: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.
