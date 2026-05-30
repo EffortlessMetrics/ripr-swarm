@@ -61975,6 +61975,175 @@ mod tests {
     }
 
     #[test]
+    fn first_successful_pr_outcome_input_path_uses_non_fixture_fallbacks() -> Result<(), String> {
+        with_temp_cwd(
+            "first-successful-pr-outcome-input-fallback-cwd",
+            |root| -> Result<(), String> {
+                let direct_root = root.join("direct-case");
+                let direct = super::first_successful_pr_outcome_input_path(
+                    &direct_root,
+                    "inputs/reports/before.json",
+                );
+                assert_eq!(direct, "direct-case/inputs/reports/before.json");
+
+                let nested = root.join("nested");
+                fs::create_dir_all(&nested).map_err(|err| format!("create nested cwd: {err}"))?;
+                std::env::set_current_dir(&nested)
+                    .map_err(|err| format!("enter nested cwd: {err}"))?;
+                let sibling_root = root.join("sibling-case");
+                let sibling = super::first_successful_pr_outcome_input_path(
+                    &sibling_root,
+                    "inputs/reports/after.json",
+                );
+                assert_eq!(sibling, "sibling-case/inputs/reports/after.json");
+
+                let outside_root = std::env::temp_dir().join("ripr-outcome-path-outside");
+                let outside =
+                    super::first_successful_pr_outcome_input_path(&outside_root, "outside.json");
+                assert!(outside.ends_with("ripr-outcome-path-outside/outside.json"));
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn first_successful_pr_corpus_reports_outcome_receipt_shape_drift() -> Result<(), String> {
+        let root = temp_dir("first-successful-pr-outcome-shape-drift");
+        let corpus = root.join("corpus.json");
+        write(
+            &corpus,
+            r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "python-preview-gap",
+      "description": "bad outcome receipt case",
+      "expected_status": "actionable",
+      "expected_state": "top_gap",
+      "expected_output_state": "preview_limited",
+      "outcome_receipts": {
+        "id": "not-an-array"
+      }
+    }
+  ]
+}"#,
+        );
+
+        let mut violations = Vec::new();
+        super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("outcome_receipts must be an array")),
+            "expected malformed outcome_receipts violation, got {violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn first_successful_pr_outcome_receipt_reports_field_and_render_drift() -> Result<(), String> {
+        let root = temp_dir("first-successful-pr-outcome-render-drift");
+        let mut violations = Vec::new();
+
+        for receipt in [
+            serde_json::json!({"id": "missing-before"}),
+            serde_json::json!({
+                "id": "missing-after",
+                "before": "inputs/before.json"
+            }),
+            serde_json::json!({
+                "id": "missing-expected",
+                "before": "inputs/before.json",
+                "after": "inputs/after.json"
+            }),
+            serde_json::json!({
+                "id": "missing-markdown",
+                "before": "inputs/before.json",
+                "after": "inputs/after.json",
+                "expected": "expected/outcome.json"
+            }),
+            serde_json::json!({
+                "id": "missing-movement",
+                "before": "inputs/before.json",
+                "after": "inputs/after.json",
+                "expected": "expected/outcome.json",
+                "expected_markdown": "expected/outcome.md"
+            }),
+        ] {
+            super::validate_first_successful_pr_outcome_receipt(
+                &root,
+                "python-preview-gap",
+                &receipt,
+                &mut violations,
+            )?;
+        }
+
+        write(&root.join("inputs/before.json"), "{}");
+        write(&root.join("inputs/after.json"), "{}");
+        write(
+            &root.join("expected/outcome.json"),
+            r#"{
+  "schema_version": "0.2",
+  "tool": "other",
+  "status": "complete",
+  "inputs": {
+    "before": "wrong-before.json",
+    "after": "wrong-after.json"
+  },
+  "summary": {
+    "gap_movement": {
+      "closed": 1
+    }
+  },
+  "review_receipt": {}
+}"#,
+        );
+        write(
+            &root.join("expected/outcome.md"),
+            "not a targeted outcome report\n",
+        );
+        let rendered_drift = serde_json::json!({
+            "id": "rendered-drift",
+            "before": "inputs/before.json",
+            "after": "inputs/after.json",
+            "expected": "expected/outcome.json",
+            "expected_markdown": "expected/outcome.md",
+            "expected_gap_movement": "closed"
+        });
+        super::validate_first_successful_pr_outcome_receipt(
+            &root,
+            "python-preview-gap",
+            &rendered_drift,
+            &mut violations,
+        )?;
+
+        let report = violations.join("\n");
+        for expected in [
+            "is missing before",
+            "is missing after",
+            "is missing expected",
+            "is missing expected_markdown",
+            "is missing expected_gap_movement",
+            "schema_version must be 0.1",
+            "tool must be ripr",
+            "status must be advisory",
+            "before input must be",
+            "after input must be",
+            "Markdown is missing `# ripr targeted-test outcome report`",
+            "Markdown must show `| closed | 1 |`",
+        ] {
+            assert!(
+                report.contains(expected),
+                "expected `{expected}` in outcome receipt drift report:\n{report}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn first_successful_pr_corpus_reports_contract_drift() -> Result<(), String> {
         let root = temp_dir("first-successful-pr-invalid");
         let corpus = root.join("corpus.json");
