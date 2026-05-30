@@ -20206,8 +20206,10 @@ impl Lane1EvidenceAuditBuilder {
         evidence_class: &str,
         file: &str,
     ) {
-        let canonical_gap_id = audit_non_empty_string(canonical_item, &["canonical_gap_id"])
-            .or_else(|| audit_non_empty_string(record, &["canonical_gap_id"]))
+        let stable_canonical_gap_id = audit_non_empty_string(canonical_item, &["canonical_gap_id"])
+            .or_else(|| audit_non_empty_string(record, &["canonical_gap_id"]));
+        let has_stable_canonical_gap_id = stable_canonical_gap_id.is_some();
+        let canonical_gap_id = stable_canonical_gap_id
             .or_else(|| audit_non_empty_string(record, &["seam_id"]))
             .unwrap_or_else(|| format!("actionable-gap::{file}"));
         if self.actionable_gap_packets.contains_key(&canonical_gap_id) {
@@ -20278,6 +20280,7 @@ impl Lane1EvidenceAuditBuilder {
                 receipt_command_or_path: receipt_command_or_path.as_deref(),
                 receipt_source: &receipt_source,
                 typed_related_target_available,
+                has_stable_canonical_gap_id,
                 confidence_basis: &confidence_basis,
                 must_not_change_count: must_not_change.len(),
                 allowed_edit_surface_count: allowed_edit_surface.len(),
@@ -22038,6 +22041,7 @@ struct RiprSwarmReadinessSummary {
     blocked_by_public_projection_exclusion_packets: usize,
     blocked_by_operator_judgment_packets: usize,
     public_projection_excluded_packets: usize,
+    missing_canonical_gap_id: usize,
     not_actionable_gap_state: usize,
     missing_verify_command: usize,
     missing_verify_result: usize,
@@ -22880,6 +22884,12 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     if canonical_gap_id.trim().is_empty() {
         missing_context.push("canonical_gap_id".to_string());
     }
+    if projection_exclusion_reasons
+        .iter()
+        .any(|reason| reason == "missing_canonical_gap_id")
+    {
+        missing_context.push("canonical_gap_id".to_string());
+    }
     if gap_state != "actionable" {
         missing_context.push("actionable_gap_state".to_string());
     }
@@ -23284,6 +23294,20 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
             .iter()
             .filter(|packet| packet.swarm_state == "blocked_by_public_projection_exclusion")
             .count(),
+        "missing_canonical_gap_id": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "canonical_gap_id")
+                    || packet
+                        .projection_exclusion_reasons
+                        .iter()
+                        .any(|reason| reason == "missing_canonical_gap_id")
+            })
+            .count(),
         "not_actionable_gap_state": report
             .packets
             .iter()
@@ -23431,6 +23455,21 @@ fn ripr_swarm_plan_blocked_state_examples_json(report: &RiprSwarmPlanReport) -> 
         &report.packets,
         "blocked_by_operator_judgment",
         |packet| packet.swarm_state == "blocked_by_operator_judgment",
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_canonical_gap_id",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "canonical_gap_id")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_canonical_gap_id")
+        },
     );
     ripr_swarm_plan_push_blocked_state_example(
         &mut rows,
@@ -23605,6 +23644,7 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "blocked_by_static_limitation_packets",
         "blocked_by_public_projection_exclusion_packets",
         "blocked_by_operator_judgment_packets",
+        "missing_canonical_gap_id",
         "missing_verify_command",
         "missing_verify_result",
         "missing_receipt_command",
@@ -25569,6 +25609,8 @@ fn ripr_swarm_readiness_summary(
         summary.public_projection_excluded_packets =
             audit_usize(plan, &["summary", "public_projection_excluded_packets"])
                 .unwrap_or_default();
+        summary.missing_canonical_gap_id =
+            audit_usize(plan, &["summary", "missing_canonical_gap_id"]).unwrap_or_default();
         summary.not_actionable_gap_state =
             audit_usize(plan, &["summary", "not_actionable_gap_state"]).unwrap_or_default();
         summary.missing_verify_command =
@@ -25764,6 +25806,7 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
             .blocked_by_public_projection_exclusion_packets,
         "blocked_by_operator_judgment_packets": summary.blocked_by_operator_judgment_packets,
         "public_projection_excluded_packets": summary.public_projection_excluded_packets,
+        "missing_canonical_gap_id": summary.missing_canonical_gap_id,
         "not_actionable_gap_state": summary.not_actionable_gap_state,
         "missing_verify_command": summary.missing_verify_command,
         "missing_verify_result": summary.missing_verify_result,
@@ -25869,6 +25912,21 @@ fn ripr_swarm_readiness_blocked_state_routes(
                     == Some("blocked_by_operator_judgment")
             },
         ),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_canonical_gap_id",
+        summary.missing_canonical_gap_id,
+        "the packet has no stable canonical_gap_id identity",
+        "fix_canonical_gap_identity",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_canonical_gap_id", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "canonical_gap_id")
+                || ripr_swarm_readiness_packet_projection_exclusion(
+                    packet,
+                    "missing_canonical_gap_id",
+                )
+        }),
     );
     ripr_swarm_readiness_push_blocked_state_route(
         &mut routes,
@@ -26791,6 +26849,20 @@ fn ripr_swarm_readiness_next_actions(
             ),
         });
     }
+    if summary.missing_canonical_gap_id > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_canonical_gap_identity".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing stable canonical_gap_id identity; repair canonical grouping before attempting swarm work",
+                summary.missing_canonical_gap_id
+            ),
+        });
+    }
     if summary.missing_must_not_change > 0 {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "fix_must_not_change_boundaries".to_string(),
@@ -27270,6 +27342,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "blocked_by_public_projection_exclusion_packets",
         "blocked_by_operator_judgment_packets",
         "public_projection_excluded_packets",
+        "missing_canonical_gap_id",
         "not_actionable_gap_state",
         "missing_verify_command",
         "missing_verify_result",
@@ -29053,6 +29126,7 @@ struct AuditActionableGapProjectionInput<'a> {
     receipt_command_or_path: Option<&'a str>,
     receipt_source: &'a str,
     typed_related_target_available: bool,
+    has_stable_canonical_gap_id: bool,
     confidence_basis: &'a str,
     must_not_change_count: usize,
     allowed_edit_surface_count: usize,
@@ -29064,6 +29138,9 @@ fn audit_actionable_gap_projection_exclusion_reasons(
     input: AuditActionableGapProjectionInput<'_>,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
+    if !input.has_stable_canonical_gap_id {
+        audit_push_projection_exclusion_reason(&mut reasons, "missing_canonical_gap_id");
+    }
     if input.canonical_gap_id.trim().is_empty() {
         audit_push_projection_exclusion_reason(&mut reasons, "malformed");
     }
@@ -81048,6 +81125,82 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_actionable_gap_packets_exclude_missing_canonical_gap_id() -> Result<(), String> {
+        let root = temp_dir("lane1-missing-canonical-gap-id");
+        write(&root.join("tests/pricing.rs"), "");
+        let root = root.to_string_lossy().to_string();
+        let report = lane1_evidence_audit_from_repo_exposure(
+            &root,
+            r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-missing-canonical-gap-id",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-missing-canonical-gap-id",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(threshold), expected)"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "related_test": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "reason": "direct_owner_call"},
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )?;
+
+        let packet_json = lane1_actionable_gap_packets_json(&report)?;
+        let packet_value: serde_json::Value =
+            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            packet_value["packets"][0]["canonical_gap_id"],
+            "packet-missing-canonical-gap-id"
+        );
+        assert_eq!(
+            packet_value["packets"][0]["public_projection_eligible"],
+            serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            packet_value["packets"][0]["projection_exclusion_reasons"],
+            serde_json::json!(["missing_canonical_gap_id"])
+        );
+
+        let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &packet_value,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(blocked[0].missing_context, vec!["canonical_gap_id"]);
+        Ok(())
+    }
+
+    #[test]
     fn lane1_actionable_gap_public_projection_requires_actionable_gap_state() {
         let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
             crate::AuditActionableGapProjectionInput {
@@ -81065,6 +81218,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 receipt_command_or_path: Some("cargo xtask receipts check"),
                 receipt_source: "canonical_item.receipt_command",
                 typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
                 confidence_basis: "fixture_backed",
                 must_not_change_count: 1,
                 allowed_edit_surface_count: 1,
@@ -81074,6 +81228,36 @@ covered_by = ["cargo xtask check-file-policy"]
         );
 
         assert_eq!(reasons, vec!["not_actionable_gap_state"]);
+    }
+
+    #[test]
+    fn lane1_actionable_gap_public_projection_requires_canonical_gap_id() {
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "packet-fallback-seam-id",
+                gap_state: "actionable",
+                actionability: "extend_related_test",
+                repair_kind: "add_boundary_assertion",
+                target_test_type: "boundary_discriminator",
+                assertion_shape: "assert_eq!(value, expected)",
+                target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: "cargo test missing_canonical_gap_id",
+                verify_command_source: "canonical_item.verify_command",
+                receipt_command_or_path: Some("cargo xtask receipts check"),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                has_stable_canonical_gap_id: false,
+                confidence_basis: "fixture_backed",
+                must_not_change_count: 1,
+                allowed_edit_surface_count: 1,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["missing_canonical_gap_id"]);
     }
 
     #[test]
@@ -81094,6 +81278,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 receipt_command_or_path: Some("cargo xtask receipts check"),
                 receipt_source: "canonical_item.receipt_command",
                 typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
                 confidence_basis: "fixture_backed",
                 must_not_change_count: 1,
                 allowed_edit_surface_count: 0,
@@ -81123,6 +81308,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 receipt_command_or_path: Some("cargo xtask receipts check"),
                 receipt_source: "canonical_item.receipt_command",
                 typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
                 confidence_basis: "confidence_basis_unknown",
                 must_not_change_count: 1,
                 allowed_edit_surface_count: 1,
@@ -81177,6 +81363,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 ),
                 receipt_source: "canonical_item.receipt_command",
                 typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
                 confidence_basis: "fixture_backed",
                 must_not_change_count: 1,
                 allowed_edit_surface_count: 1,
@@ -81207,6 +81394,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 ),
                 receipt_source: "canonical_item.receipt_command",
                 typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
                 confidence_basis: "fixture_backed",
                 must_not_change_count: 1,
                 allowed_edit_surface_count: 1,

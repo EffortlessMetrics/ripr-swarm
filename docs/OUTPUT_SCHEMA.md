@@ -2363,7 +2363,8 @@ Field contract:
   fixture-backed repair slice from live evidence.
 - `finding_alignment.actionable_gap_packets` - bounded top actionable
   canonical gap packets derived from `evidence_record.canonical_item`. Packets
-  are agent-safe work items: they carry stable identity, evidence class, repair
+  are agent-safe work items: they carry stable `canonical_gap_id` identity,
+  evidence class, repair
   kind, `target_test_shape`, related test or observer, verification command,
   receipt command, raw evidence references as supporting evidence, confidence
   basis, conservative `must_not_change` boundaries, and
@@ -2374,6 +2375,9 @@ Field contract:
   snapshot comparison verify command is not enough for swarm-ready routing
   unless RIPR can derive a narrower `cargo test -p <package> <test-filter>`
   command from a typed `related_test_or_observer` file/name pair.
+  `seam_id`, `finding_id`, and synthetic packet IDs can help internal
+  diagnostics, but they do not satisfy public repair packet identity; missing
+  canonical identity is reported as `missing_canonical_gap_id`.
   `raw_evidence_refs[]` entries are structured evidence anchors. For public
   projection and swarm planning, at least one entry must carry an anchor field
   (`file`, `path`, or `source_file`) and an identity field (`kind`,
@@ -2384,7 +2388,8 @@ Field contract:
   badge-readiness diagnostics for the emitted packet set. It counts
   public-projection eligible packets, excluded packets, and stable
   `projection_exclusion_reasons` rows such as `not_actionable_gap_state`,
-  `missing_receipt_command`, `missing_related_test_or_observer`, `missing_confidence`,
+  `missing_canonical_gap_id`, `missing_receipt_command`,
+  `missing_related_test_or_observer`, `missing_confidence`,
   `missing_must_not_change`, `missing_allowed_edit_surface`,
   `missing_raw_evidence_refs`, `unbounded_verify_command`, and
   `static_limitation_present`. This is advisory report evidence only and does
@@ -2696,6 +2701,7 @@ are not public repair packets and must not enter the swarm-ready queue.
     "blocked_by_public_projection_exclusion_packets": 0,
     "blocked_by_operator_judgment_packets": 1,
     "public_projection_excluded_packets": 0,
+    "missing_canonical_gap_id": 0,
     "missing_verify_command": 0,
     "missing_receipt_command": 0,
     "missing_repair_route": 0,
@@ -2708,6 +2714,15 @@ are not public repair packets and must not enter the swarm-ready queue.
     "high_confidence_packets": 4
   },
   "blocked_state_examples": [
+    {
+      "state": "missing_canonical_gap_id",
+      "example_packet_id": "packet:missing-canonical-gap-id",
+      "example_canonical_gap_id": "packet-fallback-seam-id",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_missing_context": ["canonical_gap_id"],
+      "example_projection_exclusion_reasons": ["missing_canonical_gap_id"],
+      "example_blocked_reasons": ["missing_canonical_gap_id"]
+    },
     {
       "state": "missing_allowed_edit_surface",
       "example_packet_id": "packet:missing-edit-surface",
@@ -3404,6 +3419,7 @@ limits.
     "blocked_by_public_projection_exclusion_packets": 0,
     "blocked_by_operator_judgment_packets": 1,
     "public_projection_excluded_packets": 0,
+    "missing_canonical_gap_id": 0,
     "missing_verify_command": 0,
     "missing_verify_result": 0,
     "missing_receipt_command": 0,
@@ -3668,7 +3684,8 @@ count, reason, next action kind, repair route, and example packet/canonical gap
 identity when source artifacts provide one, so no blocked class is visible only
 through raw packet JSON. It includes coarse states such as
 `blocked_by_missing_context`, field-level blockers such as
-`missing_allowed_edit_surface`, `missing_confidence`, and
+`missing_canonical_gap_id`, `missing_allowed_edit_surface`,
+`missing_confidence`, and
 `missing_raw_evidence_refs`, and outcome blockers such as `orphan_receipt`,
 `unchanged_attempt`, and
 `regressed_attempt`. For `blocked_by_static_limitation`, readiness prefers the

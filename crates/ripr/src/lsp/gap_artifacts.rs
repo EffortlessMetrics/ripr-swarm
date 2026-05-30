@@ -417,6 +417,11 @@ fn validate_actionable_gaps(
 
         if packet_is_actionable(packet) {
             has_actionable_packet = true;
+            require_actionable_packet_string(
+                packet,
+                &["canonical_gap_id"],
+                "actionable packet must carry canonical_gap_id",
+            )?;
             identities.push(
                 identity_from_sources(&[Some(packet)])
                     .ok_or(GapArtifactRejection::MissingIdentity)?,
@@ -1765,7 +1770,24 @@ mod tests {
 
         assert_eq!(
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
-            Err(GapArtifactRejection::MissingIdentity)
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry canonical_gap_id"
+            ))
+        );
+    }
+
+    #[test]
+    fn actionable_gaps_report_rejects_actionable_packet_without_canonical_gap_id_even_with_seam_id()
+    {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["canonical_gap_id"] = json!(null);
+        artifact["packets"][0]["seam_id"] = json!("fallback-seam-id");
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry canonical_gap_id"
+            ))
         );
     }
 
