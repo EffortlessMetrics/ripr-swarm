@@ -4169,10 +4169,11 @@ Field contract:
 
 ## Targeted-Test Outcome Report
 
-`ripr outcome --before <repo-exposure-json> --after <repo-exposure-json>`
-compares two repo exposure snapshots and prints Markdown by default. Use
-`--format json` for the machine-readable shape, or `--out <path>` to write the
-rendered receipt to disk.
+`ripr outcome --before <snapshot-json> --after <snapshot-json>` compares two
+static RIPR snapshots and prints Markdown by default. The snapshots can be
+repo-exposure JSON with `seams[]` or check-output JSON with `findings[]` that
+carry canonical gap IDs. Use `--format json` for the machine-readable shape, or
+`--out <path>` to write the rendered receipt to disk.
 
 ```text
 ripr outcome --before before.json --after after.json
@@ -4182,7 +4183,10 @@ ripr outcome --before before.json --after after.json --out target/ripr/outcome/t
 
 The report is an advisory receipt for the targeted-test loop. It does not run
 analysis, mutation testing, SARIF policy, or badge generation; it only compares
-the two supplied `repo-exposure-json` artifacts.
+the two supplied static artifacts. Repo-exposure seams are matched by
+`seam_id`; check-output findings are matched by `canonical_gap_id`, which lets
+Python preview repair cards produce before/after receipts without a Python-only
+receipt command.
 
 JSON shape:
 
@@ -4223,6 +4227,7 @@ JSON shape:
       "before": "weakly_gripped",
       "after": "strongly_gripped",
       "direction": "improved",
+      "gap_movement": "closed",
       "evidence_delta": [
         "grip class moved from weakly_gripped to strongly_gripped",
         "discriminate evidence moved from missing to yes",
@@ -4296,6 +4301,12 @@ JSON shape:
 }
 ```
 
+For check-output snapshots, `seam_id` is the canonical gap ID. A Python preview
+gap that moves from `weakly_exposed` to `exposed` is rendered as
+`weakly_gripped -> strongly_gripped` with `gap_movement = "closed"`. This is
+still static/advisory evidence: verify success and a closed gap movement are
+receipt signals, not runtime mutation proof or correctness proof.
+
 Field contract:
 
 - `schema_version` — currently `"0.1"`.
@@ -4350,8 +4361,8 @@ class.
 
 ## Agent Verify
 
-`ripr agent verify --root <workspace> --before <repo-exposure-json> --after
-<repo-exposure-json> --json` compares two saved static repo-exposure snapshots
+`ripr agent verify --root <workspace> --before <snapshot-json> --after
+<snapshot-json> --json` compares two saved static snapshots
 under the workspace root and emits a compact agent-focused JSON summary. It
 reuses the targeted-test outcome comparison engine, but names the buckets for
 the active agent loop:
@@ -4361,8 +4372,8 @@ ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.js
 ```
 
 The command does not run analysis, mutation testing, SARIF policy, badge
-generation, LSP refresh, or cache warm-up. It only compares the supplied
-`repo-exposure-json` artifacts after validating they resolve under `--root`.
+generation, LSP refresh, or cache warm-up. It only compares the supplied static
+artifacts after validating they resolve under `--root`.
 
 JSON shape:
 
@@ -4392,6 +4403,7 @@ JSON shape:
       "before": "weakly_gripped",
       "after": "strongly_gripped",
       "change": "improved",
+      "gap_movement": "closed",
       "evidence_delta": [
         "grip class moved from weakly_gripped to strongly_gripped",
         "missing discriminator no longer reported: discount_threshold (equality boundary)"
@@ -4449,7 +4461,8 @@ Field contract:
 - `changed_seams[]` / `unchanged_seams[]` carry the same additive
   evidence-record movement fields as `ripr outcome`: stage deltas,
   observed-value movement, missing-discriminator movement, oracle strength
-  movement, related-test count movement, and `no_movement_reason`.
+  movement, related-test count movement, `gap_movement`, and
+  `no_movement_reason`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
@@ -9490,6 +9503,10 @@ trust an agent success claim, rerun the verify command, write receipts, call
 providers, generate tests, or inspect source code. Missing verify evidence is
 classified as `uncertain`, and edits to packet `forbidden_files` are classified
 as `edited_forbidden_file` before any reported verify or receipt success.
+`attempt_outcome` uses the shared repair-loop outcome vocabulary so downstream
+ledgers can distinguish `attempted_no_receipt`, `receipt_present`,
+`evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
+and `unknown` without reinterpreting raw agent output.
 
 The ingest envelope is:
 
@@ -9501,11 +9518,13 @@ The ingest envelope is:
   "scope": "agent_result",
   "source": "external_agent_result",
   "status": "advisory",
+  "attempt_outcome": "unknown",
   "inputs": {
     "result": "target/ripr/workflow/agent-result.json"
   },
   "classification": {
     "state": "edited_forbidden_file",
+    "outcome": "unknown",
     "reason": "Agent result reports edits to files forbidden by the packet.",
     "gap_id": "gap:python:pricing-boundary",
     "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
@@ -9526,6 +9545,8 @@ The ingest envelope is:
       "failed": false
     },
     "receipt": {
+      "present": true,
+      "path": "target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
       "movement": "resolved"
     }
   },
@@ -9551,7 +9572,13 @@ The ingest envelope is:
 `verify_failed`, `edited_forbidden_file`, `stopped_by_agent`, `stale_packet`,
 or `uncertain`. Closure requires both passing verify evidence and recognized
 receipt movement such as `resolved` or `closed`; passing verify with only
-`improved` movement is `partially_improved`.
+`improved` movement is `partially_improved`. `classification.outcome` and the
+top-level `attempt_outcome` are one of `attempted_no_receipt`,
+`receipt_present`, `evidence_improved`, `evidence_unchanged`,
+`evidence_regressed`, `resolved`, or `unknown`. Ingest keeps
+`status: "advisory"` even when `attempt_outcome = "resolved"` because it
+classifies an external result artifact; it does not run verification or write
+the receipt.
 
 ```json
 {
