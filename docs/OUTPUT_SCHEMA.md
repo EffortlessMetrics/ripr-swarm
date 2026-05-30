@@ -3034,7 +3034,8 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"]
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
     }
   ],
   "top_failing_repair_routes": [
@@ -3053,7 +3054,8 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"]
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
     }
   ],
   "repair_route_quality_backlog": [
@@ -3066,6 +3068,7 @@ actionable operator evidence instead of only route-quality counts.
       "dominant_failure_count": 1,
       "sample_packet_ids": ["packet-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": [],
       "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
       "unlock_condition": "update `add_boundary_assertion` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
       "non_claims": [
@@ -3422,7 +3425,8 @@ limits.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
-      "sample_canonical_gap_ids": ["gap:def"]
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
     }
   ],
   "top_failing_repair_routes": [
@@ -3454,6 +3458,7 @@ limits.
       "dominant_failure_count": 1,
       "sample_packet_ids": ["packet-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": [],
       "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
       "unlock_condition": "update `add_boundary_assertion` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
       "non_claims": [

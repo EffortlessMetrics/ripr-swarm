@@ -46,6 +46,9 @@ The behavior is intentionally narrow:
 - route-quality projection preserves non-success outcomes such as unchanged
   attempts as first-class next actions instead of converting every full
   actionable packet into another blind attempt;
+- route-quality backlog rows preserve sampled missing receipt reasons when
+  available, so receipt-reliability work can distinguish broad verify timeout
+  routes from ordinary absent local receipts;
 - attempted packets without receipts route to `collect_missing_attempt_receipts`
   with a sample packet/gap/repair-kind when one is available, so downstream
   surfaces cannot claim improvement from verify evidence alone;
