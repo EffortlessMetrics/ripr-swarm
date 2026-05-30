@@ -49,6 +49,9 @@ The behavior is intentionally narrow:
 - route-quality backlog rows preserve sampled missing receipt reasons when
   available, so receipt-reliability work can distinguish broad verify timeout
   routes from ordinary absent local receipts;
+- timeout-backed missing receipt reasons route to a bounded verify-route
+  improvement backlog instead of generic receipt collection, because broad
+  verify commands that cannot finish are not safe repair guidance;
 - attempted packets without receipts route to `collect_missing_attempt_receipts`
   with a sample packet/gap/repair-kind when one is available, so downstream
   surfaces cannot claim improvement from verify evidence alone;
