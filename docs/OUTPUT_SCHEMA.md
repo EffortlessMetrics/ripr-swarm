@@ -9395,6 +9395,95 @@ When the gap ledger was derived from check JSON, actionable Python
 projection ineligible, and `agent_packet` projection eligible. This is the
 Python swarm handoff path until a dedicated Python outcome ledger exists.
 
+`ripr swarm queue --language python --top 10` reads
+`target/ripr/reports/gap-decision-ledger.json` by default and emits a
+GapRecord-backed queue of bounded agent-packet work. The queue does not rerun
+analysis and only includes records that can already render through
+`ripr agent packet --gap-ledger ... --gap-id ... --json`. Static limitations,
+already-observed/no-action records, records without verify commands, and
+records without `allowed_edit_surface` are counted in `exclusion_reasons`
+instead of entering `packets[]`.
+
+The queue envelope is:
+
+```json
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "report": "swarm-queue",
+  "scope": "repo",
+  "source": "gap_decision_ledger",
+  "status": "advisory",
+  "inputs": {
+    "root": ".",
+    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
+    "language": "python",
+    "top": 10
+  },
+  "summary": {
+    "records_total": 3,
+    "language_records_total": 3,
+    "queue_total": 2,
+    "returned": 2,
+    "excluded_records_total": 1,
+    "conflict_groups_total": 1
+  },
+  "conflict_groups": [
+    {
+      "conflict_group": "file:tests/test_pricing.py",
+      "size": 2,
+      "gap_ids": ["gap:python:pricing-boundary", "gap:python:pricing-return"]
+    }
+  ],
+  "exclusion_reasons": [
+    {
+      "reason": "is not agent-packet eligible: already_observed",
+      "count": 1
+    }
+  ],
+  "packets": [
+    {
+      "priority": 1,
+      "queue_state": "queued",
+      "staleness_status": "not_evaluated",
+      "gap_id": "gap:python:pricing-boundary",
+      "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+      "language": "python",
+      "language_status": "preview",
+      "repair_kind": "AddBoundaryAssertion",
+      "changed_owner": "calculate_discount",
+      "missing_discriminator": "amount == threshold",
+      "suggested_test_file": "tests/test_pricing.py",
+      "suggested_test_name": "test_calculate_discount_threshold_boundary",
+      "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+      "conflict_group": "file:tests/test_pricing.py",
+      "conflict_group_size": 2,
+      "allowed_edit_surface": ["tests/test_pricing.py"],
+      "allowed_files": ["tests/test_pricing.py"],
+      "forbidden_files": ["src/pricing.py"],
+      "packet_command_args": [
+        "ripr",
+        "agent",
+        "packet",
+        "--root",
+        ".",
+        "--gap-ledger",
+        "target/ripr/reports/gap-decision-ledger.json",
+        "--gap-id",
+        "gap:python:pricing-boundary",
+        "--json"
+      ]
+    }
+  ]
+}
+```
+
+`staleness_status = "not_evaluated"` is intentional until the outcome/ledger
+work can compare queue items against current git state. Consumers must treat it
+as a stop-and-refresh signal, not freshness proof. `conflict_group_size > 1`
+means another queued packet targets the same edit surface, so schedulers should
+avoid assigning those packets in parallel.
+
 ```json
 {
   "schema_version": "0.3",
