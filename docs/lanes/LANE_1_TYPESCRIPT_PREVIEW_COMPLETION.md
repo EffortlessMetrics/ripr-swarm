@@ -1,6 +1,6 @@
 # Lane 1: TypeScript Preview Completion
 
-Status: TypeScript preview probe facts landed; static-limit taxonomy next
+Status: TypeScript preview static-limit taxonomy landed; strict actionability next
 
 Date: 2026-05-29
 
@@ -224,12 +224,17 @@ Completed after the initial audit:
      candidates.
 
 6. Static-limit taxonomy
-   - Current structured TypeScript static limit is `mocked_module`.
-   - Missing limit kinds: `dynamic_dispatch`, `metaprogramming`,
-     `missing_import_graph`, `unsupported_syntax`, and decorator indirection
-     when decorators are encountered.
-   - Next step: emit named limitations with human reason and repair route
-     instead of silently dropping parse or unsupported syntax cases.
+   - Status: done for the PR 8 scope.
+   - Structured TypeScript/JavaScript preview static limits now cover
+     `dynamic_dispatch`, `metaprogramming`, `missing_import_graph`,
+     `decorator_indirection`, `mocked_module`, and parser-error
+     `unsupported_syntax`.
+   - The new fixture family `typescript_static_limit_taxonomy` covers
+     dynamic dispatch, metaprogramming, decorator indirection, and missing
+     import graph across TypeScript-family sources. Existing fixtures keep
+     `mocked_module` and parser-error `unsupported_syntax` pinned.
+   - Static limitations are emitted as evidence and missing context only; they
+     do not promote TypeScript/JavaScript beyond advisory preview.
 
 7. Repo-mode and output projection
    - TypeScript `analyze_repo` currently returns no findings.
@@ -313,10 +318,16 @@ PR 7 landed TypeScript preview probe facts without support-tier promotion,
 runtime execution, generated tests, source edits, default gates, badge
 contribution, baseline authority, or RIPR Zero contribution.
 
+PR 8 landed TypeScript preview static-limit taxonomy for dynamic dispatch,
+metaprogramming, missing import graph, decorator indirection, mocked modules,
+and parser-error unsupported syntax without support-tier promotion, runtime
+execution, generated tests, source edits, default gates, badge contribution,
+baseline authority, or RIPR Zero contribution.
+
 The next safe PR is:
 
 ```text
-PR 8: analysis(ts): surface TypeScript preview static limitations
+PR 9: analysis(ts): require complete repair packets for TypeScript actionability
 ```
 
 ## Validation

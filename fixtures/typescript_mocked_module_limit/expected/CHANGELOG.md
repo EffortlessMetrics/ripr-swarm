@@ -46,3 +46,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+Add explicit TypeScript mocked-module static-limit repair route wording.
+
+Command:
+`cargo xtask goldens bless typescript_mocked_module_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

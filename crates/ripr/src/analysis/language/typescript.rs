@@ -68,6 +68,8 @@ struct TypeScriptOwner {
     start_line: usize,
     end_line: usize,
     owner_kind: OwnerKind,
+    decorated: bool,
+    imports: Vec<TypeScriptImport>,
 }
 
 impl TypeScriptOwner {
@@ -266,9 +268,10 @@ fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> {
     if !ret.errors.is_empty() {
         return Vec::new();
     }
+    let imports = extract_imports_from_statements(&ret.program.body);
     let mut owners = Vec::new();
     for stmt in &ret.program.body {
-        owners.extend(owners_from_statement(stmt, file, source));
+        owners.extend(owners_from_statement(stmt, file, source, &imports));
     }
     owners
 }
@@ -283,7 +286,12 @@ fn parse_error_reason(file: &Path, source: &str) -> Option<String> {
     }
 }
 
-fn owners_from_statement(stmt: &Statement<'_>, file: &Path, source: &str) -> Vec<TypeScriptOwner> {
+fn owners_from_statement(
+    stmt: &Statement<'_>,
+    file: &Path,
+    source: &str,
+    imports: &[TypeScriptImport],
+) -> Vec<TypeScriptOwner> {
     if let Statement::FunctionDeclaration(func) = stmt
         && let Some(id) = &func.id
     {
@@ -299,29 +307,32 @@ fn owners_from_statement(stmt: &Statement<'_>, file: &Path, source: &str) -> Vec
                 func.span.start,
                 func.span.end,
             ),
+            false,
+            imports,
         )];
     }
     if let Statement::ExportNamedDeclaration(export) = stmt
         && let Some(decl) = export.declaration.as_ref()
     {
-        return owners_from_declaration(decl, file, source);
+        return owners_from_declaration(decl, file, source, imports);
     }
     if let Statement::ExportDefaultDeclaration(export) = stmt {
-        return owners_from_default_export(&export.declaration, file, source);
+        return owners_from_default_export(&export.declaration, file, source, imports);
     }
-    owners_from_statement_declaration(stmt, file, source)
+    owners_from_statement_declaration(stmt, file, source, imports)
 }
 
 fn owners_from_statement_declaration(
     stmt: &Statement<'_>,
     file: &Path,
     source: &str,
+    imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match stmt {
         Statement::VariableDeclaration(decl) => {
-            owners_from_variable_declaration(decl, file, source)
+            owners_from_variable_declaration(decl, file, source, imports)
         }
-        Statement::ClassDeclaration(class) => owners_from_class(class, file, source),
+        Statement::ClassDeclaration(class) => owners_from_class(class, file, source, imports),
         _ => Vec::new(),
     }
 }
@@ -330,6 +341,7 @@ fn owners_from_declaration(
     decl: &Declaration<'_>,
     file: &Path,
     source: &str,
+    imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match decl {
         Declaration::FunctionDeclaration(func) => func
@@ -348,13 +360,15 @@ fn owners_from_declaration(
                         func.span.start,
                         func.span.end,
                     ),
+                    false,
+                    imports,
                 )]
             })
             .unwrap_or_default(),
         Declaration::VariableDeclaration(decl) => {
-            owners_from_variable_declaration(decl, file, source)
+            owners_from_variable_declaration(decl, file, source, imports)
         }
-        Declaration::ClassDeclaration(class) => owners_from_class(class, file, source),
+        Declaration::ClassDeclaration(class) => owners_from_class(class, file, source, imports),
         _ => Vec::new(),
     }
 }
@@ -363,6 +377,7 @@ fn owners_from_default_export(
     decl: &ExportDefaultDeclarationKind<'_>,
     file: &Path,
     source: &str,
+    imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match decl {
         ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
@@ -377,10 +392,12 @@ fn owners_from_default_export(
                 name,
                 func,
                 function_owner_kind(file, source, name, func.span.start, func.span.end),
+                false,
+                imports,
             )]
         }
         ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            owners_from_class(class, file, source)
+            owners_from_class(class, file, source, imports)
         }
         ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => vec![owner_from_arrow(
             file,
@@ -388,6 +405,8 @@ fn owners_from_default_export(
             "default",
             arrow,
             arrow.span.start,
+            false,
+            imports,
         )],
         _ => Vec::new(),
     }
@@ -397,10 +416,11 @@ fn owners_from_variable_declaration(
     decl: &VariableDeclaration<'_>,
     file: &Path,
     source: &str,
+    imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     decl.declarations
         .iter()
-        .filter_map(|declarator| owner_from_variable_declarator(declarator, file, source))
+        .filter_map(|declarator| owner_from_variable_declarator(declarator, file, source, imports))
         .collect()
 }
 
@@ -408,6 +428,7 @@ fn owner_from_variable_declarator(
     declarator: &VariableDeclarator<'_>,
     file: &Path,
     source: &str,
+    imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
     let name = binding_identifier_name(&declarator.id)?;
     let init = declarator.init.as_ref()?;
@@ -418,6 +439,8 @@ fn owner_from_variable_declarator(
             name,
             arrow,
             declarator.span.start,
+            false,
+            imports,
         )),
         Expression::FunctionExpression(func) => Some(owner_from_function(
             file,
@@ -425,6 +448,8 @@ fn owner_from_variable_declarator(
             name,
             func,
             function_owner_kind(file, source, name, func.span.start, func.span.end),
+            false,
+            imports,
         )),
         _ => Some(TypeScriptOwner {
             name: name.to_string(),
@@ -432,6 +457,8 @@ fn owner_from_variable_declarator(
             start_line: line_for_offset(source, declarator.span.start as usize),
             end_line: line_for_offset(source, declarator.span.end as usize),
             owner_kind: OwnerKind::ModuleFunction,
+            decorated: false,
+            imports: imports.to_vec(),
         }),
     }
 }
@@ -442,6 +469,8 @@ fn owner_from_function(
     name: &str,
     func: &Function<'_>,
     owner_kind: OwnerKind,
+    decorated: bool,
+    imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
     TypeScriptOwner {
         name: name.to_string(),
@@ -449,6 +478,8 @@ fn owner_from_function(
         start_line: line_for_offset(source, func.span.start as usize),
         end_line: line_for_offset(source, func.span.end as usize),
         owner_kind,
+        decorated,
+        imports: imports.to_vec(),
     }
 }
 
@@ -458,6 +489,8 @@ fn owner_from_arrow(
     name: &str,
     arrow: &ArrowFunctionExpression<'_>,
     owner_start: u32,
+    decorated: bool,
+    imports: &[TypeScriptImport],
 ) -> TypeScriptOwner {
     TypeScriptOwner {
         name: name.to_string(),
@@ -465,14 +498,22 @@ fn owner_from_arrow(
         start_line: line_for_offset(source, owner_start as usize),
         end_line: line_for_offset(source, arrow.span.end as usize),
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
+        decorated,
+        imports: imports.to_vec(),
     }
 }
 
-fn owners_from_class(class: &Class<'_>, file: &Path, source: &str) -> Vec<TypeScriptOwner> {
+fn owners_from_class(
+    class: &Class<'_>,
+    file: &Path,
+    source: &str,
+    imports: &[TypeScriptImport],
+) -> Vec<TypeScriptOwner> {
     let mut owners = Vec::new();
+    let class_decorated = !class.decorators.is_empty();
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
-            && let Some(owner) = owner_from_method(method, file, source)
+            && let Some(owner) = owner_from_method(method, file, source, class_decorated, imports)
         {
             owners.push(owner);
         }
@@ -484,6 +525,8 @@ fn owner_from_method(
     method: &MethodDefinition<'_>,
     file: &Path,
     source: &str,
+    class_decorated: bool,
+    imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
     if method.computed {
         return None;
@@ -499,6 +542,8 @@ fn owner_from_method(
         } else {
             OwnerKind::Method
         },
+        decorated: class_decorated || !method.decorators.is_empty(),
+        imports: imports.to_vec(),
     })
 }
 
@@ -1438,6 +1483,153 @@ fn collect_related_mock_paths(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct TypeScriptStaticLimit {
+    kind: StaticLimitKind,
+    evidence: Vec<String>,
+    missing: String,
+    repair_route: String,
+}
+
+fn static_limit_for_change(
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    mock_paths: &[String],
+) -> Option<TypeScriptStaticLimit> {
+    let trimmed = line_text.trim();
+    if is_computed_member_call(trimmed) {
+        return Some(TypeScriptStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: vec![
+                "static_limit dynamic_dispatch: changed line uses computed member invocation"
+                    .to_string(),
+            ],
+            missing: "Static limit `dynamic_dispatch`: the TypeScript preview adapter saw a computed member call such as `obj[name](...)`; syntax alone cannot resolve the called behavior. Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.".to_string(),
+            repair_route: "Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.".to_string(),
+        });
+    }
+    if contains_metaprogramming(trimmed) {
+        return Some(TypeScriptStaticLimit {
+            kind: StaticLimitKind::Metaprogramming,
+            evidence: vec![
+                "static_limit metaprogramming: changed line uses metaprogramming syntax"
+                    .to_string(),
+            ],
+            missing: "Static limit `metaprogramming`: the TypeScript preview adapter saw Proxy, Reflect, or property-definition metaprogramming syntax and does not infer runtime-created behavior. Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet.".to_string(),
+            repair_route: "Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet.".to_string(),
+        });
+    }
+    if owner.decorated || trimmed.starts_with('@') {
+        return Some(TypeScriptStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: vec![format!(
+                "static_limit decorator_indirection: owner `{}` uses TypeScript decorators",
+                owner.name
+            )],
+            missing: format!(
+                "Static limit `decorator_indirection`: owner `{}` uses TypeScript decorators; syntax-first preview evidence does not resolve decorator-modified call behavior. Repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet.",
+                owner.name
+            ),
+            repair_route: "Repair route: add decorator-aware owner modeling or verify decorator-modified behavior manually before issuing a repair packet.".to_string(),
+        });
+    }
+    if !mock_paths.is_empty() {
+        let preview: String = mock_paths
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Some(TypeScriptStaticLimit {
+            kind: StaticLimitKind::MockedModule,
+            evidence: mock_paths
+                .iter()
+                .map(|path| format!("static_limit mocked_module: `{path}`"))
+                .collect(),
+            missing: format!(
+                "Static limit `mocked_module`: related test file mocks {preview} via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence. Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet."
+            ),
+            repair_route: "Repair route: add mock-shape support or validate the real substitution under test before issuing a repair packet.".to_string(),
+        });
+    }
+    if let Some(import) = imported_symbol_call(trimmed, &owner.imports) {
+        let symbol = if import.namespace {
+            format!("{}.*", import.local)
+        } else {
+            import.local.clone()
+        };
+        return Some(TypeScriptStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: vec![format!(
+                "static_limit missing_import_graph: changed line calls imported symbol `{symbol}`"
+            )],
+            missing: format!(
+                "Static limit `missing_import_graph`: the changed line calls imported symbol `{symbol}` from `{}`; the TypeScript preview adapter does not build a package or import graph for production implementation semantics. Repair route: add import graph support or inspect the imported implementation before issuing a repair packet.",
+                import.source
+            ),
+            repair_route: "Repair route: add import graph support or inspect the imported implementation before issuing a repair packet.".to_string(),
+        });
+    }
+    None
+}
+
+fn contains_metaprogramming(text: &str) -> bool {
+    [
+        "new Proxy(",
+        "Proxy(",
+        "Reflect.",
+        "Object.defineProperty(",
+        "Object.defineProperties(",
+    ]
+    .iter()
+    .any(|shape| contains_unquoted_shape(text, shape))
+}
+
+fn imported_symbol_call<'a>(
+    line_text: &str,
+    imports: &'a [TypeScriptImport],
+) -> Option<&'a TypeScriptImport> {
+    imports.iter().find(|import| {
+        if import.namespace {
+            contains_namespace_import_call(line_text, &import.local)
+        } else {
+            contains_call_name(line_text, &import.local)
+        }
+    })
+}
+
+fn contains_namespace_import_call(line_text: &str, namespace: &str) -> bool {
+    let needle = format!("{namespace}.");
+    line_text.match_indices(&needle).any(|(idx, _)| {
+        has_member_call_boundary(line_text, idx)
+            && !line_prefix_looks_like_comment_or_string(line_text, idx)
+            && !inside_block_comment(line_text, idx)
+            && line_text
+                .get(idx + needle.len()..)
+                .is_some_and(namespace_tail_has_call)
+    })
+}
+
+fn namespace_tail_has_call(tail: &str) -> bool {
+    let mut saw_name = false;
+    for ch in tail.chars() {
+        if ch == '(' {
+            return saw_name;
+        }
+        if ch.is_whitespace() || ch == ';' || ch == ',' || ch == ')' || ch == ']' || ch == '}' {
+            return false;
+        }
+        if ch == '?' || ch == '.' {
+            continue;
+        }
+        if is_javascript_identifier_char(ch) {
+            saw_name = true;
+            continue;
+        }
+        return false;
+    }
+    false
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct TypeScriptProbeShape {
     family: ProbeFamily,
     delta: DeltaKind,
@@ -1956,7 +2148,15 @@ fn typescript_call_parts(line_text: &str) -> Option<(String, String)> {
 
 fn is_computed_member_call(line_text: &str) -> bool {
     let text = line_text.trim();
-    text.contains("](") || text.contains("]?.") || text.contains("?.[")
+    ["](", "]?.", "?.["]
+        .iter()
+        .any(|shape| contains_unquoted_shape(text, shape))
+}
+
+fn contains_unquoted_shape(text: &str, shape: &str) -> bool {
+    text.match_indices(shape).any(|(idx, _)| {
+        !line_prefix_looks_like_comment_or_string(text, idx) && !inside_block_comment(text, idx)
+    })
 }
 
 fn first_typescript_string_literal(text: &str) -> Option<String> {
@@ -2010,6 +2210,7 @@ fn classify_change(
     let related_candidates = related_test_candidates(owner, all_tests);
     let related = find_related_tests(owner, all_tests);
     let mock_paths = collect_related_mock_paths(owner, all_tests);
+    let static_limit = static_limit_for_change(line_text, owner, &mock_paths);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -2071,21 +2272,14 @@ fn classify_change(
             )],
         )
     };
-    if !mock_paths.is_empty() {
-        let preview: String = mock_paths
-            .iter()
-            .map(|path| format!("`{path}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        missing.push(format!(
-            "Static limit `mocked_module`: related test file mocks {preview} via `vi.mock(...)` / `jest.mock(...)`. The TypeScript preview adapter does not resolve mocked module semantics, so the substitution under test is opaque to static evidence."
-        ));
+    if let Some(limit) = &static_limit {
+        missing.push(limit.missing.clone());
     }
 
     let flow_sink = typescript_flow_sink_for(&probe_shape, owner, line, line_text);
     let missing_discriminators = if matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
-        && mock_paths.is_empty()
+        && static_limit.is_none()
     {
         typescript_missing_discriminators(&probe_shape, line, line_text, flow_sink.as_ref())
     } else {
@@ -2161,7 +2355,14 @@ fn classify_change(
     let discriminate =
         StageEvidence::new(discriminate_state, Confidence::Low, &discriminate_summary);
 
-    let recommended = match &class {
+    let recommended = if let Some(limit) = &static_limit {
+        format!(
+            "TypeScript preview: static limit `{}`; {}",
+            limit.kind.as_str(),
+            limit.repair_route
+        )
+    } else {
+        match &class {
         ExposureClass::Exposed => {
             "TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
         }
@@ -2180,6 +2381,7 @@ fn classify_change(
         _ => {
             "TypeScript preview: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`).".to_string()
         }
+        }
     };
     let confidence_value = if matches!(class, ExposureClass::Exposed) {
         0.6
@@ -2193,6 +2395,9 @@ fn classify_change(
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
+    }
+    if let Some(limit) = &static_limit {
+        evidence.extend(limit.evidence.iter().cloned());
     }
     for candidate in related_candidates
         .iter()
@@ -2208,9 +2413,6 @@ fn classify_change(
             candidate.relation.as_str(),
             candidate.test.name
         ));
-    }
-    for path in &mock_paths {
-        evidence.push(format!("static_limit mocked_module: `{path}`"));
     }
     Some(Finding {
         id: probe.id.0.clone(),
@@ -2240,7 +2442,7 @@ fn classify_change(
         language: Some(output_language_for(file)),
         language_status: Some(LanguageStatus::Preview),
         owner_kind: Some(owner.owner_kind),
-        static_limit_kind: (!mock_paths.is_empty()).then_some(StaticLimitKind::MockedModule),
+        static_limit_kind: static_limit.map(|limit| limit.kind),
     })
 }
 
@@ -2325,10 +2527,10 @@ fn unsupported_syntax_finding(
     );
     let stage = StageEvidence::new(StageState::Unknown, Confidence::Low, &summary);
     let missing = format!(
-        "Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `{}`.",
+        "Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `{}`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance.",
         normalized_path(file)
     );
-    let recommended = "TypeScript preview: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.".to_string();
+    let recommended = "TypeScript preview: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.".to_string();
 
     Finding {
         id: probe.id.0.clone(),
@@ -2517,6 +2719,8 @@ mod tests {
             start_line: 1,
             end_line: 20,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         }
     }
 
@@ -2580,6 +2784,32 @@ mod tests {
             .iter()
             .map(|fact| fact.value.clone())
             .collect()
+    }
+
+    fn assert_static_limit(finding: &Finding, kind: StaticLimitKind, expected_text: &str) {
+        assert_eq!(finding.static_limit_kind, Some(kind));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains(expected_text)),
+            "expected evidence containing {expected_text:?}, got {:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains(expected_text)),
+            "expected missing text containing {expected_text:?}, got {:?}",
+            finding.missing
+        );
+        let recommended = finding.recommended_next_step.as_deref().unwrap_or_default();
+        assert!(
+            recommended.contains(expected_text) && recommended.contains("Repair route:"),
+            "expected limitation-oriented next step for {expected_text:?}, got {recommended:?}"
+        );
+        assert!(finding.activation.missing_discriminators.is_empty());
     }
 
     #[test]
@@ -2801,6 +3031,8 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![
             TypeScriptTest {
@@ -2841,6 +3073,8 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![TypeScriptTest {
             name: "method call on another object".to_string(),
@@ -2867,6 +3101,8 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = extract_tests(
             Path::new("tests/pricing.test.ts"),
@@ -2892,6 +3128,8 @@ test("alias import observes threshold", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = extract_tests(
             Path::new("tests/pricing.test.ts"),
@@ -2917,6 +3155,8 @@ test("namespace import observes threshold", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = extract_tests(
             Path::new("tests/pricing.test.ts"),
@@ -2951,6 +3191,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![TypeScriptTest {
             name: "string mention".to_string(),
@@ -2977,6 +3219,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![
             TypeScriptTest {
@@ -3016,6 +3260,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let mut tests = extract_tests(
             Path::new("tests/pricing.test.ts"),
@@ -3078,6 +3324,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = extract_tests(
             Path::new("tests/checkout.test.ts"),
@@ -3102,6 +3350,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = extract_tests(
             Path::new("tests/pricing.test.ts"),
@@ -3145,6 +3395,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let test = TypeScriptTest {
             name: "alpha".to_string(),
@@ -3180,6 +3432,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let test = TypeScriptTest {
             name: "alpha".to_string(),
@@ -3216,6 +3470,8 @@ test("type only import", () => {
                 start_line: 1,
                 end_line: 5,
                 owner_kind: OwnerKind::Function,
+                decorated: false,
+                imports: Vec::new(),
             },
             TypeScriptOwner {
                 name: "betaScore".to_string(),
@@ -3223,6 +3479,8 @@ test("type only import", () => {
                 start_line: 1,
                 end_line: 5,
                 owner_kind: OwnerKind::Function,
+                decorated: false,
+                imports: Vec::new(),
             },
         ];
         let tests = vec![
@@ -3579,6 +3837,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let test = TypeScriptTest {
             name: "alpha".to_string(),
@@ -3623,6 +3883,8 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let finding = classify_change(
             Path::new("src/lib.ts"),
@@ -3645,6 +3907,8 @@ test("type only import", () => {
             start_line: 10,
             end_line: 20,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let finding = classify_change(
             Path::new("src/lib.ts"),
@@ -3944,6 +4208,109 @@ test("type only import", () => {
         assert_eq!(finding.probe.family, ProbeFamily::SideEffect);
         assert!(finding.flow_sinks.is_empty());
         assert!(finding.activation.missing_discriminators.is_empty());
+        assert_static_limit(
+            &finding,
+            StaticLimitKind::DynamicDispatch,
+            "dynamic_dispatch",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_surfaces_metaprogramming_static_limit() -> Result<(), String> {
+        let finding = classify_weak_direct_line("    return new Proxy(target, handler);")?;
+
+        assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
+        assert_static_limit(
+            &finding,
+            StaticLimitKind::Metaprogramming,
+            "metaprogramming",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_does_not_surface_static_limits_from_string_literals() -> Result<(), String> {
+        let proxy_string = classify_weak_direct_line("    return \"Proxy(\";")?;
+        let computed_string = classify_weak_direct_line("    return \"actions[key](\";")?;
+
+        assert_eq!(proxy_string.static_limit_kind, None);
+        assert_eq!(computed_string.static_limit_kind, None);
+        Ok(())
+    }
+
+    #[test]
+    fn classify_change_surfaces_decorator_indirection_static_limit() -> Result<(), String> {
+        let mut owner = test_owner("save", "src/service.ts");
+        owner.decorated = true;
+        let test = weak_direct_test_for("save");
+        let finding = classify_change(
+            Path::new("src/service.ts"),
+            2,
+            "    return value;",
+            &[owner],
+            &[test],
+        )
+        .ok_or_else(|| "expected decorated owner finding".to_string())?;
+
+        assert_static_limit(
+            &finding,
+            StaticLimitKind::DecoratorIndirection,
+            "decorator_indirection",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn extract_owners_marks_class_method_as_decorated_when_class_is_decorated() {
+        let owners = extract_owners(
+            Path::new("src/service.ts"),
+            r#"@sealed
+class Service {
+    save(value: string) {
+        return value;
+    }
+}
+"#,
+        );
+
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].name, "save");
+        assert!(owners[0].decorated);
+    }
+
+    #[test]
+    fn classify_change_surfaces_missing_import_graph_static_limit() -> Result<(), String> {
+        let owners = extract_owners(
+            Path::new("src/pricing.ts"),
+            r#"import { normalizeTotal } from "./math";
+
+export function discountedTotal(amount: number): number {
+    return normalizeTotal(amount);
+}
+"#,
+        );
+        let test = weak_direct_test_for("discountedTotal");
+        let finding = classify_change(
+            Path::new("src/pricing.ts"),
+            4,
+            "    return normalizeTotal(amount);",
+            &owners,
+            &[test],
+        )
+        .ok_or_else(|| "expected imported-symbol finding".to_string())?;
+
+        assert_static_limit(
+            &finding,
+            StaticLimitKind::MissingImportGraph,
+            "missing_import_graph",
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("normalizeTotal"))
+        );
         Ok(())
     }
 
@@ -4033,6 +4400,8 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![
             TypeScriptTest {
@@ -4070,6 +4439,8 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![TypeScriptTest {
             name: "unrelated".to_string(),
@@ -4094,6 +4465,8 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![TypeScriptTest {
             name: "unrelated method".to_string(),
@@ -4119,6 +4492,8 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            decorated: false,
+            imports: Vec::new(),
         };
         let tests = vec![TypeScriptTest {
             name: "alpha".to_string(),
