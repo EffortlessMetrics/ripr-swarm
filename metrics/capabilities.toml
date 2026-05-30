@@ -1484,7 +1484,7 @@ evidence = [
   "python_test_placement_verify pins suggested pytest and unittest test placement, verify commands, and verify-command confidence for direct weak Python findings",
   "direct weak Python findings with canonical gaps, concrete missing discriminators, placement, and verify commands now carry python_repair_card output with changed owner, changed behavior, current test evidence, test shape, suggested assertion, suggested location, verify command, preview/advisory authority boundary, deferred receipt status, stop conditions, and limits",
   "ripr pilot projects the top Python preview repair card into pilot-summary.{json,md} and terminal first-use output for Python diff runs",
-  "ripr first-pr selects Python preview GapRecords from the gap decision ledger and emits preview-limited start-here.{json,md} for Python project roots without Cargo",
+  "ripr first-pr selects Python preview GapRecords from the gap decision ledger, emits preview-limited start-here.{json,md} for Python project roots without Cargo, and recovers missing Python-only gap ledgers through ripr check --json plus reports gap-ledger --check-output instead of Rust repo-exposure",
   "reports gap-ledger --check-output derives PR-local Python GapRecords from python_repair_card findings, and agent packet --gap-ledger exports bounded packets with allowed files, forbidden files, conflict groups, verify commands, deferred receipt status, and stop conditions",
   "static-limit fixtures cover dynamic_dispatch, decorator_indirection, mocked_module, missing_import_graph, metaprogramming, and unsupported_syntax",
   "cargo xtask dogfood checks Python preview receipts for missing_import_graph, disabled-language behavior, and no cross-language related-test routing",
