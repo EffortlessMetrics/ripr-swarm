@@ -87930,6 +87930,120 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn ripr_swarm_attempt_ledger_real_corpus_supersedes_add_output_observer_missing_receipt()
+    -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "outcomes": []
+        });
+        let corpus_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(REAL_REPAIR_ATTEMPTS_CORPUS);
+        let real_attempts = read_json_value(&corpus_path)?;
+
+        let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+            "unix_ms:100".to_string(),
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("no prior ledger".to_string()),
+                value: None,
+            },
+            RiprSwarmReadinessInput {
+                path: REAL_REPAIR_ATTEMPTS_CORPUS.to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&real_attempts),
+            },
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+                .map_err(|err| err.to_string())?;
+        let latest = value["latest_attempts"]
+            .as_array()
+            .and_then(|attempts| {
+                attempts
+                    .iter()
+                    .find(|attempt| attempt["canonical_gap_id"] == "gap:report-config-label")
+            })
+            .ok_or_else(|| "expected latest add_output_observer attempt".to_string())?;
+        assert_eq!(latest["outcome"], "evidence_improved");
+        assert_eq!(latest["verify_command"], "cargo xtask goldens check");
+        assert_eq!(latest["receipt_command"], "cargo xtask dogfood");
+        assert_eq!(
+            latest["receipt_path"],
+            serde_json::Value::from(REAL_REPAIR_ATTEMPTS_CORPUS)
+        );
+
+        let route_quality = value["repair_route_quality"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["repair_kind"] == "add_output_observer")
+            })
+            .ok_or_else(|| "expected add_output_observer route-quality row".to_string())?;
+        assert_eq!(
+            route_quality["repair_kind_attempted_no_receipt"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            route_quality["repair_kind_improved"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["repair_kind_failure_count"],
+            serde_json::Value::from(0)
+        );
+        assert!(
+            value["top_missing_evidence_fields"]
+                .as_array()
+                .is_none_or(|rows| {
+                    !rows
+                        .iter()
+                        .flat_map(|row| {
+                            row["sample_canonical_gap_ids"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                        })
+                        .any(|gap| gap == "gap:report-config-label")
+                })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_attempt_ledger_preserves_limited_outcome_runtime_status() -> Result<(), String> {
         let swarm_plan = serde_json::json!({
             "schema_version": "0.1",

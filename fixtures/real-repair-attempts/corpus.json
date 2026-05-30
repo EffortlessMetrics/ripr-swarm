@@ -205,6 +205,41 @@
       "reason": "A real dogfood dry-run pass proved missing receipts stay named and do not become implicit success."
     },
     {
+      "id": "report_config_label_output_observer_receipt_improved",
+      "source_ref": "local:bounded-add-output-observer-receipt-2026-05-30",
+      "canonical_gap_id": "gap:report-config-label",
+      "packet_id": "gap:report-config-label",
+      "repair_kind": "add_output_observer",
+      "target_test_or_observer_shape": "report golden observer for rendered configuration label with a durable dogfood receipt",
+      "verify_command": "cargo xtask goldens check",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask dogfood",
+      "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "actionable",
+      "after_gap_state": "actionable",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Recorded the report-config-label output observer route with the same bounded golden verification and a durable dogfood receipt path.",
+      "evidence_movement": "improved: the add_output_observer route now has a receipt-backed follow-up instead of only an attempted_no_receipt dry run.",
+      "operator_note": "The original missing-receipt dry run stays in the corpus as historical evidence; this follow-up only proves the route can be receipted, not that public badge or gate semantics changed.",
+      "must_not_change": [
+        "receipt fabrication",
+        "source files",
+        "public badge semantics",
+        "CI gate defaults",
+        "provider integration",
+        "mutation execution"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/real-repair-attempts/corpus.json:dry_run_receipt_command_missing_named",
+        "fixtures/swarm-plan-packet-corpus/corpus.json:output_observer_packet",
+        "docs/handoffs/2026-05-20-0.7-swarm-repair-loop-dogfood.md"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real follow-up run proved the add_output_observer route can preserve a runnable verify command and durable receipt path without turning the historical missing-receipt attempt into success."
+    },
+    {
       "id": "local_computed_boundary_limitation_route_improved",
       "source_ref": "EffortlessMetrics/ripr-swarm#499",
       "canonical_gap_id": "gap:activation-boundary-input-unresolved-local-computed",
