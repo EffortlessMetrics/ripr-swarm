@@ -21761,6 +21761,7 @@ struct RiprSwarmAttemptLedgerEntry {
     verify_command: String,
     verify_result: Option<String>,
     receipt_command: Option<String>,
+    missing_receipt_reason: Option<String>,
     before_gap_state: Option<String>,
     after_gap_state: Option<String>,
     outcome: String,
@@ -23771,6 +23772,7 @@ fn ripr_swarm_attempt_ledger_current_plan_not_attempted_entries(
             verify_command: verify_command.unwrap_or_else(|| "verify_command_unknown".to_string()),
             verify_result: None,
             receipt_command: audit_non_empty_string(packet, &["receipt_command"]),
+            missing_receipt_reason: None,
             before_gap_state: None,
             after_gap_state: None,
             outcome: "not_attempted".to_string(),
@@ -23810,6 +23812,7 @@ fn ripr_swarm_attempt_ledger_entries_from_value(
                     .unwrap_or_else(|| "verify_command_unknown".to_string()),
                 verify_result: audit_non_empty_string(entry, &["verify_result"]),
                 receipt_command: audit_non_empty_string(entry, &["receipt_command"]),
+                missing_receipt_reason: audit_non_empty_string(entry, &["missing_receipt_reason"]),
                 before_gap_state: audit_non_empty_string(entry, &["before_gap_state"]),
                 after_gap_state: audit_non_empty_string(entry, &["after_gap_state"]),
                 outcome,
@@ -23865,6 +23868,7 @@ fn ripr_swarm_attempt_ledger_entries_from_real_repair_attempts(
                     .unwrap_or_else(|| "verify_command_unknown".to_string()),
                 verify_result: audit_non_empty_string(case, &["verify_result"]),
                 receipt_command: audit_non_empty_string(case, &["receipt_command"]),
+                missing_receipt_reason: audit_non_empty_string(case, &["missing_receipt_reason"]),
                 before_gap_state: audit_non_empty_string(case, &["before_gap_state"]),
                 after_gap_state: audit_non_empty_string(case, &["after_gap_state"]),
                 outcome,
@@ -24017,6 +24021,7 @@ fn ripr_swarm_attempt_ledger_entry_from_outcome(
         verify_command,
         verify_result: audit_non_empty_string(outcome, &["verify_result"]),
         receipt_command,
+        missing_receipt_reason: audit_non_empty_string(outcome, &["missing_receipt_reason"]),
         before_gap_state: audit_non_empty_string(outcome, &["before"]),
         after_gap_state: audit_non_empty_string(outcome, &["after"]),
         outcome: outcome_state,
@@ -24676,6 +24681,7 @@ fn ripr_swarm_attempt_ledger_entry_json(entry: &RiprSwarmAttemptLedgerEntry) -> 
         "verify_command": entry.verify_command,
         "verify_result": entry.verify_result,
         "receipt_command": entry.receipt_command,
+        "missing_receipt_reason": entry.missing_receipt_reason,
         "before_gap_state": entry.before_gap_state,
         "after_gap_state": entry.after_gap_state,
         "outcome": entry.outcome,
@@ -24891,11 +24897,11 @@ fn ripr_swarm_attempt_ledger_push_attempt_table(
         out.push_str("No attempts in this section.\n\n");
         return;
     }
-    out.push_str("| Attempt | Gap | Packet | Repair | Outcome | Actor | Verify | Verify result | Receipt |\n");
-    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    out.push_str("| Attempt | Gap | Packet | Repair | Outcome | Actor | Verify | Verify result | Receipt | Missing receipt reason |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
     for attempt in attempts {
         out.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} | `{}` | {} |\n",
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} | `{}` | {} | {} |\n",
             audit_markdown_cell(&attempt.attempt_id),
             audit_markdown_cell(&attempt.canonical_gap_id),
             audit_markdown_cell(&attempt.packet_id),
@@ -24904,7 +24910,8 @@ fn ripr_swarm_attempt_ledger_push_attempt_table(
             audit_markdown_cell(&attempt.actor_kind),
             audit_markdown_cell(&attempt.verify_command),
             audit_markdown_cell(attempt.verify_result.as_deref().unwrap_or("unknown")),
-            audit_markdown_cell(attempt.receipt_command.as_deref().unwrap_or("missing"))
+            audit_markdown_cell(attempt.receipt_command.as_deref().unwrap_or("missing")),
+            audit_markdown_cell(attempt.missing_receipt_reason.as_deref().unwrap_or(""))
         ));
     }
     out.push('\n');
@@ -84660,6 +84667,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "before_gap_state": "actionable",
                     "after_gap_state": "actionable",
                     "outcome": "attempted_no_receipt",
+                    "missing_receipt_reason": "receipt command was not run after verify timed out",
                     "reason": "attempt stopped before receipt"
                 }
             ]
@@ -84712,10 +84720,22 @@ covered_by = ["cargo xtask check-file-policy"]
             value["repair_route_quality"][0]["repair_kind_attempted_no_receipt"],
             serde_json::Value::from(1)
         );
-        assert!(
-            ripr_swarm_attempt_ledger_markdown(&report)
-                .contains("| real repair attempts | `read` |")
+        let missing_receipt_attempt = value["attempts"]
+            .as_array()
+            .and_then(|attempts| {
+                attempts
+                    .iter()
+                    .find(|attempt| attempt["outcome"] == "attempted_no_receipt")
+            })
+            .ok_or_else(|| "expected attempted_no_receipt attempt".to_string())?;
+        assert_eq!(
+            missing_receipt_attempt["missing_receipt_reason"],
+            serde_json::Value::from("receipt command was not run after verify timed out")
         );
+        let markdown = ripr_swarm_attempt_ledger_markdown(&report);
+        assert!(markdown.contains("| real repair attempts | `read` |"));
+        assert!(markdown.contains("Missing receipt reason"));
+        assert!(markdown.contains("receipt command was not run after verify timed out"));
         Ok(())
     }
 
@@ -85112,6 +85132,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 verify_command: "cargo test -p ripr output_observer".to_string(),
                 verify_result: verify_result.map(str::to_string),
                 receipt_command: Some("cargo xtask receipts write --packet packet".to_string()),
+                missing_receipt_reason: None,
                 before_gap_state: Some("actionable".to_string()),
                 after_gap_state: Some("actionable".to_string()),
                 outcome: outcome.to_string(),
