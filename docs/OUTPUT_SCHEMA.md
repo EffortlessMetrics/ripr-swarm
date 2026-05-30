@@ -2396,7 +2396,7 @@ Field contract:
   `static_limitation_present`. This is advisory report evidence only and does
   not change public badge endpoint semantics. Swarm planning treats explicit
   packet-field projection exclusions such as `not_actionable_gap_state`,
-  `missing_repair_route`, `missing_verify_command`,
+  `missing_repair_route`, `missing_verify_command`, `unbounded_verify_command`,
   `missing_receipt_command`, `missing_must_not_change`,
   `missing_raw_evidence_refs`, `missing_related_test_or_observer`, or
   `missing_confidence` as field-level blocked states even if stale actionability
@@ -2827,9 +2827,10 @@ starts from the canonical packet state already emitted by Lane 1.
 packet's only verify route is a broad `ripr agent verify` repo-exposure snapshot
 comparison. Those commands require separately generating before/after
 repo-exposure artifacts and are not a bounded proof command for agent-safe
-repair delegation. `swarm-plan` also applies this exclusion when reading older
-artifacts that predate the reason, so legacy packets do not remain
-swarm-ready solely because they carry the old broad verify command.
+repair delegation. `swarm-plan` treats this as a verify-command field blocker
+and also applies this exclusion when reading older artifacts that predate the
+reason, so legacy packets do not remain swarm-ready solely because they carry
+the old broad verify command.
 
 ## RIPR Swarm Attempt Dry Run
 
