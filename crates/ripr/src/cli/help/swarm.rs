@@ -29,7 +29,8 @@ that are already eligible for `ripr agent packet --gap-ledger ... --gap-id ...`.
 It groups packets by `allowed_edit_surface` conflict group so schedulers can
 avoid parallel edits to the same test file. Staleness is reported as
 `not_evaluated` until a later receipt/ledger step compares the queue with the
-current git state.
+current git state. If the gap ledger omits root provenance or declares a root
+that differs from `--root`, the command emits a blocked queue with no packets.
 "#;
 
 pub(super) const SWARM_INGEST_HELP: &str = r#"Classify one external agent result for safe repair-loop ingestion.

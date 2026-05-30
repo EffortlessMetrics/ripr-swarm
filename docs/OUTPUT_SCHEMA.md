@@ -9652,6 +9652,15 @@ as a stop-and-refresh signal, not freshness proof. `conflict_group_size > 1`
 means another queued packet targets the same edit surface, so schedulers should
 avoid assigning those packets in parallel.
 
+If the gap decision ledger omits top-level `root` provenance, or declares a
+`root` that clearly differs from the selected `--root`, `ripr swarm queue`
+fails closed with `status = "blocked"`, `blocker.kind = "missing_root"` or
+`blocker.kind = "wrong_root"`, and `packets = []`. The blocked queue preserves
+`inputs.gap_ledger_root`, `inputs.gap_ledger_generated_at`, and
+language-scoped blocked counts so schedulers can stop instead of assigning
+stale, rootless, or wrong-workspace packets. Regenerate the gap decision ledger
+for the selected root before rerunning the queue.
+
 `ripr swarm ingest --result target/ripr/workflow/agent-result.json` reads one
 external agent result artifact and emits an advisory classification. It does not
 trust an agent success claim, rerun the verify command, write receipts, call

@@ -51,6 +51,13 @@ pub(crate) struct GapDecisionLedgerReport {
     limits: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParsedGapRecordSource {
+    pub(crate) root: Option<String>,
+    pub(crate) generated_at: Option<String>,
+    pub(crate) records: Vec<GapRecord>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct GapDecisionLedgerInputs {
     source_kind: &'static str,
@@ -342,9 +349,30 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
 }
 
 pub(crate) fn parse_gap_records_json(contents: &str) -> Result<Vec<GapRecord>, String> {
+    parse_gap_record_source_json(contents).map(|source| source.records)
+}
+
+pub(crate) fn parse_gap_record_source_json(
+    contents: &str,
+) -> Result<ParsedGapRecordSource, String> {
     let value: Value =
         serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
-    gap_records_from_value(&value)
+    let root = value
+        .as_object()
+        .and_then(|object| object.get("root"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let generated_at = value
+        .as_object()
+        .and_then(|object| object.get("generated_at"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let records = gap_records_from_value(&value)?;
+    Ok(ParsedGapRecordSource {
+        root,
+        generated_at,
+        records,
+    })
 }
 
 fn parse_gap_decision_source(
@@ -3217,6 +3245,35 @@ mod tests {
             err_msg.contains("invalid JSON"),
             "unexpected error: {err_msg}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_gap_record_source_json_preserves_report_metadata() -> Result<(), String> {
+        let value = serde_json::json!({
+            "root": "fixtures/python/basic",
+            "generated_at": "unix_ms:1778240100000",
+            "records": [
+                {
+                    "gap_id": "gap:python:pricing-boundary",
+                    "kind": "MissingBoundaryAssertion",
+                    "language": "python",
+                    "language_status": "preview",
+                    "scope": "pr_local",
+                    "repairability": "repairable",
+                    "authority_boundary": "preview_static_advisory"
+                }
+            ]
+        });
+        let source = parse_gap_record_source_json(&value.to_string())
+            .map_err(|err| format!("parse failed: {err}"))?;
+        assert_eq!(source.root.as_deref(), Some("fixtures/python/basic"));
+        assert_eq!(
+            source.generated_at.as_deref(),
+            Some("unix_ms:1778240100000")
+        );
+        assert_eq!(source.records.len(), 1);
+        assert_eq!(source.records[0].gap_id, "gap:python:pricing-boundary");
         Ok(())
     }
 
