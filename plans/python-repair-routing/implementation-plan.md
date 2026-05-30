@@ -944,7 +944,7 @@ Prefer strengthening weak related tests over adding redundant tests.
 
 ### Work item: swarm/python-gap-work-queue
 
-Status: planned
+Status: in progress
 
 Blocked by:
 
@@ -959,6 +959,16 @@ Make multiple Python repair cards shardable.
 - Queue entries include canonical gap ID, priority, owner, allowed edit files,
   verify command, expected receipt, and conflict group.
 - Same-file conflicts and stale entries are visible.
+
+#### Progress
+
+- `ripr swarm queue --language python` ranks packetable Python GapRecords into
+  conflict-grouped advisory work and excludes no-action, static-limit, and
+  non-packetable records.
+- Queue rendering now fails closed when a gap ledger omits root provenance or
+  declares a different root from the selected `--root`, returning a blocked
+  queue with no packets instead of assigning rootless, stale, or
+  wrong-workspace repair work.
 
 ### Work item: swarm/python-agent-result-ingestion
 
