@@ -160,15 +160,21 @@ real_call(1);
 let rendered = render_pipeline::<String>("alpha");
 let value = TypeName::new::<usize>();
 let parsed = crate::parser::parse::<u64>("42");
+let spaced = render_pipeline ("beta");
 "#,
             30,
         );
 
-        assert_eq!(call_names(&calls), vec!["render_pipeline", "new", "parse"]);
+        assert_eq!(
+            call_names(&calls),
+            vec!["render_pipeline", "new", "parse", "render_pipeline"]
+        );
         assert_eq!(calls[0].line, 31);
         assert_eq!(
             calls[0].text,
             "let rendered = render_pipeline::<String>(\"alpha\");"
         );
+        assert_eq!(calls[3].line, 34);
+        assert_eq!(calls[3].text, "let spaced = render_pipeline (\"beta\");");
     }
 }
