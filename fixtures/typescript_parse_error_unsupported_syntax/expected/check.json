@@ -30,7 +30,7 @@
       "flow_sinks": [
       ],
       "evidence": ["static_limit unsupported_syntax: 1 parser error(s)"],
-      "missing": ["Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`."],
+      "missing": ["Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the unsupported syntax before relying on repair guidance."],
       "activation": {
         "observed_values": [
         ],
@@ -46,8 +46,8 @@
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "TypeScript preview: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.",
-      "suggested_next_action": "TypeScript preview: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.",
+      "recommended_next_step": "TypeScript preview: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.",
       "language": "typescript",
       "language_status": "preview",
       "static_limit_kind": "unsupported_syntax"
