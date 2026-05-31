@@ -4600,8 +4600,9 @@ Field contract:
 
 - `schema_version` — currently `"0.1"`.
 - `status` — always `"advisory"`; this report is a receipt, not a CI policy.
-- `inputs.before` / `inputs.after` — normalized paths to the compared
-  `repo-exposure-json` artifacts.
+- `inputs.before` / `inputs.after` — normalized paths to the compared static
+  evidence snapshots. Supported snapshots are `repo-exposure-json` artifacts
+  with `seams[]` or check-output JSON artifacts with `findings[]`.
 - `before` / `after` — grip-class counts computed from the supplied seams. The
   report emits `seams_total` plus every known `SeamGripClass` bucket, even when
   a bucket is zero.
