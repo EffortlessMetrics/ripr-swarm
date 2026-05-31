@@ -73040,6 +73040,61 @@ fn exact_owner_call_has_external_expected_value() {
     }
 
     #[test]
+    fn dogfood_python_real_repo_eval_checks_ranked_top_3_boundaries() {
+        let mut valid_top_3 = valid_python_real_repo_eval_scenario();
+        let mut second = valid_top_3.ranked_top_3_findings[0].clone();
+        second.rank = 2;
+        second.canonical_gap_id = "gap:python:app/cart.py:total:return_value:total".to_string();
+        second.missing_discriminator = "cart total includes tax".to_string();
+        second.suggested_test_file = "cart_test.py".to_string();
+        second.verify_command = "python -m unittest cart_test.CartTotalTest".to_string();
+        second.false_positive_notes = "none".to_string();
+        second.reason =
+            "rank 2 uses unittest verification and a module-level test file".to_string();
+
+        let mut third = valid_top_3.ranked_top_3_findings[0].clone();
+        third.rank = 3;
+        third.canonical_gap_id = "gap:python:app/orders.py:submit:side_effect:email".to_string();
+        third.missing_discriminator = "submission sends confirmation email".to_string();
+        third.suggested_test_file = "app/tests/test_orders.py".to_string();
+        third.reason = "rank 3 uses a package-local test path".to_string();
+
+        valid_top_3.ranked_top_3_findings.push(second);
+        valid_top_3.ranked_top_3_findings.push(third);
+        valid_top_3.ranked_top_3_limit_reason = None;
+
+        assert!(
+            dogfood_python_real_repo_eval_run(&valid_top_3)
+                .errors
+                .is_empty()
+        );
+
+        let mut missing_limit_reason = valid_python_real_repo_eval_scenario();
+        missing_limit_reason.ranked_top_3_limit_reason = None;
+        let report = dogfood_python_real_repo_eval_run(&missing_limit_reason)
+            .errors
+            .join("\n");
+        assert!(
+            report.contains(
+                "ranked_top_3_limit_reason must explain fewer-than-three ranked findings"
+            )
+        );
+
+        let mut malformed = valid_top_3;
+        malformed
+            .ranked_top_3_findings
+            .push(malformed.ranked_top_3_findings[0].clone());
+        malformed.ranked_top_3_findings[3].rank = 2;
+        malformed.ranked_top_3_findings[3].reason.clear();
+        let report = dogfood_python_real_repo_eval_run(&malformed)
+            .errors
+            .join("\n");
+        assert!(report.contains("ranked_top_3_findings must capture at most three findings"));
+        assert!(report.contains("ranked_top_3_findings rank 2 is duplicated"));
+        assert!(report.contains("ranked_top_3_findings rank 2 must document a reason"));
+    }
+
+    #[test]
     fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), String> {
         with_repo_cwd(|| {
             let scenarios = dogfood_typescript_preview_repair_loop_scenarios();
