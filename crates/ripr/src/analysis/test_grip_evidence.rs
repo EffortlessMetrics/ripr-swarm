@@ -1741,6 +1741,7 @@ fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> boo
             | "arm"
             | "class"
             | "clone"
+            | "context"
             | "count"
             | "counts"
             | "data"
@@ -1751,6 +1752,7 @@ fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> boo
             | "field"
             | "file"
             | "files"
+            | "from"
             | "input"
             | "is_empty"
             | "iter"
@@ -1766,6 +1768,7 @@ fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> boo
             | "output"
             | "path"
             | "paths"
+            | "probe"
             | "result"
             | "results"
             | "side_effect"
@@ -1776,9 +1779,12 @@ fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> boo
             | "test"
             | "tests"
             | "text"
+            | "u64"
             | "value"
             | "values"
             | "variant"
+            | "byte"
+            | "bytes"
     ) {
         return false;
     }
@@ -5101,8 +5107,14 @@ fn wrapper_mentions_owner_only_in_non_code() {
             "side_effect",
             "description",
             "field",
+            "from",
             "is_empty",
+            "byte",
+            "bytes",
+            "context",
+            "probe",
             "sink",
+            "u64",
             "variant",
         ] {
             assert!(
@@ -5131,6 +5143,20 @@ fn wrapper_mentions_owner_only_in_non_code() {
                             collect_source_facts_from_expr(file, source, current_owner, out); \
                         }\n\
                         fn collect_source_facts_from_expr(_file: &str, _source: &str, _current_owner: &str, _out: &mut Vec<String>) { \
+                        }\n\
+                        pub fn zq_byte_owner(bytes: &[u8]) -> Vec<u64> { \
+                            bytes.iter().map(|byte| u64::from(*byte)).collect() \
+                        }\n\
+                        pub struct ZqContext { \
+                            pub probe: String, \
+                            pub class: String, \
+                            pub evidence: String, \
+                        }\n\
+                        pub fn zq_probe_owner(context: &ZqContext) -> String { \
+                            zq_missing_evidence(&context.probe, &context.class, &context.evidence) \
+                        }\n\
+                        fn zq_missing_evidence(probe: &str, class: &str, evidence: &str) -> String { \
+                            format!(\"{probe}:{class}:{evidence}\") \
                         }\n";
         let test = (
             "tests/unrelated.rs",
@@ -5159,6 +5185,19 @@ fn wrapper_mentions_owner_only_in_non_code() {
                  assert_eq!(source, \"src/lib.rs\"); \
                  assert_eq!(current_owner, \"current_owner\"); \
                  assert_eq!(out, \"out\"); \
+             }\n\
+             #[test] fn unrelated_byte_assertion() { \
+                 let bytes = vec![1u8, 2u8]; \
+                 let byte = bytes[0]; \
+                 assert_eq!(u64::from(byte), 1); \
+             }\n\
+             #[test] fn unrelated_probe_context_assertion() { \
+                 let context = \"probe\"; \
+                 let probe = \"alpha\"; \
+                 let evidence = \"beta\"; \
+                 assert_eq!(context, \"probe\"); \
+                 assert_eq!(probe, \"alpha\"); \
+                 assert_eq!(evidence, \"beta\"); \
              }\n",
         );
         let files: Vec<(PathBuf, &str)> = vec![
@@ -5237,6 +5276,30 @@ fn wrapper_mentions_owner_only_in_non_code() {
             collect_evidence.related_tests
         );
         assert_eq!(collect_evidence.reach.state, StageState::No);
+        let byte_call_presence = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::CallPresence && s.expression().contains("u64::from"))
+            .ok_or_else(|| "byte conversion call_presence seam present".to_string())?;
+        let byte_evidence = evidence_for_seam(byte_call_presence, &index);
+        assert!(
+            byte_evidence.related_tests.is_empty(),
+            "generic conversion tokens `u64`, `from`, `byte`, and `bytes` must not create assertion-target affinity; got {:?}",
+            byte_evidence.related_tests
+        );
+        assert_eq!(byte_evidence.reach.state, StageState::No);
+        let probe_call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence && s.expression().contains("zq_missing_evidence")
+            })
+            .ok_or_else(|| "probe context call_presence seam present".to_string())?;
+        let probe_evidence = evidence_for_seam(probe_call_presence, &index);
+        assert!(
+            probe_evidence.related_tests.is_empty(),
+            "generic context tokens `context`, `probe`, and `evidence` must not create assertion-target affinity; got {:?}",
+            probe_evidence.related_tests
+        );
+        assert_eq!(probe_evidence.reach.state, StageState::No);
         assert_eq!(evidence.reach.state, StageState::No);
         Ok(())
     }
