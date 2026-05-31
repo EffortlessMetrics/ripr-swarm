@@ -62858,12 +62858,12 @@ mod tests {
         dogfood_language_preview_run, dogfood_language_preview_scenarios,
         dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
         dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
-        dogfood_python_real_repo_eval_run, dogfood_python_real_repo_eval_scenarios,
-        dogfood_python_repair_routing_quality_summary, dogfood_real_repair_attempt_run,
-        dogfood_real_repair_attempt_scenarios, dogfood_report_json, dogfood_report_markdown,
-        dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios,
-        dogfood_surface_projection_alignment_run, dogfood_surface_projection_alignment_scenarios,
-        dogfood_typescript_preview_repair_loop_run,
+        dogfood_push_python_quality_ratio_json, dogfood_python_real_repo_eval_run,
+        dogfood_python_real_repo_eval_scenarios, dogfood_python_repair_routing_quality_summary,
+        dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios,
+        dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+        dogfood_report_packet_index_scenarios, dogfood_surface_projection_alignment_run,
+        dogfood_surface_projection_alignment_scenarios, dogfood_typescript_preview_repair_loop_run,
         dogfood_typescript_preview_repair_loop_scenarios, dogfood_user_surface_projection_run,
         dogfood_user_surface_projection_scenarios, evaluate_semantic_no_panic_policy,
         evidence_health_args, evidence_quality_scorecard_audit_regeneration_failure_audit,
@@ -72282,6 +72282,97 @@ fn exact_owner_call_has_external_expected_value() {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn dogfood_python_repair_routing_quality_flags_noisy_routes() {
+        let empty_quality = dogfood_python_repair_routing_quality_summary(&[]);
+        assert_eq!(empty_quality.gate_status, "review");
+        assert_eq!(empty_quality.cases, 0);
+        assert_eq!(empty_quality.receipt_closed, 0);
+
+        let mut unusable_card = valid_python_real_repo_eval_scenario();
+        unusable_card.usability = "needs_review".to_string();
+
+        let mut bad_verify = valid_python_real_repo_eval_scenario();
+        bad_verify.verify_result = "fail".to_string();
+        bad_verify.gap_movement = "unchanged".to_string();
+        bad_verify.closed_gaps = 0;
+
+        let mut vague_discriminator = valid_python_real_repo_eval_scenario();
+        vague_discriminator.missing_discriminator = "uncertain".to_string();
+
+        let mut missing_location = valid_python_real_repo_eval_scenario();
+        missing_location.suggested_test_file = "src/pricing.py".to_string();
+
+        let mut false_actionable = valid_python_real_repo_eval_scenario();
+        false_actionable.false_positive_notes = "possible false actionability".to_string();
+
+        let mut not_closed = valid_python_real_repo_eval_scenario();
+        not_closed.gap_movement = "unchanged".to_string();
+        not_closed.closed_gaps = 0;
+
+        let mut unsupported = valid_python_real_repo_eval_scenario();
+        unsupported.unsupported_limitations = vec![
+            "decorator_indirection".to_string(),
+            "dynamic_route_registration".to_string(),
+        ];
+
+        let mut crashed =
+            dogfood_python_real_repo_eval_run(&valid_python_real_repo_eval_scenario());
+        crashed
+            .errors
+            .push("simulated parser/report contract error".to_string());
+
+        let runs = vec![
+            dogfood_python_real_repo_eval_run(&unusable_card),
+            dogfood_python_real_repo_eval_run(&bad_verify),
+            dogfood_python_real_repo_eval_run(&vague_discriminator),
+            dogfood_python_real_repo_eval_run(&missing_location),
+            dogfood_python_real_repo_eval_run(&false_actionable),
+            dogfood_python_real_repo_eval_run(&not_closed),
+            dogfood_python_real_repo_eval_run(&unsupported),
+            crashed,
+        ];
+        let quality = dogfood_python_repair_routing_quality_summary(&runs);
+
+        assert_eq!(quality.gate_status, "review");
+        assert_eq!(quality.cases, 8);
+        assert_eq!(quality.top_1_actionable_usable, 6);
+        assert_eq!(quality.verify_command_valid, 7);
+        assert_eq!(quality.concrete_discriminator, 7);
+        assert_eq!(quality.suggested_test_location, 7);
+        assert_eq!(quality.false_actionable, 1);
+        assert_eq!(quality.crashes, 1);
+        assert_eq!(quality.receipt_closed, 6);
+        assert!(
+            quality
+                .unsupported_limitation_distribution
+                .iter()
+                .any(|(kind, count)| kind == "decorator_indirection" && *count == 1)
+        );
+        assert!(
+            quality
+                .unsupported_limitation_distribution
+                .iter()
+                .any(|(kind, count)| kind == "dynamic_route_registration" && *count == 1)
+        );
+    }
+
+    #[test]
+    fn dogfood_python_quality_ratio_json_marks_review_and_not_measured() {
+        let mut body = String::new();
+        dogfood_push_python_quality_ratio_json(&mut body, "empty", 0, 0, true, "no cases");
+        dogfood_push_python_quality_ratio_json(&mut body, "higher_pass", 2, 2, true, "all good");
+        dogfood_push_python_quality_ratio_json(&mut body, "higher_review", 1, 2, true, "missing");
+        dogfood_push_python_quality_ratio_json(&mut body, "lower_pass", 0, 2, false, "none");
+        dogfood_push_python_quality_ratio_json(&mut body, "lower_review", 1, 2, false, "noisy");
+
+        assert!(body.contains("\"empty\": { \"status\": \"not_measured\""));
+        assert!(body.contains("\"higher_pass\": { \"status\": \"pass\""));
+        assert!(body.contains("\"higher_review\": { \"status\": \"review\""));
+        assert!(body.contains("\"lower_pass\": { \"status\": \"pass\""));
+        assert!(body.contains("\"lower_review\": { \"status\": \"review\""));
     }
 
     fn valid_python_real_repo_eval_scenario() -> DogfoodPythonRealRepoEvalScenario {
