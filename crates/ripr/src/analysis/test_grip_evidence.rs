@@ -13,7 +13,8 @@
 
 use super::facts::CallFact;
 use super::rust_index::{
-    self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_identifier_tokens,
+    self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
+    extract_identifier_tokens,
 };
 use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::domain::{
@@ -1705,7 +1706,11 @@ impl OwnerContext {
 /// through `extract_identifier_tokens`, so stop-words and short tokens
 /// are excluded.
 fn assertion_target_tokens(seam: &RepoSeam) -> BTreeSet<String> {
-    let discriminator_tokens = required_discriminator_tokens(seam);
+    let discriminator_tokens = if seam.kind() == SeamKind::CallPresence {
+        call_presence_callee_target_tokens(required_discriminator_text(seam))
+    } else {
+        required_discriminator_tokens(seam)
+    };
     let sink_tokens = extract_identifier_tokens(seam.expected_sink().as_str());
     let filters_generic_call_tokens = seam.kind() == SeamKind::CallPresence;
     discriminator_tokens
@@ -1716,6 +1721,16 @@ fn assertion_target_tokens(seam: &RepoSeam) -> BTreeSet<String> {
                 || call_presence_assertion_affinity_token_is_specific_enough(token)
         })
         .collect()
+}
+
+fn call_presence_callee_target_tokens(expression: &str) -> Vec<String> {
+    let mut tokens = extract_call_facts(expression, 0)
+        .into_iter()
+        .flat_map(|call| extract_identifier_tokens(&call.name))
+        .collect::<Vec<_>>();
+    tokens.sort();
+    tokens.dedup();
+    tokens
 }
 
 fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> bool {
@@ -5075,9 +5090,11 @@ fn wrapper_mentions_owner_only_in_non_code() {
         // Live Lane 1 audit showed many call_presence limitations where
         // assertion-target affinity came from generic argument names
         // such as `path`, plus generic field/method targets such as
-        // `description.clone()` and `is_empty()`, and enum/match field
-        // names such as `variant` and `arm`. That is not enough evidence
-        // that the test reaches the owner or observes the call site.
+        // `description.clone()` and `is_empty()`, enum/match field
+        // names such as `variant` and `arm`, and argument/context tokens
+        // from full call expressions such as `source`, `current_owner`,
+        // and `out`. That is not enough evidence that the test reaches
+        // the owner or observes the call site.
         for token in [
             "arm",
             "path",
@@ -5109,6 +5126,11 @@ fn wrapper_mentions_owner_only_in_non_code() {
                         pub fn zq_variant_owner(variant: &str, arm: &str) -> String { \
                             let _arm = arm.clone(); \
                             variant.to_string() \
+                        }\n\
+                        pub fn zq_collect_source_owner(file: &str, source: &str, current_owner: &str, out: &mut Vec<String>) { \
+                            collect_source_facts_from_expr(file, source, current_owner, out); \
+                        }\n\
+                        fn collect_source_facts_from_expr(_file: &str, _source: &str, _current_owner: &str, _out: &mut Vec<String>) { \
                         }\n";
         let test = (
             "tests/unrelated.rs",
@@ -5129,6 +5151,14 @@ fn wrapper_mentions_owner_only_in_non_code() {
                  let arm = \"fallback\"; \
                  assert_eq!(variant, \"NotFound\"); \
                  assert_eq!(arm, \"fallback\"); \
+             }\n\
+             #[test] fn unrelated_call_argument_assertion() { \
+                 let source = \"src/lib.rs\"; \
+                 let current_owner = \"current_owner\"; \
+                 let out = \"out\"; \
+                 assert_eq!(source, \"src/lib.rs\"); \
+                 assert_eq!(current_owner, \"current_owner\"); \
+                 assert_eq!(out, \"out\"); \
              }\n",
         );
         let files: Vec<(PathBuf, &str)> = vec![
@@ -5190,6 +5220,23 @@ fn wrapper_mentions_owner_only_in_non_code() {
             arm_evidence.related_tests
         );
         assert_eq!(arm_evidence.reach.state, StageState::No);
+
+        let collect_call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.expression().contains("collect_source_facts_from_expr")
+            })
+            .ok_or_else(|| {
+                "collect_source_facts_from_expr call_presence seam present".to_string()
+            })?;
+        let collect_evidence = evidence_for_seam(collect_call_presence, &index);
+        assert!(
+            collect_evidence.related_tests.is_empty(),
+            "call-presence assertion-target affinity must not match argument/context tokens from the full call expression; got {:?}",
+            collect_evidence.related_tests
+        );
+        assert_eq!(collect_evidence.reach.state, StageState::No);
         assert_eq!(evidence.reach.state, StageState::No);
         Ok(())
     }
