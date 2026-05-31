@@ -52475,6 +52475,14 @@ fn generated_clean_violations(changes: &[ChangedPath], badge_refresh_context: bo
             continue;
         }
 
+        if is_ad_hoc_repo_exposure_artifact(path) && !is_deletion_only(change) {
+            violations.push(format!(
+                "ad-hoc repo exposure artifact is present in the PR diff: {}\n  rule: write full repo-exposure-json outputs under ignored target/ripr paths for explicit inspection only; ordinary badge, receipt, top-file, and packet queue paths must use bounded summaries or ledgers",
+                format_changed_path(change)
+            ));
+            continue;
+        }
+
         if is_sample_target_artifact(path) && !is_deletion_only(change) {
             violations.push(format!(
                 "sample workspace build output is present in the PR diff: {}\n  rule: remove crates/ripr/examples/sample/target residue before review",
@@ -52572,6 +52580,16 @@ fn is_ripr_target_artifact(path: &str) -> bool {
 fn is_sample_target_artifact(path: &str) -> bool {
     path == "crates/ripr/examples/sample/target"
         || path.starts_with("crates/ripr/examples/sample/target/")
+}
+
+fn is_ad_hoc_repo_exposure_artifact(path: &str) -> bool {
+    let path = path.trim_start_matches("./");
+    if path.contains('/') || path.contains('\\') {
+        return false;
+    }
+    path == "exposure.json"
+        || (path.starts_with("repo-exposure") && path.ends_with(".json"))
+        || path.ends_with(".repo-exposure.json")
 }
 
 fn is_deletion_only(change: &ChangedPath) -> bool {
@@ -78439,6 +78457,37 @@ jobs:
             violations
                 .iter()
                 .any(|violation| violation.contains("sample workspace build output"))
+        );
+    }
+
+    #[test]
+    fn generated_clean_rejects_ad_hoc_root_repo_exposure_dumps() {
+        let changes = vec![
+            changed_path("exposure.json", &["A"]),
+            changed_path("repo-exposure.json", &["A"]),
+            changed_path("after.repo-exposure.json", &["A"]),
+            changed_path("target/ripr/reports/repo-exposure.json", &["A"]),
+            changed_path(
+                "fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json",
+                &["A"],
+            ),
+        ];
+        let violations = generated_clean_violations(&changes, false);
+        assert_eq!(violations.len(), 4);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("ad-hoc repo exposure artifact"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("generated RIPR target artifact"))
+        );
+        assert!(
+            violations
+                .iter()
+                .all(|violation| !violation.contains("fixtures/boundary_gap/calibration"))
         );
     }
 
