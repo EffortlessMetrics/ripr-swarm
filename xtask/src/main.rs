@@ -50688,7 +50688,7 @@ fn finish_capabilities_report(violations: &[String]) -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update metrics/capabilities.toml with status, spec, next checkpoint, and metric fields.",
-                "Keep capability statuses to planned, alpha, stable, or calibrated.",
+                "Keep capability statuses to planned, alpha, usable alpha, stable, or calibrated.",
                 "Reference only specs that exist in docs/specs.",
                 "Use cargo xtask metrics to regenerate target/ripr/reports/metrics.md and metrics.json.",
             ],
@@ -50733,7 +50733,7 @@ fn validate_capabilities(
             violations.push(format!("{id} is missing a non-empty `name`"));
         }
         match capability.status.as_deref() {
-            Some("planned" | "alpha" | "stable" | "calibrated") => {}
+            Some("planned" | "alpha" | "usable alpha" | "stable" | "calibrated") => {}
             Some(status) => violations.push(format!("{id} has unsupported status `{status}`")),
             None => violations.push(format!("{id} is missing `status`")),
         }
@@ -50767,8 +50767,14 @@ fn validate_capabilities(
                 violations.push(format!("{id} fixture path does not exist: {fixture}"));
             }
         }
-        if capability.status.as_deref() == Some("stable") && capability.fixtures.is_empty() {
-            violations.push(format!("{id} is stable but has no fixture entries"));
+        if matches!(
+            capability.status.as_deref(),
+            Some("usable alpha" | "stable")
+        ) && capability.fixtures.is_empty()
+        {
+            violations.push(format!(
+                "{id} is usable alpha or stable but has no fixture entries"
+            ));
         }
         if capability.status.as_deref() == Some("calibrated")
             && !capability
@@ -53546,7 +53552,7 @@ fn check_readme_state() -> Result<(), String> {
             "docs/CAPABILITY_MATRIX.md does not reference metrics/capabilities.toml".to_string(),
         );
     }
-    for status in ["planned", "alpha", "stable", "calibrated"] {
+    for status in ["planned", "alpha", "usable alpha", "stable", "calibrated"] {
         let marker = format!("`{status}`");
         if !matrix.contains(&marker) {
             violations.push(format!(
