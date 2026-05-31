@@ -63,7 +63,7 @@ pub(crate) fn render_check_with_config(
         }
         OutputFormat::RepoExposureSummaryJson => {
             let classified =
-                analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
+                analysis::inventory_compact_classified_seams_at_with_config(&output.root, config)?;
             Ok(repo_exposure::render_repo_exposure_summary_json(
                 &classified,
                 &output.root,
