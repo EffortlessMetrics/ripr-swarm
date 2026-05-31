@@ -10895,7 +10895,7 @@ and `python -m unittest ...` verification commands, expose verify and receipt
 copy actions when those commands are safe, expose `Agent handoff: copy Python
 packet` to copy the same GapRecord-backed agent packet as `ripr agent packet
 --gap-ledger ... --gap-id ...`, expose `Copy Python repair card` to copy a
-current validated GapRecord repair-card brief through
+current validated GapRecord repair-card brief for safe target-file routes through
 `ripr.copyTargetedTestBrief`, can open `repair_route.target_file` when
 `related_test` is a bare test name, and expose `Write Python test: copy pytest
 skeleton` for pytest-backed repairs. The Python agent-packet action appears
