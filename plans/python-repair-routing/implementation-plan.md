@@ -901,6 +901,15 @@ Support simple FastAPI/Flask-shaped repair cards.
   client tests can produce framework-shaped repair cards.
 - Dynamic routing remains a named limitation.
 
+#### Progress
+
+- `fixtures/python_api_route_decorator_repair_gap` now proves a simple
+  FastAPI/Flask-shaped `@api.post(...)` route decorator can remain
+  syntax-first route metadata instead of a decorator-indirection limit when a
+  changed `response.status_code` assignment has weak pytest evidence.
+- Arbitrary decorators remain fail-closed through
+  `python_decorator_indirection_limit`.
+
 ### Work item: analysis/python-cli-output-pack-v1
 
 Status: planned
@@ -974,7 +983,7 @@ Prefer strengthening weak related tests over adding redundant tests.
 
 ### Work item: swarm/python-gap-work-queue
 
-Status: in progress
+Status: complete
 
 Blocked by:
 
@@ -1204,20 +1213,35 @@ Prove usefulness outside fixtures.
   a `free_shipping_offer` threshold-boundary change routes to a
   strengthen-existing-test repair card, the focused pytest verify command
   passes, and `ripr outcome` closes the canonical Python gap.
+- The same corpus now records a CLI/output-style pytest eval where a changed
+  `print(...)` side effect routes to a strengthen-existing-test repair card,
+  the focused `capsys` pytest verify command passes, and `ripr outcome` closes
+  the canonical Python output/call-effect gap.
+- The same corpus now records a lightweight API-handler pytest eval where a
+  changed `response.status_code` assignment routes to a field/object repair
+  card, the focused status-code pytest verify command passes, and
+  `ripr outcome` closes the canonical Python API status gap.
+- The same corpus now records a mixed Rust/Python pytest eval where a Python
+  `amount >= threshold` predicate-boundary change routes to a repair card
+  despite Cargo metadata, the focused pytest verify command passes, and
+  `ripr outcome` closes the canonical Python gap.
+- The same corpus now records a decorated route pytest eval where a simple
+  `@api.post(...)` route handler changes `response.status_code`, RIPR emits a
+  field/object repair card with missing discriminator
+  `response.status_code == 422`, the focused pytest verify command passes, and
+  `ripr outcome` closes the canonical Python gap.
 - `cargo xtask dogfood` projects the Python real-repo eval corpus into the
   dogfood report as receipt-backed eval evidence separate from analyzer
   fixture goldens.
-- Broader outside-fixture evaluations across API, CLI/tooling, and mixed
-  Python repos remain the next dogfood slice before metrics or support-tier
-  promotion.
+- Metrics and support-tier review remain the next slices before any promotion.
 
 ### Work item: metrics/python-repair-routing-quality
 
-Status: planned
+Status: in progress
 
 Blocked by:
 
-- `dogfood/python-real-repo-evals`
+- none; dogfood real-repo eval receipts are now fixture-backed.
 
 #### Goal
 
@@ -1230,6 +1254,24 @@ Measure Python quality by repair usefulness, not finding volume.
   related-test-location rate, false-actionable rate, crash rate, unsupported
   limitation distribution, and receipt closure rate.
 - Noisy changes fail quality gates.
+
+#### Progress
+
+- `cargo xtask dogfood` now derives Python repair-routing quality metrics from
+  `fixtures/python-real-repo-evals/corpus.json`: top-1 actionable usefulness,
+  verify-command validity, concrete-discriminator coverage, suggested
+  test-location coverage, false-actionable rate, crash rate, receipt closure
+  rate, and unsupported limitation distribution.
+- The Python eval corpus now records structured unsupported limitation kinds,
+  and the decorated-route eval contributes `dynamic_route_registration` to the
+  limitation distribution while keeping the support-tier boundary explicit.
+- Dogfood exposes top-3 actionable precision as `not_measured` until the eval
+  corpus captures ranked top-3 findings; promotion remains blocked on that
+  missing measurement.
+- Corpus validation fails if the checked top Python repair cards become noisy:
+  unusable top-1 card, invalid verify command, missing concrete discriminator,
+  missing suggested test location, false actionability, crash/contract error, or
+  no closed receipt.
 
 ### Work item: campaign/python-usable-alpha-promotion
 

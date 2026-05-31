@@ -2009,6 +2009,9 @@ name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript.rs",
+  "crates/ripr/src/analysis/language/typescript.rs::tests::extract_tests_records_safe_mock_payload_shapes",
+  "crates/ripr/src/analysis/language/typescript.rs::tests::extract_tests_keeps_ambiguous_mock_payload_shapes_unbounded",
+  "crates/ripr/src/analysis/language/typescript.rs::tests::typescript_preview_mock_payload_guidance_names_literal_payload_without_repair_packet",
   "crates/ripr/src/output/preview_actionability.rs::tests::parses_typescript_preview_actionability_strings",
   "crates/ripr/src/output/json/mod.rs::tests::finding_json_projects_typescript_preview_actionability",
   "crates/ripr/src/output/human.rs::tests::render_finding_includes_preview_actionability_without_raw_string_spam",
@@ -2021,6 +2024,7 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
   "xtask/src/main.rs::tests::dogfood_typescript_preview_repair_loop_receipts_are_checked",
   "xtask/src/main.rs::tests::dogfood_typescript_preview_repair_loop_rejects_overclaiming",
+  "xtask/src/main.rs::tests::typescript_preview_false_actionable_audit_cases_are_checked",
 ]
 fixtures = [
   "fixtures/typescript_boundary_gap",
@@ -2042,6 +2046,7 @@ fixtures = [
   "fixtures/typescript_static_limit_taxonomy",
   "fixtures/typescript_strict_actionability",
   "fixtures/typescript-preview-repair-loop",
+  "fixtures/typescript-preview-false-actionable-audit",
   "fixtures/mixed_rust_typescript_preview",
 ]
 code = [
@@ -2088,6 +2093,8 @@ outputs = [
   "fixtures/typescript_strict_actionability/expected/check.json",
   "fixtures/typescript_strict_actionability/expected/human.txt",
   "fixtures/typescript-preview-repair-loop/corpus.json",
+  "fixtures/typescript-preview-false-actionable-audit/corpus.json",
+  "docs/lanes/TYPESCRIPT_ENABLEMENT.md",
   "docs/handoffs/2026-05-13-language-adapter-preview-receipts.md",
   "docs/handoffs/2026-05-13-campaign-27-closeout.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
@@ -2129,6 +2136,7 @@ metrics = [
   "language_adapter_typescript_lsp_preview_actionability_context",
   "language_adapter_typescript_ci_preview_grouping",
   "language_adapter_typescript_preview_repair_loop_dogfood",
+  "language_adapter_typescript_false_actionable_audit",
   "language_adapter_typescript_route_quality_by_language",
   "language_adapter_javascript_route_quality_by_language",
 ]
@@ -2183,6 +2191,7 @@ fixtures = [
   "fixtures/python_same_line_duplicate_collapse",
   "fixtures/python_ranking_noise_control",
   "fixtures/python_test_placement_verify",
+  "fixtures/python_api_route_decorator_repair_gap",
   "fixtures/python_call_argument_shape",
   "fixtures/python_mock_interaction_shape",
   "fixtures/python_owner_file_match",
@@ -2279,11 +2288,13 @@ metrics = [
   "language_adapter_python_test_placement_verify",
   "language_adapter_python_repair_card_v1",
   "language_adapter_python_existing_test_strengthening",
+  "language_adapter_python_route_decorator_repair_card",
   "language_adapter_python_agent_packet_v1",
   "language_adapter_python_swarm_queue_stale_packets",
   "language_adapter_python_gap_receipt_from_check_output",
   "language_adapter_python_real_repair_attempt_receipt",
   "language_adapter_python_real_repo_eval_receipt",
+  "language_adapter_python_repair_routing_quality_metrics",
   "language_adapter_python_pilot_first_use_path",
   "language_adapter_python_first_pr_start_here_path",
   "language_adapter_python_static_limit_stop_reasons",
@@ -4062,6 +4073,8 @@ tests = [
   "xtask::tests::ripr_swarm_readiness_consumes_attempt_ledger_counts",
   "xtask::tests::ripr_swarm_readiness_recomputes_summary_from_attempts_when_summary_is_stale",
   "xtask::tests::ripr_swarm_readiness_audits_blocked_state_routes",
+  "xtask::tests::ripr_swarm_readiness_hardens_legacy_limitation_backlog_packets",
+  "xtask::tests::ripr_swarm_readiness_prioritizes_sampled_static_limitation_backlog",
   "xtask::tests::dogfood_surface_projection_alignment_receipts_are_checked",
   "xtask::tests::dogfood_surface_projection_alignment_covers_route_quality_non_success",
   "xtask::tests::dogfood_surface_projection_alignment_covers_missing_receipt_route_quality",
@@ -4170,6 +4183,7 @@ metrics = [
   "top_limitation_routes",
   "real_repair_attempt_receipts",
   "language_adapter_python_real_repo_eval_receipt",
+  "language_adapter_python_repair_routing_quality_metrics",
 ]
 
 [[behavior]]

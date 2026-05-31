@@ -192,6 +192,11 @@ Readiness may project the leading analyzer backlog routes as
 `top_limitation_routes[]`. That projection is separate from
 `repair_route_quality[]`, which is attempt-outcome evidence; limitation routes
 remain non-actionable until the full public packet contract is satisfied.
+When readiness consumes older or external backlog packets that omit
+presentation-only route fields, it must preserve the non-actionable boundary by
+filling standard non-claims, fallback why-not-actionable text, fallback unlock
+conditions, and explicit `unknown` evidence class values instead of making those
+routes repair-ready.
 
 ## Required Packet Fields
 
@@ -375,6 +380,14 @@ for failing latest attempts when available, and readiness should point
 preserving the first failed-attempt sample in the reason text. Route-quality
 work should start from a concrete failed attempt without re-queuing that failed
 repair packet as swarm-ready work.
+Attempt-ledger reports should also project `historical_repair_route_quality[]`,
+`historical_language_repair_route_quality[]`, and
+`top_historical_failing_repair_routes[]` from durable full attempt history. These
+history rows keep older unchanged, regressed, and no-receipt attempts visible
+after a later follow-up improves or resolves the same canonical gap. They are
+route-learning audit evidence, not current routing state; current readiness
+actions still come from latest-attempt repair-route quality and explicit
+missing-evidence rows.
 Attempt-ledger and readiness reports should also project
 `repair_route_quality_backlog[]` from the top failing repair routes. Each row is
 an analyzer/report improvement packet with a stable `packet_id`,
@@ -472,7 +485,11 @@ resulting command is `cargo test -p <package> <test-filter>`.
 Readiness must also expose `top_next_action` as a stable projection of
 `next_actions[0]`. Downstream surfaces may show that object directly, but they
 must not treat it as an independent ranking source or reinterpret raw findings
-to produce their own top action.
+to produce their own top action. A `limited_sampled_input` repo-exposure run may
+still put the sampled static-limitation/analyzer backlog first when all
+coordination inputs are readable and no swarm-ready packet exists; the
+`resolve_limited_runtime_status` action must remain visible in `next_actions`
+and the report must keep the run marked limited.
 
 Dogfood receipts must include at least one surface-projection alignment case
 that starts from a single canonical repair packet and receipt-backed attempt,
@@ -682,6 +699,9 @@ Current implementation coverage:
 - `xtask::tests::ripr_swarm_readiness_routes_static_limitation_backlog_when_no_ready_packets`
   pins readiness `top_limitation_routes[]` and sample packet routing without
   making limitation backlog packets swarm-ready.
+- `xtask::tests::ripr_swarm_readiness_hardens_legacy_limitation_backlog_packets`
+  pins readiness fallback non-claims, non-actionability text, unlock conditions,
+  and explicit unknown evidence classes for older limitation backlog packets.
 - `xtask::tests::dogfood_real_repair_attempt_rejects_movement_contradictions`
   pins that real repair attempt receipts cannot record contradictory movement
   claims or claim evidence movement without a receipt.

@@ -970,6 +970,7 @@ struct DogfoodPythonRealRepoEvalScenario {
     usability: String,
     false_positive_notes: String,
     limitation_notes: String,
+    unsupported_limitations: Vec<String>,
     claim_boundary: Vec<String>,
     reason: String,
 }
@@ -1002,9 +1003,25 @@ struct DogfoodPythonRealRepoEvalRun {
     usability: String,
     false_positive_notes: String,
     limitation_notes: String,
+    unsupported_limitations: Vec<String>,
     claim_boundary: Vec<String>,
     reason: String,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct DogfoodPythonRepairRoutingQualitySummary {
+    cases: usize,
+    top_1_actionable_usable: usize,
+    verify_command_valid: usize,
+    concrete_discriminator: usize,
+    suggested_test_location: usize,
+    false_actionable: usize,
+    crashes: usize,
+    receipt_closed: usize,
+    unsupported_limitation_distribution: Vec<(String, usize)>,
+    gate_status: String,
+    gate_reason: String,
 }
 
 #[derive(Debug)]
@@ -1068,6 +1085,32 @@ struct DogfoodTypescriptPreviewRepairLoopRun {
     non_claims: Vec<String>,
     reason: String,
     errors: Vec<String>,
+}
+
+#[derive(Debug)]
+struct TypeScriptPreviewFalseActionableAuditCase {
+    name: String,
+    source_fixture: String,
+    source_finding_id: String,
+    language: String,
+    language_status: String,
+    risk_class: String,
+    evidence_kind: String,
+    oracle_kind: Option<String>,
+    gap_state: String,
+    actionability_category: String,
+    static_limit_kind: Option<String>,
+    disposition: String,
+    repair_packet_ready: bool,
+    authority_boundary: String,
+    why_not_actionable: String,
+    repair_route: String,
+    future_support: String,
+    must_remain_non_actionable: bool,
+    required_evidence_fragment: String,
+    raw_evidence_refs: Vec<String>,
+    non_claims: Vec<String>,
+    reason: String,
 }
 
 #[derive(Debug)]
@@ -5515,6 +5558,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "real-repair-attempts"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
                     | "user-surface-projection-alignment"
             )
@@ -7897,6 +7941,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_python_real_repo_eval_fixture_corpus(&mut violations)?;
     validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_typescript_preview_repair_loop_fixture_corpus(&mut violations)?;
+    validate_typescript_preview_false_actionable_audit_fixture_corpus(&mut violations)?;
     validate_user_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
     validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
@@ -8083,6 +8128,8 @@ const SURFACE_PROJECTION_ALIGNMENT_CORPUS: &str =
     "fixtures/surface-projection-alignment/corpus.json";
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_CORPUS: &str =
     "fixtures/typescript-preview-repair-loop/corpus.json";
+const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS: &str =
+    "fixtures/typescript-preview-false-actionable-audit/corpus.json";
 const USER_SURFACE_PROJECTION_ALIGNMENT_CORPUS: &str =
     "fixtures/user-surface-projection-alignment/corpus.json";
 
@@ -8125,6 +8172,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
         "attempted_no_receipt",
     ),
     (
+        "missing_repair_kind_blocker_route_improved",
+        "evidence_improved",
+    ),
+    (
         "local_computed_boundary_limitation_route_improved",
         "evidence_improved",
     ),
@@ -8158,6 +8209,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
 const PYTHON_REAL_REPO_EVAL_REQUIRED_CASES: &[(&str, &str)] = &[
     ("tiny_controlled_pytest_boundary_receipt", "closed"),
     ("normal_pytest_app_boundary_receipt", "closed"),
+    ("cli_output_pytest_receipt", "closed"),
+    ("api_status_pytest_receipt", "closed"),
+    ("mixed_rust_python_pytest_receipt", "closed"),
+    ("decorated_route_status_pytest_receipt", "closed"),
 ];
 
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -8186,6 +8241,29 @@ const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] = &[
         "javascript_already_observed_unchanged",
         "already_observed_unchanged",
     ),
+];
+
+const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] = &[
+    (
+        "mock_interaction_without_payload_proof",
+        "candidate_future_support",
+    ),
+    (
+        "broad_throw_or_rejects_without_payload",
+        "candidate_future_support",
+    ),
+    ("snapshot_only_weak_oracle", "safe_advisory"),
+    ("smoke_only_truthiness", "safe_advisory"),
+    ("heuristic_related_test_link", "must_remain_non_actionable"),
+    (
+        "owner_name_in_test_title_only",
+        "must_remain_non_actionable",
+    ),
+    ("method_receiver_ambiguity", "candidate_future_support"),
+    ("module_initializer_ambiguity", "candidate_future_support"),
+    ("mocked_module_limit", "named_static_limitation"),
+    ("decorator_indirection_limit", "named_static_limitation"),
+    ("dynamic_dispatch_limit", "named_static_limitation"),
 ];
 
 const USER_SURFACE_PROJECTION_REQUIRED_SURFACES: &[&str] = &["badge", "lsp", "pr_comment", "ci"];
@@ -9244,6 +9322,7 @@ fn validate_python_real_repo_eval_fixture_corpus_at(
     let scenarios = dogfood_python_real_repo_eval_scenarios_at(path);
     let mut seen = BTreeMap::new();
     let mut closed_cases = 0usize;
+    let mut runs = Vec::new();
     for scenario in &scenarios {
         if seen
             .insert(scenario.name.clone(), scenario.gap_movement.clone())
@@ -9258,12 +9337,13 @@ fn validate_python_real_repo_eval_fixture_corpus_at(
             closed_cases += 1;
         }
         let run = dogfood_python_real_repo_eval_run(scenario);
-        for error in run.errors {
+        for error in &run.errors {
             violations.push(format!(
                 "Python real-repo eval case {}: {error}",
                 scenario.name
             ));
         }
+        runs.push(run);
     }
 
     for (case_id, gap_movement) in PYTHON_REAL_REPO_EVAL_REQUIRED_CASES {
@@ -9284,6 +9364,13 @@ fn validate_python_real_repo_eval_fixture_corpus_at(
         violations.push(
             "Python real-repo eval corpus must include at least one closed gap receipt".to_string(),
         );
+    }
+    let quality = dogfood_python_repair_routing_quality_summary(&runs);
+    if quality.gate_status != "pass" {
+        violations.push(format!(
+            "Python repair-routing quality gate is {}: {}",
+            quality.gate_status, quality.gate_reason
+        ));
     }
 
     Ok(())
@@ -9410,6 +9497,84 @@ fn validate_typescript_preview_repair_loop_fixture_corpus_at(
             "TypeScript preview repair-loop corpus must not claim complete repair packets yet"
                 .to_string(),
         );
+    }
+
+    Ok(())
+}
+
+fn validate_typescript_preview_false_actionable_audit_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/typescript-preview-false-actionable-audit");
+    let corpus = root.join("corpus.json");
+    if !corpus.exists() {
+        violations.push(format!(
+            "TypeScript preview false-actionable audit corpus is missing {}",
+            normalize_path(&corpus)
+        ));
+    }
+    validate_typescript_preview_false_actionable_audit_fixture_corpus_at(
+        Path::new(TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS),
+        violations,
+    )
+}
+
+fn validate_typescript_preview_false_actionable_audit_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "TypeScript preview false-actionable audit corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let cases = typescript_preview_false_actionable_audit_cases_at(path);
+    let mut seen = BTreeMap::new();
+    let mut dispositions = BTreeSet::<String>::new();
+    for case in &cases {
+        if seen
+            .insert(case.name.clone(), case.disposition.clone())
+            .is_some()
+        {
+            violations.push(format!(
+                "TypeScript preview false-actionable audit case {} is duplicated",
+                case.name
+            ));
+        }
+        dispositions.insert(case.disposition.clone());
+        for error in typescript_preview_false_actionable_audit_case_errors(case) {
+            violations.push(format!(
+                "TypeScript preview false-actionable audit case {}: {error}",
+                case.name
+            ));
+        }
+    }
+
+    for (case_id, disposition) in TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == disposition => {}
+            Some(actual) => violations.push(format!(
+                "TypeScript preview false-actionable audit case {case_id} must have disposition {disposition}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "TypeScript preview false-actionable audit corpus is missing case {case_id}"
+            )),
+        }
+    }
+    for required in [
+        "safe_advisory",
+        "named_static_limitation",
+        "candidate_future_support",
+        "must_remain_non_actionable",
+    ] {
+        if !dispositions.contains(required) {
+            violations.push(format!(
+                "TypeScript preview false-actionable audit corpus must include disposition {required}"
+            ));
+        }
     }
 
     Ok(())
@@ -17955,8 +18120,297 @@ pub(crate) fn repo_exposure_report_impl() -> Result<(), String> {
 /// `target/ripr/reports/repo-exposure-summary.json`.
 pub(crate) fn repo_exposure_summary_report_impl() -> Result<(), String> {
     let json_args = repo_seam_inventory_command_args("repo-exposure-summary-json");
-    let json_output = run_output_owned("cargo", &json_args)?;
-    write_report("repo-exposure-summary.json", &json_output)
+    let timeout = Duration::from_millis(repo_exposure_summary_report_timeout_ms());
+    write_repo_exposure_summary_report_with_runner(
+        &json_args,
+        timeout,
+        run_repo_exposure_summary_report_command,
+    )
+}
+
+const REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV: &str = "RIPR_REPO_EXPOSURE_SUMMARY_TIMEOUT_MS";
+const REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS: u64 = 240_000;
+const REPO_EXPOSURE_SUMMARY_REPORT_SCHEMA_VERSION: &str = "0.1";
+
+fn repo_exposure_summary_report_timeout_ms() -> u64 {
+    repo_exposure_summary_report_timeout_ms_from_env(
+        std::env::var(REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV).ok(),
+    )
+}
+
+fn repo_exposure_summary_report_timeout_ms_from_env(value: Option<String>) -> u64 {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS)
+}
+
+fn run_repo_exposure_summary_report_command(
+    args: &[String],
+    timeout: Duration,
+) -> Result<TimedOutput, String> {
+    capture_output_with_timeout(
+        "cargo",
+        args,
+        &[(REPO_EXPOSURE_LATENCY_TRACE_ENV, "1")],
+        timeout,
+        "repo exposure summary report",
+    )
+}
+
+fn write_repo_exposure_summary_report_with_runner<F>(
+    args: &[String],
+    timeout: Duration,
+    mut run_summary: F,
+) -> Result<(), String>
+where
+    F: FnMut(&[String], Duration) -> Result<TimedOutput, String>,
+{
+    let command = format!("cargo {}", args.join(" "));
+    let started = Instant::now();
+    let output = match run_summary(args, timeout) {
+        Ok(output) => output,
+        Err(err) => {
+            let output = TimedOutput {
+                status: None,
+                stdout: String::new(),
+                stderr: err.clone(),
+                duration: started.elapsed(),
+                timed_out: false,
+            };
+            return write_limited_repo_exposure_summary_report(
+                &command,
+                timeout,
+                &output,
+                "repo_exposure_summary_runner_error",
+                Some("runner_error"),
+                Some(&err),
+            );
+        }
+    };
+
+    if output.timed_out {
+        return write_limited_repo_exposure_summary_report(
+            &command,
+            timeout,
+            &output,
+            "repo_exposure_summary_timeout",
+            None,
+            None,
+        );
+    }
+
+    let Some(status) = output.status else {
+        return write_limited_repo_exposure_summary_report(
+            &command,
+            timeout,
+            &output,
+            "repo_exposure_summary_incomplete",
+            Some("missing_exit_status"),
+            Some("repo exposure summary generation finished without an exit status"),
+        );
+    };
+
+    if !status.success() {
+        return write_limited_repo_exposure_summary_report(
+            &command,
+            timeout,
+            &output,
+            "repo_exposure_summary_incomplete",
+            None,
+            Some("repo exposure summary generation exited non-zero"),
+        );
+    }
+
+    if let Err(err) = validate_repo_exposure_summary_stdout(&output.stdout) {
+        return write_limited_repo_exposure_summary_report(
+            &command,
+            timeout,
+            &output,
+            "repo_exposure_summary_incomplete",
+            Some("pass_incomplete"),
+            Some(&err),
+        );
+    }
+
+    write_report("repo-exposure-summary.json", &output.stdout)
+}
+
+fn validate_repo_exposure_summary_stdout(stdout: &str) -> Result<(), String> {
+    let value: Value = serde_json::from_str(stdout)
+        .map_err(|err| format!("failed to parse repo-exposure-summary-json stdout: {err}"))?;
+    let format = value.get("format").and_then(Value::as_str);
+    if format != Some("repo-exposure-summary-json") {
+        return Err(format!(
+            "repo exposure summary stdout used unexpected format {format:?}"
+        ));
+    }
+    let basis = value.get("basis").and_then(Value::as_str);
+    if basis != Some("canonical_actionable_gap") {
+        return Err(format!(
+            "repo exposure summary stdout used unexpected basis {basis:?}"
+        ));
+    }
+    if !value.get("metrics").is_some_and(Value::is_object) {
+        return Err("repo exposure summary stdout is missing metrics object".to_string());
+    }
+    if !value.get("top_files").is_some_and(Value::is_array) {
+        return Err("repo exposure summary stdout is missing top_files array".to_string());
+    }
+    Ok(())
+}
+
+fn write_limited_repo_exposure_summary_report(
+    command: &str,
+    timeout: Duration,
+    output: &TimedOutput,
+    limitation: &str,
+    generation_status: Option<&str>,
+    failure_reason: Option<&str>,
+) -> Result<(), String> {
+    write_report(
+        "repo-exposure-summary.json",
+        &limited_repo_exposure_summary_report_json(
+            command,
+            timeout,
+            output,
+            limitation,
+            generation_status,
+            failure_reason,
+        )?,
+    )
+}
+
+fn limited_repo_exposure_summary_report_json(
+    command: &str,
+    timeout: Duration,
+    output: &TimedOutput,
+    limitation: &str,
+    generation_status: Option<&str>,
+    failure_reason: Option<&str>,
+) -> Result<String, String> {
+    let runtime_state = repo_exposure_summary_limited_runtime_state(limitation);
+    let summary = repo_exposure_summary_limited_summary(limitation);
+    let repair_route = repo_exposure_summary_limited_repair_route(limitation);
+    let (latency_trace_events_total, latency_trace_tail) =
+        evidence_health_latency_trace_tail(output);
+    let value = serde_json::json!({
+        "schema_version": REPO_EXPOSURE_SUMMARY_REPORT_SCHEMA_VERSION,
+        "tool": "ripr",
+        "report": "repo-exposure-summary",
+        "format": "repo-exposure-summary-json",
+        "scope": "repo",
+        "basis": "limited_runtime_status",
+        "status": "warn",
+        "run_status": runtime_state,
+        "runtime_status": {
+            "state": runtime_state,
+            "phase": "repo_exposure_summary_generation",
+            "duration_ms": output.duration.as_millis(),
+            "limit_ms": timeout.as_millis(),
+            "input_kind": "repo-exposure-summary-json",
+            "input_path": "target/ripr/reports/repo-exposure-summary.json",
+            "limitation_category": limitation,
+            "repair_route": repair_route,
+            "downstream_consumable": false,
+        },
+        "generation": {
+            "command": command,
+            "timeout_ms": timeout.as_millis(),
+            "status": generation_status.unwrap_or(if output.timed_out { "timeout" } else { "fail" }),
+            "duration_ms": output.duration.as_millis(),
+            "timed_out": output.timed_out,
+            "exit_code": output.status.and_then(|status| status.code()),
+            "stdout_bytes": output.stdout.len(),
+            "stderr_bytes": output.stderr.len(),
+            "stdout_excerpt": evidence_health_output_excerpt(&output.stdout),
+            "stderr_excerpt": evidence_health_output_excerpt(&output.stderr),
+            "failure_reason": failure_reason,
+            "latency_trace_events_total": latency_trace_events_total,
+            "latency_trace_tail": latency_trace_tail
+                .iter()
+                .map(repo_exposure_latency_trace_json)
+                .collect::<Vec<_>>(),
+        },
+        "metrics": {},
+        "reason_breakdown": {},
+        "limits": {
+            "top_files_limit": 0,
+            "top_files_total": 0,
+            "top_files_truncated": false,
+            "timeout_ms": timeout.as_millis(),
+        },
+        "top_files": [],
+        "run_limitations": [
+            {
+                "category": limitation,
+                "phase": "repo_exposure_summary_generation",
+                "input": "repo-exposure-summary-json",
+                "summary": summary,
+                "repair_route": repair_route,
+                "timeout_ms": timeout.as_millis(),
+                "duration_ms": output.duration.as_millis(),
+                "command": command,
+                "exit_code": output.status.and_then(|status| status.code()),
+                "stdout_bytes": output.stdout.len(),
+                "stderr_bytes": output.stderr.len(),
+                "stdout_excerpt": evidence_health_output_excerpt(&output.stdout),
+                "stderr_excerpt": evidence_health_output_excerpt(&output.stderr),
+                "failure_reason": failure_reason,
+                "downstream_consumable": false,
+                "latency_trace_events_total": latency_trace_events_total,
+                "latency_trace_tail": latency_trace_tail
+                    .iter()
+                    .map(repo_exposure_latency_trace_json)
+                    .collect::<Vec<_>>(),
+            }
+        ],
+        "non_claims": [
+            "not a canonical actionable gap count",
+            "not raw seam inventory",
+            "not runtime mutation confirmation",
+            "not downstream consumable"
+        ],
+    });
+    serde_json::to_string_pretty(&value)
+        .map(|json| format!("{json}\n"))
+        .map_err(|err| format!("failed to render limited repo exposure summary JSON: {err}"))
+}
+
+fn repo_exposure_summary_limited_runtime_state(limitation: &str) -> &'static str {
+    match limitation {
+        "repo_exposure_summary_timeout" => "limited_timeout",
+        "repo_exposure_summary_runner_error" => "limited_runner_failure",
+        _ => "limited_incomplete_input",
+    }
+}
+
+fn repo_exposure_summary_limited_summary(limitation: &str) -> &'static str {
+    match limitation {
+        "repo_exposure_summary_timeout" => {
+            "Repo exposure summary generation exceeded its bounded runtime; partial stdout was discarded and no repair debt count is claimed."
+        }
+        "repo_exposure_summary_runner_error" => {
+            "Repo exposure summary generation could not be started or captured; no repair debt count is claimed."
+        }
+        _ => {
+            "Repo exposure summary generation ended before producing a complete canonical actionable summary; no repair debt count is claimed."
+        }
+    }
+}
+
+fn repo_exposure_summary_limited_repair_route(limitation: &str) -> &'static str {
+    match limitation {
+        "repo_exposure_summary_timeout" => {
+            "inspect repo-exposure summary runtime, rerun with RIPR_REPO_EXPOSURE_SUMMARY_TIMEOUT_MS for an explicit large-repo refresh, or use a fresh downstream-consumable summary artifact"
+        }
+        "repo_exposure_summary_runner_error" => {
+            "inspect repo exposure summary command availability, report directory permissions, and child process capture before rerunning"
+        }
+        _ => {
+            "inspect repo exposure summary exit status, stdout/stderr, and output schema before treating the artifact as planning input"
+        }
+    }
 }
 
 /// Run the Lane 1 evidence health report and write
@@ -22072,10 +22526,7 @@ fn static_limitation_subroute(
             format!("assertion_target_affinity_{class}_missing_owner_call")
         }
         "activation_owner_call_absent_affinity_only" => {
-            let relation = audit_dominant_related_test_reason(record)
-                .map(|reason| audit_identifier_slug(&reason))
-                .unwrap_or_else(|| "related_test_affinity".to_string());
-            format!("{relation}_missing_owner_call")
+            related_test_affinity_subroute(record, evidence_class)
         }
         "activation_owner_call_absent_same_file_only" => {
             "same_file_only_missing_owner_call".to_string()
@@ -22096,6 +22547,27 @@ fn call_presence_target_affinity_subroute(record: &Value) -> String {
         "call_presence_target_affinity_function_call_missing_owner_call".to_string()
     } else {
         "call_presence_target_affinity_missing_owner_call".to_string()
+    }
+}
+
+fn related_test_affinity_subroute(record: &Value, evidence_class: &str) -> String {
+    let relation = audit_dominant_related_test_reason(record)
+        .map(|reason| audit_identifier_slug(&reason))
+        .unwrap_or_else(|| "related_test_affinity".to_string());
+    if audit_identifier_slug(evidence_class) != "call_presence" {
+        return format!("{relation}_missing_owner_call");
+    }
+    let Some(expression) = audit_static_limitation_example_expression(record) else {
+        return format!("{relation}_missing_owner_call");
+    };
+    if call_presence_expression_is_method_chain(&expression) {
+        format!("{relation}_call_presence_method_chain_missing_owner_call")
+    } else if call_presence_expression_is_associated_call(&expression) {
+        format!("{relation}_call_presence_associated_call_missing_owner_call")
+    } else if expression.contains('(') {
+        format!("{relation}_call_presence_function_call_missing_owner_call")
+    } else {
+        format!("{relation}_missing_owner_call")
     }
 }
 
@@ -22212,6 +22684,7 @@ fn static_limitation_backlog_packet_non_claims(category: &str) -> Vec<String> {
         "not a public repair packet".to_string(),
         "not swarm-ready work".to_string(),
         "do not edit tests from this backlog item alone".to_string(),
+        "do not invent exact candidate values".to_string(),
     ];
     if category == "activation_boundary_input_unresolved" {
         claims.push("do not invent exact boundary candidate values".to_string());
@@ -22590,6 +23063,8 @@ struct RiprSwarmAttemptLedgerReport {
     latest_attempts: Vec<RiprSwarmAttemptLedgerEntry>,
     repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
     language_repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
+    historical_repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
+    historical_language_repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
     top_missing_evidence_fields: Vec<RiprSwarmMissingEvidenceFieldRow>,
     orphaned_receipts: Vec<Value>,
 }
@@ -22715,14 +23190,18 @@ struct RiprSwarmReadinessSummary {
     missing_verify_command: usize,
     missing_verify_result: usize,
     missing_receipt_command: usize,
+    missing_repair_kind: usize,
     missing_repair_route: usize,
     missing_target_test_shape: usize,
     missing_must_not_change: usize,
     missing_allowed_edit_surface: usize,
     missing_confidence: usize,
     missing_raw_evidence_refs: usize,
+    missing_related_test_or_observer: usize,
     related_context_missing: usize,
     static_limitation_packets: usize,
+    static_limitation_backlog_packets: usize,
+    static_limitation_backlog_signals: usize,
     high_confidence_packets: usize,
     attempted_packets: usize,
     attempted_no_receipt_packets: usize,
@@ -23590,6 +24069,14 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     {
         missing_context.push("repair_route".to_string());
     }
+    if ripr_swarm_plan_field_missing(&repair_kind)
+        || repair_kind == "repair_route_unknown"
+        || projection_exclusion_reasons
+            .iter()
+            .any(|reason| reason == "missing_repair_kind")
+    {
+        missing_context.push("repair_kind".to_string());
+    }
     if has_repair_route && !repair_route_consistent {
         missing_context.push("repair_route_consistency".to_string());
     }
@@ -24020,6 +24507,21 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                     .any(|reason| reason == "missing_receipt_command")
         })
         .count();
+    let related_context_missing = report
+        .packets
+        .iter()
+        .filter(|packet| {
+            !packet.related_test_or_observer_available
+                || packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "related_test_or_observer")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_related_test_or_observer")
+        })
+        .count();
     serde_json::json!({
         "packets_total": report.packets.len(),
         "swarm_ready_packets": ready,
@@ -24078,6 +24580,20 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
             .count(),
         "missing_verify_command": missing_verify,
         "missing_receipt_command": missing_receipt,
+        "missing_repair_kind": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "repair_kind")
+                    || packet
+                        .projection_exclusion_reasons
+                        .iter()
+                        .any(|reason| reason == "missing_repair_kind")
+            })
+            .count(),
         "missing_repair_route": report
             .packets
             .iter()
@@ -24158,21 +24674,8 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                         .any(|reason| reason == "missing_raw_evidence_refs")
             })
             .count(),
-        "related_context_missing": report
-            .packets
-            .iter()
-            .filter(|packet| {
-                !packet.related_test_or_observer_available
-                    || packet
-                        .missing_context
-                        .iter()
-                        .any(|field| field == "related_test_or_observer")
-                    || packet
-                        .projection_exclusion_reasons
-                        .iter()
-                        .any(|reason| reason == "missing_related_test_or_observer")
-            })
-            .count(),
+        "missing_related_test_or_observer": related_context_missing,
+        "related_context_missing": related_context_missing,
         "static_limitation_packets": report
             .packets
             .iter()
@@ -24188,12 +24691,37 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                         .any(|reason| reason == "static_limitation_present")
             })
             .count(),
+        "static_limitation_backlog_packets":
+            ripr_swarm_static_limitation_backlog_packet_count(&report.static_limitation_backlog),
+        "static_limitation_backlog_signals":
+            ripr_swarm_static_limitation_backlog_signal_count(&report.static_limitation_backlog),
         "high_confidence_packets": report
             .packets
             .iter()
             .filter(|packet| ripr_swarm_plan_packet_is_high_confidence(packet))
             .count(),
     })
+}
+
+fn ripr_swarm_static_limitation_backlog_packet_count(backlog: &Value) -> usize {
+    audit_array(backlog, &["limitation_backlog_packets"]).len()
+}
+
+fn ripr_swarm_static_limitation_backlog_signal_count(backlog: &Value) -> usize {
+    let packet_signals = audit_array(backlog, &["limitation_backlog_packets"])
+        .iter()
+        .filter_map(|packet| audit_usize(packet, &["signal_count"]))
+        .sum::<usize>();
+    let route_signals = audit_array(backlog, &["top_repair_routes"])
+        .iter()
+        .filter_map(|row| audit_usize(row, &["count"]))
+        .sum::<usize>();
+    let category_signals = audit_array(backlog, &["top_categories"])
+        .iter()
+        .filter_map(|row| audit_usize(row, &["count"]))
+        .sum::<usize>();
+
+    packet_signals.max(route_signals).max(category_signals)
 }
 
 fn ripr_swarm_plan_packet_state_count(report: &RiprSwarmPlanReport, state: &str) -> usize {
@@ -24344,6 +24872,21 @@ fn ripr_swarm_plan_blocked_state_examples_json(report: &RiprSwarmPlanReport) -> 
                     .projection_exclusion_reasons
                     .iter()
                     .any(|reason| reason == "missing_receipt_command")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_repair_kind",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_kind")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_repair_kind")
         },
     );
     ripr_swarm_plan_push_blocked_state_example(
@@ -24513,14 +25056,18 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "missing_verify_command",
         "missing_verify_result",
         "missing_receipt_command",
+        "missing_repair_kind",
         "missing_repair_route",
         "missing_target_test_shape",
         "missing_must_not_change",
         "missing_allowed_edit_surface",
         "missing_confidence",
         "missing_raw_evidence_refs",
+        "missing_related_test_or_observer",
         "related_context_missing",
         "static_limitation_packets",
+        "static_limitation_backlog_packets",
+        "static_limitation_backlog_signals",
         "high_confidence_packets",
     ] {
         out.push_str(&format!(
@@ -24851,6 +25398,9 @@ fn ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
     let repair_route_quality = ripr_swarm_attempt_ledger_repair_route_quality(&latest_attempts);
     let language_repair_route_quality =
         ripr_swarm_attempt_ledger_language_repair_route_quality(&latest_attempts);
+    let historical_repair_route_quality = ripr_swarm_attempt_ledger_repair_route_quality(&attempts);
+    let historical_language_repair_route_quality =
+        ripr_swarm_attempt_ledger_language_repair_route_quality(&attempts);
     let top_missing_evidence_fields =
         ripr_swarm_attempt_ledger_top_missing_evidence_fields(&latest_attempts);
     let orphaned_receipts = actionable_gap_outcomes
@@ -24886,6 +25436,8 @@ fn ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
         latest_attempts,
         repair_route_quality,
         language_repair_route_quality,
+        historical_repair_route_quality,
+        historical_language_repair_route_quality,
         top_missing_evidence_fields,
         orphaned_receipts,
     }
@@ -25871,6 +26423,7 @@ fn ripr_swarm_repair_route_quality_backlog_json(
                     "not a public repair packet",
                     "not swarm-ready work",
                     "do not retry this repair kind from this backlog item alone",
+                    "do not promote or downgrade actionability from route-quality evidence alone",
                     "do not change badge or gate semantics from route-quality evidence alone"
                 ],
             })
@@ -26043,8 +26596,17 @@ fn ripr_swarm_attempt_ledger_json(report: &RiprSwarmAttemptLedgerReport) -> Resu
         "language_repair_route_quality": ripr_swarm_repair_route_quality_json(
             &report.language_repair_route_quality
         ),
+        "historical_repair_route_quality": ripr_swarm_repair_route_quality_json(
+            &report.historical_repair_route_quality
+        ),
+        "historical_language_repair_route_quality": ripr_swarm_repair_route_quality_json(
+            &report.historical_language_repair_route_quality
+        ),
         "top_failing_repair_routes": ripr_swarm_top_failing_repair_routes_json(
             &report.repair_route_quality
+        ),
+        "top_historical_failing_repair_routes": ripr_swarm_top_failing_repair_routes_json(
+            &report.historical_repair_route_quality
         ),
         "repair_route_quality_backlog": ripr_swarm_repair_route_quality_backlog_json(
             &ripr_swarm_readiness_top_failing_repair_routes(&report.repair_route_quality)
@@ -26238,6 +26800,19 @@ fn ripr_swarm_attempt_ledger_markdown(report: &RiprSwarmAttemptLedgerReport) -> 
     ripr_swarm_push_repair_route_quality_table(&mut out, &report.repair_route_quality);
     out.push_str("## Repair Route Quality By Language\n\n");
     ripr_swarm_push_repair_route_quality_table(&mut out, &report.language_repair_route_quality);
+    out.push_str("## Historical Repair Route Quality\n\n");
+    out.push_str("Durable history rows preserve older unchanged, regressed, and no-receipt attempts after a later attempt improves or resolves the same canonical gap. They are audit evidence, not current routing state.\n\n");
+    ripr_swarm_push_repair_route_quality_table(&mut out, &report.historical_repair_route_quality);
+    out.push_str("## Historical Repair Route Quality By Language\n\n");
+    ripr_swarm_push_repair_route_quality_table(
+        &mut out,
+        &report.historical_language_repair_route_quality,
+    );
+    out.push_str("## Historical Repair Route Quality Backlog\n\n");
+    ripr_swarm_push_repair_route_quality_backlog_table(
+        &mut out,
+        &ripr_swarm_readiness_top_failing_repair_routes(&report.historical_repair_route_quality),
+    );
     out.push_str("## Repair Route Quality Backlog\n\n");
     ripr_swarm_push_repair_route_quality_backlog_table(
         &mut out,
@@ -26266,6 +26841,7 @@ fn ripr_swarm_attempt_ledger_markdown(report: &RiprSwarmAttemptLedgerReport) -> 
         "- Attempt ledgers preserve existing artifact joins; they do not execute repairs.\n",
     );
     out.push_str("- Repair-route quality is grouped from latest attempts by `repair_kind`; it is an improvement signal, not a ranking gate.\n");
+    out.push_str("- Historical repair-route quality is durable audit evidence; current routing still comes from latest attempts.\n");
     out.push_str("- `not_attempted` means no matching attempt artifact was supplied, not that repair failed.\n");
     out.push_str("- `receipt_present` without movement is not evidence improvement.\n");
     out.push_str("- Orphaned receipts do not create new actionable gaps.\n");
@@ -26698,6 +27274,13 @@ fn ripr_swarm_readiness_summary(
             audit_usize(plan, &["summary", "missing_verify_command"]).unwrap_or_default();
         summary.missing_receipt_command =
             audit_usize(plan, &["summary", "missing_receipt_command"]).unwrap_or_default();
+        summary.missing_repair_kind = audit_usize(plan, &["summary", "missing_repair_kind"])
+            .unwrap_or_default()
+            .max(ripr_swarm_readiness_plan_packet_field_blocker_count(
+                plan,
+                "repair_kind",
+                &["missing_repair_kind"],
+            ));
         summary.missing_repair_route =
             audit_usize(plan, &["summary", "missing_repair_route"]).unwrap_or_default();
         summary.missing_target_test_shape =
@@ -26722,10 +27305,27 @@ fn ripr_swarm_readiness_summary(
                     "raw_evidence_refs",
                     &["missing_raw_evidence_refs"],
                 ));
-        summary.related_context_missing =
-            audit_usize(plan, &["summary", "related_context_missing"]).unwrap_or_default();
+        let related_context_missing =
+            audit_usize(plan, &["summary", "missing_related_test_or_observer"]).unwrap_or_else(
+                || audit_usize(plan, &["summary", "related_context_missing"]).unwrap_or_default(),
+            );
+        summary.missing_related_test_or_observer = related_context_missing;
+        summary.related_context_missing = related_context_missing;
         summary.static_limitation_packets =
             audit_usize(plan, &["summary", "static_limitation_packets"]).unwrap_or_default();
+        let static_limitation_backlog = audit_get(plan, &["static_limitation_backlog"]);
+        summary.static_limitation_backlog_packets =
+            audit_usize(plan, &["summary", "static_limitation_backlog_packets"])
+                .or_else(|| {
+                    static_limitation_backlog.map(ripr_swarm_static_limitation_backlog_packet_count)
+                })
+                .unwrap_or_default();
+        summary.static_limitation_backlog_signals =
+            audit_usize(plan, &["summary", "static_limitation_backlog_signals"])
+                .or_else(|| {
+                    static_limitation_backlog.map(ripr_swarm_static_limitation_backlog_signal_count)
+                })
+                .unwrap_or_default();
         summary.high_confidence_packets =
             audit_usize(plan, &["summary", "high_confidence_packets"]).unwrap_or_default();
     }
@@ -26975,14 +27575,18 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
         "missing_verify_command": summary.missing_verify_command,
         "missing_verify_result": summary.missing_verify_result,
         "missing_receipt_command": summary.missing_receipt_command,
+        "missing_repair_kind": summary.missing_repair_kind,
         "missing_repair_route": summary.missing_repair_route,
         "missing_target_test_shape": summary.missing_target_test_shape,
         "missing_must_not_change": summary.missing_must_not_change,
         "missing_allowed_edit_surface": summary.missing_allowed_edit_surface,
         "missing_confidence": summary.missing_confidence,
         "missing_raw_evidence_refs": summary.missing_raw_evidence_refs,
+        "missing_related_test_or_observer": summary.missing_related_test_or_observer,
         "related_context_missing": summary.related_context_missing,
         "static_limitation_packets": summary.static_limitation_packets,
+        "static_limitation_backlog_packets": summary.static_limitation_backlog_packets,
+        "static_limitation_backlog_signals": summary.static_limitation_backlog_signals,
         "high_confidence_packets": summary.high_confidence_packets,
         "attempted_packets": summary.attempted_packets,
         "attempted_no_receipt_packets": summary.attempted_no_receipt_packets,
@@ -27145,6 +27749,18 @@ fn ripr_swarm_readiness_blocked_state_routes(
     );
     ripr_swarm_readiness_push_blocked_state_route(
         &mut routes,
+        "missing_repair_kind",
+        summary.missing_repair_kind,
+        "the packet has no usable repair_kind",
+        "fix_repair_kind_source",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_repair_kind", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "repair_kind")
+                || ripr_swarm_readiness_packet_projection_exclusion(packet, "missing_repair_kind")
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
         "missing_repair_route",
         summary.missing_repair_route,
         "the packet has no structured repair route",
@@ -27177,7 +27793,7 @@ fn ripr_swarm_readiness_blocked_state_routes(
     ripr_swarm_readiness_push_blocked_state_route(
         &mut routes,
         "missing_related_test_or_observer",
-        summary.related_context_missing,
+        summary.missing_related_test_or_observer,
         "the packet has no typed related test or observer target",
         "fix_related_test_or_observer",
         "cargo xtask lane1-evidence-audit",
@@ -27575,7 +28191,7 @@ fn ripr_swarm_readiness_top_limitation_routes(backlog: &Value) -> Vec<RiprSwarmL
         let row = rows
             .entry(repair_route.clone())
             .or_insert_with(|| RiprSwarmLimitationRouteRow {
-                repair_route,
+                repair_route: repair_route.clone(),
                 signal_count,
                 sample_packet_id: None,
                 sample_limitation_category: None,
@@ -27589,6 +28205,7 @@ fn ripr_swarm_readiness_top_limitation_routes(backlog: &Value) -> Vec<RiprSwarmL
             });
         row.signal_count = row.signal_count.max(signal_count);
         if row.sample_packet_id.is_none() {
+            let category_for_defaults = category.clone();
             row.sample_packet_id = audit_non_empty_string(packet, &["packet_id"]);
             row.sample_limitation_category = category;
             row.sample_limitation_subroute =
@@ -27600,10 +28217,23 @@ fn ripr_swarm_readiness_top_limitation_routes(backlog: &Value) -> Vec<RiprSwarmL
             row.sample_canonical_gap_ids = ripr_swarm_limitation_route_sample_gap_ids(packet);
             row.sample_sources = ripr_swarm_limitation_route_sample_sources(packet);
             row.dominant_evidence_class =
-                audit_non_empty_string(packet, &["dominant_evidence_class"]);
-            row.why_not_actionable = audit_non_empty_string(packet, &["why_not_actionable"]);
-            row.unlock_condition = audit_non_empty_string(packet, &["unlock_condition"]);
-            row.non_claims = audit_string_array(packet, &["non_claims"]).unwrap_or_default();
+                audit_non_empty_string(packet, &["dominant_evidence_class"])
+                    .or_else(|| Some("unknown".to_string()));
+            row.why_not_actionable = audit_non_empty_string(packet, &["why_not_actionable"])
+                .or_else(|| {
+                    category_for_defaults
+                        .as_deref()
+                        .map(static_limitation_why_not_actionable)
+                        .map(str::to_string)
+                });
+            row.unlock_condition =
+                audit_non_empty_string(packet, &["unlock_condition"]).or_else(|| {
+                    category_for_defaults
+                        .as_deref()
+                        .map(|category| static_limitation_unlock_condition(category, &repair_route))
+                });
+            row.non_claims =
+                ripr_swarm_limitation_route_non_claims(packet, category_for_defaults.as_deref());
         }
     }
     let mut rows = rows.into_values().collect::<Vec<_>>();
@@ -27656,6 +28286,19 @@ fn ripr_swarm_limitation_route_sample_sources(
         })
         .take(3)
         .collect()
+}
+
+fn ripr_swarm_limitation_route_non_claims(packet: &Value, category: Option<&str>) -> Vec<String> {
+    let mut claims = audit_string_array(packet, &["non_claims"]).unwrap_or_default();
+    let required_claims = category
+        .map(static_limitation_backlog_packet_non_claims)
+        .unwrap_or_else(|| static_limitation_backlog_packet_non_claims("unknown"));
+    for claim in required_claims {
+        if !claims.iter().any(|existing| existing == &claim) {
+            claims.push(claim);
+        }
+    }
+    claims
 }
 
 fn ripr_swarm_limitation_routes_json(rows: &[RiprSwarmLimitationRouteRow]) -> Vec<Value> {
@@ -27993,7 +28636,10 @@ fn ripr_swarm_readiness_next_actions(
     let mut actions = Vec::new();
     let runtime_not_downstream_consumable =
         runtime_status.state != "full" && !runtime_status.downstream_consumable;
+    let defer_sampled_runtime_action = runtime_not_downstream_consumable
+        && ripr_swarm_readiness_runtime_is_sampled_work_queue(runtime_status);
     if runtime_not_downstream_consumable
+        && !defer_sampled_runtime_action
         && swarm_plan_input.state == "read"
         && actionable_gap_outcomes_input.state == "read"
         && attempt_ledger_input.state == "read"
@@ -28101,7 +28747,21 @@ fn ripr_swarm_readiness_next_actions(
             ),
         });
     }
-    if summary.related_context_missing > 0 {
+    if summary.missing_repair_kind > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_repair_kind_source".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing repair_kind; repair canonical item route-kind projection before attempting swarm work",
+                summary.missing_repair_kind
+            ),
+        });
+    }
+    if summary.missing_related_test_or_observer > 0 {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "fix_related_test_or_observer".to_string(),
             packet_id: None,
@@ -28111,7 +28771,7 @@ fn ripr_swarm_readiness_next_actions(
             command: Some("cargo xtask lane1-evidence-audit".to_string()),
             reason: format!(
                 "{} packet(s) are missing typed related test or observer context; repair target projection before attempting swarm work",
-                summary.related_context_missing
+                summary.missing_related_test_or_observer
             ),
         });
     }
@@ -28398,6 +29058,13 @@ fn ripr_swarm_readiness_next_actions(
             ),
         });
     }
+    if defer_sampled_runtime_action
+        && swarm_plan_input.state == "read"
+        && actionable_gap_outcomes_input.state == "read"
+        && attempt_ledger_input.state == "read"
+    {
+        actions.push(ripr_swarm_readiness_limited_runtime_action(runtime_status));
+    }
     if let Some(plan) = sources.swarm_plan {
         if let Some(action) = ripr_swarm_readiness_operator_judgment_action(plan) {
             actions.push(action);
@@ -28418,6 +29085,14 @@ fn ripr_swarm_readiness_next_actions(
         });
     }
     actions
+}
+
+fn ripr_swarm_readiness_runtime_is_sampled_work_queue(runtime_status: &Lane1RuntimeStatus) -> bool {
+    runtime_status.state == "limited_sampled_input"
+        && runtime_status
+            .limitation_category
+            .as_deref()
+            .is_some_and(|category| category == "lane1_repo_exposure_sampled")
 }
 
 fn ripr_swarm_static_limitation_backlog_top_category(
@@ -28631,14 +29306,18 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "missing_verify_command",
         "missing_verify_result",
         "missing_receipt_command",
+        "missing_repair_kind",
         "missing_repair_route",
         "missing_target_test_shape",
         "missing_must_not_change",
         "missing_allowed_edit_surface",
         "missing_confidence",
         "missing_raw_evidence_refs",
+        "missing_related_test_or_observer",
         "related_context_missing",
         "static_limitation_packets",
+        "static_limitation_backlog_packets",
+        "static_limitation_backlog_signals",
         "high_confidence_packets",
         "attempted_packets",
         "attempted_no_receipt_packets",
@@ -30548,11 +31227,15 @@ fn audit_actionable_gap_projection_exclusion_reasons(
     }
     if !input.repair_route_present
         || input.repair_route_source != "canonical_item.repair_route"
-        || input.repair_kind == "repair_route_unknown"
         || input.target_test_type == "target_test_type_unknown"
         || input.assertion_shape == "assertion_shape_unknown"
     {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_repair_route");
+    }
+    if audit_guidance_field_is_missing(input.repair_kind)
+        || input.repair_kind == "repair_route_unknown"
+    {
+        audit_push_projection_exclusion_reason(&mut reasons, "missing_repair_kind");
     }
     if input.target_test_shape == "target_test_shape_unknown"
         || audit_guidance_field_is_missing(input.target_test_shape)
@@ -43572,6 +44255,7 @@ fn dogfood_python_real_repo_eval_scenarios_at(
             usability: "unknown".to_string(),
             false_positive_notes: "unknown".to_string(),
             limitation_notes: "unknown".to_string(),
+            unsupported_limitations: Vec::new(),
             claim_boundary: Vec::new(),
             reason,
         }]
@@ -43650,6 +44334,7 @@ fn dogfood_python_real_repo_eval_scenarios_at(
                 .unwrap_or_else(|| "unknown".to_string()),
             limitation_notes: json_string_field(case, "limitation_notes")
                 .unwrap_or_else(|| "unknown".to_string()),
+            unsupported_limitations: json_string_array_field(case, "unsupported_limitations"),
             claim_boundary: json_string_array_field(case, "claim_boundary"),
             reason: json_string_field(case, "reason").unwrap_or_else(|| {
                 "Python real-repo eval case did not document a reason".to_string()
@@ -43770,6 +44455,27 @@ fn dogfood_python_real_repo_eval_run(
     if scenario.receipt_command == scenario.verify_command {
         errors.push("receipt_command must stay distinct from verify_command".to_string());
     }
+    for limitation in &scenario.unsupported_limitations {
+        if limitation.trim().is_empty() || limitation == "unknown" {
+            errors.push("unsupported_limitations entries must be named limitations".to_string());
+        }
+        if limitation.contains(' ') {
+            errors.push(format!(
+                "unsupported_limitations entries must be stable tokens, got {limitation}"
+            ));
+        }
+    }
+    if scenario
+        .limitation_notes
+        .to_ascii_lowercase()
+        .contains("unsupported")
+        && scenario.unsupported_limitations.is_empty()
+    {
+        errors.push(
+            "limitation_notes mention unsupported behavior but unsupported_limitations is empty"
+                .to_string(),
+        );
+    }
     if scenario.claim_boundary.is_empty() {
         errors.push("claim_boundary must keep preview boundary denials visible".to_string());
     }
@@ -43814,10 +44520,137 @@ fn dogfood_python_real_repo_eval_run(
         usability: scenario.usability.clone(),
         false_positive_notes: scenario.false_positive_notes.clone(),
         limitation_notes: scenario.limitation_notes.clone(),
+        unsupported_limitations: scenario.unsupported_limitations.clone(),
         claim_boundary: scenario.claim_boundary.clone(),
         reason: scenario.reason.clone(),
         errors,
     }
+}
+
+fn dogfood_python_repair_routing_quality_summary(
+    runs: &[DogfoodPythonRealRepoEvalRun],
+) -> DogfoodPythonRepairRoutingQualitySummary {
+    let mut summary = DogfoodPythonRepairRoutingQualitySummary {
+        cases: runs.len(),
+        ..DogfoodPythonRepairRoutingQualitySummary::default()
+    };
+    let mut unsupported_limitations = BTreeMap::<String, usize>::new();
+
+    for run in runs {
+        if dogfood_python_eval_top_1_actionable_usable(run) {
+            summary.top_1_actionable_usable += 1;
+        }
+        if dogfood_python_eval_verify_command_valid(run) {
+            summary.verify_command_valid += 1;
+        }
+        if dogfood_python_eval_has_concrete_discriminator(run) {
+            summary.concrete_discriminator += 1;
+        }
+        if dogfood_python_eval_has_suggested_test_location(run) {
+            summary.suggested_test_location += 1;
+        }
+        if !dogfood_python_eval_false_positive_clean(run) {
+            summary.false_actionable += 1;
+        }
+        if !run.errors.is_empty() {
+            summary.crashes += 1;
+        }
+        if run.gap_movement == "closed" && run.receipt_result == "pass" {
+            summary.receipt_closed += 1;
+        }
+        for limitation in &run.unsupported_limitations {
+            *unsupported_limitations
+                .entry(limitation.clone())
+                .or_default() += 1;
+        }
+    }
+
+    summary.unsupported_limitation_distribution =
+        unsupported_limitations.into_iter().collect::<Vec<_>>();
+
+    let missing_quality = summary.cases == 0
+        || summary.top_1_actionable_usable != summary.cases
+        || summary.verify_command_valid != summary.cases
+        || summary.concrete_discriminator != summary.cases
+        || summary.suggested_test_location != summary.cases
+        || summary.false_actionable > 0
+        || summary.crashes > 0
+        || summary.receipt_closed == 0;
+    if missing_quality {
+        summary.gate_status = "review".to_string();
+        summary.gate_reason =
+            "Python repair-routing dogfood quality is incomplete or noisy".to_string();
+    } else {
+        summary.gate_status = "pass".to_string();
+        summary.gate_reason = "All checked top Python repair cards are usable, verifiable, placed, and receipt-backed without observed false actionability".to_string();
+    }
+
+    summary
+}
+
+fn dogfood_python_eval_top_1_actionable_usable(run: &DogfoodPythonRealRepoEvalRun) -> bool {
+    run.repair_card_present
+        && run.usability == "usable"
+        && dogfood_python_eval_false_positive_clean(run)
+}
+
+fn dogfood_python_eval_verify_command_valid(run: &DogfoodPythonRealRepoEvalRun) -> bool {
+    (run.verify_command.starts_with("pytest ")
+        || run.verify_command.starts_with("python -m unittest "))
+        && run.verify_result == "pass"
+}
+
+fn dogfood_python_eval_has_concrete_discriminator(run: &DogfoodPythonRealRepoEvalRun) -> bool {
+    let discriminator = run.missing_discriminator.trim();
+    !discriminator.is_empty()
+        && discriminator != "unknown"
+        && !discriminator.contains("...")
+        && !discriminator.eq_ignore_ascii_case("uncertain")
+}
+
+fn dogfood_python_eval_has_suggested_test_location(run: &DogfoodPythonRealRepoEvalRun) -> bool {
+    let file = run.suggested_test_file.trim();
+    let name = run.suggested_test_name.trim();
+    !file.is_empty()
+        && file != "unknown"
+        && !name.is_empty()
+        && name != "unknown"
+        && (file.starts_with("tests/") || file.ends_with("_test.py") || file.contains("/test_"))
+}
+
+fn dogfood_python_eval_false_positive_clean(run: &DogfoodPythonRealRepoEvalRun) -> bool {
+    matches!(
+        run.false_positive_notes
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "none observed" | "none"
+    )
+}
+
+fn dogfood_push_python_quality_ratio_json(
+    body: &mut String,
+    name: &str,
+    count: usize,
+    checked: usize,
+    higher_is_better: bool,
+    reason: &str,
+) {
+    let status = if checked == 0 {
+        "not_measured"
+    } else if (higher_is_better && count == checked) || (!higher_is_better && count == 0) {
+        "pass"
+    } else {
+        "review"
+    };
+    body.push_str(&format!(
+        "      \"{}\": {{ \"status\": \"{}\", \"count\": {}, \"checked\": {}, \"reason\": \"{}\" }},\n",
+        json_escape(name),
+        status,
+        count,
+        checked,
+        json_escape(reason)
+    ));
 }
 
 fn dogfood_typescript_preview_repair_loop_scenarios()
@@ -44313,6 +45146,382 @@ fn typescript_preview_repair_loop_required_non_claims() -> &'static [&'static st
         "baseline",
         "RIPR Zero",
         "support-tier promotion",
+    ]
+}
+
+#[cfg(test)]
+fn typescript_preview_false_actionable_audit_cases()
+-> Vec<TypeScriptPreviewFalseActionableAuditCase> {
+    typescript_preview_false_actionable_audit_cases_at(Path::new(
+        TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS,
+    ))
+}
+
+fn typescript_preview_false_actionable_audit_cases_at(
+    corpus_path: &Path,
+) -> Vec<TypeScriptPreviewFalseActionableAuditCase> {
+    let fallback = |reason: String| {
+        vec![TypeScriptPreviewFalseActionableAuditCase {
+            name: "corpus".to_string(),
+            source_fixture: "unknown".to_string(),
+            source_finding_id: "unknown".to_string(),
+            language: "unknown".to_string(),
+            language_status: "unknown".to_string(),
+            risk_class: "unknown".to_string(),
+            evidence_kind: "unknown".to_string(),
+            oracle_kind: None,
+            gap_state: "unknown".to_string(),
+            actionability_category: "unknown".to_string(),
+            static_limit_kind: None,
+            disposition: "unknown".to_string(),
+            repair_packet_ready: true,
+            authority_boundary: "unknown".to_string(),
+            why_not_actionable: "unknown".to_string(),
+            repair_route: "unknown".to_string(),
+            future_support: "unknown".to_string(),
+            must_remain_non_actionable: false,
+            required_evidence_fragment: "unknown".to_string(),
+            raw_evidence_refs: Vec::new(),
+            non_claims: Vec::new(),
+            reason,
+        }]
+    };
+
+    let corpus = match read_json_value(corpus_path) {
+        Ok(value) => value,
+        Err(err) => return fallback(err),
+    };
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        return fallback(
+            "TypeScript preview false-actionable audit corpus schema_version must be 0.1"
+                .to_string(),
+        );
+    }
+    if json_string_field(&corpus, "kind").as_deref()
+        != Some("typescript_preview_false_actionable_audit_corpus")
+    {
+        return fallback(
+            "TypeScript preview false-actionable audit corpus kind must be typescript_preview_false_actionable_audit_corpus"
+                .to_string(),
+        );
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0027") {
+        return fallback(
+            "TypeScript preview false-actionable audit corpus spec must be RIPR-SPEC-0027"
+                .to_string(),
+        );
+    }
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        return fallback(
+            "TypeScript preview false-actionable audit corpus is missing cases array".to_string(),
+        );
+    };
+
+    cases
+        .iter()
+        .map(|case| TypeScriptPreviewFalseActionableAuditCase {
+            name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
+            source_fixture: json_string_field(case, "source_fixture")
+                .unwrap_or_else(|| "unknown".to_string()),
+            source_finding_id: json_string_field(case, "source_finding_id")
+                .unwrap_or_else(|| "unknown".to_string()),
+            language: json_string_field(case, "language").unwrap_or_else(|| "unknown".to_string()),
+            language_status: json_string_field(case, "language_status")
+                .unwrap_or_else(|| "unknown".to_string()),
+            risk_class: json_string_field(case, "risk_class")
+                .unwrap_or_else(|| "unknown".to_string()),
+            evidence_kind: json_string_field(case, "evidence_kind")
+                .unwrap_or_else(|| "unknown".to_string()),
+            oracle_kind: json_string_field(case, "oracle_kind"),
+            gap_state: json_string_field(case, "gap_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            actionability_category: json_string_field(case, "actionability_category")
+                .unwrap_or_else(|| "unknown".to_string()),
+            static_limit_kind: json_string_field(case, "static_limit_kind"),
+            disposition: json_string_field(case, "disposition")
+                .unwrap_or_else(|| "unknown".to_string()),
+            repair_packet_ready: json_bool_field(case, "repair_packet_ready").unwrap_or(true),
+            authority_boundary: json_string_field(case, "authority_boundary")
+                .unwrap_or_else(|| "unknown".to_string()),
+            why_not_actionable: json_string_field(case, "why_not_actionable")
+                .unwrap_or_else(|| "unknown".to_string()),
+            repair_route: json_string_field(case, "repair_route")
+                .unwrap_or_else(|| "unknown".to_string()),
+            future_support: json_string_field(case, "future_support")
+                .unwrap_or_else(|| "unknown".to_string()),
+            must_remain_non_actionable: json_bool_field(case, "must_remain_non_actionable")
+                .unwrap_or(false),
+            required_evidence_fragment: json_string_field(case, "required_evidence_fragment")
+                .unwrap_or_else(|| "unknown".to_string()),
+            raw_evidence_refs: json_string_array_field(case, "raw_evidence_refs"),
+            non_claims: json_string_array_field(case, "non_claims"),
+            reason: json_string_field(case, "reason").unwrap_or_else(|| {
+                "TypeScript preview false-actionable audit case did not document a reason"
+                    .to_string()
+            }),
+        })
+        .collect()
+}
+
+fn typescript_preview_false_actionable_audit_case_errors(
+    case: &TypeScriptPreviewFalseActionableAuditCase,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (label, value) in [
+        ("case id", &case.name),
+        ("source_fixture", &case.source_fixture),
+        ("source_finding_id", &case.source_finding_id),
+        ("language", &case.language),
+        ("language_status", &case.language_status),
+        ("risk_class", &case.risk_class),
+        ("evidence_kind", &case.evidence_kind),
+        ("gap_state", &case.gap_state),
+        ("actionability_category", &case.actionability_category),
+        ("disposition", &case.disposition),
+        ("authority_boundary", &case.authority_boundary),
+        ("why_not_actionable", &case.why_not_actionable),
+        ("repair_route", &case.repair_route),
+        ("future_support", &case.future_support),
+        (
+            "required_evidence_fragment",
+            &case.required_evidence_fragment,
+        ),
+        ("reason", &case.reason),
+    ] {
+        if value.trim().is_empty() || value == "unknown" {
+            errors.push(format!("{label} must be present"));
+        }
+    }
+
+    if !matches!(case.language.as_str(), "typescript" | "javascript") {
+        errors.push(format!(
+            "language must be typescript or javascript, got {}",
+            case.language
+        ));
+    }
+    if case.language_status != "preview" {
+        errors.push("language_status must be preview".to_string());
+    }
+    if case.authority_boundary != "preview_advisory_only" {
+        errors.push("authority_boundary must be preview_advisory_only".to_string());
+    }
+    if !typescript_preview_false_actionable_audit_allowed_dispositions()
+        .contains(&case.disposition.as_str())
+    {
+        errors.push(format!(
+            "disposition must be a TypeScript preview false-actionable audit disposition, got {}",
+            case.disposition
+        ));
+    }
+    if case.repair_packet_ready {
+        errors.push("repair_packet_ready must remain false for audit cases".to_string());
+    }
+    if case.gap_state == "actionable" {
+        errors.push("audit cases must not be actionable".to_string());
+    }
+    if !case.must_remain_non_actionable {
+        errors.push("must_remain_non_actionable must be true".to_string());
+    }
+    if case.raw_evidence_refs.is_empty() {
+        errors.push("raw_evidence_refs must keep lineage to preview evidence".to_string());
+    }
+    if case.non_claims.is_empty() {
+        errors.push("non_claims must keep preview boundary denials visible".to_string());
+    }
+    for required in typescript_preview_repair_loop_required_non_claims() {
+        if !case
+            .non_claims
+            .iter()
+            .any(|non_claim| non_claim.contains(required))
+        {
+            errors.push(format!("non_claims must deny {required}"));
+        }
+    }
+    if !case.source_fixture.starts_with("fixtures/")
+        || case.source_fixture.contains("..")
+        || case.source_fixture.contains('\\')
+    {
+        errors.push(format!(
+            "source_fixture must be a normalized fixtures/ path, got {}",
+            case.source_fixture
+        ));
+    }
+    if case.static_limit_kind.is_some() && case.gap_state != "static_limitation" {
+        errors.push("static_limit_kind requires gap_state=static_limitation".to_string());
+    }
+    if case.gap_state == "static_limitation" && case.static_limit_kind.is_none() {
+        errors.push("static_limitation cases must name static_limit_kind".to_string());
+    }
+    if case.disposition == "named_static_limitation" && case.gap_state != "static_limitation" {
+        errors.push(
+            "named_static_limitation disposition requires gap_state=static_limitation".to_string(),
+        );
+    }
+    if case.disposition != "named_static_limitation" && case.gap_state == "static_limitation" {
+        errors.push(
+            "static_limitation gap_state must use named_static_limitation disposition".to_string(),
+        );
+    }
+
+    typescript_preview_false_actionable_audit_check_source_fixture(case, &mut errors);
+    errors
+}
+
+fn typescript_preview_false_actionable_audit_check_source_fixture(
+    case: &TypeScriptPreviewFalseActionableAuditCase,
+    errors: &mut Vec<String>,
+) {
+    if !case.source_fixture.starts_with("fixtures/") || case.source_fixture.contains("..") {
+        return;
+    }
+    let check_path = Path::new(&case.source_fixture)
+        .join("expected")
+        .join("check.json");
+    let report = match read_json_value(&check_path) {
+        Ok(value) => value,
+        Err(err) => {
+            errors.push(format!(
+                "source fixture check output is unavailable at {}: {err}",
+                normalize_path(&check_path)
+            ));
+            return;
+        }
+    };
+    let finding = report
+        .get("findings")
+        .and_then(Value::as_array)
+        .and_then(|findings| {
+            findings.iter().find(|finding| {
+                json_string_field(finding, "id").as_deref() == Some(case.source_finding_id.as_str())
+            })
+        });
+    let Some(finding) = finding else {
+        errors.push(format!(
+            "source fixture {} does not contain finding {}",
+            normalize_path(&check_path),
+            case.source_finding_id
+        ));
+        return;
+    };
+
+    dogfood_typescript_preview_repair_loop_expect_string(
+        errors,
+        finding,
+        "language",
+        &case.language,
+    );
+    dogfood_typescript_preview_repair_loop_expect_string(
+        errors,
+        finding,
+        "language_status",
+        &case.language_status,
+    );
+    if let Some(expected_oracle) = &case.oracle_kind {
+        dogfood_typescript_preview_repair_loop_expect_string(
+            errors,
+            finding,
+            "oracle_kind",
+            expected_oracle,
+        );
+    }
+    if json_string_field(finding, "static_limit_kind") != case.static_limit_kind {
+        errors.push(format!(
+            "source finding static_limit_kind must be {:?}, got {:?}",
+            case.static_limit_kind,
+            json_string_field(finding, "static_limit_kind")
+        ));
+    }
+    if !case
+        .raw_evidence_refs
+        .iter()
+        .any(|reference| reference.contains(&case.source_finding_id))
+    {
+        errors.push("raw_evidence_refs must include the source finding id".to_string());
+    }
+    if !typescript_preview_false_actionable_finding_contains(
+        finding,
+        &case.required_evidence_fragment,
+    ) {
+        errors.push(format!(
+            "source finding must contain required evidence fragment `{}`",
+            case.required_evidence_fragment
+        ));
+    }
+
+    let Some(actionability) = finding.get("preview_actionability") else {
+        errors.push("source finding is missing preview_actionability".to_string());
+        return;
+    };
+    dogfood_typescript_preview_repair_loop_expect_string(
+        errors,
+        actionability,
+        "gap_state",
+        &case.gap_state,
+    );
+    dogfood_typescript_preview_repair_loop_expect_string(
+        errors,
+        actionability,
+        "actionability_category",
+        &case.actionability_category,
+    );
+    dogfood_typescript_preview_repair_loop_expect_string(
+        errors,
+        actionability,
+        "authority_boundary",
+        &case.authority_boundary,
+    );
+    if json_bool_field(actionability, "repair_packet_ready") != Some(case.repair_packet_ready) {
+        errors.push(format!(
+            "source finding repair_packet_ready must be {}, got {:?}",
+            case.repair_packet_ready,
+            json_bool_field(actionability, "repair_packet_ready")
+        ));
+    }
+    if json_string_field(actionability, "why_not_actionable").as_deref()
+        != Some(case.why_not_actionable.as_str())
+    {
+        errors.push("why_not_actionable must match source preview actionability".to_string());
+    }
+    if json_string_field(actionability, "repair_route").as_deref()
+        != Some(case.repair_route.as_str())
+    {
+        errors.push("repair_route must match source preview actionability".to_string());
+    }
+}
+
+fn typescript_preview_false_actionable_finding_contains(finding: &Value, fragment: &str) -> bool {
+    if fragment.trim().is_empty() {
+        return false;
+    }
+    if json_string_field(finding, "recommended_next_step")
+        .as_deref()
+        .is_some_and(|value| value.contains(fragment))
+    {
+        return true;
+    }
+    for field in ["evidence", "missing"] {
+        if finding
+            .get(field)
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|item| item.contains(fragment))
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn typescript_preview_false_actionable_audit_allowed_dispositions() -> &'static [&'static str] {
+    &[
+        "safe_advisory",
+        "named_static_limitation",
+        "candidate_future_support",
+        "must_remain_non_actionable",
     ]
 }
 
@@ -45615,6 +46824,8 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
     let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
     let real_repair_attempt_runs = inputs.real_repair_attempt_runs;
     let python_real_repo_eval_runs = inputs.python_real_repo_eval_runs;
+    let python_repair_quality =
+        dogfood_python_repair_routing_quality_summary(python_real_repo_eval_runs);
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
@@ -45655,6 +46866,7 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
         || python_real_repo_eval_runs
             .iter()
             .any(|run| !run.errors.is_empty())
+        || python_repair_quality.gate_status != "pass"
         || typescript_preview_repair_loop_runs
             .iter()
             .any(|run| !run.errors.is_empty())
@@ -46922,6 +48134,8 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         .iter()
         .filter(|run| run.usability == "usable")
         .count();
+    let python_repair_quality =
+        dogfood_python_repair_routing_quality_summary(python_real_repo_eval_runs);
     body.push_str("## Python Real-Repo Eval Receipts\n\n");
     body.push_str("These receipts record Python repair-routing runs outside analyzer fixture goldens. They are advisory dogfood evidence for the repair card -> verify -> receipt loop, not support-tier promotion or runtime adequacy proof.\n\n");
     body.push_str("- Default CI blocking: no\n");
@@ -46948,6 +48162,61 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         ));
     }
     body.push('\n');
+    body.push_str("## Python Repair-Routing Quality Metrics\n\n");
+    body.push_str("These metrics are computed from the checked Python real-repo eval receipts. They measure top repair-card usefulness and closure evidence; they are not support-tier promotion and do not make Python gate eligible.\n\n");
+    body.push_str(&format!(
+        "- Quality gate: `{}` - {}\n",
+        markdown_cell(&python_repair_quality.gate_status),
+        markdown_cell(&python_repair_quality.gate_reason)
+    ));
+    body.push_str("- Top-3 actionable precision: `not_measured` - the current corpus records the top finding only; ranked top-3 capture remains future work.\n\n");
+    body.push_str("| Metric | Passing / Checked |\n");
+    body.push_str("| --- | --- |\n");
+    body.push_str(&format!(
+        "| Top-1 actionable precision | {} / {} |\n",
+        python_repair_quality.top_1_actionable_usable, python_repair_quality.cases
+    ));
+    body.push_str(&format!(
+        "| Verify-command validity | {} / {} |\n",
+        python_repair_quality.verify_command_valid, python_repair_quality.cases
+    ));
+    body.push_str(&format!(
+        "| Concrete discriminator rate | {} / {} |\n",
+        python_repair_quality.concrete_discriminator, python_repair_quality.cases
+    ));
+    body.push_str(&format!(
+        "| Related test-location rate | {} / {} |\n",
+        python_repair_quality.suggested_test_location, python_repair_quality.cases
+    ));
+    body.push_str(&format!(
+        "| Receipt closure rate | {} / {} |\n",
+        python_repair_quality.receipt_closed, python_repair_quality.cases
+    ));
+    body.push_str(&format!(
+        "| False-actionable rate | {} / {} |\n",
+        python_repair_quality.false_actionable, python_repair_quality.cases
+    ));
+    body.push_str(&format!(
+        "| Crash rate | {} / {} |\n\n",
+        python_repair_quality.crashes, python_repair_quality.cases
+    ));
+    body.push_str("| Unsupported limitation | Cases |\n");
+    body.push_str("| --- | --- |\n");
+    if python_repair_quality
+        .unsupported_limitation_distribution
+        .is_empty()
+    {
+        body.push_str("| none recorded | 0 |\n\n");
+    } else {
+        for (limitation, count) in &python_repair_quality.unsupported_limitation_distribution {
+            body.push_str(&format!(
+                "| `{}` | {} |\n",
+                markdown_cell(limitation),
+                count
+            ));
+        }
+        body.push('\n');
+    }
     for run in python_real_repo_eval_runs {
         body.push_str(&format!("### Python Real-Repo Eval `{}`\n\n", run.name));
         body.push_str(&format!(
@@ -47011,6 +48280,12 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
             "- Limitation notes: {}\n",
             markdown_cell(&run.limitation_notes)
         ));
+        if !run.unsupported_limitations.is_empty() {
+            body.push_str(&format!(
+                "- Unsupported limitations: `{}`\n",
+                markdown_cell(&run.unsupported_limitations.join(", "))
+            ));
+        }
         body.push_str(&format!(
             "- Claim boundary: `{}`\n",
             markdown_cell(&run.claim_boundary.join("; "))
@@ -47312,6 +48587,8 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
     let surface_projection_alignment_runs = inputs.surface_projection_alignment_runs;
     let real_repair_attempt_runs = inputs.real_repair_attempt_runs;
     let python_real_repo_eval_runs = inputs.python_real_repo_eval_runs;
+    let python_repair_quality =
+        dogfood_python_repair_routing_quality_summary(python_real_repo_eval_runs);
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
@@ -48695,6 +49972,9 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
             "        \"limitation_notes\": \"{}\",\n",
             json_escape(&run.limitation_notes)
         ));
+        body.push_str("        \"unsupported_limitations\": [");
+        write_json_string_array(&mut body, &run.unsupported_limitations);
+        body.push_str("],\n");
         body.push_str("        \"claim_boundary\": [");
         write_json_string_array(&mut body, &run.claim_boundary);
         body.push_str("],\n");
@@ -48706,7 +49986,94 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         write_json_string_array(&mut body, &run.errors);
         body.push_str("]\n      }");
     }
-    body.push_str("\n    ]\n  },\n  \"user_surface_projection_alignment\": {\n");
+    body.push_str("\n    ]\n  },\n  \"python_repair_routing_quality\": {\n");
+    body.push_str("    \"default_ci_blocking\": false,\n");
+    body.push_str("    \"input\": \"fixtures/python-real-repo-evals/corpus.json\",\n");
+    body.push_str(&format!(
+        "    \"quality_gate\": {{ \"status\": \"{}\", \"reason\": \"{}\" }},\n",
+        json_escape(&python_repair_quality.gate_status),
+        json_escape(&python_repair_quality.gate_reason)
+    ));
+    body.push_str("    \"summary\": {\n");
+    body.push_str(&format!(
+        "      \"cases\": {},\n",
+        python_repair_quality.cases
+    ));
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "top_1_actionable_precision",
+        python_repair_quality.top_1_actionable_usable,
+        python_repair_quality.cases,
+        true,
+        "top finding is usable, repair-card-backed, and has no observed false actionability",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "verify_command_validity",
+        python_repair_quality.verify_command_valid,
+        python_repair_quality.cases,
+        true,
+        "verify command is pytest or unittest and passed in the recorded eval",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "concrete_discriminator_rate",
+        python_repair_quality.concrete_discriminator,
+        python_repair_quality.cases,
+        true,
+        "missing discriminator is a concrete non-placeholder value",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "related_test_location_rate",
+        python_repair_quality.suggested_test_location,
+        python_repair_quality.cases,
+        true,
+        "suggested test file and test name are present",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "receipt_closure_rate",
+        python_repair_quality.receipt_closed,
+        python_repair_quality.cases,
+        true,
+        "before/after receipt closes the canonical Python gap",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "false_actionable_rate",
+        python_repair_quality.false_actionable,
+        python_repair_quality.cases,
+        false,
+        "recorded eval reports observed false actionability",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "crash_rate",
+        python_repair_quality.crashes,
+        python_repair_quality.cases,
+        false,
+        "eval validation reported parser/reporting crashes or contract errors",
+    );
+    body.push_str(
+        "      \"top_3_actionable_precision\": { \"status\": \"not_measured\", \"reason\": \"the current Python real-repo eval corpus records the top finding only\" }\n",
+    );
+    body.push_str("    },\n    \"unsupported_limitation_distribution\": [");
+    for (index, (limitation, count)) in python_repair_quality
+        .unsupported_limitation_distribution
+        .iter()
+        .enumerate()
+    {
+        if index > 0 {
+            body.push_str(", ");
+        }
+        body.push_str(&format!(
+            "{{ \"kind\": \"{}\", \"cases\": {} }}",
+            json_escape(limitation),
+            count
+        ));
+    }
+    body.push_str("]\n  },\n  \"user_surface_projection_alignment\": {\n");
     body.push_str("    \"default_ci_blocking\": false,\n");
     body.push_str(
         "    \"receipt_dir\": \"fixtures/user-surface-projection-alignment\",\n    \"cases\": [\n",
@@ -61519,11 +62886,16 @@ mod tests {
 
     use super::PrActionableInput;
     use super::RiprSwarmAttemptLedgerEntry;
+    use super::RiprSwarmAttemptLedgerReport;
     use super::RiprSwarmCommand;
     use super::RiprSwarmReadinessInput;
     use super::XtaskCommand;
     use super::dispatch;
+    use super::lane1_runtime_status_full;
+    use super::ripr_swarm_attempt_ledger_latest_attempts;
+    use super::ripr_swarm_attempt_ledger_repair_route_quality;
     use super::ripr_swarm_repair_route_quality_attempt_is_failure;
+    use super::ripr_swarm_repair_route_quality_failure_count;
     use super::run::{
         TimedFileOutput, TimedOutput, capture_output, run, run_output, run_output_optional,
         run_output_owned,
@@ -61550,12 +62922,14 @@ mod tests {
         LocalContextAllow, LspCockpitFixture, LspCockpitReport, MarkdownLink,
         PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PrTriageCheck, PrTriageFinding, PrTriagePullRequest,
         REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
-        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV, ReceiptRecord,
-        RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
+        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
+        REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
+        ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
         RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
         ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH,
         SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
-        StaticLanguageMatcher, TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
+        StaticLanguageMatcher, TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
+        TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
         USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
         WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
         actionable_gap_outcomes_markdown, actionable_gap_outcomes_report_from_values,
@@ -61584,7 +62958,8 @@ mod tests {
         dogfood_language_preview_run, dogfood_language_preview_scenarios,
         dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
         dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
-        dogfood_python_real_repo_eval_run, dogfood_python_real_repo_eval_scenarios,
+        dogfood_push_python_quality_ratio_json, dogfood_python_real_repo_eval_run,
+        dogfood_python_real_repo_eval_scenarios, dogfood_python_repair_routing_quality_summary,
         dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios,
         dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
         dogfood_report_packet_index_scenarios, dogfood_surface_projection_alignment_run,
@@ -61644,8 +63019,9 @@ mod tests {
         repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
         repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
-        repo_exposure_latency_trace, repo_root, repo_seam_inventory_command_args_for_root,
-        report_index_json, report_index_lane1_overall_status, report_index_lane1_readiness_packets,
+        repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
+        repo_seam_inventory_command_args_for_root, report_index_json,
+        report_index_lane1_overall_status, report_index_lane1_readiness_packets,
         report_index_markdown, report_index_missing_artifact_count, report_index_missing_expected,
         report_index_next_commands, report_index_repo_ops_packets, report_index_repo_ops_status,
         report_status_from_text, ripr_command_literals_in_text, ripr_debug_binary,
@@ -61683,6 +63059,7 @@ mod tests {
         write_badge_artifacts_from_diff, write_evidence_health_report_with_runner,
         write_evidence_health_report_with_runners,
         write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
+        write_repo_exposure_summary_report_with_runner,
     };
     use super::{
         DeclaredIntent, LocalContextFinding,
@@ -69842,7 +71219,8 @@ fn exact_owner_call_has_external_expected_value() {
             closed_gaps: 1,
             usability: "usable".to_string(),
             false_positive_notes: "none observed".to_string(),
-            limitation_notes: "normal pytest app, API, CLI/tooling, and mixed repo dogfood remain outstanding".to_string(),
+            limitation_notes: "support-tier promotion remains pending ranked top-3 metrics review".to_string(),
+            unsupported_limitations: Vec::new(),
             claim_boundary: vec![
                 "Python remains preview/advisory".to_string(),
                 "No arbitrary imports or tests were run by RIPR".to_string(),
@@ -70047,6 +71425,8 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(markdown.contains("Surface Projection Alignment Receipts"));
         assert!(markdown.contains("Real Repair Attempt Receipts"));
         assert!(markdown.contains("Python Real-Repo Eval Receipts"));
+        assert!(markdown.contains("Python Repair-Routing Quality Metrics"));
+        assert!(markdown.contains("Top-3 actionable precision: `not_measured`"));
         assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
         assert!(markdown.contains("User Surface Projection Alignment Receipts"));
         assert!(markdown.contains("PR Inline Comment Publisher Receipts"));
@@ -70275,6 +71655,25 @@ fn exact_owner_call_has_external_expected_value() {
                 .get("missing_discriminator")
                 .and_then(Value::as_str),
             Some("amount == threshold")
+        );
+        let python_quality = value
+            .get("python_repair_routing_quality")
+            .ok_or_else(|| "python_repair_routing_quality section missing".to_string())?;
+        assert_eq!(
+            python_quality["quality_gate"]["status"],
+            serde_json::Value::from("pass")
+        );
+        assert_eq!(
+            python_quality["summary"]["top_1_actionable_precision"]["status"],
+            serde_json::Value::from("pass")
+        );
+        assert_eq!(
+            python_quality["summary"]["top_3_actionable_precision"]["status"],
+            serde_json::Value::from("not_measured")
+        );
+        assert_eq!(
+            python_quality["summary"]["receipt_closure_rate"]["count"],
+            serde_json::Value::from(1)
         );
         let typescript_preview_repair_loop = value
             .get("typescript_preview_repair_loop")
@@ -70996,6 +72395,26 @@ fn exact_owner_call_has_external_expected_value() {
                 "Python real-repo eval receipts should include a closed gap"
             );
 
+            let runs = scenarios
+                .iter()
+                .map(dogfood_python_real_repo_eval_run)
+                .collect::<Vec<_>>();
+            let quality = dogfood_python_repair_routing_quality_summary(&runs);
+            assert_eq!(quality.gate_status, "pass");
+            assert_eq!(quality.top_1_actionable_usable, quality.cases);
+            assert_eq!(quality.verify_command_valid, quality.cases);
+            assert_eq!(quality.concrete_discriminator, quality.cases);
+            assert_eq!(quality.suggested_test_location, quality.cases);
+            assert_eq!(quality.false_actionable, 0);
+            assert_eq!(quality.crashes, 0);
+            assert!(quality.receipt_closed > 0);
+            assert!(
+                quality
+                    .unsupported_limitation_distribution
+                    .iter()
+                    .any(|(kind, count)| kind == "dynamic_route_registration" && *count == 1)
+            );
+
             for scenario in scenarios {
                 let run = dogfood_python_real_repo_eval_run(&scenario);
                 assert!(
@@ -71008,6 +72427,97 @@ fn exact_owner_call_has_external_expected_value() {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn dogfood_python_repair_routing_quality_flags_noisy_routes() {
+        let empty_quality = dogfood_python_repair_routing_quality_summary(&[]);
+        assert_eq!(empty_quality.gate_status, "review");
+        assert_eq!(empty_quality.cases, 0);
+        assert_eq!(empty_quality.receipt_closed, 0);
+
+        let mut unusable_card = valid_python_real_repo_eval_scenario();
+        unusable_card.usability = "needs_review".to_string();
+
+        let mut bad_verify = valid_python_real_repo_eval_scenario();
+        bad_verify.verify_result = "fail".to_string();
+        bad_verify.gap_movement = "unchanged".to_string();
+        bad_verify.closed_gaps = 0;
+
+        let mut vague_discriminator = valid_python_real_repo_eval_scenario();
+        vague_discriminator.missing_discriminator = "uncertain".to_string();
+
+        let mut missing_location = valid_python_real_repo_eval_scenario();
+        missing_location.suggested_test_file = "src/pricing.py".to_string();
+
+        let mut false_actionable = valid_python_real_repo_eval_scenario();
+        false_actionable.false_positive_notes = "possible false actionability".to_string();
+
+        let mut not_closed = valid_python_real_repo_eval_scenario();
+        not_closed.gap_movement = "unchanged".to_string();
+        not_closed.closed_gaps = 0;
+
+        let mut unsupported = valid_python_real_repo_eval_scenario();
+        unsupported.unsupported_limitations = vec![
+            "decorator_indirection".to_string(),
+            "dynamic_route_registration".to_string(),
+        ];
+
+        let mut crashed =
+            dogfood_python_real_repo_eval_run(&valid_python_real_repo_eval_scenario());
+        crashed
+            .errors
+            .push("simulated parser/report contract error".to_string());
+
+        let runs = vec![
+            dogfood_python_real_repo_eval_run(&unusable_card),
+            dogfood_python_real_repo_eval_run(&bad_verify),
+            dogfood_python_real_repo_eval_run(&vague_discriminator),
+            dogfood_python_real_repo_eval_run(&missing_location),
+            dogfood_python_real_repo_eval_run(&false_actionable),
+            dogfood_python_real_repo_eval_run(&not_closed),
+            dogfood_python_real_repo_eval_run(&unsupported),
+            crashed,
+        ];
+        let quality = dogfood_python_repair_routing_quality_summary(&runs);
+
+        assert_eq!(quality.gate_status, "review");
+        assert_eq!(quality.cases, 8);
+        assert_eq!(quality.top_1_actionable_usable, 6);
+        assert_eq!(quality.verify_command_valid, 7);
+        assert_eq!(quality.concrete_discriminator, 7);
+        assert_eq!(quality.suggested_test_location, 7);
+        assert_eq!(quality.false_actionable, 1);
+        assert_eq!(quality.crashes, 1);
+        assert_eq!(quality.receipt_closed, 6);
+        assert!(
+            quality
+                .unsupported_limitation_distribution
+                .iter()
+                .any(|(kind, count)| kind == "decorator_indirection" && *count == 1)
+        );
+        assert!(
+            quality
+                .unsupported_limitation_distribution
+                .iter()
+                .any(|(kind, count)| kind == "dynamic_route_registration" && *count == 1)
+        );
+    }
+
+    #[test]
+    fn dogfood_python_quality_ratio_json_marks_review_and_not_measured() {
+        let mut body = String::new();
+        dogfood_push_python_quality_ratio_json(&mut body, "empty", 0, 0, true, "no cases");
+        dogfood_push_python_quality_ratio_json(&mut body, "higher_pass", 2, 2, true, "all good");
+        dogfood_push_python_quality_ratio_json(&mut body, "higher_review", 1, 2, true, "missing");
+        dogfood_push_python_quality_ratio_json(&mut body, "lower_pass", 0, 2, false, "none");
+        dogfood_push_python_quality_ratio_json(&mut body, "lower_review", 1, 2, false, "noisy");
+
+        assert!(body.contains("\"empty\": { \"status\": \"not_measured\""));
+        assert!(body.contains("\"higher_pass\": { \"status\": \"pass\""));
+        assert!(body.contains("\"higher_review\": { \"status\": \"review\""));
+        assert!(body.contains("\"lower_pass\": { \"status\": \"pass\""));
+        assert!(body.contains("\"lower_review\": { \"status\": \"review\""));
     }
 
     fn valid_python_real_repo_eval_scenario() -> DogfoodPythonRealRepoEvalScenario {
@@ -71045,9 +72555,8 @@ fn exact_owner_call_has_external_expected_value() {
             closed_gaps: 1,
             usability: "usable".to_string(),
             false_positive_notes: "none observed".to_string(),
-            limitation_notes:
-                "normal pytest app, API, CLI/tooling, and mixed repo dogfood remain outstanding"
-                    .to_string(),
+            limitation_notes: "support-tier promotion remains pending ranked top-3 metrics review".to_string(),
+            unsupported_limitations: Vec::new(),
             claim_boundary: vec![
                 "Python remains preview/advisory".to_string(),
                 "No arbitrary imports or tests were run by RIPR".to_string(),
@@ -71067,6 +72576,7 @@ fn exact_owner_call_has_external_expected_value() {
         scenario.gap_movement = "closed".to_string();
         scenario.closed_gaps = 0;
         scenario.verify_result = "not_run".to_string();
+        scenario.limitation_notes = "dynamic routing remains unsupported".to_string();
         scenario.claim_boundary.clear();
 
         let report = dogfood_python_real_repo_eval_run(&scenario)
@@ -71078,6 +72588,9 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(report.contains("repair_card_present must be true"));
         assert!(report.contains("closed gap movement must record closed_gaps > 0"));
         assert!(report.contains("closed gap movement requires verify_result=pass"));
+        assert!(report.contains(
+            "limitation_notes mention unsupported behavior but unsupported_limitations is empty"
+        ));
         assert!(report.contains("claim_boundary must keep preview boundary denials visible"));
     }
 
@@ -71133,6 +72646,51 @@ fn exact_owner_call_has_external_expected_value() {
                     "{} TypeScript preview repair-loop receipt should validate: {:?}",
                     run.name,
                     run.errors
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn typescript_preview_false_actionable_audit_cases_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let cases = super::typescript_preview_false_actionable_audit_cases();
+            for required in TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES {
+                assert!(
+                    cases
+                        .iter()
+                        .any(|case| { case.name == required.0 && case.disposition == required.1 }),
+                    "{} TypeScript preview false-actionable audit case should be checked as {}",
+                    required.0,
+                    required.1
+                );
+            }
+
+            let dispositions = cases
+                .iter()
+                .map(|case| case.disposition.as_str())
+                .collect::<BTreeSet<_>>();
+            for required in [
+                "safe_advisory",
+                "named_static_limitation",
+                "candidate_future_support",
+                "must_remain_non_actionable",
+            ] {
+                assert!(
+                    dispositions.contains(required),
+                    "TypeScript preview false-actionable audit should include {required}"
+                );
+            }
+
+            for case in cases {
+                let errors = super::typescript_preview_false_actionable_audit_case_errors(&case);
+                assert!(
+                    errors.is_empty(),
+                    "{} TypeScript preview false-actionable audit case should validate: {:?}",
+                    case.name,
+                    errors
                 );
             }
 
@@ -78143,6 +79701,146 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
     }
 
     #[test]
+    fn repo_exposure_summary_report_timeout_ms_uses_positive_env_override_only()
+    -> Result<(), String> {
+        assert_eq!(
+            repo_exposure_summary_report_timeout_ms_from_env(None),
+            REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_exposure_summary_report_timeout_ms_from_env(Some(String::new())),
+            REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_exposure_summary_report_timeout_ms_from_env(Some("0".to_string())),
+            REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_exposure_summary_report_timeout_ms_from_env(Some("not-a-timeout".to_string())),
+            REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+        );
+        assert_eq!(
+            repo_exposure_summary_report_timeout_ms_from_env(Some("300000".to_string())),
+            300_000
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_summary_report_timeout_writes_non_consumable_limitation() -> Result<(), String>
+    {
+        with_temp_cwd("repo-exposure-summary-timeout", |_root| {
+            let args = repo_seam_inventory_command_args_for_root("repo-exposure-summary-json", ".");
+            let output_path = Path::new("target/ripr/reports/repo-exposure-summary.json");
+            write(output_path, "stale summary");
+
+            write_repo_exposure_summary_report_with_runner(
+                &args,
+                Duration::from_millis(7),
+                |_args, _timeout| {
+                    Ok(TimedOutput {
+                        status: None,
+                        stdout: "{\"format\":\"repo-exposure-summary-json\"".to_string(),
+                        stderr: concat!(
+                            "ripr_repo_exposure_latency phase=inventory_seams status=ok duration_ms=3\n",
+                            "ripr_repo_exposure_latency phase=evidence_for_seams_progress status=processed_500_of_39021 duration_ms=7\n",
+                        )
+                        .to_string(),
+                        duration: Duration::from_millis(8),
+                        timed_out: true,
+                    })
+                },
+            )?;
+
+            let json_text = fs::read_to_string(output_path).map_err(|err| err.to_string())?;
+            let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+            assert_eq!(value["status"], "warn");
+            assert_eq!(value["basis"], "limited_runtime_status");
+            assert_eq!(value["run_status"], "limited_timeout");
+            assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+            assert_eq!(
+                value["runtime_status"]["limitation_category"],
+                "repo_exposure_summary_timeout"
+            );
+            assert_eq!(value["generation"]["status"], "timeout");
+            assert_eq!(value["generation"]["timed_out"], true);
+            assert_eq!(value["generation"]["latency_trace_events_total"], 2);
+            assert_eq!(
+                value["generation"]["latency_trace_tail"][1]["status"],
+                "processed_500_of_39021"
+            );
+            assert!(
+                value["metrics"]
+                    .as_object()
+                    .is_some_and(|map| map.is_empty())
+            );
+            assert!(value["top_files"].as_array().is_some_and(Vec::is_empty));
+            assert_eq!(value["run_limitations"][0]["downstream_consumable"], false);
+            assert!(
+                value["run_limitations"][0]["repair_route"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV)
+            );
+            assert!(!json_text.contains("stale summary"));
+            assert!(!json_text.contains("unsuppressed_exposure_gaps"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn repo_exposure_summary_report_success_writes_complete_summary() -> Result<(), String> {
+        with_temp_cwd("repo-exposure-summary-success", |_root| {
+            let args = repo_seam_inventory_command_args_for_root("repo-exposure-summary-json", ".");
+            let output_path = Path::new("target/ripr/reports/repo-exposure-summary.json");
+            let summary = r#"{
+  "schema_version": "0.1",
+  "format": "repo-exposure-summary-json",
+  "scope": "repo",
+  "basis": "canonical_actionable_gap",
+  "metrics": {
+    "raw_seams": 5,
+    "unsuppressed_exposure_gaps": 2
+  },
+  "reason_breakdown": {
+    "actionability": {
+      "upgrade_assertion": 2
+    }
+  },
+  "limits": {
+    "top_files_limit": 25,
+    "top_files_total": 0,
+    "top_files_truncated": false
+  },
+  "top_files": []
+}
+"#;
+
+            write_repo_exposure_summary_report_with_runner(
+                &args,
+                Duration::from_millis(7),
+                |_args, _timeout| {
+                    Ok(TimedOutput {
+                        status: Some(success_exit_status()),
+                        stdout: summary.to_string(),
+                        stderr: String::new(),
+                        duration: Duration::from_millis(6),
+                        timed_out: false,
+                    })
+                },
+            )?;
+
+            let json_text = fs::read_to_string(output_path).map_err(|err| err.to_string())?;
+            let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+            assert_eq!(value["format"], "repo-exposure-summary-json");
+            assert_eq!(value["basis"], "canonical_actionable_gap");
+            assert_eq!(value["metrics"]["unsuppressed_exposure_gaps"], 2);
+            assert!(value.get("runtime_status").is_none());
+            Ok(())
+        })
+    }
+
+    #[test]
     fn diff_badge_artifact_command_args_still_use_git_diff_input() -> Result<(), String> {
         // Companion to the repo regression: the diff-scope contract is that
         // the args DO consult `git diff origin/main...HEAD` (captured to
@@ -83808,6 +85506,11 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(packet["non_claims"].as_array().is_some_and(|claims| {
             claims
                 .iter()
+                .any(|claim| claim == "do not invent exact candidate values")
+        }));
+        assert!(packet["non_claims"].as_array().is_some_and(|claims| {
+            claims
+                .iter()
                 .any(|claim| claim == "do not invent exact boundary candidate values")
         }));
         assert_eq!(
@@ -84209,6 +85912,88 @@ covered_by = ["cargo xtask check-file-policy"]
                 "call_presence"
             ),
             "call_presence_target_affinity_missing_owner_call"
+        );
+    }
+
+    #[test]
+    fn lane1_static_limitation_backlog_splits_related_test_affinity_call_presence_by_expression_shape()
+     {
+        let limitation = serde_json::json!({});
+        fn affinity_record(reason: &str, expression: Option<&str>) -> Value {
+            let mut record = serde_json::json!({
+                "related_tests": [
+                    {
+                        "relation_reason": reason
+                    }
+                ]
+            });
+            if let Some(expression) = expression {
+                record["raw_findings"] = serde_json::json!([
+                    {
+                        "expression": expression
+                    }
+                ]);
+            }
+            record
+        }
+
+        assert_eq!(
+            crate::static_limitation_subroute(
+                &affinity_record(
+                    "same_test_file",
+                    Some(
+                        "entry\n        .evidence\n        .missing_discriminators\n        .iter()"
+                    ),
+                ),
+                &limitation,
+                "activation_owner_call_absent_affinity_only",
+                "analysis/related-test-affinity-owner-call-tracing",
+                "call_presence"
+            ),
+            "same_test_file_call_presence_method_chain_missing_owner_call"
+        );
+        assert_eq!(
+            crate::static_limitation_subroute(
+                &affinity_record("same_test_file", Some("u64::from(*byte)")),
+                &limitation,
+                "activation_owner_call_absent_affinity_only",
+                "analysis/related-test-affinity-owner-call-tracing",
+                "call_presence"
+            ),
+            "same_test_file_call_presence_associated_call_missing_owner_call"
+        );
+        assert_eq!(
+            crate::static_limitation_subroute(
+                &affinity_record(
+                    "same_test_file",
+                    Some("missing_evidence(context.probe, &class)"),
+                ),
+                &limitation,
+                "activation_owner_call_absent_affinity_only",
+                "analysis/related-test-affinity-owner-call-tracing",
+                "call_presence"
+            ),
+            "same_test_file_call_presence_function_call_missing_owner_call"
+        );
+        assert_eq!(
+            crate::static_limitation_subroute(
+                &affinity_record("owner_named_test", Some("Vec::new()")),
+                &limitation,
+                "activation_owner_call_absent_affinity_only",
+                "analysis/related-test-affinity-owner-call-tracing",
+                "return_value"
+            ),
+            "owner_named_test_missing_owner_call"
+        );
+        assert_eq!(
+            crate::static_limitation_subroute(
+                &affinity_record("same_test_file", None),
+                &limitation,
+                "activation_owner_call_absent_affinity_only",
+                "analysis/related-test-affinity-owner-call-tracing",
+                "call_presence"
+            ),
+            "same_test_file_missing_owner_call"
         );
     }
 
@@ -85056,6 +86841,36 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_actionable_gap_public_projection_requires_repair_kind() {
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "gap:missing-repair-kind",
+                gap_state: "actionable",
+                actionability: "extend_related_test",
+                repair_kind: "repair_route_unknown",
+                target_test_type: "boundary_discriminator",
+                assertion_shape: "assert_eq!(value, expected)",
+                target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: "cargo test missing_repair_kind",
+                verify_command_source: "canonical_item.verify_command",
+                receipt_command_or_path: Some("cargo xtask receipts check"),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
+                confidence_basis: "fixture_backed",
+                must_not_change_count: 1,
+                allowed_edit_surface_count: 1,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["missing_repair_kind"]);
+    }
+
+    #[test]
     fn lane1_actionable_gap_public_projection_requires_target_test_shape() {
         let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
             crate::AuditActionableGapProjectionInput {
@@ -85246,6 +87061,74 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("| Input path | `target/ripr/reports/actionable-gaps.json` |"));
         Ok(())
     }
+
+    #[test]
+    fn ripr_swarm_plan_summarizes_static_limitation_backlog_without_repair_packets()
+    -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "report": "actionable-gaps",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "actionable_gaps": 0,
+                "public_projection_eligible_packets": 0
+            },
+            "static_limitation_backlog": {
+                "source": "lane1-evidence-audit.static_limitations",
+                "top_categories": [
+                    {
+                        "category": "activation_owner_call_absent_affinity_only",
+                        "count": 10,
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                    }
+                ],
+                "top_repair_routes": [
+                    {
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "count": 10
+                    }
+                ],
+                "limitation_backlog_packets": [
+                    {
+                        "packet_id": "limitation:owner-call:first",
+                        "limitation_category": "activation_owner_call_absent_affinity_only",
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "signal_count": 3
+                    },
+                    {
+                        "packet_id": "limitation:owner-call:second",
+                        "limitation_category": "activation_owner_call_absent_affinity_only",
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "signal_count": 7
+                    }
+                ]
+            },
+            "packets": []
+        });
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_plan_json(&report)?).map_err(|err| err.to_string())?;
+
+        assert_eq!(value["summary"]["static_limitation_packets"], 0);
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_packets"],
+            serde_json::Value::from(2)
+        );
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_signals"],
+            serde_json::Value::from(10)
+        );
+        assert_eq!(value["summary"]["swarm_ready_packets"], 0);
+        Ok(())
+    }
+
     #[test]
     fn ripr_swarm_plan_blocks_legacy_unbounded_repo_exposure_verify_commands() -> Result<(), String>
     {
@@ -86447,11 +88330,13 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing_verify_command": 1,
                 "missing_verify_result": 1,
                 "missing_receipt_command": 1,
+                "missing_repair_kind": 1,
                 "missing_repair_route": 1,
                 "missing_must_not_change": 1,
                 "missing_allowed_edit_surface": 1,
                 "missing_confidence": 1,
                 "missing_raw_evidence_refs": 1,
+                "missing_related_test_or_observer": 1,
                 "related_context_missing": 1,
                 "static_limitation_packets": 1,
                 "high_confidence_packets": 0,
@@ -86472,6 +88357,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "swarm_state": "blocked_by_missing_context",
                     "missing_context": [
                         "actionable_gap_state",
+                        "repair_kind",
                         "repair_route",
                         "related_test_or_observer",
                         "verify_command",
@@ -86669,11 +88555,13 @@ covered_by = ["cargo xtask check-file-policy"]
             "missing_verify_command",
             "missing_verify_result",
             "missing_receipt_command",
+            "missing_repair_kind",
             "missing_repair_route",
             "missing_must_not_change",
             "missing_allowed_edit_surface",
             "missing_confidence",
             "missing_raw_evidence_refs",
+            "missing_related_test_or_observer",
             "related_context_missing",
             "attempted_no_receipt_packets",
             "unchanged_packets",
@@ -86735,6 +88623,13 @@ covered_by = ["cargo xtask check-file-policy"]
             (
                 "missing_receipt_command",
                 "fix_receipt_command_source",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_repair_kind",
+                "fix_repair_kind_source",
                 "cargo xtask lane1-evidence-audit",
                 "packet:missing-context",
                 "gap:missing-context",
@@ -88056,6 +89951,15 @@ covered_by = ["cargo xtask check-file-policy"]
             value["top_next_action"]["kind"],
             "route_static_limitation_backlog"
         );
+        assert_eq!(value["summary"]["static_limitation_packets"], 0);
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_signals"],
+            serde_json::Value::from(1148)
+        );
         assert_eq!(
             value["top_next_action"]["packet_id"],
             "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing"
@@ -88148,6 +90052,321 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("gap:affinity-owner-call"));
         assert!(markdown.contains("target.call()"));
         assert!(markdown.contains("not a public repair packet"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_hardens_legacy_limitation_backlog_packets() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "swarm_ready_packets": 0,
+                "blocked_packets": 0,
+                "static_limitation_packets": 0
+            },
+            "source_summary": {
+                "actionable_gaps": 0,
+                "public_projection_eligible_packets": 0
+            },
+            "static_limitation_backlog": {
+                "source": "lane1-evidence-audit.static_limitations",
+                "top_repair_routes": [
+                    {
+                        "repair_route": "analysis/local-computed-boundary-operand-resolution",
+                        "count": 297
+                    }
+                ],
+                "limitation_backlog_packets": [
+                    {
+                        "packet_id": "limitation:activation-boundary-input-unresolved:local-computed",
+                        "limitation_category": "activation_boundary_input_unresolved",
+                        "repair_route": "analysis/local-computed-boundary-operand-resolution",
+                        "signal_count": 297,
+                        "sample_canonical_gap_ids": [
+                            "gap:idx-offset-local"
+                        ],
+                        "sample_sources": [
+                            {
+                                "canonical_gap_id": "gap:idx-offset-local",
+                                "source_file": "src/window.rs",
+                                "line": 44,
+                                "expression": "idx >= offset",
+                                "limitation_reason": "local/computed operand cannot be mapped to a safe test input"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "outcomes_total": 0,
+                "not_attempted": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "attempts_total": 0,
+                "canonical_gaps_total": 0,
+                "not_attempted": 0,
+                "orphaned_receipts": 0
+            },
+            "attempts": []
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["top_limitation_routes"][0]["dominant_evidence_class"],
+            "unknown"
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["why_not_actionable"],
+            "activation inputs cannot yet be mapped to a safe concrete test value"
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["unlock_condition"],
+            "implement `analysis/local-computed-boundary-operand-resolution` so local, iterator, or computed operands can be resolved before candidate values are recommended"
+        );
+        assert_eq!(
+            value["top_limitation_routes"][0]["sample_sources"][0]["evidence_class"],
+            "unknown"
+        );
+        assert!(
+            value["top_limitation_routes"][0]["non_claims"]
+                .as_array()
+                .is_some_and(|claims| claims
+                    .iter()
+                    .any(|claim| claim == "not a public repair packet"))
+        );
+        assert!(
+            value["top_limitation_routes"][0]["non_claims"]
+                .as_array()
+                .is_some_and(|claims| claims.iter().any(|claim| claim == "not swarm-ready work"))
+        );
+        assert!(
+            value["top_limitation_routes"][0]["non_claims"]
+                .as_array()
+                .is_some_and(|claims| claims
+                    .iter()
+                    .any(|claim| claim == "do not edit tests from this backlog item alone"))
+        );
+        assert!(
+            value["top_limitation_routes"][0]["non_claims"]
+                .as_array()
+                .is_some_and(|claims| claims
+                    .iter()
+                    .any(|claim| claim == "do not invent exact boundary candidate values"))
+        );
+        assert!(
+            value["top_limitation_routes"][0]
+                .get("public_projection_eligible")
+                .is_none()
+        );
+        assert!(
+            value["top_limitation_routes"][0]
+                .get("swarm_ready")
+                .is_none()
+        );
+        let markdown = ripr_swarm_readiness_markdown(&report);
+        assert!(markdown.contains("not a public repair packet"));
+        assert!(markdown.contains("not swarm-ready work"));
+        assert!(markdown.contains("src/window.rs:44"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_prioritizes_sampled_static_limitation_backlog() -> Result<(), String> {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "limited_sampled_input",
+            "runtime_status": {
+                "state": "limited_sampled_input",
+                "limitation_category": "lane1_repo_exposure_sampled",
+                "repair_route": "use the sampled work queue for the next analyzer narrowing slice",
+                "downstream_consumable": false
+            },
+            "summary": {
+                "swarm_ready_packets": 0,
+                "blocked_packets": 0,
+                "missing_verify_command": 0,
+                "missing_receipt_command": 0,
+                "static_limitation_packets": 0,
+                "high_confidence_packets": 0
+            },
+            "source_summary": {
+                "actionable_gaps": 0,
+                "public_projection_eligible_packets": 0
+            },
+            "static_limitation_backlog": {
+                "source": "lane1-evidence-audit.static_limitations",
+                "top_categories": [
+                    {
+                        "category": "activation_owner_call_absent_affinity_only",
+                        "count": 333,
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                    }
+                ],
+                "top_repair_routes": [
+                    {
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "count": 333
+                    }
+                ],
+                "limitation_backlog_packets": [
+                    {
+                        "packet_id": "limitation:activation_owner_call_absent_affinity_only:same_test_file_call_presence_function_call_missing_owner_call:analysis-related-test-affinity-owner-call-tracing",
+                        "limitation_category": "activation_owner_call_absent_affinity_only",
+                        "limitation_subroute": "same_test_file_call_presence_function_call_missing_owner_call",
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "signal_count": 333,
+                        "dominant_evidence_class": "call_presence",
+                        "why_not_actionable": "related-test affinity is not enough to prove the owner is exercised",
+                        "unlock_condition": "implement related-test owner-call tracing before repair packets are emitted",
+                        "non_claims": [
+                            "not a public repair packet",
+                            "not swarm-ready work",
+                            "do not edit tests from this backlog item alone"
+                        ],
+                        "sample_canonical_gap_ids": [
+                            "gap:sampled-affinity-owner-call"
+                        ],
+                        "sample_sources": [
+                            {
+                                "canonical_gap_id": "gap:sampled-affinity-owner-call",
+                                "source_file": "src/lib.rs",
+                                "evidence_class": "call_presence",
+                                "line": 42,
+                                "expression": "target.call()",
+                                "limitation_reason": "related-test affinity is not enough to prove the owner is exercised"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "outcomes_total": 0,
+                "not_attempted": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "attempts_total": 0,
+                "canonical_gaps_total": 0,
+                "not_attempted": 0,
+                "orphaned_receipts": 0
+            },
+            "attempts": []
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "blocked");
+        assert_eq!(value["readiness_state"], "limited");
+        assert_eq!(value["run_status"], "limited_sampled_input");
+        assert_eq!(
+            value["runtime_status"]["limitation_category"],
+            "lane1_repo_exposure_sampled"
+        );
+        assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+        assert_eq!(
+            value["top_next_action"]["kind"],
+            "route_static_limitation_backlog"
+        );
+        assert_eq!(
+            value["top_next_action"]["packet_id"],
+            "limitation:activation_owner_call_absent_affinity_only:same_test_file_call_presence_function_call_missing_owner_call:analysis-related-test-affinity-owner-call-tracing"
+        );
+        assert_eq!(
+            value["top_next_action"]["canonical_gap_id"],
+            "gap:sampled-affinity-owner-call"
+        );
+        assert_eq!(
+            value["next_actions"][1]["kind"],
+            "resolve_limited_runtime_status"
+        );
+        assert!(
+            value["next_actions"][1]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("limited_sampled_input"))
+        );
         Ok(())
     }
 
@@ -89377,6 +91596,10 @@ covered_by = ["cargo xtask check-file-policy"]
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|err| err.to_string())?;
         assert_eq!(
+            value["summary"]["missing_related_test_or_observer"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
             value["summary"]["related_context_missing"],
             serde_json::Value::from(1)
         );
@@ -89464,6 +91687,81 @@ covered_by = ["cargo xtask check-file-policy"]
                         example["state"] == "not_actionable_gap_state"
                             && example["example_packet_id"]
                                 == "packet:explicit-not-actionable-gap-state"
+                    })
+                })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_routes_explicit_missing_repair_kind_projection_exclusion()
+    -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "packet_id": "packet:explicit-missing-repair-kind",
+                    "canonical_gap_id": "gap:explicit-missing-repair-kind",
+                    "evidence_class": "error_path",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant_observer",
+                        "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                    },
+                    "verify_command": "cargo test exact_error_variant",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": {
+                        "file": "tests/error.rs",
+                        "name": "exact_error_variant"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true,
+                    "projection_exclusion_reasons": ["missing_repair_kind"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        assert!(ready.is_empty());
+
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(blocked[0].missing_context, vec!["repair_kind"]);
+        assert_eq!(
+            blocked[0].projection_exclusion_reasons,
+            vec!["missing_repair_kind"]
+        );
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["missing_repair_kind"],
+            serde_json::Value::from(1)
+        );
+        assert!(
+            value["blocked_state_examples"]
+                .as_array()
+                .is_some_and(|examples| {
+                    examples.iter().any(|example| {
+                        example["state"] == "missing_repair_kind"
+                            && example["example_packet_id"] == "packet:explicit-missing-repair-kind"
                     })
                 })
         );
@@ -92803,6 +95101,12 @@ covered_by = ["cargo xtask check-file-policy"]
             value["repair_route_quality_backlog"][0]["non_claims"][0],
             "not a public repair packet"
         );
+        assert!(
+            value["repair_route_quality_backlog"][0]["non_claims"]
+                .as_array()
+                .is_some_and(|claims| claims.iter().any(|claim| claim
+                    == "do not promote or downgrade actionability from route-quality evidence alone"))
+        );
         assert_eq!(value["summary"]["missing_verify_result"], 4);
         assert!(
             value["top_missing_evidence_fields"]
@@ -92940,6 +95244,133 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
             &attempt("resolved", Some("pass"))
         ));
+    }
+
+    #[test]
+    fn ripr_swarm_attempt_ledger_projects_historical_route_quality() -> Result<(), String> {
+        fn attempt(
+            packet_id: &str,
+            outcome: &str,
+            receipt_state: &str,
+            verify_result: &str,
+            timestamp: &str,
+            missing_receipt_reason: Option<&str>,
+        ) -> RiprSwarmAttemptLedgerEntry {
+            RiprSwarmAttemptLedgerEntry {
+                packet_id: packet_id.to_string(),
+                canonical_gap_id: "gap:call-a".to_string(),
+                attempt_id: format!("attempt:{packet_id}:{outcome}"),
+                language: None,
+                evidence_class: Some("call_presence".to_string()),
+                source_file: Some("crates/ripr/src/lsp/tests.rs".to_string()),
+                repair_kind: Some("add_call_observer".to_string()),
+                target_test_type: Some("call_observer".to_string()),
+                assertion_shape: Some("serve_stdio observer".to_string()),
+                actor_kind: "codex".to_string(),
+                receipt_path: None,
+                verify_command: "cargo test -p ripr serve_stdio_call_presence_observer".to_string(),
+                verify_result: Some(verify_result.to_string()),
+                receipt_command: Some("cargo xtask dogfood".to_string()),
+                missing_receipt_reason: missing_receipt_reason.map(str::to_string),
+                before_gap_state: Some("actionable".to_string()),
+                after_gap_state: Some("actionable".to_string()),
+                outcome: outcome.to_string(),
+                timestamp: Some(timestamp.to_string()),
+                receipt_state: receipt_state.to_string(),
+                movement_source: Some("real_repair_attempts".to_string()),
+                route_quality_expectation: None,
+                reason: "fixture attempt".to_string(),
+            }
+        }
+
+        let attempts = vec![
+            attempt(
+                "packet-call-broad-receipt",
+                "attempted_no_receipt",
+                "receipt_missing",
+                "not_run",
+                "unix_ms:1",
+                Some("repo exposure verify timed out before receipt capture"),
+            ),
+            attempt(
+                "packet-call-bounded-receipt",
+                "evidence_improved",
+                "receipt_movement_improved",
+                "pass",
+                "unix_ms:2",
+                None,
+            ),
+        ];
+        let latest_attempts = ripr_swarm_attempt_ledger_latest_attempts(&attempts);
+        let repair_route_quality = ripr_swarm_attempt_ledger_repair_route_quality(&latest_attempts);
+        let historical_repair_route_quality =
+            ripr_swarm_attempt_ledger_repair_route_quality(&attempts);
+
+        assert_eq!(latest_attempts.len(), 1);
+        assert_eq!(repair_route_quality[0].attempted, 1);
+        assert_eq!(repair_route_quality[0].improved, 1);
+        assert_eq!(
+            ripr_swarm_repair_route_quality_failure_count(&repair_route_quality[0]),
+            0
+        );
+        assert_eq!(historical_repair_route_quality[0].attempted, 2);
+        assert_eq!(historical_repair_route_quality[0].improved, 1);
+        assert_eq!(historical_repair_route_quality[0].attempted_no_receipt, 1);
+        assert_eq!(
+            ripr_swarm_repair_route_quality_failure_count(&historical_repair_route_quality[0]),
+            1
+        );
+        assert_eq!(
+            historical_repair_route_quality[0].sample_packet_ids,
+            vec!["packet-call-broad-receipt".to_string()]
+        );
+
+        let report = RiprSwarmAttemptLedgerReport {
+            status: "advisory".to_string(),
+            runtime_status: lane1_runtime_status_full(),
+            generated_at: "unix_ms:3".to_string(),
+            swarm_plan_path: "target/ripr/reports/swarm-plan.json".to_string(),
+            swarm_plan_state: "read".to_string(),
+            swarm_plan_limitation: None,
+            actionable_gap_outcomes_path: "target/ripr/reports/actionable-gap-outcomes.json"
+                .to_string(),
+            actionable_gap_outcomes_state: "read".to_string(),
+            actionable_gap_outcomes_limitation: None,
+            prior_ledger_path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            prior_ledger_state: "read".to_string(),
+            prior_ledger_limitation: None,
+            real_repair_attempts_path: "fixtures/real-repair-attempts/corpus.json".to_string(),
+            real_repair_attempts_state: "read".to_string(),
+            real_repair_attempts_limitation: None,
+            attempts,
+            latest_attempts,
+            repair_route_quality,
+            language_repair_route_quality: Vec::new(),
+            historical_repair_route_quality,
+            historical_language_repair_route_quality: Vec::new(),
+            top_missing_evidence_fields: Vec::new(),
+            orphaned_receipts: Vec::new(),
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+                .map_err(|err| err.to_string())?;
+
+        assert_eq!(value["top_failing_repair_routes"], serde_json::json!([]));
+        assert_eq!(
+            value["top_historical_failing_repair_routes"][0]["repair_kind"],
+            "add_call_observer"
+        );
+        assert_eq!(
+            value["top_historical_failing_repair_routes"][0]["sample_packet_ids"][0],
+            "packet-call-broad-receipt"
+        );
+        let markdown = ripr_swarm_attempt_ledger_markdown(&report);
+        assert!(markdown.contains("## Historical Repair Route Quality"));
+        assert!(markdown.contains("## Historical Repair Route Quality Backlog"));
+        assert!(markdown.contains("packet-call-broad-receipt"));
+        assert!(markdown.contains("current routing still comes from latest attempts"));
+
+        Ok(())
     }
 
     #[test]
@@ -94186,6 +96617,7 @@ covered_by = ["cargo xtask check-file-policy"]
             packet["projection_exclusion_reasons"],
             serde_json::json!([
                 "missing_repair_route",
+                "missing_repair_kind",
                 "missing_target_test_shape",
                 "missing_verify_command",
                 "missing_receipt_command",

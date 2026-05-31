@@ -9,22 +9,52 @@ are scoped or reviewed.
 
 ## Unreleased
 
+- Added Python repair-routing quality metrics to `cargo xtask dogfood`. The
+  report now derives top-1 repair-card usefulness, verify-command validity,
+  concrete-discriminator coverage, suggested test-location coverage,
+  false-actionable and crash rates, receipt closure, and unsupported limitation
+  distribution from the Python real-repo eval corpus while marking top-3
+  precision as not yet measured. Python remains preview/advisory; support-tier
+  promotion still depends on ranked top-3 evidence and review.
+- Added simple Python route-decorator repair routing for FastAPI/Flask-shaped
+  handlers such as `@api.post(...)`. RIPR now treats those route decorators as
+  static route metadata, still keeps arbitrary decorators fail-closed, and the
+  new fixture plus real-repo eval receipt show a changed
+  `response.status_code` route behavior closing after a focused pytest status
+  assertion. Python remains preview/advisory; support-tier promotion still
+  depends on metrics review.
+- Added a mixed Rust/Python pytest case to the Python real-repo eval corpus.
+  RIPR emits a predicate-boundary repair card for a changed Python behavior in
+  a repo with Cargo and pyproject metadata, the focused pytest verify command
+  passes, and `ripr outcome` records the canonical Python gap closed. Python
+  remains preview/advisory; support-tier promotion still depends on metrics
+  review.
+- Added an API-style status-code pytest case to the Python real-repo eval
+  corpus. RIPR emits a field/object repair card for a changed
+  `response.status_code` behavior, the focused pytest verify command passes,
+  and `ripr outcome` records the canonical Python gap closed. Python remains
+  preview/advisory; support-tier promotion still depends on metrics review.
+- Added a CLI/output-style pytest case to the Python real-repo eval corpus.
+  RIPR emits an output/call-effect repair card for a changed `print(...)`
+  behavior, the focused `capsys` pytest verify command passes, and
+  `ripr outcome` records the canonical Python gap closed. Python remains
+  preview/advisory; support-tier promotion still depends on metrics review.
 - Added a normal pytest app case to the Python real-repo eval corpus. RIPR
   emits a strengthen-existing-test boundary repair card, the focused pytest
   verify command passes, and `ripr outcome` records the Python canonical gap
-  closed. Python remains preview/advisory; API, CLI/tooling, and mixed-repo
-  dogfood remain outstanding before promotion.
+  closed. Python remains preview/advisory; support-tier promotion still depends
+  on metrics review.
 - Added a Python real-repo eval corpus with a tiny controlled pytest scratch
   repo receipt: RIPR emits the predicate-boundary repair card, a human-run
   focused pytest command passes, and `ripr outcome` closes the canonical Python
-  gap. This is still preview/advisory evidence; normal pytest app, API,
-  CLI/tooling, and mixed-repo dogfood remain outstanding before promotion.
+  gap. This is still preview/advisory evidence; support-tier promotion still
+  depends on metrics review.
 - Added a repo-local Python repair-routing dogfood receipt row for a
   test-only packet that strengthens the preview pricing test, forbids the
   production Python source file, passes the focused pytest verify command, and
   closes the predicate-boundary canonical gap through `ripr outcome`. Python
-  remains preview/advisory, and broader normal-pytest/API/CLI/mixed dogfood is
-  still the next promotion blocker.
+  remains preview/advisory, and broader real-repo dogfood remains the promotion
+  blocker.
 - Added a Python repair-routing noise-control fixture that pins same-line
   returned-dict return, field, and string-literal signals as one user-facing
   canonical field/object repair gap. The Python false-positive corpus is now

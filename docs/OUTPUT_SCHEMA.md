@@ -1245,6 +1245,22 @@ The summary format is additive. It does not replace `repo-exposure-json`, which
 remains the full per-seam evidence artifact for deep debugging and downstream
 consumers that require complete evidence records.
 
+`cargo xtask repo-exposure-summary-report` wraps this format with a local
+timeout. The timeout is controlled by `RIPR_REPO_EXPOSURE_SUMMARY_TIMEOUT_MS`
+(default: 240000). If the command times out, exits before a complete summary, or
+cannot start, it writes a warning artifact to the same
+`target/ripr/reports/repo-exposure-summary.json` path with:
+
+- `basis: "limited_runtime_status"`
+- `run_status` such as `limited_timeout`, `limited_runner_failure`, or
+  `limited_incomplete_input`
+- `runtime_status.downstream_consumable: false`
+- an empty `metrics` object and empty `top_files` array
+- `run_limitations[]` with command, timeout, duration, exit code, and stderr/stdout
+  excerpts
+
+Consumers must not treat limited artifacts as canonical actionable counts.
+
 ```json
 {
   "schema_version": "0.3",
@@ -1934,8 +1950,8 @@ Field contract:
   `analysis/related-test-affinity-owner-call-tracing`, or
   `activation_owner_call_absent_same_file_only` routed to
   `analysis/same-file-owner-call-tracing`.
-  Call-presence target-affinity backlog packets may further split
-  `limitation_subroute` by expression shape, such as method-chain,
+  Call-presence target-affinity and related-test-affinity backlog packets may
+  further split `limitation_subroute` by expression shape, such as method-chain,
   associated-call, or function-call missing-owner-call routes, so analyzer work
   can distinguish local method-chain tracing from free-function call tracing
   without making the item actionable.
@@ -2546,14 +2562,14 @@ Field contract:
   badge-readiness diagnostics for the emitted packet set. It counts
   public-projection eligible packets, excluded packets, and stable
   `projection_exclusion_reasons` rows such as `not_actionable_gap_state`,
-  `missing_canonical_gap_id`, `missing_receipt_command`,
+  `missing_canonical_gap_id`, `missing_receipt_command`, `missing_repair_kind`,
   `missing_target_test_shape`, `missing_related_test_or_observer`, `missing_confidence`,
   `missing_must_not_change`, `missing_allowed_edit_surface`,
   `missing_raw_evidence_refs`, `unbounded_verify_command`, and
   `static_limitation_present`. This is advisory report evidence only and does
   not change public badge endpoint semantics. Swarm planning treats explicit
   packet-field projection exclusions such as `not_actionable_gap_state`,
-  `missing_repair_route`, `missing_verify_command`, `unbounded_verify_command`,
+  `missing_repair_kind`, `missing_repair_route`, `missing_verify_command`, `unbounded_verify_command`,
   `missing_receipt_command`, `missing_must_not_change`,
   `missing_raw_evidence_refs`, `missing_related_test_or_observer`, or
   `missing_confidence` as field-level blocked states even if stale actionability
@@ -2715,6 +2731,7 @@ otherwise it uses the category fallback route.
           "not a public repair packet",
           "not swarm-ready work",
           "do not edit tests from this backlog item alone",
+          "do not invent exact candidate values",
           "do not invent exact boundary candidate values"
         ]
       }
@@ -2836,6 +2853,11 @@ blocked by unsupported alias or ambiguity shapes. Packet identity is route- and
 subroute-grained: the same limitation category can emit separate backlog packets
 for separate analyzer repair routes or named subroutes. These packets are not
 public repair packets and must not enter the swarm-ready queue.
+The `summary.static_limitation_packets` count is limited to public repair
+packets that carry static limitations. `summary.static_limitation_backlog_packets`
+and `summary.static_limitation_backlog_signals` summarize the separate analyzer
+backlog so consumers can route analyzer work even when no public repair packets
+are emitted.
 
 ```json
 {
@@ -2893,14 +2915,18 @@ public repair packets and must not enter the swarm-ready queue.
     "missing_canonical_gap_id": 0,
     "missing_verify_command": 0,
     "missing_receipt_command": 0,
+    "missing_repair_kind": 0,
     "missing_repair_route": 0,
     "missing_target_test_shape": 0,
     "missing_must_not_change": 0,
     "missing_allowed_edit_surface": 0,
     "missing_confidence": 0,
     "missing_raw_evidence_refs": 0,
+    "missing_related_test_or_observer": 3,
     "related_context_missing": 3,
     "static_limitation_packets": 2,
+    "static_limitation_backlog_packets": 6,
+    "static_limitation_backlog_signals": 141,
     "high_confidence_packets": 4
   },
   "blocked_state_examples": [
@@ -3336,6 +3362,50 @@ actionable operator evidence instead of only route-quality counts.
       "sample_missing_receipt_reasons": []
     }
   ],
+  "historical_repair_route_quality": [
+    {
+      "language": null,
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 3,
+      "repair_kind_improved": 2,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 1,
+      "repair_kind_dominant_failure_reason": "unchanged",
+      "repair_kind_success_rate": 0.667,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "historical_language_repair_route_quality": [
+    {
+      "language": "typescript",
+      "repair_kind": "sharpen_static_limitation_route",
+      "repair_kind_attempted": 2,
+      "repair_kind_improved": 2,
+      "repair_kind_unchanged": 0,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 0,
+      "repair_kind_dominant_failure_reason": null,
+      "repair_kind_success_rate": 1.0,
+      "sample_packet_ids": [],
+      "sample_canonical_gap_ids": [],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
   "top_failing_repair_routes": [
     {
       "language": null,
@@ -3358,6 +3428,28 @@ actionable operator evidence instead of only route-quality counts.
       "sample_missing_receipt_reasons": []
     }
   ],
+  "top_historical_failing_repair_routes": [
+    {
+      "language": null,
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 3,
+      "repair_kind_improved": 2,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 1,
+      "repair_kind_dominant_failure_reason": "unchanged",
+      "repair_kind_success_rate": 0.667,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
   "repair_route_quality_backlog": [
     {
       "packet_id": "route-quality:add-boundary-assertion:unchanged",
@@ -3375,6 +3467,7 @@ actionable operator evidence instead of only route-quality counts.
         "not a public repair packet",
         "not swarm-ready work",
         "do not retry this repair kind from this backlog item alone",
+        "do not promote or downgrade actionability from route-quality evidence alone",
         "do not change badge or gate semantics from route-quality evidence alone"
       ]
     }
@@ -3510,6 +3603,12 @@ Rows include `language = null` because they are repo-level repair-kind rollups.
 grouped by `language` and `repair_kind` for attempts that carry a known language
 field. It lets TypeScript/JavaScript preview route outcomes be measured without
 promoting preview evidence into public repair packets, badge inputs, or gates.
+`historical_repair_route_quality[]` and
+`historical_language_repair_route_quality[]` use the same row shape over the
+durable full attempt history instead of the latest-attempt projection. They keep
+older unchanged, regressed, and no-receipt attempts visible after a later
+follow-up improves or resolves the same canonical gap. They are audit evidence;
+current routing still comes from latest-attempt `repair_route_quality[]`.
 `top_failing_repair_routes[]` is the subset with unexpected unchanged,
 regressed, no-receipt, missing-verify-result, or unknown outcomes,
 ordered for analyzer-improvement routing. Repair-route quality rows include
@@ -3519,7 +3618,12 @@ route-quality backlog packet while preserving the concrete failed-attempt
 sample in the reason text. `repair_route_quality_backlog[]` converts
 top failing repair routes into analyzer/report backlog packets with stable
 packet IDs, improvement routes, unlock conditions, samples, and non-claims; the
-rows are not public repair packets and are not swarm-ready work.
+rows are not public repair packets, are not swarm-ready work, and do not promote
+or downgrade actionability by themselves.
+`top_historical_failing_repair_routes[]` applies the same failing-route ordering
+to durable history. It is for route-learning audits and must not be used as the
+current next action when the latest-attempt projection has already improved or
+resolved the route.
 When `sample_missing_receipt_reasons[]` shows that no-receipt attempts timed
 out before receipt capture, readiness routes that sample to the bounded
 verify-route `improve_repair_route_quality` action instead of generic
@@ -3600,11 +3704,19 @@ Readiness forwards `static_limitation_backlog` from `swarm-plan` so thin
 surfaces can show the leading analyzer repair routes when no packet is safely
 actionable. This field is advisory limitation backlog, not a public actionable
 count and not a CI gate predicate.
+Readiness summary counts keep the same split as the plan summary:
+`static_limitation_packets` counts public repair packets blocked by static
+limitations, while `static_limitation_backlog_packets` and
+`static_limitation_backlog_signals` describe the separate analyzer backlog.
 `top_limitation_routes[]` is a readiness-level projection of those analyzer
 routes with sample packet context, sample category/subroute, sample canonical
 gap IDs, sample source locations, and non-claims so operators can inspect the
 backlog without treating it as repair work. It is intentionally separate from
 `repair_route_quality[]`, which is based only on latest repair attempts.
+For older or external backlog packets that omit presentation-only route fields,
+readiness fills standard non-claims, fallback non-actionability text, fallback
+unlock conditions, and explicit `unknown` evidence class values rather than
+dropping the route or making it look repair-ready.
 `attempt_history_summary` preserves durable attempt-ledger history before
 readiness collapses to latest attempts for current routing counts. Use it to
 inspect prior unchanged, no-receipt, regressed, or expected-unchanged outcomes
@@ -3673,8 +3785,11 @@ limits.
     "missing_verify_command": 0,
     "missing_verify_result": 0,
     "missing_receipt_command": 0,
+    "missing_repair_kind": 0,
     "missing_target_test_shape": 0,
     "static_limitation_packets": 2,
+    "static_limitation_backlog_packets": 6,
+    "static_limitation_backlog_signals": 141,
     "high_confidence_packets": 4,
     "attempted_packets": 3,
     "attempted_no_receipt_packets": 0,
@@ -3741,7 +3856,8 @@ limits.
       "non_claims": [
         "not a public repair packet",
         "not swarm-ready work",
-        "do not edit tests from this backlog item alone"
+        "do not edit tests from this backlog item alone",
+        "do not invent exact candidate values"
       ]
     }
   ],
@@ -3862,6 +3978,7 @@ limits.
         "not a public repair packet",
         "not swarm-ready work",
         "do not retry this repair kind from this backlog item alone",
+        "do not promote or downgrade actionability from route-quality evidence alone",
         "do not change badge or gate semantics from route-quality evidence alone"
       ]
     }
@@ -3960,9 +4077,9 @@ count, reason, next action kind, repair route, and example packet/canonical gap
 identity when source artifacts provide one, so no blocked class is visible only
 through raw packet JSON. It includes coarse states such as
 `blocked_by_missing_context`, field-level blockers such as
-`missing_canonical_gap_id`, `missing_target_test_shape`, `missing_allowed_edit_surface`,
-`missing_confidence`, and
-`missing_raw_evidence_refs`, and outcome blockers such as `orphan_receipt`,
+`missing_canonical_gap_id`, `missing_repair_kind`, `missing_target_test_shape`, `missing_allowed_edit_surface`,
+`missing_confidence`, `missing_raw_evidence_refs`, and
+`missing_related_test_or_observer`, and outcome blockers such as `orphan_receipt`,
 `unchanged_attempt`, and
 `regressed_attempt`. For `blocked_by_static_limitation`, readiness prefers the
 top static-limitation backlog route and sample packet when available, so the
@@ -11234,6 +11351,7 @@ fixtures/boundary_gap/expected/report-packet-index/<case>/index.md
 fixtures/finding-alignment-dogfood/corpus.json
 fixtures/surface-projection-alignment/corpus.json
 fixtures/real-repair-attempts/corpus.json
+fixtures/python-real-repo-evals/corpus.json
 fixtures/user-surface-projection-alignment/corpus.json
 ```
 
@@ -11277,6 +11395,15 @@ The checked real repair attempt receipts are read from
 attempts, including improved/resolved movement and unchanged or missing-receipt
 non-success cases, so failed or incomplete attempts remain visible instead of
 being hidden from the repair queue.
+The checked Python real-repo eval receipts are read from
+`fixtures/python-real-repo-evals/` and record the top Python repair card,
+verify command, before/after receipt movement, false-positive notes, and
+unsupported limitation kinds. The report derives
+`python_repair_routing_quality` from those receipts, including top-1
+actionable usefulness, verify-command validity, concrete-discriminator and
+test-location coverage, false-actionable and crash rates, receipt closure rate,
+unsupported limitation distribution, and an explicit `not_measured` state for
+top-3 precision until the corpus captures ranked top-3 findings.
 The checked user-surface projection receipts are read from
 `fixtures/user-surface-projection-alignment/` and prove badge, LSP, PR comment,
 and CI projection examples share the same canonical gap, packet or limitation
@@ -11580,6 +11707,87 @@ JSON shape:
         "missing_receipt_reason": null,
         "reason": "A real merged repair-loop PR converted attempt outcomes into route-quality evidence.",
         "errors": []
+      }
+    ]
+  },
+  "python_real_repo_evals": {
+    "default_ci_blocking": false,
+    "receipt_dir": "fixtures/python-real-repo-evals",
+    "summary": {
+      "cases": 6,
+      "closed": 6,
+      "usable": 6
+    },
+    "cases": [
+      {
+        "name": "decorated_route_status_pytest_receipt",
+        "repo_shape": "decorated_route_pytest",
+        "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422",
+        "repair_card_present": true,
+        "missing_discriminator": "response.status_code == 422",
+        "suggested_test_file": "tests/test_checkout.py",
+        "verify_command": "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+        "verify_result": "pass",
+        "receipt_result": "pass",
+        "gap_movement": "closed",
+        "unsupported_limitations": ["dynamic_route_registration"],
+        "errors": []
+      }
+    ]
+  },
+  "python_repair_routing_quality": {
+    "default_ci_blocking": false,
+    "input": "fixtures/python-real-repo-evals/corpus.json",
+    "quality_gate": {
+      "status": "pass",
+      "reason": "All checked top Python repair cards are usable, verifiable, placed, and receipt-backed without observed false actionability"
+    },
+    "summary": {
+      "cases": 6,
+      "top_1_actionable_precision": {
+        "status": "pass",
+        "count": 6,
+        "checked": 6
+      },
+      "verify_command_validity": {
+        "status": "pass",
+        "count": 6,
+        "checked": 6
+      },
+      "concrete_discriminator_rate": {
+        "status": "pass",
+        "count": 6,
+        "checked": 6
+      },
+      "related_test_location_rate": {
+        "status": "pass",
+        "count": 6,
+        "checked": 6
+      },
+      "receipt_closure_rate": {
+        "status": "pass",
+        "count": 6,
+        "checked": 6
+      },
+      "false_actionable_rate": {
+        "status": "pass",
+        "count": 0,
+        "checked": 6
+      },
+      "crash_rate": {
+        "status": "pass",
+        "count": 0,
+        "checked": 6
+      },
+      "top_3_actionable_precision": {
+        "status": "not_measured",
+        "reason": "the current Python real-repo eval corpus records the top finding only"
+      }
+    },
+    "unsupported_limitation_distribution": [
+      {
+        "kind": "dynamic_route_registration",
+        "cases": 1
       }
     ]
   },

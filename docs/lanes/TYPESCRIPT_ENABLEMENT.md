@@ -90,9 +90,10 @@ claims.
 1. Sharpen weak-oracle preview guidance:
    - snapshots advise exact-value assertions alongside snapshots;
    - smoke-only truthiness advises exact-value assertions;
-   - mock interaction stays advisory until mock payload support can name the
-     callee, expected arguments, verify command, receipt command, and edit
-     boundaries;
+   - mock interaction without safe payload proof stays advisory;
+   - bounded literal/object/count mock payload evidence may name the callee and
+     expected value, but still stays advisory until verify command, receipt
+     command, evidence refs, and edit boundaries exist;
    - broad error evidence stays weak until error payload or variant support can
      name a bounded repair route.
 2. Audit false-actionable candidates:
@@ -104,8 +105,8 @@ claims.
    - method receiver ambiguity;
    - module initializer ambiguity;
    - mocked module, decorator, and dynamic-dispatch limits.
-3. Add narrow mock payload support only when syntax can safely name the target
-   interaction.
+3. Expand narrow mock payload support only when syntax can safely name the
+   target interaction.
 4. Distinguish broad error checks from exact error payload or rejected-promise
    evidence.
 5. Add bounded method receiver relation support for direct receiver calls only.
@@ -118,6 +119,24 @@ claims.
 9. Decide whether TypeScript/JavaScript remain preview or have enough false-
    actionable audit, dogfood, route-quality, and surface proof for a narrow
    promotion packet.
+
+## False-Actionable Audit Packet
+
+[typescript-preview-false-actionable-audit](../../fixtures/typescript-preview-false-actionable-audit/corpus.json)
+is the current audit packet for preview cases that can look repair-shaped but
+must not become actionable packets without stricter proof. It pins:
+
+- mock interaction without payload proof;
+- broad thrown or rejected error evidence without payload proof;
+- snapshot-only and smoke-only weak oracles;
+- heuristic related-test links and owner-name-only test titles;
+- method receiver and module-initializer ambiguity;
+- mocked module, decorator-indirection, and dynamic-dispatch static limits.
+
+Each row points at an existing checked TypeScript-family fixture finding,
+records the current disposition, preserves `repair_packet_ready = false`, and
+names the future support route required before any repair-card or promotion
+claim can be considered.
 
 ## Validation
 
