@@ -138,7 +138,6 @@ cargo xtask check-capabilities
 cargo xtask check-pr
 git diff --check
 ```
-
 Docs-only changes should run:
 
 ```bash
