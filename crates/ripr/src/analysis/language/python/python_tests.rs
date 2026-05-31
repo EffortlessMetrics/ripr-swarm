@@ -1603,8 +1603,20 @@ fn contains_dynamic_import_detects_runtime_import_calls() {
     assert!(contains_dynamic_import(
         "    return __import__(module_name).handle(payload)"
     ));
+    assert!(contains_dynamic_import(
+        "    return __import__ (module_name).handle(payload)"
+    ));
     assert!(!contains_dynamic_import(
         "    return imported_module.handle(payload)"
+    ));
+    assert!(!contains_dynamic_import(
+        "    note = \"call importlib.import_module(module_name)\""
+    ));
+    assert!(!contains_dynamic_import(
+        "    return payload  # __import__(module_name)"
+    ));
+    assert!(!contains_dynamic_import(
+        "    return not_importlib.import_module(module_name)"
     ));
 }
 
