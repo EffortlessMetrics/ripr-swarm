@@ -25962,6 +25962,7 @@ fn ripr_swarm_repair_route_quality_backlog_json(
                     "not a public repair packet",
                     "not swarm-ready work",
                     "do not retry this repair kind from this backlog item alone",
+                    "do not promote or downgrade actionability from route-quality evidence alone",
                     "do not change badge or gate semantics from route-quality evidence alone"
                 ],
             })
@@ -93369,6 +93370,12 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             value["repair_route_quality_backlog"][0]["non_claims"][0],
             "not a public repair packet"
+        );
+        assert!(
+            value["repair_route_quality_backlog"][0]["non_claims"]
+                .as_array()
+                .is_some_and(|claims| claims.iter().any(|claim| claim
+                    == "do not promote or downgrade actionability from route-quality evidence alone"))
         );
         assert_eq!(value["summary"]["missing_verify_result"], 4);
         assert!(
