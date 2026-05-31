@@ -8,6 +8,3 @@ editors/vscode/out/
 editors/vscode/dist/
 editors/vscode/.vscode-test/
 .claude/
-/exposure.json
-/repo-exposure*.json
-/*.repo-exposure.json
