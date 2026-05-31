@@ -71074,8 +71074,11 @@ fn exact_owner_call_has_external_expected_value() {
             closed_gaps: 1,
             usability: "usable".to_string(),
             false_positive_notes: "none observed".to_string(),
-            limitation_notes: "support-tier promotion remains pending ranked top-3 metrics review".to_string(),
-            unsupported_limitations: Vec::new(),
+            limitation_notes: "unsupported decorator indirection and dynamic route registration remain outside support-tier promotion scope".to_string(),
+            unsupported_limitations: vec![
+                "decorator_indirection".to_string(),
+                "dynamic_route_registration".to_string(),
+            ],
             claim_boundary: vec![
                 "Python remains preview/advisory".to_string(),
                 "No arbitrary imports or tests were run by RIPR".to_string(),
@@ -71511,6 +71514,17 @@ fn exact_owner_call_has_external_expected_value() {
                 .and_then(Value::as_str),
             Some("amount == threshold")
         );
+        let python_eval_limitations = python_eval_cases[0]
+            .get("unsupported_limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "python_real_repo_eval unsupported_limitations missing".to_string())?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            python_eval_limitations,
+            vec!["decorator_indirection", "dynamic_route_registration"]
+        );
         let python_quality = value
             .get("python_repair_routing_quality")
             .ok_or_else(|| "python_repair_routing_quality section missing".to_string())?;
@@ -71529,6 +71543,28 @@ fn exact_owner_call_has_external_expected_value() {
         assert_eq!(
             python_quality["summary"]["receipt_closure_rate"]["count"],
             serde_json::Value::from(1)
+        );
+        let python_unsupported_distribution = python_quality
+            .get("unsupported_limitation_distribution")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                "python_repair_routing_quality unsupported limitation distribution missing"
+                    .to_string()
+            })?
+            .iter()
+            .map(|entry| {
+                (
+                    entry.get("kind").and_then(Value::as_str).unwrap_or(""),
+                    entry.get("cases").and_then(Value::as_u64).unwrap_or(0),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            python_unsupported_distribution,
+            vec![
+                ("decorator_indirection", 1),
+                ("dynamic_route_registration", 1)
+            ]
         );
         let typescript_preview_repair_loop = value
             .get("typescript_preview_repair_loop")
