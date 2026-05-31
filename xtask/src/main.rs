@@ -23119,6 +23119,7 @@ struct RiprSwarmReadinessSummary {
     missing_verify_command: usize,
     missing_verify_result: usize,
     missing_receipt_command: usize,
+    missing_repair_kind: usize,
     missing_repair_route: usize,
     missing_target_test_shape: usize,
     missing_must_not_change: usize,
@@ -23128,6 +23129,8 @@ struct RiprSwarmReadinessSummary {
     missing_related_test_or_observer: usize,
     related_context_missing: usize,
     static_limitation_packets: usize,
+    static_limitation_backlog_packets: usize,
+    static_limitation_backlog_signals: usize,
     high_confidence_packets: usize,
     attempted_packets: usize,
     attempted_no_receipt_packets: usize,
@@ -23995,6 +23998,14 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     {
         missing_context.push("repair_route".to_string());
     }
+    if ripr_swarm_plan_field_missing(&repair_kind)
+        || repair_kind == "repair_route_unknown"
+        || projection_exclusion_reasons
+            .iter()
+            .any(|reason| reason == "missing_repair_kind")
+    {
+        missing_context.push("repair_kind".to_string());
+    }
     if has_repair_route && !repair_route_consistent {
         missing_context.push("repair_route_consistency".to_string());
     }
@@ -24498,6 +24509,20 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
             .count(),
         "missing_verify_command": missing_verify,
         "missing_receipt_command": missing_receipt,
+        "missing_repair_kind": report
+            .packets
+            .iter()
+            .filter(|packet| {
+                packet
+                    .missing_context
+                    .iter()
+                    .any(|field| field == "repair_kind")
+                    || packet
+                        .projection_exclusion_reasons
+                        .iter()
+                        .any(|reason| reason == "missing_repair_kind")
+            })
+            .count(),
         "missing_repair_route": report
             .packets
             .iter()
@@ -24595,12 +24620,37 @@ fn ripr_swarm_plan_summary_json(report: &RiprSwarmPlanReport) -> Value {
                         .any(|reason| reason == "static_limitation_present")
             })
             .count(),
+        "static_limitation_backlog_packets":
+            ripr_swarm_static_limitation_backlog_packet_count(&report.static_limitation_backlog),
+        "static_limitation_backlog_signals":
+            ripr_swarm_static_limitation_backlog_signal_count(&report.static_limitation_backlog),
         "high_confidence_packets": report
             .packets
             .iter()
             .filter(|packet| ripr_swarm_plan_packet_is_high_confidence(packet))
             .count(),
     })
+}
+
+fn ripr_swarm_static_limitation_backlog_packet_count(backlog: &Value) -> usize {
+    audit_array(backlog, &["limitation_backlog_packets"]).len()
+}
+
+fn ripr_swarm_static_limitation_backlog_signal_count(backlog: &Value) -> usize {
+    let packet_signals = audit_array(backlog, &["limitation_backlog_packets"])
+        .iter()
+        .filter_map(|packet| audit_usize(packet, &["signal_count"]))
+        .sum::<usize>();
+    let route_signals = audit_array(backlog, &["top_repair_routes"])
+        .iter()
+        .filter_map(|row| audit_usize(row, &["count"]))
+        .sum::<usize>();
+    let category_signals = audit_array(backlog, &["top_categories"])
+        .iter()
+        .filter_map(|row| audit_usize(row, &["count"]))
+        .sum::<usize>();
+
+    packet_signals.max(route_signals).max(category_signals)
 }
 
 fn ripr_swarm_plan_packet_state_count(report: &RiprSwarmPlanReport, state: &str) -> usize {
@@ -24751,6 +24801,21 @@ fn ripr_swarm_plan_blocked_state_examples_json(report: &RiprSwarmPlanReport) -> 
                     .projection_exclusion_reasons
                     .iter()
                     .any(|reason| reason == "missing_receipt_command")
+        },
+    );
+    ripr_swarm_plan_push_blocked_state_example(
+        &mut rows,
+        &report.packets,
+        "missing_repair_kind",
+        |packet| {
+            packet
+                .missing_context
+                .iter()
+                .any(|field| field == "repair_kind")
+                || packet
+                    .projection_exclusion_reasons
+                    .iter()
+                    .any(|reason| reason == "missing_repair_kind")
         },
     );
     ripr_swarm_plan_push_blocked_state_example(
@@ -24920,6 +24985,7 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "missing_verify_command",
         "missing_verify_result",
         "missing_receipt_command",
+        "missing_repair_kind",
         "missing_repair_route",
         "missing_target_test_shape",
         "missing_must_not_change",
@@ -24929,6 +24995,8 @@ fn ripr_swarm_plan_markdown(report: &RiprSwarmPlanReport) -> String {
         "missing_related_test_or_observer",
         "related_context_missing",
         "static_limitation_packets",
+        "static_limitation_backlog_packets",
+        "static_limitation_backlog_signals",
         "high_confidence_packets",
     ] {
         out.push_str(&format!(
@@ -27107,6 +27175,13 @@ fn ripr_swarm_readiness_summary(
             audit_usize(plan, &["summary", "missing_verify_command"]).unwrap_or_default();
         summary.missing_receipt_command =
             audit_usize(plan, &["summary", "missing_receipt_command"]).unwrap_or_default();
+        summary.missing_repair_kind = audit_usize(plan, &["summary", "missing_repair_kind"])
+            .unwrap_or_default()
+            .max(ripr_swarm_readiness_plan_packet_field_blocker_count(
+                plan,
+                "repair_kind",
+                &["missing_repair_kind"],
+            ));
         summary.missing_repair_route =
             audit_usize(plan, &["summary", "missing_repair_route"]).unwrap_or_default();
         summary.missing_target_test_shape =
@@ -27139,6 +27214,19 @@ fn ripr_swarm_readiness_summary(
         summary.related_context_missing = related_context_missing;
         summary.static_limitation_packets =
             audit_usize(plan, &["summary", "static_limitation_packets"]).unwrap_or_default();
+        let static_limitation_backlog = audit_get(plan, &["static_limitation_backlog"]);
+        summary.static_limitation_backlog_packets =
+            audit_usize(plan, &["summary", "static_limitation_backlog_packets"])
+                .or_else(|| {
+                    static_limitation_backlog.map(ripr_swarm_static_limitation_backlog_packet_count)
+                })
+                .unwrap_or_default();
+        summary.static_limitation_backlog_signals =
+            audit_usize(plan, &["summary", "static_limitation_backlog_signals"])
+                .or_else(|| {
+                    static_limitation_backlog.map(ripr_swarm_static_limitation_backlog_signal_count)
+                })
+                .unwrap_or_default();
         summary.high_confidence_packets =
             audit_usize(plan, &["summary", "high_confidence_packets"]).unwrap_or_default();
     }
@@ -27388,6 +27476,7 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
         "missing_verify_command": summary.missing_verify_command,
         "missing_verify_result": summary.missing_verify_result,
         "missing_receipt_command": summary.missing_receipt_command,
+        "missing_repair_kind": summary.missing_repair_kind,
         "missing_repair_route": summary.missing_repair_route,
         "missing_target_test_shape": summary.missing_target_test_shape,
         "missing_must_not_change": summary.missing_must_not_change,
@@ -27397,6 +27486,8 @@ fn ripr_swarm_readiness_summary_json(summary: &RiprSwarmReadinessSummary) -> Val
         "missing_related_test_or_observer": summary.missing_related_test_or_observer,
         "related_context_missing": summary.related_context_missing,
         "static_limitation_packets": summary.static_limitation_packets,
+        "static_limitation_backlog_packets": summary.static_limitation_backlog_packets,
+        "static_limitation_backlog_signals": summary.static_limitation_backlog_signals,
         "high_confidence_packets": summary.high_confidence_packets,
         "attempted_packets": summary.attempted_packets,
         "attempted_no_receipt_packets": summary.attempted_no_receipt_packets,
@@ -27555,6 +27646,18 @@ fn ripr_swarm_readiness_blocked_state_routes(
                     packet,
                     "missing_receipt_command",
                 )
+        }),
+    );
+    ripr_swarm_readiness_push_blocked_state_route(
+        &mut routes,
+        "missing_repair_kind",
+        summary.missing_repair_kind,
+        "the packet has no usable repair_kind",
+        "fix_repair_kind_source",
+        "cargo xtask lane1-evidence-audit",
+        ripr_swarm_readiness_plan_packet_sample(swarm_plan, "missing_repair_kind", |packet| {
+            ripr_swarm_readiness_packet_missing_context(packet, "repair_kind")
+                || ripr_swarm_readiness_packet_projection_exclusion(packet, "missing_repair_kind")
         }),
     );
     ripr_swarm_readiness_push_blocked_state_route(
@@ -28515,6 +28618,20 @@ fn ripr_swarm_readiness_next_actions(
             ),
         });
     }
+    if summary.missing_repair_kind > 0 {
+        actions.push(RiprSwarmReadinessNextAction {
+            kind: "fix_repair_kind_source".to_string(),
+            packet_id: None,
+            canonical_gap_id: None,
+            evidence_class: None,
+            repair_kind: None,
+            command: Some("cargo xtask lane1-evidence-audit".to_string()),
+            reason: format!(
+                "{} packet(s) are missing repair_kind; repair canonical item route-kind projection before attempting swarm work",
+                summary.missing_repair_kind
+            ),
+        });
+    }
     if summary.missing_related_test_or_observer > 0 {
         actions.push(RiprSwarmReadinessNextAction {
             kind: "fix_related_test_or_observer".to_string(),
@@ -29045,6 +29162,7 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "missing_verify_command",
         "missing_verify_result",
         "missing_receipt_command",
+        "missing_repair_kind",
         "missing_repair_route",
         "missing_target_test_shape",
         "missing_must_not_change",
@@ -29054,6 +29172,8 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
         "missing_related_test_or_observer",
         "related_context_missing",
         "static_limitation_packets",
+        "static_limitation_backlog_packets",
+        "static_limitation_backlog_signals",
         "high_confidence_packets",
         "attempted_packets",
         "attempted_no_receipt_packets",
@@ -30963,11 +31083,15 @@ fn audit_actionable_gap_projection_exclusion_reasons(
     }
     if !input.repair_route_present
         || input.repair_route_source != "canonical_item.repair_route"
-        || input.repair_kind == "repair_route_unknown"
         || input.target_test_type == "target_test_type_unknown"
         || input.assertion_shape == "assertion_shape_unknown"
     {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_repair_route");
+    }
+    if audit_guidance_field_is_missing(input.repair_kind)
+        || input.repair_kind == "repair_route_unknown"
+    {
+        audit_push_projection_exclusion_reason(&mut reasons, "missing_repair_kind");
     }
     if input.target_test_shape == "target_test_shape_unknown"
         || audit_guidance_field_is_missing(input.target_test_shape)
@@ -86432,6 +86556,36 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_actionable_gap_public_projection_requires_repair_kind() {
+        let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+            crate::AuditActionableGapProjectionInput {
+                canonical_gap_id: "gap:missing-repair-kind",
+                gap_state: "actionable",
+                actionability: "extend_related_test",
+                repair_kind: "repair_route_unknown",
+                target_test_type: "boundary_discriminator",
+                assertion_shape: "assert_eq!(value, expected)",
+                target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+                repair_route_present: true,
+                repair_route_source: "canonical_item.repair_route",
+                verify_command: "cargo test missing_repair_kind",
+                verify_command_source: "canonical_item.verify_command",
+                receipt_command_or_path: Some("cargo xtask receipts check"),
+                receipt_source: "canonical_item.receipt_command",
+                typed_related_target_available: true,
+                has_stable_canonical_gap_id: true,
+                confidence_basis: "fixture_backed",
+                must_not_change_count: 1,
+                allowed_edit_surface_count: 1,
+                raw_evidence_refs_count: 1,
+                static_limitations_count: 0,
+            },
+        );
+
+        assert_eq!(reasons, vec!["missing_repair_kind"]);
+    }
+
+    #[test]
     fn lane1_actionable_gap_public_projection_requires_target_test_shape() {
         let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
             crate::AuditActionableGapProjectionInput {
@@ -86622,6 +86776,74 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("| Input path | `target/ripr/reports/actionable-gaps.json` |"));
         Ok(())
     }
+
+    #[test]
+    fn ripr_swarm_plan_summarizes_static_limitation_backlog_without_repair_packets()
+    -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "report": "actionable-gaps",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "actionable_gaps": 0,
+                "public_projection_eligible_packets": 0
+            },
+            "static_limitation_backlog": {
+                "source": "lane1-evidence-audit.static_limitations",
+                "top_categories": [
+                    {
+                        "category": "activation_owner_call_absent_affinity_only",
+                        "count": 10,
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                    }
+                ],
+                "top_repair_routes": [
+                    {
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "count": 10
+                    }
+                ],
+                "limitation_backlog_packets": [
+                    {
+                        "packet_id": "limitation:owner-call:first",
+                        "limitation_category": "activation_owner_call_absent_affinity_only",
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "signal_count": 3
+                    },
+                    {
+                        "packet_id": "limitation:owner-call:second",
+                        "limitation_category": "activation_owner_call_absent_affinity_only",
+                        "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                        "signal_count": 7
+                    }
+                ]
+            },
+            "packets": []
+        });
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&ripr_swarm_plan_json(&report)?).map_err(|err| err.to_string())?;
+
+        assert_eq!(value["summary"]["static_limitation_packets"], 0);
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_packets"],
+            serde_json::Value::from(2)
+        );
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_signals"],
+            serde_json::Value::from(10)
+        );
+        assert_eq!(value["summary"]["swarm_ready_packets"], 0);
+        Ok(())
+    }
+
     #[test]
     fn ripr_swarm_plan_blocks_legacy_unbounded_repo_exposure_verify_commands() -> Result<(), String>
     {
@@ -87823,6 +88045,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 "missing_verify_command": 1,
                 "missing_verify_result": 1,
                 "missing_receipt_command": 1,
+                "missing_repair_kind": 1,
                 "missing_repair_route": 1,
                 "missing_must_not_change": 1,
                 "missing_allowed_edit_surface": 1,
@@ -87849,6 +88072,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "swarm_state": "blocked_by_missing_context",
                     "missing_context": [
                         "actionable_gap_state",
+                        "repair_kind",
                         "repair_route",
                         "related_test_or_observer",
                         "verify_command",
@@ -88046,6 +88270,7 @@ covered_by = ["cargo xtask check-file-policy"]
             "missing_verify_command",
             "missing_verify_result",
             "missing_receipt_command",
+            "missing_repair_kind",
             "missing_repair_route",
             "missing_must_not_change",
             "missing_allowed_edit_surface",
@@ -88113,6 +88338,13 @@ covered_by = ["cargo xtask check-file-policy"]
             (
                 "missing_receipt_command",
                 "fix_receipt_command_source",
+                "cargo xtask lane1-evidence-audit",
+                "packet:missing-context",
+                "gap:missing-context",
+            ),
+            (
+                "missing_repair_kind",
+                "fix_repair_kind_source",
                 "cargo xtask lane1-evidence-audit",
                 "packet:missing-context",
                 "gap:missing-context",
@@ -89433,6 +89665,15 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             value["top_next_action"]["kind"],
             "route_static_limitation_backlog"
+        );
+        assert_eq!(value["summary"]["static_limitation_packets"], 0);
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["summary"]["static_limitation_backlog_signals"],
+            serde_json::Value::from(1148)
         );
         assert_eq!(
             value["top_next_action"]["packet_id"],
@@ -90846,6 +91087,81 @@ covered_by = ["cargo xtask check-file-policy"]
                         example["state"] == "not_actionable_gap_state"
                             && example["example_packet_id"]
                                 == "packet:explicit-not-actionable-gap-state"
+                    })
+                })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_plan_routes_explicit_missing_repair_kind_projection_exclusion()
+    -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "packet_id": "packet:explicit-missing-repair-kind",
+                    "canonical_gap_id": "gap:explicit-missing-repair-kind",
+                    "evidence_class": "error_path",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant_observer",
+                        "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                    },
+                    "verify_command": "cargo test exact_error_variant",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": {
+                        "file": "tests/error.rs",
+                        "name": "exact_error_variant"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true,
+                    "projection_exclusion_reasons": ["missing_repair_kind"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        assert!(ready.is_empty());
+
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(blocked[0].missing_context, vec!["repair_kind"]);
+        assert_eq!(
+            blocked[0].projection_exclusion_reasons,
+            vec!["missing_repair_kind"]
+        );
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["missing_repair_kind"],
+            serde_json::Value::from(1)
+        );
+        assert!(
+            value["blocked_state_examples"]
+                .as_array()
+                .is_some_and(|examples| {
+                    examples.iter().any(|example| {
+                        example["state"] == "missing_repair_kind"
+                            && example["example_packet_id"] == "packet:explicit-missing-repair-kind"
                     })
                 })
         );
@@ -95574,6 +95890,7 @@ covered_by = ["cargo xtask check-file-policy"]
             packet["projection_exclusion_reasons"],
             serde_json::json!([
                 "missing_repair_route",
+                "missing_repair_kind",
                 "missing_target_test_shape",
                 "missing_verify_command",
                 "missing_receipt_command",
