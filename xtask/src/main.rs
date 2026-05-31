@@ -23105,10 +23105,11 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     let receipt_command_or_path = receipt_command
         .clone()
         .or_else(|| audit_non_empty_string(packet, &["receipt_command_or_path"]));
-    let raw_findings_count =
-        audit_structured_raw_evidence_refs_count(audit_array(packet, &["raw_evidence_refs"])).max(
-            audit_structured_raw_evidence_refs_count(audit_array(packet, &["raw_findings"])),
-        );
+    let raw_evidence_refs_count =
+        audit_structured_raw_evidence_refs_count(audit_array(packet, &["raw_evidence_refs"]));
+    let raw_findings_count = raw_evidence_refs_count.max(audit_structured_raw_evidence_refs_count(
+        audit_array(packet, &["raw_findings"]),
+    ));
     let static_limitations_count = audit_array(packet, &["static_limitations"]).len();
     let must_not_change = audit_string_array(packet, &["must_not_change"]).unwrap_or_default();
     let must_not_change_count = must_not_change.len();
@@ -23222,7 +23223,7 @@ fn ripr_swarm_plan_packet_from_value(packet: &Value) -> RiprSwarmPlanPacket {
     if allowed_edit_surface_count == 0 {
         missing_context.push("allowed_edit_surface".to_string());
     }
-    if raw_findings_count == 0
+    if raw_evidence_refs_count == 0
         || projection_exclusion_reasons
             .iter()
             .any(|reason| reason == "missing_raw_evidence_refs")
@@ -83332,6 +83333,9 @@ covered_by = ["cargo xtask check-file-policy"]
                     "seam_id": "packet-route-without-target-gap",
                     "canonical_gap_id": "gap:packet-route-without-target-gap",
                     "location": {"file": "src/pricing.rs", "line": 42},
+                    "raw_evidence_refs": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
                     "raw_findings": [
                       {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
                     ],
@@ -83341,6 +83345,9 @@ covered_by = ["cargo xtask check-file-policy"]
                       "evidence_class": "predicate_boundary",
                       "gap_state": "actionable",
                       "actionability": "extend_related_test",
+                      "raw_evidence_refs": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
                       "raw_findings": [
                         {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
                       ],
@@ -83440,6 +83447,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": {"file": "tests/pricing.rs", "name": "threshold"},
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
                     "raw_findings": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -83465,6 +83473,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": {"file": "tests/pricing.rs", "name": "threshold"},
                     "confidence_basis": "static_only",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}],
                     "raw_findings": [{"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -83488,6 +83497,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": {"file": "tests/parser.rs", "name": "missing"},
                     "confidence_basis": "static_only",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}],
                     "raw_findings": [{"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}],
                     "static_limitations": []
                 },
@@ -83510,6 +83520,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": {"file": "tests/events.rs", "name": "event"},
                     "confidence_basis": "static_only",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/events.rs", "line": 7, "kind": "weakly_exposed"}],
                     "raw_findings": [{"file": "src/events.rs", "line": 7, "kind": "weakly_exposed"}],
                     "static_limitations": []
                 },
@@ -83533,6 +83544,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": {"file": "tests/config.rs", "name": "config"},
                     "confidence_basis": "static_only",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
                     "raw_findings": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
                     "static_limitations": [
                         {"category": "opaque_helper_call", "repair_route": "add fixture-backed helper tracing"}
@@ -83698,6 +83710,9 @@ covered_by = ["cargo xtask check-file-policy"]
                     },
                     "confidence_basis": "static_only",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [
+                        {"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}
+                    ],
                     "raw_findings": [
                         {"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}
                     ],
@@ -83804,6 +83819,9 @@ covered_by = ["cargo xtask check-file-policy"]
                     },
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [
+                        {"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}
+                    ],
                     "raw_findings": [
                         {"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}
                     ],
@@ -86138,6 +86156,9 @@ covered_by = ["cargo xtask check-file-policy"]
                     "must_not_change": [
                         "Do not edit production code by default."
                     ],
+                    "raw_evidence_refs": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
+                    ],
                     "raw_findings": [
                         {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
                     ],
@@ -86211,6 +86232,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": {"file": "tests/config.rs", "name": "config"},
                     "confidence_basis": "static_only",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
                     "raw_findings": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
                     "static_limitations": [
                         {"category": "opaque_helper_call", "repair_route": "add fixture-backed helper tracing"}
@@ -86257,6 +86279,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "candidate_value_or_observer": "input that hits the boundary branch",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
                     "raw_findings": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -86346,6 +86369,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "confidence_basis_unknown",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/lib.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": false,
@@ -86410,6 +86434,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "candidate_value_or_observer": "tests/lib.rs::structured",
                     "confidence_basis": "calibrated",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -86485,6 +86510,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     },
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -86565,6 +86591,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -86643,6 +86670,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -86721,6 +86749,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["stale boundary text"],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -86768,6 +86797,83 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn ripr_swarm_plan_routes_explicit_missing_allowed_edit_surface_projection_exclusion()
+    -> Result<(), String> {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "packet_id": "packet:explicit-missing-edit-surface",
+                    "canonical_gap_id": "gap:explicit-missing-edit-surface",
+                    "evidence_class": "error_path",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                    "repair_route": {
+                        "repair_kind": "add_exact_error_variant",
+                        "target_test_type": "error_variant_observer",
+                        "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                    },
+                    "verify_command": "cargo test exact_error_variant",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": {
+                        "file": "tests/error.rs",
+                        "name": "exact_error_variant"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true,
+                    "projection_exclusion_reasons": ["missing_allowed_edit_surface"]
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        assert!(ready.is_empty());
+
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(blocked[0].missing_context, vec!["allowed_edit_surface"]);
+        assert_eq!(
+            blocked[0].projection_exclusion_reasons,
+            vec!["missing_allowed_edit_surface"]
+        );
+        assert_eq!(blocked[0].allowed_edit_surface_count, 0);
+
+        let json = ripr_swarm_plan_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["summary"]["missing_allowed_edit_surface"],
+            serde_json::Value::from(1)
+        );
+        assert!(
+            value["blocked_state_examples"]
+                .as_array()
+                .is_some_and(|examples| {
+                    examples.iter().any(|example| {
+                        example["state"] == "missing_allowed_edit_surface"
+                            && example["example_packet_id"]
+                                == "packet:explicit-missing-edit-surface"
+                    })
+                })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ripr_swarm_plan_routes_explicit_missing_raw_evidence_refs_projection_exclusion()
     -> Result<(), String> {
         let actionable_gaps = serde_json::json!({
@@ -86796,6 +86902,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -86871,6 +86978,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -86945,6 +87053,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -87020,6 +87129,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -87095,6 +87205,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/error.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -87170,6 +87281,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
                     "allowed_edit_surface": ["tests/boundary.rs"],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true,
@@ -87318,6 +87430,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "receipt_command": "cargo xtask receipts check",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -87365,6 +87478,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "candidate_value_or_observer": "input that reaches call helper()",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -87434,6 +87548,60 @@ covered_by = ["cargo xtask check-file-policy"]
                 .missing_context
                 .iter()
                 .any(|field| field == "raw_evidence_refs")
+        );
+    }
+
+    #[test]
+    fn ripr_swarm_plan_blocks_missing_raw_evidence_refs_even_with_raw_findings() {
+        let actionable_gaps = serde_json::json!({
+            "summary": {"actionable_gaps": 1},
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:raw-findings-only",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "source_file": "src/lib.rs",
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)",
+                    "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "assertion_shape": "assert_eq!(value, expected)"
+                    },
+                    "verify_command": "cargo test raw_findings_only",
+                    "receipt_command": "cargo xtask receipts check",
+                    "related_test_or_observer": {
+                        "file": "tests/lib.rs",
+                        "name": "raw_findings_only"
+                    },
+                    "confidence_basis": "fixture_backed",
+                    "must_not_change": ["Do not edit production code by default."],
+                    "allowed_edit_surface": ["tests/lib.rs"],
+                    "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                    "static_limitations": [],
+                    "public_projection_eligible": true
+                }
+            ]
+        });
+
+        let report = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &actionable_gaps,
+        );
+        let ready = ripr_swarm_plan_ready_packets(&report);
+        let blocked = ripr_swarm_plan_blocked_packets(&report);
+        let summary = crate::ripr_swarm_plan_summary_json(&report);
+
+        assert!(ready.is_empty());
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+        assert_eq!(blocked[0].missing_context, vec!["raw_evidence_refs"]);
+        assert_eq!(blocked[0].raw_findings_count, 1);
+        assert_eq!(
+            summary["missing_raw_evidence_refs"],
+            serde_json::Value::from(1)
         );
     }
 
@@ -87562,6 +87730,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": "tests/lib.rs::incomplete_route",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -87609,6 +87778,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": "tests/lib.rs::inconsistent_route",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -87660,6 +87830,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": "tests/lib.rs::helper_call",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
@@ -87707,6 +87878,7 @@ covered_by = ["cargo xtask check-file-policy"]
                     "related_test_or_observer": "tests/lib.rs::suggested_assertion",
                     "confidence_basis": "fixture_backed",
                     "must_not_change": ["Do not edit production code by default."],
+                    "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
                     "static_limitations": [],
                     "public_projection_eligible": true
