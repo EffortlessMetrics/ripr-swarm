@@ -3072,7 +3072,7 @@ mod tests {
 
     fn direct_test_with_assertion(
         test_name: &str,
-        body_text: String,
+        body_text: impl Into<String>,
         matcher: &str,
         argument_count: usize,
         oracle_kind: OracleKind,
@@ -3084,7 +3084,7 @@ mod tests {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/lib.test.ts"),
             line: 1,
-            body_text,
+            body_text: body_text.into(),
             assertions: vec![TypeScriptAssertion {
                 matcher: matcher.to_string(),
                 argument_count,
@@ -3842,7 +3842,7 @@ test("type only import", () => {
         let owner = test_owner("renderSummary", "src/lib.ts");
         let test = direct_test_with_assertion(
             "renders summary snapshot",
-            "const value = renderSummary(status);\nexpect(value).toMatchSnapshot();".to_string(),
+            "const value = renderSummary(status);\nexpect(value).toMatchSnapshot();",
             "toMatchSnapshot",
             0,
             OracleKind::Snapshot,
@@ -3913,7 +3913,7 @@ test("type only import", () => {
         let owner = test_owner("parseUser", "src/lib.ts");
         let test = direct_test_with_assertion(
             "rejects empty user broadly",
-            "expect(() => parseUser('')).toThrow();".to_string(),
+            "expect(() => parseUser('')).toThrow();",
             "toThrow",
             0,
             OracleKind::BroadError,
