@@ -77981,6 +77981,72 @@ linked_spec = "RIPR-SPEC-0001"
     }
 
     #[test]
+    fn capabilities_accept_usable_alpha_status_with_fixture() -> Result<(), String> {
+        with_temp_cwd("capabilities-usable-alpha", |root| {
+            write(
+                &root.join("docs/specs/RIPR-SPEC-0028-python.md"),
+                "Status: accepted\n",
+            );
+            write(
+                &root.join("fixtures/python-real-repo-evals/SPEC.md"),
+                "Python real-repo eval fixture\n",
+            );
+            let manifest = r#"
+[[capability]]
+id = "python_repair_routing_loop"
+name = "Python repair routing loop"
+status = "usable alpha"
+spec = "RIPR-SPEC-0028"
+evidence = ["fixture-backed repair routing proof"]
+fixtures = ["fixtures/python-real-repo-evals"]
+next = "analysis/python-cli-output-pack-v1"
+metric = "language_adapter_python_repair_routing_quality_metrics"
+"#;
+
+            let (capabilities, parse_violations) =
+                super::parse_capabilities_manifest_text("metrics/capabilities.toml", manifest);
+            assert!(parse_violations.is_empty(), "{parse_violations:#?}");
+            let mut violations = Vec::new();
+            super::validate_capabilities(&capabilities, &mut violations)?;
+            assert!(violations.is_empty(), "{violations:#?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn capabilities_require_fixture_for_usable_alpha_status() -> Result<(), String> {
+        with_temp_cwd("capabilities-usable-alpha-fixture", |root| {
+            write(
+                &root.join("docs/specs/RIPR-SPEC-0028-python.md"),
+                "Status: accepted\n",
+            );
+            let manifest = r#"
+[[capability]]
+id = "python_repair_routing_loop"
+name = "Python repair routing loop"
+status = "usable alpha"
+spec = "RIPR-SPEC-0028"
+evidence = ["fixture-backed repair routing proof"]
+next = "analysis/python-cli-output-pack-v1"
+metric = "language_adapter_python_repair_routing_quality_metrics"
+"#;
+
+            let (capabilities, parse_violations) =
+                super::parse_capabilities_manifest_text("metrics/capabilities.toml", manifest);
+            assert!(parse_violations.is_empty(), "{parse_violations:#?}");
+            let mut violations = Vec::new();
+            super::validate_capabilities(&capabilities, &mut violations)?;
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("usable alpha or stable but has no fixture entries")
+                }),
+                "{violations:#?}"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
     fn support_tiers_accept_valid_fixture() -> Result<(), String> {
         with_temp_cwd("support-tiers-valid", |root| {
             write_support_tier_fixture(
