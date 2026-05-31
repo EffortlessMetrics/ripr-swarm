@@ -4589,6 +4589,12 @@ The field/object receipt path is pinned by
 `fixtures/first_successful_pr/python-field-gap/expected/outcome/closed.json`,
 and
 `fixtures/first_successful_pr/python-field-gap/expected/outcome/closed.md`.
+The output/log receipt path is pinned by
+`fixtures/first_successful_pr/python-output-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-output-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.md`.
 
 Field contract:
 
