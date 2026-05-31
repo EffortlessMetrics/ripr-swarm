@@ -8096,6 +8096,7 @@ const PYTHON_REAL_REPO_EVAL_REQUIRED_CASES: &[(&str, &str)] = &[
     ("cli_output_pytest_receipt", "closed"),
     ("api_status_pytest_receipt", "closed"),
     ("mixed_rust_python_pytest_receipt", "closed"),
+    ("decorated_route_status_pytest_receipt", "closed"),
 ];
 
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -69765,7 +69766,7 @@ fn exact_owner_call_has_external_expected_value() {
             closed_gaps: 1,
             usability: "usable".to_string(),
             false_positive_notes: "none observed".to_string(),
-            limitation_notes: "decorated framework-route dogfood remains outstanding".to_string(),
+            limitation_notes: "support-tier promotion remains pending metrics review".to_string(),
             claim_boundary: vec![
                 "Python remains preview/advisory".to_string(),
                 "No arbitrary imports or tests were run by RIPR".to_string(),
@@ -70968,7 +70969,7 @@ fn exact_owner_call_has_external_expected_value() {
             closed_gaps: 1,
             usability: "usable".to_string(),
             false_positive_notes: "none observed".to_string(),
-            limitation_notes: "decorated framework-route dogfood remains outstanding".to_string(),
+            limitation_notes: "support-tier promotion remains pending metrics review".to_string(),
             claim_boundary: vec![
                 "Python remains preview/advisory".to_string(),
                 "No arbitrary imports or tests were run by RIPR".to_string(),
