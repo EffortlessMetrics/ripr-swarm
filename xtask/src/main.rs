@@ -72767,6 +72767,47 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(body.contains("\"lower_review\": { \"status\": \"review\""));
     }
 
+    #[test]
+    fn dogfood_python_ranked_finding_parser_defaults_missing_reason() {
+        let case = serde_json::json!({
+            "ranked_top_3_findings": [
+                {
+                    "rank": 1,
+                    "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                    "repair_card_present": true,
+                    "usability": "usable",
+                    "missing_discriminator": "amount == threshold",
+                    "suggested_test_file": "tests/test_pricing.py",
+                    "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+                    "false_positive_notes": "none observed"
+                }
+            ]
+        });
+
+        let findings = super::dogfood_python_ranked_findings(&case);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].reason,
+            "ranked Python finding did not document a reason"
+        );
+    }
+
+    #[test]
+    fn dogfood_python_ranked_findings_json_separates_multiple_entries() {
+        let findings = vec![
+            valid_python_ranked_finding(1),
+            valid_python_ranked_finding(2),
+        ];
+        let mut body = String::new();
+
+        super::dogfood_push_python_ranked_findings_json(&mut body, &findings);
+
+        assert!(body.contains("}, {"));
+        assert!(body.contains("\"rank\": 1"));
+        assert!(body.contains("\"rank\": 2"));
+    }
+
     fn valid_python_real_repo_eval_scenario() -> DogfoodPythonRealRepoEvalScenario {
         DogfoodPythonRealRepoEvalScenario {
             name: "tiny_controlled_pytest_boundary_receipt".to_string(),
@@ -72830,6 +72871,20 @@ fn exact_owner_call_has_external_expected_value() {
             reason: "tiny controlled repo proved one Python repair card closes with receipt"
                 .to_string(),
         }
+    }
+
+    fn valid_python_ranked_finding(rank: usize) -> super::DogfoodPythonRankedFinding {
+        let mut finding = valid_python_real_repo_eval_scenario().ranked_top_3_findings[0].clone();
+        finding.rank = rank;
+        if rank > 1 {
+            finding.canonical_gap_id =
+                format!("gap:python:app/pricing.py:calculate_discount:return_value:rank-{rank}");
+            finding.missing_discriminator = format!("amount == threshold + {rank}");
+            finding.verify_command =
+                format!("pytest tests/test_pricing.py::test_calculate_discount_rank_{rank}");
+            finding.reason = format!("rank {rank} repair card remained usable in dogfood capture");
+        }
+        finding
     }
 
     #[test]
@@ -72896,6 +72951,92 @@ fn exact_owner_call_has_external_expected_value() {
             "ranked_top_3_findings rank 4 must be usable, concrete, placed, verifiable, and false-positive clean"
         ));
         assert!(report.contains("ranked_top_3_findings must include rank 1"));
+
+        let mut too_many = valid_python_real_repo_eval_scenario();
+        too_many.ranked_top_3_findings = vec![
+            valid_python_ranked_finding(1),
+            valid_python_ranked_finding(2),
+            valid_python_ranked_finding(3),
+            valid_python_ranked_finding(4),
+        ];
+
+        let report = dogfood_python_real_repo_eval_run(&too_many)
+            .errors
+            .join("\n");
+
+        assert!(report.contains("ranked_top_3_findings must capture at most three findings"));
+
+        let mut missing_limit_reason = valid_python_real_repo_eval_scenario();
+        missing_limit_reason.ranked_top_3_limit_reason = Some(" ".to_string());
+
+        let report = dogfood_python_real_repo_eval_run(&missing_limit_reason)
+            .errors
+            .join("\n");
+
+        assert!(
+            report.contains(
+                "ranked_top_3_limit_reason must explain fewer-than-three ranked findings"
+            )
+        );
+
+        let mut duplicate_rank = valid_python_real_repo_eval_scenario();
+        duplicate_rank.ranked_top_3_findings = vec![
+            valid_python_ranked_finding(1),
+            valid_python_ranked_finding(1),
+        ];
+
+        let report = dogfood_python_real_repo_eval_run(&duplicate_rank)
+            .errors
+            .join("\n");
+
+        assert!(report.contains("ranked_top_3_findings rank 1 is duplicated"));
+
+        let mut missing_card = valid_python_real_repo_eval_scenario();
+        missing_card.ranked_top_3_findings[0].repair_card_present = false;
+
+        let report = dogfood_python_real_repo_eval_run(&missing_card)
+            .errors
+            .join("\n");
+
+        assert!(report.contains("ranked_top_3_findings rank 1 must be repair-card-backed"));
+
+        let mut missing_reason = valid_python_real_repo_eval_scenario();
+        missing_reason.ranked_top_3_findings[0].reason.clear();
+
+        let report = dogfood_python_real_repo_eval_run(&missing_reason)
+            .errors
+            .join("\n");
+
+        assert!(report.contains("ranked_top_3_findings rank 1 must document a reason"));
+
+        let mut verify_mismatch = valid_python_real_repo_eval_scenario();
+        verify_mismatch.ranked_top_3_findings[0].verify_command =
+            "pytest tests/test_pricing.py::test_calculate_discount_boundary".to_string();
+
+        let report = dogfood_python_real_repo_eval_run(&verify_mismatch)
+            .errors
+            .join("\n");
+
+        assert!(report.contains(
+            "ranked_top_3_findings rank 1 verify_command must match the recorded top finding"
+        ));
+    }
+
+    #[test]
+    fn dogfood_python_real_repo_eval_accepts_unittest_ranked_verify_command() {
+        let mut scenario = valid_python_real_repo_eval_scenario();
+        let verify_command =
+            "python -m unittest tests.test_pricing.PricingTests.test_calculate_discount_smoke";
+        scenario.verify_command = verify_command.to_string();
+        scenario.ranked_top_3_findings[0].verify_command = verify_command.to_string();
+
+        let run = dogfood_python_real_repo_eval_run(&scenario);
+
+        assert!(
+            run.errors.is_empty(),
+            "unittest verify commands should validate for ranked Python dogfood findings: {:?}",
+            run.errors
+        );
     }
 
     #[test]
