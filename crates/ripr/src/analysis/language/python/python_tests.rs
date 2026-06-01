@@ -454,6 +454,7 @@ fn route_owner_collects_static_and_dynamic_route_metadata() -> Result<(), String
         Path::new("app/checkout.py"),
         r#"
 api = object()
+prefix = "/v1"
 
 def route_path():
     return "/checkout"
@@ -464,6 +465,10 @@ def checkout():
 
 @api.get(route_path())
 def dynamic_checkout():
+    return {"detail": "ok"}
+
+@api.post(prefix + "/checkout")
+def expression_checkout():
     return {"detail": "ok"}
 "#,
     );
@@ -483,6 +488,16 @@ def dynamic_checkout():
     assert_eq!(
         dynamic.dynamic_route_decorators,
         vec!["api.get".to_string()]
+    );
+
+    let expression = owners
+        .iter()
+        .find(|owner| owner.name == "expression_checkout")
+        .ok_or_else(|| "expected expression_checkout owner".to_string())?;
+    assert!(expression.route_paths.is_empty());
+    assert_eq!(
+        expression.dynamic_route_decorators,
+        vec!["api.post".to_string()]
     );
     Ok(())
 }
