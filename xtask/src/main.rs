@@ -88340,6 +88340,16 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             crate::static_limitation_subroute(
+                &same_file_record(Some("description.value")),
+                &limitation,
+                "activation_owner_call_absent_same_file_only",
+                "analysis/same-file-owner-call-tracing",
+                "call_presence"
+            ),
+            "same_file_only_missing_owner_call"
+        );
+        assert_eq!(
+            crate::static_limitation_subroute(
                 &same_file_record(Some("return Vec::new()")),
                 &limitation,
                 "activation_owner_call_absent_same_file_only",
