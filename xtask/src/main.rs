@@ -8174,6 +8174,14 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
         "python_cli_output_repair_card_route_improved",
         "evidence_improved",
     ),
+    (
+        "python_argparse_output_repair_card_route_improved",
+        "evidence_improved",
+    ),
+    (
+        "python_api_json_field_repair_card_route_improved",
+        "evidence_improved",
+    ),
     ("python_preview_boundary_gap_test_only_closed", "resolved"),
 ];
 
