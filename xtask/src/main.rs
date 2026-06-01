@@ -8143,6 +8143,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
         "evidence_improved",
     ),
     (
+        "same_file_method_owner_call_route_improved",
+        "evidence_improved",
+    ),
+    (
         "call_presence_imported_module_wrapper_route_improved",
         "evidence_improved",
     ),
@@ -8176,6 +8180,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
     ),
     (
         "python_argparse_output_repair_card_route_improved",
+        "evidence_improved",
+    ),
+    (
+        "python_api_json_field_repair_card_route_improved",
         "evidence_improved",
     ),
     ("python_preview_boundary_gap_test_only_closed", "resolved"),

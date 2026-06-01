@@ -520,6 +520,41 @@
       "reason": "A real merged analyzer slice reduced the highest-volume sampled same-file owner-call limitation while preserving the non-actionable boundary for the remaining backlog."
     },
     {
+      "id": "same_file_method_owner_call_route_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#761",
+      "canonical_gap_id": "gap:activation-owner-call-absent-same-file-only",
+      "packet_id": "limitation:activation_owner_call_absent_same_file_only:same_file_only_call_presence_method_chain_missing_owner_call:analysis-same-file-owner-call-tracing",
+      "repair_kind": "trace_same_file_owner_call",
+      "target_test_or_observer_shape": "fixture-backed same-file wrapper where a simple identifier receiver method call reaches the owner for value-insensitive call-presence activation, while a dynamic receiver method chain remains limited",
+      "verify_command": "cargo test -p ripr same_file_wrapper --lib -- --test-threads=1",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask dogfood",
+      "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "static_limitation",
+      "after_gap_state": "static_limitation",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Taught same-file owner-call tracing to recognize simple receiver method calls such as `pipeline.render_pipeline(...)` while keeping dynamic receivers such as `factory().render_pipeline(...)` limited.",
+      "evidence_movement": "improved: the analyzer route now has positive and negative fixture proof for same-file receiver-method activation without inventing observed values or promoting the remaining same-file backlog to public repair work.",
+      "operator_note": "This is analyzer-route dogfood. It sharpens a top static-limitation route but does not claim sampled route-count movement, public packet eligibility, badge movement, gate movement, or parser support promotion.",
+      "must_not_change": [
+        "do not treat same-file proximity alone as owner-call activation",
+        "do not accept dynamic method receivers as direct owner-call proof",
+        "do not invent observed values for call-presence arguments",
+        "do not emit public repair packets from static-limitation backlog",
+        "do not change gate or badge semantics"
+      ],
+      "raw_evidence_refs": [
+        "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_call_presence_when_same_file_wrapper_calls_owner_method_then_activation_is_yes",
+        "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_call_presence_when_same_file_wrapper_uses_dynamic_method_receiver_then_activation_stays_unknown",
+        "target/ripr/reports/swarm-readiness.json:analysis/same-file-owner-call-tracing",
+        "EffortlessMetrics/ripr-swarm#761"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged analyzer slice added bounded method-call proof for the same-file owner-call route while preserving dynamic receiver and non-actionable backlog boundaries."
+    },
+    {
       "id": "call_presence_imported_module_wrapper_route_improved",
       "source_ref": "local:analysis-call-presence-target-affinity-owner-call-tracing-2026-05-30",
       "canonical_gap_id": "gap:activation-owner-call-absent-call-presence-target-affinity",
@@ -1093,6 +1128,47 @@
       ],
       "missing_receipt_reason": null,
       "reason": "A real merged Python preview PR generalized CLI-output repair-card guidance to argparse-shaped commands while preserving the receipt/actionability boundary."
+    },
+    {
+      "id": "python_api_json_field_repair_card_route_improved",
+      "source_ref": "EffortlessMetrics/ripr-swarm#759",
+      "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:return_detail_coupon_expired",
+      "packet_id": "python-repair-card:gap:python:app/checkout.py:checkout:field_value:field_construction:return_detail_coupon_expired",
+      "language": "python",
+      "evidence_class": "field_construction",
+      "source_file": "app/checkout.py",
+      "repair_kind": "route_python_api_json_field_repair_card",
+      "target_test_or_observer_shape": "Python preview repair-card guidance for a literal FastAPI/Flask-shaped route returning a changed JSON field: strengthen the existing pytest test `tests/test_checkout.py::test_expired_coupon_response_smoke` with `response.json()[\"detail\"] == \"coupon expired\"`.",
+      "verify_command": "cargo xtask fixtures python_api_json_field_repair_gap",
+      "verify_result": "pass",
+      "receipt_command": "cargo xtask dogfood",
+      "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+      "receipt_state": "receipt_movement_improved",
+      "actor_kind": "codex",
+      "before_gap_state": "static_limitation",
+      "after_gap_state": "advisory",
+      "outcome": "evidence_improved",
+      "attempted_repair": "Routed literal Python API endpoint JSON-field changes through the Python preview repair-card flow, linking `client.post(\"/checkout\")` to the route owner and naming the exact `response.json()[\"detail\"] == \"coupon expired\"` discriminator.",
+      "evidence_movement": "improved: the fixture now emits a canonical Python field-value gap, repair-card target shape, suggested pytest file/test/node id, and verify command for API JSON response fields while dynamic route registration remains fail-closed.",
+      "operator_note": "This is analyzer-route dogfood, not public repair delegation. The preview card is useful guidance, but it remains advisory because the card itself reports receipt status as unavailable_until_python_gap_ledger.",
+      "must_not_change": [
+        "do not promote Python preview cards to public repair packets",
+        "do not emit repair cards for dynamically registered route paths",
+        "do not execute imports, route registration, pytest, or route handlers during analysis",
+        "do not authorize production-code edits",
+        "do not change badge or CI gate semantics"
+      ],
+      "raw_evidence_refs": [
+        "fixtures/python_api_json_field_repair_gap/SPEC.md",
+        "fixtures/python_api_json_field_repair_gap/expected/check.json",
+        "fixtures/python_api_json_field_repair_gap/expected/human.txt",
+        "fixtures/python_dynamic_route_registration_limit/expected/check.json",
+        "crates/ripr/src/analysis/language/python.rs",
+        "crates/ripr/src/output/python_repair_card.rs",
+        "EffortlessMetrics/ripr-swarm#759"
+      ],
+      "missing_receipt_reason": null,
+      "reason": "A real merged Python preview PR converted literal API JSON-field route evidence into concrete advisory repair-card guidance while preserving the dynamic-route and receipt/actionability boundaries."
     },
     {
       "id": "python_preview_boundary_gap_test_only_closed",
