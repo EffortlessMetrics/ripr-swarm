@@ -39644,6 +39644,7 @@ fn normalize_report_path(path: &str) -> String {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RepoBadgeArtifactOptions {
     gap_ledger: Option<PathBuf>,
+    repo_exposure_summary: Option<PathBuf>,
     include_seam_classes: bool,
 }
 
@@ -39816,7 +39817,18 @@ pub(crate) fn ripr_plus_impl(args: &[String]) -> Result<(), String> {
     let options = parse_repo_badge_artifact_options(args, "ripr-plus")?;
     run_with_repo_root_cwd(|| {
         let head = git_value(&["rev-parse", "HEAD"]);
-        let receipt = if options.gap_ledger.is_some() {
+        let receipt = if let Some(summary_path) = options.repo_exposure_summary.as_deref() {
+            let repo_summary_json = read_repo_exposure_summary_artifact(summary_path)?;
+            ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
+                &repo_summary_json,
+                &head,
+                &format!(
+                    "cargo xtask ripr-plus --repo-exposure-summary {}",
+                    normalize_path(summary_path)
+                ),
+                Some(summary_path),
+            )?
+        } else if options.gap_ledger.is_some() {
             let repo_badge_json =
                 run_repo_badge_artifact_job("repo-badge-json", options.gap_ledger.as_deref())?;
             ripr_plus_receipt_from_repo_badge_json(
@@ -39833,6 +39845,26 @@ pub(crate) fn ripr_plus_impl(args: &[String]) -> Result<(), String> {
         write_report("ripr-plus.json", &format!("{json}\n"))?;
         write_report("ripr-plus.md", &ripr_plus_receipt_markdown(&receipt))
     })
+}
+
+fn read_repo_exposure_summary_artifact(path: &Path) -> Result<String, String> {
+    let json = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", normalize_path(path)))?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| {
+        format!(
+            "failed to parse repo exposure summary artifact {}: {err}",
+            normalize_path(path)
+        )
+    })?;
+    if audit_bool(&value, &["runtime_status", "downstream_consumable"]) == Some(false) {
+        return Err(format!(
+            "repo exposure summary artifact {} is not downstream consumable (basis {:?}, run_status {:?}); rerun `cargo xtask repo-exposure-summary-report` with enough time to produce canonical_actionable_gap data, or pass --gap-ledger to use an existing gap decision ledger",
+            normalize_path(path),
+            value.get("basis").and_then(Value::as_str),
+            value.get("run_status").and_then(Value::as_str)
+        ));
+    }
+    Ok(json)
 }
 
 fn run_repo_exposure_summary_job() -> Result<String, String> {
@@ -39976,6 +40008,20 @@ fn ripr_plus_receipt_from_repo_exposure_summary_json(
     json: &str,
     head: &str,
 ) -> Result<Value, String> {
+    ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
+        json,
+        head,
+        "ripr check --root . --format repo-exposure-summary-json",
+        None,
+    )
+}
+
+fn ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
+    json: &str,
+    head: &str,
+    source_command: &str,
+    source_artifact: Option<&Path>,
+) -> Result<Value, String> {
     let summary: Value = serde_json::from_str(json)
         .map_err(|err| format!("failed to parse repo-exposure-summary-json: {err}"))?;
     let format = json_string_field_value(&summary, "format");
@@ -40017,7 +40063,8 @@ fn ripr_plus_receipt_from_repo_exposure_summary_json(
         "status": status,
         "basis": basis,
         "source_format": "repo-exposure-summary-json",
-        "source_command": "ripr check --root . --format repo-exposure-summary-json",
+        "source_command": source_command,
+        "source_artifact": source_artifact.map(normalize_path),
         "unresolved": unresolved,
         "top_files": top_files,
         "suppressed": suppressed,
@@ -40188,9 +40235,33 @@ fn parse_repo_badge_artifact_options(
                 }
                 options.gap_ledger = Some(PathBuf::from(value));
             }
+            "--repo-exposure-summary" if command_name == "ripr-plus" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "{command_name} --repo-exposure-summary requires a path"
+                    ));
+                };
+                if value.trim().is_empty() {
+                    return Err(format!(
+                        "{command_name} --repo-exposure-summary requires a non-empty path"
+                    ));
+                }
+                options.repo_exposure_summary = Some(PathBuf::from(value));
+            }
+            "--repo-exposure-summary" => {
+                return Err(format!(
+                    "{command_name} does not support --repo-exposure-summary"
+                ));
+            }
             other => return Err(format!("unknown {command_name} argument {other:?}")),
         }
         index += 1;
+    }
+    if options.gap_ledger.is_some() && options.repo_exposure_summary.is_some() {
+        return Err(format!(
+            "{command_name} accepts either --gap-ledger or --repo-exposure-summary, not both"
+        ));
     }
     Ok(options)
 }
@@ -63417,22 +63488,22 @@ mod tests {
         parse_gh_pr_status_pull_request, parse_inline_array, parse_mutation_calibration_args,
         parse_mutation_outcomes_json, parse_no_panic_allowlist_toml,
         parse_no_panic_allowlist_toml_v2, parse_pr_triage_pull_requests, parse_reason,
-        parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
-        parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
-        parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-        parse_string_value, parse_targeted_test_outcome_args,
+        parse_repo_badge_artifact_options, parse_repo_exposure_static_seams,
+        parse_repo_exposure_summary_counts, parse_required_status_contexts, parse_ripr_swarm_args,
+        parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
+        parse_static_language_allowlist, parse_string_value, parse_targeted_test_outcome_args,
         pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
         pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
         pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
         pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
         pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
         public_contract_rows, read_json_value, read_lsp_cockpit_json_value,
-        read_mutation_input_json, receipt_json, receipt_specs, receipt_status_from_reports,
-        render_no_panic_allowlist_proposals_markdown, render_no_panic_allowlist_proposals_toml,
-        repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-        repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-        repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
-        repo_exposure_latency_markdown, repo_exposure_latency_run,
+        read_mutation_input_json, read_repo_exposure_summary_artifact, receipt_json, receipt_specs,
+        receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
+        render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
+        repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+        repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+        repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
         repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
         repo_seam_inventory_command_args_for_root, report_index_json,
@@ -63441,7 +63512,8 @@ mod tests {
         report_index_next_commands, report_index_repo_ops_packets, report_index_repo_ops_status,
         report_status_from_text, ripr_command_literals_in_text, ripr_debug_binary,
         ripr_plus_receipt_from_badge, ripr_plus_receipt_from_repo_badge_json,
-        ripr_plus_receipt_from_repo_exposure_summary_json, ripr_plus_receipt_markdown,
+        ripr_plus_receipt_from_repo_exposure_summary_json,
+        ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
         ripr_pre_commit_hook, ripr_swarm_attempt_allowed_file_line,
         ripr_swarm_attempt_dry_run_from_actionable_gaps_value, ripr_swarm_attempt_dry_run_markdown,
         ripr_swarm_attempt_ledger_from_values,
@@ -80827,6 +80899,117 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
     }
 
     #[test]
+    fn ripr_plus_receipt_source_command_names_summary_artifact() -> Result<(), String> {
+        let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metrics": {
+                "raw_seams": 5,
+                "headline_eligible_seams": 4,
+                "canonical_gap_records": 2,
+                "raw_actionable_seam_records": 2,
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_breakdown": {
+                "actionability": {
+                    "upgrade_assertion": 2
+                }
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 0,
+                "top_files_truncated": false
+            },
+            "top_files": []
+        }"#;
+
+        let receipt = ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
+            fixture,
+            "HEAD",
+            "cargo xtask ripr-plus --repo-exposure-summary target/ripr/reports/repo-exposure-summary.json",
+            Some(Path::new("target/ripr/reports/repo-exposure-summary.json")),
+        )?;
+
+        assert_eq!(
+            receipt["source_command"],
+            "cargo xtask ripr-plus --repo-exposure-summary target/ripr/reports/repo-exposure-summary.json"
+        );
+        assert_eq!(
+            receipt["source_artifact"],
+            "target/ripr/reports/repo-exposure-summary.json"
+        );
+        assert_eq!(receipt["unresolved"], 2);
+        Ok(())
+    }
+
+    #[test]
+    fn read_repo_exposure_summary_artifact_rejects_limited_runtime_status() -> Result<(), String> {
+        let dir = badge_endpoint_tempdir("limited-summary")?;
+        let path = dir.join("repo-exposure-summary.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "schema_version": "0.1",
+                "format": "repo-exposure-summary-json",
+                "basis": "limited_runtime_status",
+                "run_status": "limited_timeout",
+                "runtime_status": {
+                    "downstream_consumable": false
+                },
+                "metrics": {},
+                "top_files": []
+            }"#,
+        )
+        .map_err(|err| format!("write limited summary fixture: {err}"))?;
+
+        let err = read_repo_exposure_summary_artifact(&path)
+            .expect_err("limited summary artifacts must not feed ripr-plus receipts");
+        assert!(err.contains("not downstream consumable"));
+        assert!(err.contains("limited_runtime_status"));
+        assert!(err.contains("limited_timeout"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_ripr_plus_options_accepts_repo_exposure_summary_path() -> Result<(), String> {
+        let options = parse_repo_badge_artifact_options(
+            &[
+                "--repo-exposure-summary".to_string(),
+                "target/ripr/reports/repo-exposure-summary.json".to_string(),
+            ],
+            "ripr-plus",
+        )?;
+
+        assert_eq!(
+            options.repo_exposure_summary,
+            Some(PathBuf::from(
+                "target/ripr/reports/repo-exposure-summary.json"
+            ))
+        );
+        assert_eq!(options.gap_ledger, None);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_ripr_plus_options_rejects_ambiguous_receipt_sources() {
+        let err = parse_repo_badge_artifact_options(
+            &[
+                "--gap-ledger".to_string(),
+                "target/ripr/reports/gap-decision-ledger.json".to_string(),
+                "--repo-exposure-summary".to_string(),
+                "target/ripr/reports/repo-exposure-summary.json".to_string(),
+            ],
+            "ripr-plus",
+        )
+        .expect_err("ripr-plus must use exactly one receipt source override");
+
+        assert!(err.contains("either --gap-ledger or --repo-exposure-summary"));
+    }
+
+    #[test]
     fn badge_basis_default_derives_repo_plus_without_second_badge_job() {
         assert!(!badge_basis_needs_repo_badge_plus_job(
             &RepoBadgeArtifactOptions::default()
@@ -80836,6 +81019,7 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
                 gap_ledger: Some(PathBuf::from(
                     "target/ripr/reports/gap-decision-ledger.json"
                 )),
+                repo_exposure_summary: None,
                 include_seam_classes: false,
             }
         ));
