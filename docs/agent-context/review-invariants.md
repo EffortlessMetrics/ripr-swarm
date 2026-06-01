@@ -103,11 +103,11 @@ For GitHub Actions:
 For Droid workflows:
 
 - Use the MiniMax BYOK model path unless intentionally changing provider.
-- Model should be `custom:MiniMax-M2.7-0`.
-- Runtime BYOK settings should be written to `~/.factory/settings.local.json`.
-- Do not rely on the Droid Action `settings:` input for BYOK custom models unless Factory fixes the path mismatch.
+- Model should be `custom:MiniMax-M3-0`.
+- Runtime BYOK settings should be written to `~/.factory/settings.json`.
+- Do not rely on the Droid Action `settings:` input for BYOK custom models; write the runtime Factory settings file instead.
 - Keep `${MINIMAX_API_KEY}` literal in checked-in or artifact-prone files.
-- Do not set `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_BASE_URL`.
+- Clear `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` to empty strings on Droid action steps so global Anthropic settings cannot override MiniMax BYOK.
 - Keep `show_full_output: false`.
 - Use the approved safe action ref
   `EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec`.
