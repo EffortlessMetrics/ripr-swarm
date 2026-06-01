@@ -12248,6 +12248,52 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
     }
 
     #[test]
+    fn given_boundary_owner_call_when_parameter_field_operands_are_opaque_then_activation_stays_static_limitation()
+    -> Result<(), String> {
+        let prod_src = "pub struct BoundarySide { pub value: i32 } \
+                        pub fn equal_boundary(left: BoundarySide, right: BoundarySide) -> bool { \
+                            left.value == right.value \
+                        }\n";
+        let test = (
+            "tests/boundary_tests.rs",
+            "#[test] fn equal_field_boundary() { \
+                 let left = make_side(10); \
+                 let right = make_side(10); \
+                 assert!(equal_boundary(left, right)); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/boundary.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/boundary.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence.activate.summary.contains("local or computed"),
+            "opaque parameter field operands must remain a named limitation; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "opaque parameter field operands must not invent activation values; got {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "opaque parameter field operands must not emit exact candidate discriminator; got {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
     fn iterator_boundary_operand_route_only_matches_iterator_loop_bindings() {
         for source in [
             "for (idx, value) in values.iter().enumerate() {",

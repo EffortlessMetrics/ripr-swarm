@@ -418,8 +418,8 @@
     {
       "id": "parameter_field_boundary_operand_route_improved",
       "source_ref": "local:parameter-field-boundary-operands-2026-06-01",
-      "canonical_gap_id": "gap:activation-boundary-input-unresolved-local-computed",
-      "packet_id": "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution",
+      "canonical_gap_id": "gap:activation-boundary-input-unresolved-parameter-field-projection",
+      "packet_id": "limitation:activation_boundary_input_unresolved:parameter_field_projection:analysis-local-computed-boundary-operand-resolution",
       "repair_kind": "resolve_parameter_field_boundary_operands",
       "target_test_or_observer_shape": "fixture-backed direct owner call where predicate operands are parameter field projections and the related test passes same-test struct values with literal fields",
       "verify_command": "cargo test -p ripr parameter_field_operands --lib -- --test-threads=1",
@@ -443,6 +443,7 @@
       ],
       "raw_evidence_refs": [
         "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_parameter_field_operands_resolve_then_activation_is_yes",
+        "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_parameter_field_operands_are_opaque_then_activation_stays_static_limitation",
         "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_computed_local_then_activation_stays_static_limitation",
         "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_iterator_local_then_activation_is_static_limitation",
         "metrics/capabilities.toml:lane1_canonical_actionability_contract"
