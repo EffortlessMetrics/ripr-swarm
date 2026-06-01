@@ -3497,8 +3497,25 @@ fn is_simple_python_model_field_value(value: &str) -> bool {
 }
 
 fn is_simple_python_numeric_literal(value: &str) -> bool {
-    let value = value.trim_start_matches('-');
-    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+    let value = value.trim().strip_prefix('-').unwrap_or(value.trim());
+    if value.is_empty() {
+        return false;
+    }
+    let mut digits = 0usize;
+    let mut dots = 0usize;
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            digits += 1;
+        } else if ch == '.' {
+            dots += 1;
+            if dots > 1 {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    digits > 0
 }
 
 fn python_output_or_call_discriminator(line_text: &str) -> Option<String> {
@@ -4695,6 +4712,60 @@ def test_build_user_smoke():
                 .any(|entry| entry == "missing_discriminator: result.active == True")
         );
         Ok(())
+    }
+
+    #[test]
+    fn constructor_keyword_field_helpers_stay_bounded_and_fail_closed() {
+        assert_eq!(
+            python_return_constructor_field_discriminator("return User(active=True)").as_deref(),
+            Some("result.active == True")
+        );
+        assert_eq!(
+            python_return_constructor_field_discriminator("return models.User(score=-1.5)")
+                .as_deref(),
+            Some("result.score == -1.5")
+        );
+        assert_eq!(
+            split_python_constructor_call("User(active=True)"),
+            Some(("User", "active=True"))
+        );
+        assert_eq!(split_python_constructor_call("User()"), None);
+        assert_eq!(split_python_constructor_call("(User(active=True))"), None);
+        assert!(is_python_constructor_callee("models.User"));
+        assert!(is_python_constructor_callee("_PrivateUser"));
+        assert!(!is_python_constructor_callee("make_user"));
+        assert_eq!(
+            first_python_keyword_argument("ignored, active=True"),
+            Some(("active", "True"))
+        );
+        assert_eq!(
+            first_python_keyword_argument("label=\"a,b=c\", active=False"),
+            Some(("label", "\"a,b=c\""))
+        );
+        assert_eq!(
+            first_python_keyword_argument("meta={\"threshold\": \"a=b,c\"}"),
+            Some(("meta", "{\"threshold\": \"a=b,c\"}"))
+        );
+        assert_eq!(python_keyword_argument_parts("not keyword"), None);
+        assert_eq!(top_level_equals("metadata={\"a\": \"b=c\"}"), Some(8));
+        assert_eq!(top_level_equals("metadata"), None);
+        assert!(is_simple_python_model_field_value("\"active\""));
+        assert!(is_simple_python_model_field_value("True"));
+        assert!(is_simple_python_model_field_value("None"));
+        assert!(is_simple_python_model_field_value("-1.25"));
+        assert!(is_simple_python_model_field_value(".5"));
+        assert!(!is_simple_python_model_field_value("."));
+        assert!(!is_simple_python_model_field_value("-"));
+        assert!(!is_simple_python_model_field_value("1.2.3"));
+        assert!(!is_simple_python_model_field_value("make_value()"));
+        assert_eq!(
+            python_return_constructor_field_discriminator("return make_user(active=True)"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_discriminator("return User(active=make_value())"),
+            None
+        );
     }
 
     #[test]
