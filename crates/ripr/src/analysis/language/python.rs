@@ -1589,8 +1589,7 @@ fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> 
             if !is_static_route_decorator(&name) {
                 return None;
             }
-            first_python_string_literal(&text_for_range(source, decorator.range()))
-                .and_then(|literal| python_string_literal_value(&literal))
+            route_decorator_literal_argument(source, decorator, &name)
         })
         .collect()
 }
@@ -1603,10 +1602,19 @@ fn collect_dynamic_route_decorators(source: &str, decorators: &[Expr]) -> Vec<St
             if !is_static_route_decorator(&name) {
                 return None;
             }
-            let text = text_for_range(source, decorator.range());
-            first_python_string_literal(&text).is_none().then_some(name)
+            route_decorator_literal_argument(source, decorator, &name)
+                .is_none()
+                .then_some(name)
         })
         .collect()
+}
+
+fn route_decorator_literal_argument(source: &str, decorator: &Expr, name: &str) -> Option<String> {
+    let text = text_for_range(source, decorator.range());
+    let after_name = text
+        .strip_prefix(name)
+        .or_else(|| text.find(name).and_then(|idx| text.get(idx + name.len()..)))?;
+    first_parenthesized_string_argument(after_name.trim_start())
 }
 
 fn expr_full_name(expr: &Expr) -> Option<String> {
