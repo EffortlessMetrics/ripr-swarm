@@ -1,6 +1,6 @@
+use super::model::{ActionInputs, FirstUsefulActionInput, FirstUsefulActionReport};
 use super::{
-    ActionInputs, FirstUsefulActionInput, FirstUsefulActionReport, ParsedSources,
-    acknowledged_report, actionable_report, baseline_only_report, gap_record_report,
+    ParsedSources, acknowledged_report, actionable_report, baseline_only_report, gap_record_report,
     missing_assistant_proof_report, no_actionable_report, read_error_report, receipt_report,
     stale_report, suppressed_report, waived_report,
 };
