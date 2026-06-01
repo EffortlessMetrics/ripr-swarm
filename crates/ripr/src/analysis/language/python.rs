@@ -4891,6 +4891,41 @@ def test_build_user_smoke():
             python_return_constructor_field_discriminator("return User(active=make_value())"),
             None
         );
+        assert_eq!(
+            python_assignment_constructor_field_parts(
+                "response = Response(status_code=422, detail=\"coupon expired\")"
+            ),
+            Some((
+                "response".to_string(),
+                "Response".to_string(),
+                "status_code".to_string(),
+                "422".to_string()
+            ))
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts("response.body = Response(status_code=422)"),
+            None
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts("response = make_response(status_code=422)"),
+            None
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts("response = Response(detail=message())"),
+            None
+        );
+        assert_eq!(
+            python_route_response_field_discriminator("status_code", "422").as_deref(),
+            Some("response.status_code == 422")
+        );
+        assert_eq!(
+            python_route_response_field_discriminator("detail", "\"coupon expired\"").as_deref(),
+            Some("response.json()[\"detail\"] == \"coupon expired\"")
+        );
+        assert_eq!(
+            python_route_response_field_discriminator("headers", "expected_headers").as_deref(),
+            Some("response.headers == expected_headers")
+        );
     }
 
     #[test]
