@@ -4645,6 +4645,89 @@ def test_notifies_callback():
     }
 
     #[test]
+    fn constructor_keyword_field_parts_accept_simple_model_field_values() {
+        assert_eq!(
+            python_return_constructor_field_parts("return User(active=True)"),
+            Some(("User".to_string(), "active".to_string(), "True".to_string()))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return models.User(name=\"Ada\")"),
+            Some((
+                "models.User".to_string(),
+                "name".to_string(),
+                "\"Ada\"".to_string()
+            ))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return _User(score=-1.5)"),
+            Some(("_User".to_string(), "score".to_string(), "-1.5".to_string()))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(plan=default_plan)"),
+            Some((
+                "User".to_string(),
+                "plan".to_string(),
+                "default_plan".to_string()
+            ))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(label=\"a=b\")"),
+            Some((
+                "User".to_string(),
+                "label".to_string(),
+                "\"a=b\"".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn constructor_keyword_field_parts_fail_closed_for_ambiguous_shapes() {
+        assert_eq!(
+            python_return_constructor_field_parts("return build_user(active=True)"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(\"Ada\")"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(profile.active=True)"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(active=build_active())"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts(
+                "return User(config={\"active\": True}, active=True)"
+            ),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("value = User(active=True)"),
+            None
+        );
+    }
+
+    #[test]
+    fn first_python_keyword_argument_skips_positional_and_nested_arguments() {
+        assert_eq!(
+            first_python_keyword_argument("factory(a=b), active=True"),
+            Some(("active", "True"))
+        );
+        assert_eq!(
+            first_python_keyword_argument("name=\"Ada, Lovelace\", active=True"),
+            Some(("name", "\"Ada, Lovelace\""))
+        );
+        assert_eq!(
+            first_python_keyword_argument("metadata={\"a\": \"b,c\"}, active=True"),
+            Some(("metadata", "{\"a\": \"b,c\"}"))
+        );
+        assert_eq!(first_python_keyword_argument("factory(a=b), user"), None);
+    }
+
+    #[test]
     fn classify_change_uses_constructor_keyword_field_discriminator() -> Result<(), String> {
         let source = r#"
 from dataclasses import dataclass
