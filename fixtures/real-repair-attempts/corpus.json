@@ -809,7 +809,7 @@
     },
     {
       "id": "format_args_macro_helper_owner_call_route_improved",
-      "source_ref": "local:same-file-format-args-macro-helper-owner-call-2026-06-01",
+      "source_ref": "EffortlessMetrics/ripr-swarm#829",
       "canonical_gap_id": "gap:activation-owner-call-absent-same-file-only",
       "packet_id": "limitation:activation_owner_call_absent_same_file_only:same_file_only_call_presence_function_call_missing_owner_call:analysis-same-file-owner-call-tracing",
       "repair_kind": "trace_same_file_owner_call",
