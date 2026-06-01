@@ -564,6 +564,60 @@ mod tests {
     }
 
     #[test]
+    fn field_cards_cover_response_object_and_fallback_assertion_shapes() {
+        assert_eq!(
+            recommended_test_shape(
+                &ProbeFamily::FieldConstruction,
+                "response.status_code == 422",
+                "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+                "strengthen_existing_test",
+            ),
+            "Strengthen the existing pytest response status-code assertion for `response.status_code == 422`."
+        );
+        assert_eq!(
+            suggested_assertion(
+                &ProbeFamily::FieldConstruction,
+                "response.json()[\"detail\"] == \"coupon expired\"",
+                "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+            ),
+            "Assert the response field directly: `assert response.json()[\"detail\"] == \"coupon expired\"`."
+        );
+        assert_eq!(
+            recommended_test_shape(
+                &ProbeFamily::FieldConstruction,
+                "order.total == 42",
+                "pytest tests/test_order.py::test_total_smoke",
+                "strengthen_existing_test",
+            ),
+            "Strengthen the existing pytest object field assertion for `order.total == 42`."
+        );
+        assert_eq!(
+            suggested_assertion(
+                &ProbeFamily::FieldConstruction,
+                "self.total == 42",
+                "pytest tests/test_order.py::test_total_smoke",
+            ),
+            "Assert the observed instance field directly, e.g. `assert <instance>.total == 42`."
+        );
+        assert_eq!(
+            suggested_assertion(
+                &ProbeFamily::FieldConstruction,
+                "order.total == 42",
+                "pytest tests/test_order.py::test_total_smoke",
+            ),
+            "Assert the object field directly: `assert order.total == 42`."
+        );
+        assert_eq!(
+            suggested_assertion(
+                &ProbeFamily::FieldConstruction,
+                "payload contains expected detail",
+                "pytest tests/test_order.py::test_total_smoke",
+            ),
+            "Assert the returned object or field satisfies `payload contains expected detail`."
+        );
+    }
+
+    #[test]
     fn pytest_boundary_cards_suggest_parametrized_rows_without_expected_values() {
         let candidate = pytest_boundary_parametrization(
             "amount == threshold",
