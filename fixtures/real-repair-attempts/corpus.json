@@ -520,7 +520,7 @@
     },
     {
       "id": "same_file_method_chain_backlog_projection_route_improved",
-      "source_ref": "local:same-file-method-chain-backlog-projection-2026-06-01",
+      "source_ref": "EffortlessMetrics/ripr-swarm#856",
       "canonical_gap_id": "gap:activation-owner-call-absent-same-file-method-chain-backlog-projection",
       "packet_id": "limitation:activation_owner_call_absent_same_file_only:same_file_only_call_presence_method_chain_missing_owner_call:analysis-same-file-method-chain-owner-call-tracing",
       "repair_kind": "sharpen_static_limitation_route",
