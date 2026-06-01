@@ -2937,7 +2937,9 @@ fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
     {
         return (ProbeFamily::ErrorPath, DeltaKind::Control);
     }
-    if python_return_dict_field_discriminator(trimmed).is_some() {
+    if python_return_dict_field_discriminator(trimmed).is_some()
+        || python_return_constructor_field_discriminator(trimmed).is_some()
+    {
         return (ProbeFamily::FieldConstruction, DeltaKind::Value);
     }
     if trimmed.starts_with("return ") || trimmed == "return" {
@@ -3322,6 +3324,9 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
         }
         return Some(format!("{field} == {value}"));
     }
+    if let Some((_constructor, field, value)) = python_return_constructor_field_parts(text) {
+        return Some(format!("result.{field} == {value}"));
+    }
     let (lhs, rhs) = split_python_assignment(text)?;
     if lhs.is_empty() || rhs.is_empty() {
         return None;
@@ -3332,6 +3337,11 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
 fn python_return_dict_field_discriminator(line_text: &str) -> Option<String> {
     let (key, value) = python_return_dict_field_parts(line_text)?;
     Some(format!("{key} == {value}"))
+}
+
+fn python_return_constructor_field_discriminator(line_text: &str) -> Option<String> {
+    let (_constructor, field, value) = python_return_constructor_field_parts(line_text)?;
+    Some(format!("result.{field} == {value}"))
 }
 
 fn python_return_dict_field_parts(line_text: &str) -> Option<(String, String)> {
@@ -3355,6 +3365,140 @@ fn python_return_dict_field_parts(line_text: &str) -> Option<(String, String)> {
     } else {
         Some((key.to_string(), value.to_string()))
     }
+}
+
+fn python_return_constructor_field_parts(line_text: &str) -> Option<(String, String, String)> {
+    let expression = line_text.trim().strip_prefix("return ")?.trim();
+    let (constructor, args) = split_python_constructor_call(expression)?;
+    if !is_python_constructor_callee(constructor) {
+        return None;
+    }
+    let (field, value) = first_python_keyword_argument(args)?;
+    if !is_simple_python_model_field_value(value) {
+        return None;
+    }
+    Some((
+        constructor.to_string(),
+        field.to_string(),
+        value.to_string(),
+    ))
+}
+
+fn split_python_constructor_call(expression: &str) -> Option<(&str, &str)> {
+    let expression = expression.trim();
+    if !looks_like_call_expression(expression) {
+        return None;
+    }
+    let open = expression.find('(')?;
+    let close = expression.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let callee = expression[..open].trim();
+    let args = expression[open + 1..close].trim();
+    (!callee.is_empty() && !args.is_empty()).then_some((callee, args))
+}
+
+fn is_python_constructor_callee(callee: &str) -> bool {
+    let last_segment = callee.rsplit('.').next().unwrap_or(callee).trim();
+    let mut chars = last_segment.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_uppercase())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn first_python_keyword_argument(args: &str) -> Option<(&str, &str)> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut segment_start = 0usize;
+    for (idx, ch) in args.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                if let Some(parts) = python_keyword_argument_parts(&args[segment_start..idx]) {
+                    return Some(parts);
+                }
+                segment_start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    python_keyword_argument_parts(&args[segment_start..])
+}
+
+fn python_keyword_argument_parts(segment: &str) -> Option<(&str, &str)> {
+    let segment = segment.trim();
+    let equals = top_level_equals(segment)?;
+    let field = segment[..equals].trim();
+    let value = segment[equals + 1..].trim();
+    (is_simple_python_identifier(field) && !value.is_empty()).then_some((field, value))
+}
+
+fn top_level_equals(text: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 => return Some(idx),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_simple_python_model_field_value(value: &str) -> bool {
+    let value = value.trim();
+    python_string_literal_value(value).is_some()
+        || matches!(value, "True" | "False" | "None")
+        || is_simple_python_numeric_literal(value)
+        || is_simple_python_identifier(value)
+}
+
+fn is_simple_python_numeric_literal(value: &str) -> bool {
+    let value = value.trim_start_matches('-');
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
 }
 
 fn python_output_or_call_discriminator(line_text: &str) -> Option<String> {
@@ -4487,6 +4631,10 @@ def test_notifies_callback():
         assert_eq!(family, ProbeFamily::FieldConstruction);
         assert_eq!(delta, DeltaKind::Value);
 
+        let (family, delta) = classify_probe_shape("    return User(active=True)");
+        assert_eq!(family, ProbeFamily::FieldConstruction);
+        assert_eq!(delta, DeltaKind::Value);
+
         let (family, delta) = classify_probe_shape("    notifier(\"receipt.sent\", order_id)");
         assert_eq!(family, ProbeFamily::SideEffect);
         assert_eq!(delta, DeltaKind::Effect);
@@ -4494,6 +4642,59 @@ def test_notifies_callback():
         let (family, delta) = classify_probe_shape("    callback = MagicMock(name=\"receipt\")");
         assert_eq!(family, ProbeFamily::SideEffect);
         assert_eq!(delta, DeltaKind::Effect);
+    }
+
+    #[test]
+    fn classify_change_uses_constructor_keyword_field_discriminator() -> Result<(), String> {
+        let source = r#"
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    active: bool
+
+def build_user():
+    return User(active=True)
+"#;
+        let owners = extract_owners(Path::new("src/users.py"), source);
+        let tests = extract_tests(
+            Path::new("tests/test_users.py"),
+            r#"
+from src.users import build_user
+
+def test_build_user_smoke():
+    user = build_user()
+    assert user
+"#,
+        );
+
+        let Some(finding) = classify_change(
+            Path::new("src/users.py"),
+            9,
+            "    return User(active=True)",
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed constructor return inside owner should classify".to_string());
+        };
+
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+        assert_eq!(
+            finding
+                .activation
+                .missing_discriminators
+                .first()
+                .map(|missing| missing.value.as_str()),
+            Some("result.active == True")
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|entry| entry == "missing_discriminator: result.active == True")
+        );
+        Ok(())
     }
 
     #[test]
