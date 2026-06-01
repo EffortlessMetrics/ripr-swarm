@@ -2962,6 +2962,9 @@ fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
         {
             return (ProbeFamily::FieldConstruction, DeltaKind::Value);
         }
+        if python_assignment_constructor_field_parts(trimmed).is_some() {
+            return (ProbeFamily::FieldConstruction, DeltaKind::Value);
+        }
         let rhs = trimmed[eq_idx + 1..].trim();
         if looks_like_call_expression(rhs) {
             return (ProbeFamily::SideEffect, DeltaKind::Effect);
@@ -3327,11 +3330,27 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
     if let Some((_constructor, field, value)) = python_return_constructor_field_parts(text) {
         return Some(format!("result.{field} == {value}"));
     }
+    if let Some((target, _constructor, field, value)) =
+        python_assignment_constructor_field_parts(text)
+    {
+        if !owner.route_paths.is_empty() {
+            return python_route_response_field_discriminator(&field, &value);
+        }
+        return Some(format!("{target}.{field} == {value}"));
+    }
     let (lhs, rhs) = split_python_assignment(text)?;
     if lhs.is_empty() || rhs.is_empty() {
         return None;
     }
     Some(format!("{lhs} == {rhs}"))
+}
+
+fn python_route_response_field_discriminator(field: &str, value: &str) -> Option<String> {
+    match field {
+        "status" | "status_code" => Some(format!("response.status_code == {value}")),
+        "detail" => Some(format!("response.json()[\"detail\"] == {value}")),
+        _ => Some(format!("response.{field} == {value}")),
+    }
 }
 
 fn python_return_dict_field_discriminator(line_text: &str) -> Option<String> {
@@ -3378,6 +3397,29 @@ fn python_return_constructor_field_parts(line_text: &str) -> Option<(String, Str
         return None;
     }
     Some((
+        constructor.to_string(),
+        field.to_string(),
+        value.to_string(),
+    ))
+}
+
+fn python_assignment_constructor_field_parts(
+    line_text: &str,
+) -> Option<(String, String, String, String)> {
+    let (target, expression) = split_python_assignment(line_text.trim())?;
+    if !is_simple_python_identifier(target) {
+        return None;
+    }
+    let (constructor, args) = split_python_constructor_call(expression)?;
+    if !is_python_constructor_callee(constructor) {
+        return None;
+    }
+    let (field, value) = first_python_keyword_argument(args)?;
+    if !is_simple_python_model_field_value(value) {
+        return None;
+    }
+    Some((
+        target.to_string(),
         constructor.to_string(),
         field.to_string(),
         value.to_string(),
