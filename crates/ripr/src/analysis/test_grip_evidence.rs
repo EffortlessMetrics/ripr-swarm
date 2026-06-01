@@ -102,7 +102,8 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        let helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        let same_file_helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        let helper_owner_calls_by_file = strict_helper_owner_calls_by_file(index);
         let unambiguous_test_helper_owner_calls_by_name =
             unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
         let helper_owner_calls_by_module_path =
@@ -158,7 +159,7 @@ impl<'a> CompactGripContext<'a> {
                 helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
                     test,
                     &call_names,
-                    &helper_owner_calls_by_file,
+                    &same_file_helper_owner_calls_by_file,
                 ));
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
@@ -324,6 +325,17 @@ fn same_file_helper_owner_call_names_for_test(
 }
 
 fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
+    helper_owner_calls_by_file_with_fanout(index, true)
+}
+
+fn strict_helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
+    helper_owner_calls_by_file_with_fanout(index, false)
+}
+
+fn helper_owner_calls_by_file_with_fanout(
+    index: &RustIndex,
+    allow_fanout_wrappers: bool,
+) -> HelperOwnerCallsByFile {
     let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
     let function_names_by_file = local_function_names_by_file(index);
     let production_owner_names = production_owner_names(index);
@@ -342,6 +354,7 @@ fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
                         call,
                         local_function_names,
                         external_owner_names,
+                        allow_fanout_wrappers,
                     ))
                     && call_text_contains_named_call(&call.text, &call.name)
             })
@@ -1120,6 +1133,7 @@ fn helper_directly_delegates_to_specific_owner(
     call: &CallFact,
     local_function_names: Option<&BTreeSet<String>>,
     external_owner_names: Option<&BTreeSet<String>>,
+    allow_fanout_wrappers: bool,
 ) -> bool {
     if call.name == function.name {
         return false;
@@ -1160,10 +1174,14 @@ fn helper_directly_delegates_to_specific_owner(
         }
     }
 
-    direct_local_owner_call_names.len() == 1
-        && direct_local_owner_call_names.contains(&call.name)
-        && delegates_to_call
-        && !has_disallowed_extra_call
+    let owner_call_is_unique_or_same_file_fanout = if allow_fanout_wrappers {
+        direct_local_owner_call_names.contains(&call.name)
+    } else {
+        direct_local_owner_call_names.len() == 1
+            && direct_local_owner_call_names.contains(&call.name)
+    };
+
+    owner_call_is_unique_or_same_file_fanout && delegates_to_call && !has_disallowed_extra_call
 }
 
 fn call_text_routes_directly_to_named_call(text: &str, name: &str) -> bool {
@@ -1190,6 +1208,9 @@ fn direct_call_prefix_is_allowed(prefix: &str) -> bool {
         return direct_delegate_parenthesized_macro_is_allowed(&macro_name);
     }
     if direct_delegate_block_prefix_is_allowed(prefix) {
+        return true;
+    }
+    if direct_delegate_std_identity_prefix_is_allowed(prefix) {
         return true;
     }
     let Some(open) = prefix.strip_suffix('(') else {
@@ -1246,6 +1267,25 @@ fn direct_delegate_block_prefix_is_allowed(prefix: &str) -> bool {
     };
     let open = open.trim_end();
     open.is_empty() || open == "return" || open.ends_with('=') || open.ends_with("=>")
+}
+
+fn direct_delegate_std_identity_prefix_is_allowed(prefix: &str) -> bool {
+    let Some(open) = prefix.strip_suffix('(') else {
+        return false;
+    };
+    let open = open.trim_end();
+    let open = open.strip_prefix("return ").unwrap_or(open).trim_start();
+    direct_delegate_std_identity_path_is_allowed(open)
+}
+
+fn direct_delegate_std_identity_path_is_allowed(path: &str) -> bool {
+    matches!(
+        path.trim(),
+        "std::convert::identity"
+            | "::std::convert::identity"
+            | "core::convert::identity"
+            | "::core::convert::identity"
+    )
 }
 
 fn direct_receiver_method_prefix_is_allowed(prefix: &str) -> bool {
@@ -1341,6 +1381,11 @@ fn direct_delegate_extra_call_is_allowed(candidate: &CallFact, owner_call: &Call
             &candidate.text,
             &owner_call.name,
         )
+        || direct_delegate_std_identity_call_is_allowed(
+            &candidate.name,
+            &candidate.text,
+            &owner_call.name,
+        )
 }
 
 fn direct_delegate_post_owner_method_is_allowed(
@@ -1368,6 +1413,30 @@ fn direct_delegate_post_owner_method_is_allowed(
         after_name[close_index + 1..]
             .trim_start()
             .starts_with(&format!(".{method_name}("))
+    })
+}
+
+fn direct_delegate_std_identity_call_is_allowed(
+    call_name: &str,
+    text: &str,
+    owner_name: &str,
+) -> bool {
+    if call_name != "identity" {
+        return false;
+    }
+    let cleaned = strip_comments_and_strings(text);
+    cleaned.match_indices(owner_name).any(|(start, _)| {
+        let before = cleaned[..start].trim_end();
+        if !direct_delegate_std_identity_prefix_is_allowed(before) {
+            return false;
+        }
+        let before_owner = cleaned[..start].chars().next_back();
+        if before_owner.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return false;
+        }
+        cleaned[start + owner_name.len()..]
+            .trim_start()
+            .starts_with('(')
     })
 }
 
@@ -10457,6 +10526,136 @@ fn helper_exercises_pipeline() {
     }
 
     #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_std_identity_then_activation_is_yes()
+    -> Result<(), String> {
+        for identity_path in [
+            "std::convert::identity",
+            "::std::convert::identity",
+            "core::convert::identity",
+            "::core::convert::identity",
+        ] {
+            let prod = PathBuf::from("src/pipeline.rs");
+            let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+            let tests = PathBuf::from("tests/pipeline_tests.rs");
+            let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    IDENTITY_PATH(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#
+            .replace("IDENTITY_PATH", identity_path);
+            let index = index_from_files(&[(prod, prod_src), (tests, tests_src.as_str())])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+            let call_presence = seams
+                .iter()
+                .find(|s| {
+                    s.kind() == SeamKind::CallPresence
+                        && s.owner().ends_with("::render_pipeline")
+                        && s.expression().contains("format_output")
+                })
+                .ok_or_else(|| {
+                    format!("expected render_pipeline call_presence seam for {identity_path}")
+                })?;
+
+            let evidence = evidence_for_seam(call_presence, &index);
+
+            assert_eq!(evidence.reach.state, StageState::Yes);
+            assert_eq!(evidence.activate.state, StageState::Yes);
+            assert!(
+                evidence
+                    .related_tests
+                    .iter()
+                    .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+                "expected {identity_path} helper owner-call relation, got {:?}",
+                evidence.related_tests
+            );
+            assert!(
+                evidence.observed_values.is_empty(),
+                "{identity_path} helper activation must not invent observed values: {:?}",
+                evidence.observed_values
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_local_identity_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn identity(input: String) -> String {
+    input
+}
+
+fn exercise_pipeline() -> String {
+    identity(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "local identity wrapper must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "local identity wrapper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_call_presence_when_test_local_two_hop_helper_calls_owner_then_activation_is_yes()
     -> Result<(), String> {
         let prod = PathBuf::from("src/pipeline.rs");
@@ -10780,6 +10979,79 @@ mod tests {
         assert!(
             evidence.observed_values.is_empty(),
             "two-hop wrapper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_calls_same_file_fanout_wrapper_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn collect_pipeline_context() -> String {
+    "context".to_string()
+}
+
+fn build_pipeline_report() -> String {
+    let context = collect_pipeline_context();
+    let output = render_pipeline("alpha");
+    format!("{context}:{output}")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fanout_wrapper_reaches_pipeline_indirectly() {
+        let output = build_pipeline_report();
+        assert!(output.ends_with(":alpha"));
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "fanout production wrapper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("helper owner call for value-insensitive seam"),
+            "activation summary should explain the fanout helper owner-call route: {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "fanout helper route must not invent observed values: {:?}",
             evidence.observed_values
         );
         Ok(())
