@@ -7583,6 +7583,7 @@ fn routed_rust_workflow_contract_violations(
             "runner read token fallback",
             "secrets.EM_RUNNER_READ_TOKEN || github.token",
         ),
+        ("slurped idle runner query", "jq -s -e --arg model"),
         ("trusted fork fallback reason", "fork_or_untrusted_pr"),
         ("runner API fallback reason", "runner_api_failed"),
         ("no-idle fallback reason", "no_idle_runner"),
@@ -71043,6 +71044,7 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr
           fi
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]?] | length > 0'; }
           gh api --paginate orgs/EffortlessMetrics/actions/runners
           reason=runner_api_failed
           reason=no_idle_runner
@@ -71124,6 +71126,11 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             violation.contains("organization runner discovery")
                 || violation.contains("repo-local runner discovery")
         }));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("slurped idle runner query") })
+        );
         assert!(
             violations
                 .iter()
