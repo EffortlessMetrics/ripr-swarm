@@ -389,6 +389,7 @@ mod tests {
         assert!(rendered.contains(
             "verify `pytest tests/test_pricing.py%3A%3Atest_calculate_discount_threshold_boundary` (preview advisory)."
         ));
+        assert!(!rendered.contains("Python no-action"));
     }
 
     #[test]
@@ -421,6 +422,22 @@ mod tests {
             "Python no-action%3A static_limit `dynamic_dispatch`; Static limit `dynamic_dispatch` prevents bounded repair routing"
         ));
         assert!(rendered.contains("Stop reason%3A dynamic_dispatch_unresolved"));
+        assert!(rendered.contains("No repair card or agent packet emitted (preview advisory)."));
+        assert!(!rendered.contains("Python repair card"));
+    }
+
+    #[test]
+    fn render_includes_python_static_limit_fallback_no_action_guidance() {
+        let mut output = output_with_python_static_limit();
+        let finding = &mut output.findings[0];
+        finding.missing.clear();
+        finding.evidence.clear();
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains(
+            "Python no-action%3A static_limit `dynamic_dispatch`; Python preview reported static limit `dynamic_dispatch` without a bounded repair route."
+        ));
         assert!(rendered.contains("No repair card or agent packet emitted (preview advisory)."));
         assert!(!rendered.contains("Python repair card"));
     }
