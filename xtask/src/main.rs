@@ -22587,9 +22587,9 @@ fn static_limitation_repair_route_for_subroute<'a>(
     fallback: &'a str,
 ) -> &'a str {
     if category == "activation_owner_call_absent_same_file_only"
-        && subroute == "same_file_only_call_presence_method_chain_missing_owner_call"
+        && subroute == "same_file_only_call_presence_receiver_method_missing_owner_call"
     {
-        "analysis/same-file-method-chain-owner-call-tracing"
+        "analysis/same-file-receiver-method-owner-call-tracing"
     } else {
         fallback
     }
@@ -22847,7 +22847,7 @@ fn same_file_owner_call_subroute(record: &Value, evidence_class: &str) -> String
         return "same_file_only_missing_owner_call".to_string();
     };
     if call_presence_expression_is_method_chain(&expression) {
-        "same_file_only_call_presence_method_chain_missing_owner_call".to_string()
+        "same_file_only_call_presence_receiver_method_missing_owner_call".to_string()
     } else if call_presence_expression_is_associated_call(&expression) {
         "same_file_only_call_presence_associated_call_missing_owner_call".to_string()
     } else if expression.contains('(') {
@@ -22945,6 +22945,13 @@ fn static_limitation_unlock_condition(
     subroute: &str,
     repair_route: &str,
 ) -> String {
+    if category == "activation_owner_call_absent_same_file_only"
+        && subroute == "same_file_only_call_presence_receiver_method_missing_owner_call"
+    {
+        return format!(
+            "implement `{repair_route}` by establishing whether the receiver method call is reached through a bounded direct or helper owner-call path; keep the limitation non-actionable until owner activation is observed"
+        );
+    }
     if category == "activation_owner_call_absent_affinity_only"
         && subroute.starts_with("same_test_file_call_presence_")
     {
@@ -23014,6 +23021,11 @@ fn static_limitation_backlog_packet_non_claims(
         && subroute.is_some_and(|subroute| subroute.starts_with("same_file_only_call_presence_"))
     {
         claims.push("do not treat same-file proximity as owner-call evidence".to_string());
+    }
+    if category == "activation_owner_call_absent_same_file_only"
+        && subroute.is_some_and(|subroute| subroute.contains("receiver_method"))
+    {
+        claims.push("do not treat receiver method text as owner-call evidence".to_string());
     }
     claims
 }
@@ -88318,15 +88330,15 @@ covered_by = ["cargo xtask check-file-policy"]
                 "analysis/same-file-owner-call-tracing",
                 "call_presence"
             ),
-            "same_file_only_call_presence_method_chain_missing_owner_call"
+            "same_file_only_call_presence_receiver_method_missing_owner_call"
         );
         assert_eq!(
             crate::static_limitation_repair_route_for_subroute(
                 "activation_owner_call_absent_same_file_only",
-                "same_file_only_call_presence_method_chain_missing_owner_call",
+                "same_file_only_call_presence_receiver_method_missing_owner_call",
                 "analysis/same-file-owner-call-tracing",
             ),
-            "analysis/same-file-method-chain-owner-call-tracing"
+            "analysis/same-file-receiver-method-owner-call-tracing"
         );
         assert_eq!(
             crate::static_limitation_subroute(
@@ -88455,6 +88467,25 @@ covered_by = ["cargo xtask check-file-policy"]
             same_file_claims
                 .iter()
                 .any(|claim| claim == "do not treat same-file proximity as owner-call evidence")
+        );
+
+        let receiver_method_unlock = crate::static_limitation_unlock_condition(
+            "activation_owner_call_absent_same_file_only",
+            "same_file_only_call_presence_receiver_method_missing_owner_call",
+            "analysis/same-file-receiver-method-owner-call-tracing",
+        );
+        assert!(receiver_method_unlock.contains("receiver method call"));
+        assert!(receiver_method_unlock.contains("bounded direct or helper owner-call path"));
+        assert!(receiver_method_unlock.contains("non-actionable"));
+
+        let receiver_method_claims = crate::static_limitation_backlog_packet_non_claims(
+            "activation_owner_call_absent_same_file_only",
+            Some("same_file_only_call_presence_receiver_method_missing_owner_call"),
+        );
+        assert!(
+            receiver_method_claims
+                .iter()
+                .any(|claim| claim == "do not treat receiver method text as owner-call evidence")
         );
     }
 
