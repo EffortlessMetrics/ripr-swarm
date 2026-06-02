@@ -1896,7 +1896,7 @@ mod tests {
         );
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local or computed for seam `call.name != owner_name`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
+            "Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
