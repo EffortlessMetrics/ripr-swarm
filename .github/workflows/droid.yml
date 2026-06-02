@@ -43,8 +43,8 @@ jobs:
       )
 
     runs-on:
-      group: em-ci-small
-      labels: [self-hosted, Linux, X64]
+      group: em-ci-review
+      labels: [self-hosted, Linux, X64, em-ci, trusted-pr, droid-review]
     timeout-minutes: 30
 
     env:

@@ -18,7 +18,7 @@ jobs:
     name: rust-coverage
     runs-on:
       group: em-ci-small
-      labels: [self-hosted, Linux, X64]
+      labels: [self-hosted, Linux, X64, em-ci, trusted-pr, rust, rust-heavy-medium]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6

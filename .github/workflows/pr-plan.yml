@@ -26,8 +26,8 @@ jobs:
   pr-plan:
     name: pr-plan
     runs-on:
-      group: em-ci-small
-      labels: [self-hosted, Linux, X64]
+      group: em-ci-nano
+      labels: [self-hosted, Linux, X64, em-ci, trusted-pr, workflow-nano]
     timeout-minutes: 10
 
     steps:

@@ -653,26 +653,33 @@ and scratch cleanup) and exposes the single branch-protection check
 `Ripr Rust Small Result`. That lane is the migrated reference and is not changed
 by routine runner-placement edits.
 
-The remaining (non-required) self-hosted lanes — `ci.yml` (`rust`, `msrv`,
-`vscode`), `coverage.yml`, `test-analytics.yml`, `security.yml` (`cargo-deny`,
-`dependency-review`), `future-clippy.yml`, `source-of-truth.yml`,
-`badge-endpoints.yml`, `pr-plan.yml`, and the three `droid*` workflows — pin
-explicitly to the verified `em-ci-small` runner group with
-`labels: [self-hosted, Linux, X64]` and carry a per-job `timeout-minutes`
-guard. This keeps them on the known-good EM self-hosted pool instead of any
-self-hosted runner, adds a hang guard, and adds no `ubuntu-latest` fallback.
-Queueing on `em-ci-small` is acceptable backpressure; these lanes are advisory
-or label/push gated and do not block merge.
+The remaining (non-required) self-hosted lanes route to the smallest safe EM
+shared self-hosted tier by actual workload, each with explicit
+`group` + `labels` and a per-job `timeout-minutes` hang guard. No
+`ubuntu-latest` fallback is added; queueing on these groups is acceptable
+backpressure and these lanes are advisory or label/push gated, so they do not
+block merge.
 
-`em-ci-small` is the only runner group verified available to `ripr-swarm`
-(see [`docs/swarm-development.md`](swarm-development.md)). The org-wide swarm
-directive's finer tiers (`em-ci-nano`, `em-ci-tiny`, `em-ci-review`) use a label
-vocabulary (`em-ci`, `trusted-pr`, `rust-medium`, `workflow-nano`, …) that does
-not match this repo's actual runner labels (`CX53`/`CX43`/`em-ci-rust-1.95`).
-Splitting the control-plane, review, and tiny-Rust lanes onto those smaller
-tiers is deferred until the corresponding runner groups and labels are confirmed
-for `ripr-swarm`; doing it now would pin jobs to labels no runner carries and
-leave them queued until the 24h self-hosted cancellation limit.
+| Workflow / job | Group | Tier label |
+| --- | --- | --- |
+| `ci.yml` `rust` | `em-ci-small` | `rust-medium` |
+| `ci.yml` `msrv`, `vscode` | `em-ci-small` | `rust-small` |
+| `coverage.yml` | `em-ci-small` | `rust-heavy-medium` |
+| `test-analytics.yml` | `em-ci-small` | `rust-medium` |
+| `future-clippy.yml` | `em-ci-small` | `rust-medium` |
+| `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
+| `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
+| `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
+| `pr-plan.yml` | `em-ci-nano` | `workflow-nano` |
+| `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+
+All self-hosted lanes carry the `trusted-pr` label and keep their existing
+fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted
+runners. `rust-large` is intentionally not used here; it is reserved org-wide
+for the single heaviest lane. Build-heavy lanes still use `Swatinem/rust-cache`;
+moving them onto the shared `sccache`/`/mnt/ci-cache` path used by
+`routed-rust.yml` is a tracked follow-up rather than part of this placement
+change.
 
 Release and publish workflows (`publish-extension.yml`,
 `release-server-binaries.yml`) and branch protection (`.github/settings.yml`)

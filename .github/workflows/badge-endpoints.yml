@@ -17,8 +17,8 @@ concurrency:
 jobs:
   refresh:
     runs-on:
-      group: em-ci-small
-      labels: [self-hosted, Linux, X64]
+      group: em-ci-tiny
+      labels: [self-hosted, Linux, X64, em-ci, trusted-pr, rust, rust-tiny]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
