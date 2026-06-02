@@ -4245,6 +4245,124 @@ test("shadowed static build stays ambiguous", () => {
     }
 
     #[test]
+    fn find_related_tests_matches_same_file_class_method_calls() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("src/owners.ts"),
+            r#"test("same file static build observes class method", () => {
+    expect(Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let candidates = related_test_candidates(&owner, &tests);
+        let related = find_related_tests(&owner, &tests);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].relation,
+            TypeScriptRelationKind::ClassMethodCall
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].name,
+            "same file static build observes class method"
+        );
+    }
+
+    #[test]
+    fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import * as Owners from "../src/owners";
+
+test("namespace static build stays ambiguous", () => {
+    expect(Owners.Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+vi.mock("../src/owners");
+
+test("mocked static build stays ambiguous", () => {
+    expect(Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_requires_class_name_for_class_method_calls() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: None,
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+test("unknown class static build stays ambiguous", () => {
+    expect(Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
     fn find_related_tests_matches_module_initializer_named_import_observer() {
         let owner = TypeScriptOwner {
             name: "DEFAULT_RATE".to_string(),
