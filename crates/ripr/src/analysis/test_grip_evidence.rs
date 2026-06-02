@@ -1249,11 +1249,7 @@ fn direct_call_prefix_is_allowed(prefix: &str) -> bool {
 }
 
 fn direct_delegate_condition_prefix_is_allowed(prefix: &str) -> bool {
-    let mut condition_prefix = prefix.trim();
-    while let Some(stripped) = condition_prefix.strip_prefix('}') {
-        condition_prefix = stripped.trim_start();
-    }
-    matches!(condition_prefix, "if" | "else if")
+    prefix.trim() == "if"
 }
 
 fn direct_delegate_parenthesized_macro_name_before_argument(prefix: &str) -> Option<String> {
@@ -9292,8 +9288,10 @@ mod nested {
     #[test]
     fn direct_delegate_condition_prefix_accepts_only_leading_condition_owner_call() {
         assert!(direct_delegate_condition_prefix_is_allowed("if"));
-        assert!(direct_delegate_condition_prefix_is_allowed("} else if"));
-        assert!(direct_delegate_condition_prefix_is_allowed("    } else if"));
+        assert!(!direct_delegate_condition_prefix_is_allowed("} else if"));
+        assert!(!direct_delegate_condition_prefix_is_allowed(
+            "    } else if"
+        ));
         assert!(!direct_delegate_condition_prefix_is_allowed("if ready &&"));
         assert!(!direct_delegate_condition_prefix_is_allowed("while"));
         assert!(!direct_delegate_condition_prefix_is_allowed("match"));
@@ -11332,10 +11330,10 @@ mod tests {
         let source = PathBuf::from("src/flow.rs");
         let source_src = r#"
 fn effect_sink_kind(text: &str) -> &'static str {
-    if looks_like_log_effect(text) {
-        "log"
-    } else if looks_like_event_call_effect(text) {
+    if looks_like_event_call_effect(text) {
         "event"
+    } else if looks_like_log_effect(text) {
+        "log"
     } else {
         "call"
     }
@@ -11389,6 +11387,79 @@ mod tests {
         assert!(
             evidence.observed_values.is_empty(),
             "condition helper activation must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "condition helper activation must not create boundary debt: {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_else_if_condition_helper_is_skipped_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/flow.rs");
+        let source_src = r#"
+fn effect_sink_kind(text: &str) -> &'static str {
+    if looks_like_log_effect(text) {
+        "log"
+    } else if looks_like_event_call_effect(text) {
+        "event"
+    } else {
+        "call"
+    }
+}
+
+fn looks_like_log_effect(text: &str) -> bool {
+    text.contains("log")
+}
+
+fn looks_like_event_call_effect(text: &str) -> bool {
+    [".publish(", ".emit("]
+        .iter()
+        .any(|needle| text.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_sink_detects_log_call() {
+        assert_eq!(effect_sink_kind("write log line"), "log");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/flow.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::looks_like_event_call_effect")
+                    && s.expression().contains(".iter()")
+            })
+            .ok_or_else(|| {
+                "expected looks_like_event_call_effect call_presence seam".to_string()
+            })?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "skipped else-if helper must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "skipped else-if helper must not invent observed values: {:?}",
             evidence.observed_values
         );
         Ok(())
