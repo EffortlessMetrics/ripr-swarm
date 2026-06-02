@@ -1,4 +1,4 @@
-﻿# Capability Matrix
+# Capability Matrix
 
 This matrix tracks what `ripr` can currently do, which artifacts prove it, and
 which roadmap item should move it next. It is intentionally capability-focused:
