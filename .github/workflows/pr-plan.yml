@@ -25,7 +25,10 @@ permissions:
 jobs:
   pr-plan:
     name: pr-plan
-    runs-on: self-hosted
+    runs-on:
+      group: em-ci-small
+      labels: [self-hosted, Linux, X64]
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v6

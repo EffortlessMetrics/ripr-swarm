@@ -645,6 +645,39 @@ the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
 
+### Self-Hosted Runner Placement
+
+The everyday required Rust gate routes through `routed-rust.yml`
+(`CX53 -> CX43 -> GitHub-hosted` fallback, shared `/mnt/ci-cache`, disk guards,
+and scratch cleanup) and exposes the single branch-protection check
+`Ripr Rust Small Result`. That lane is the migrated reference and is not changed
+by routine runner-placement edits.
+
+The remaining (non-required) self-hosted lanes — `ci.yml` (`rust`, `msrv`,
+`vscode`), `coverage.yml`, `test-analytics.yml`, `security.yml` (`cargo-deny`,
+`dependency-review`), `future-clippy.yml`, `source-of-truth.yml`,
+`badge-endpoints.yml`, `pr-plan.yml`, and the three `droid*` workflows — pin
+explicitly to the verified `em-ci-small` runner group with
+`labels: [self-hosted, Linux, X64]` and carry a per-job `timeout-minutes`
+guard. This keeps them on the known-good EM self-hosted pool instead of any
+self-hosted runner, adds a hang guard, and adds no `ubuntu-latest` fallback.
+Queueing on `em-ci-small` is acceptable backpressure; these lanes are advisory
+or label/push gated and do not block merge.
+
+`em-ci-small` is the only runner group verified available to `ripr-swarm`
+(see [`docs/swarm-development.md`](swarm-development.md)). The org-wide swarm
+directive's finer tiers (`em-ci-nano`, `em-ci-tiny`, `em-ci-review`) use a label
+vocabulary (`em-ci`, `trusted-pr`, `rust-medium`, `workflow-nano`, …) that does
+not match this repo's actual runner labels (`CX53`/`CX43`/`em-ci-rust-1.95`).
+Splitting the control-plane, review, and tiny-Rust lanes onto those smaller
+tiers is deferred until the corresponding runner groups and labels are confirmed
+for `ripr-swarm`; doing it now would pin jobs to labels no runner carries and
+leave them queued until the 24h self-hosted cancellation limit.
+
+Release and publish workflows (`publish-extension.yml`,
+`release-server-binaries.yml`) and branch protection (`.github/settings.yml`)
+are intentionally out of scope for this placement change.
+
 ## SARIF and Policy Contract
 
 Campaign 5B SARIF work is governed by
