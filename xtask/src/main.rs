@@ -8208,6 +8208,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
         "evidence_improved",
     ),
     (
+        "local_member_boundary_operand_route_split",
+        "evidence_improved",
+    ),
+    (
         "same_file_owner_call_route_samples_improved",
         "evidence_improved",
     ),
@@ -8221,6 +8225,10 @@ const REAL_REPAIR_ATTEMPTS_REQUIRED_CASES: &[(&str, &str)] = &[
     ),
     (
         "same_file_method_chain_owner_call_helper_tests_improved",
+        "evidence_improved",
+    ),
+    (
+        "activation_body_line_helper_owner_call_tests_improved",
         "evidence_improved",
     ),
     (
@@ -8280,10 +8288,13 @@ const PYTHON_REAL_REPO_EVAL_REQUIRED_CASES: &[(&str, &str)] = &[
     ("async_return_pytest_receipt", "closed"),
     ("parametrized_boundary_pytest_receipt", "closed"),
     ("cli_output_pytest_receipt", "closed"),
+    ("log_output_pytest_receipt", "closed"),
+    ("argparse_cli_output_pytest_receipt", "closed"),
     ("click_cli_output_pytest_receipt", "closed"),
     ("typer_cli_output_pytest_receipt", "closed"),
     ("cli_exit_code_pytest_receipt", "closed"),
     ("exception_path_pytest_receipt", "closed"),
+    ("custom_exception_pytest_receipt", "closed"),
     ("unittest_exception_path_receipt", "closed"),
     ("api_status_pytest_receipt", "closed"),
     ("api_json_detail_pytest_receipt", "closed"),
@@ -8293,6 +8304,7 @@ const PYTHON_REAL_REPO_EVAL_REQUIRED_CASES: &[(&str, &str)] = &[
     ("mixed_rust_python_pytest_receipt", "closed"),
     ("decorated_route_status_pytest_receipt", "closed"),
     ("unittest_return_value_receipt", "closed"),
+    ("unittest_dict_field_receipt", "closed"),
     ("model_field_pytest_receipt", "closed"),
 ];
 
@@ -8365,6 +8377,10 @@ const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] 
         "must_remain_non_actionable",
     ),
     ("method_receiver_ambiguity", "candidate_future_support"),
+    (
+        "class_method_static_call_incomplete_packet",
+        "candidate_future_support",
+    ),
     ("module_initializer_ambiguity", "candidate_future_support"),
     ("mocked_module_limit", "named_static_limitation"),
     ("decorator_indirection_limit", "named_static_limitation"),
@@ -21693,6 +21709,7 @@ fn lane1_evidence_audit_json(report: &Lane1EvidenceAuditReport) -> Result<String
             .iter()
             .map(lane1_evidence_audit_run_limitation_json)
             .collect::<Vec<_>>(),
+        "static_limitation_backlog": lane1_static_limitation_backlog_json(report),
         "summary": {
             "seams_total": report.summary.seams_total,
             "raw_headline_gaps": report.summary.raw_headline_gaps,
@@ -22576,9 +22593,9 @@ fn static_limitation_repair_route_for_subroute<'a>(
     fallback: &'a str,
 ) -> &'a str {
     if category == "activation_owner_call_absent_same_file_only"
-        && subroute == "same_file_only_call_presence_method_chain_missing_owner_call"
+        && subroute == "same_file_only_call_presence_receiver_method_missing_owner_call"
     {
-        "analysis/same-file-method-chain-owner-call-tracing"
+        "analysis/same-file-receiver-method-owner-call-tracing"
     } else {
         fallback
     }
@@ -22836,7 +22853,7 @@ fn same_file_owner_call_subroute(record: &Value, evidence_class: &str) -> String
         return "same_file_only_missing_owner_call".to_string();
     };
     if call_presence_expression_is_method_chain(&expression) {
-        "same_file_only_call_presence_method_chain_missing_owner_call".to_string()
+        "same_file_only_call_presence_receiver_method_missing_owner_call".to_string()
     } else if call_presence_expression_is_associated_call(&expression) {
         "same_file_only_call_presence_associated_call_missing_owner_call".to_string()
     } else if expression.contains('(') {
@@ -22934,6 +22951,13 @@ fn static_limitation_unlock_condition(
     subroute: &str,
     repair_route: &str,
 ) -> String {
+    if category == "activation_owner_call_absent_same_file_only"
+        && subroute == "same_file_only_call_presence_receiver_method_missing_owner_call"
+    {
+        return format!(
+            "implement `{repair_route}` by establishing whether the receiver method call is reached through a bounded direct or helper owner-call path; keep the limitation non-actionable until owner activation is observed"
+        );
+    }
     if category == "activation_owner_call_absent_affinity_only"
         && subroute.starts_with("same_test_file_call_presence_")
     {
@@ -22952,7 +22976,7 @@ fn static_limitation_unlock_condition(
     match category {
         "activation_boundary_input_unresolved" => {
             format!(
-                "implement `{repair_route}` so local, iterator, or computed operands can be resolved before candidate values are recommended"
+                "implement `{repair_route}` so local, member-access, iterator, or computed operands can be resolved before candidate values are recommended"
             )
         }
         "activation_owner_call_absent_assertion_target_affinity"
@@ -23003,6 +23027,11 @@ fn static_limitation_backlog_packet_non_claims(
         && subroute.is_some_and(|subroute| subroute.starts_with("same_file_only_call_presence_"))
     {
         claims.push("do not treat same-file proximity as owner-call evidence".to_string());
+    }
+    if category == "activation_owner_call_absent_same_file_only"
+        && subroute.is_some_and(|subroute| subroute.contains("receiver_method"))
+    {
+        claims.push("do not treat receiver method text as owner-call evidence".to_string());
     }
     claims
 }
@@ -87730,6 +87759,13 @@ covered_by = ["cargo xtask check-file-policy"]
         let actionable_json = lane1_actionable_gap_packets_json(&report)?;
         let value: serde_json::Value =
             serde_json::from_str(&actionable_json).map_err(|err| err.to_string())?;
+        let audit_json = lane1_evidence_audit_json(&report)?;
+        let audit_value: serde_json::Value =
+            serde_json::from_str(&audit_json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            audit_value["static_limitation_backlog"]["limitation_backlog_packets"][0]["packet_id"],
+            "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution"
+        );
         let packet = &value["static_limitation_backlog"]["limitation_backlog_packets"][0];
         assert_eq!(
             packet["packet_id"],
@@ -87910,6 +87946,56 @@ covered_by = ["cargo xtask check-file-policy"]
                       "confidence": {"basis": "static_only", "notes": []}
                     }
                   }
+                },
+                {
+                  "seam_id": "call-name-member",
+                  "headline_eligible": true,
+                  "file": "src/window.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "call-name-member",
+                    "canonical_gap_id": "gap:call-name-member",
+                    "owner": "window::filter_call",
+                    "location": {"file": "src/window.rs", "line": 88},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "member boundary operand unresolved", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "member boundary operand cannot be mapped to a safe test input",
+                        "category": "activation_boundary_input_unresolved",
+                        "repair_route": "analysis/local-member-boundary-operand-resolution"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "src/window.rs", "line": 88, "kind": "static_unknown", "probe_kind": "predicate_boundary", "expression": "call.name != owner_name"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:call-name-member",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/window.rs", "line": 88, "kind": "static_unknown", "expression": "call.name != owner_name"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "member boundary operand cannot be mapped to a safe test input",
+                      "recommended_repair": "Improve member operand resolution before emitting a repair packet.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
                 }
               ]
             }"#,
@@ -87936,14 +88022,25 @@ covered_by = ["cargo xtask check-file-policy"]
                     == "limitation:activation_boundary_input_unresolved:analysis-iterator-boundary-operand-resolution"
             })
             .ok_or_else(|| "missing iterator backlog packet".to_string())?;
+        let member_packet = packets
+            .iter()
+            .find(|packet| {
+                packet["packet_id"]
+                    == "limitation:activation_boundary_input_unresolved:analysis-local-member-boundary-operand-resolution"
+            })
+            .ok_or_else(|| "missing member backlog packet".to_string())?;
 
-        assert_eq!(packets.len(), 2);
+        assert_eq!(packets.len(), 3);
         assert_eq!(
             local_packet["limitation_category"],
             "activation_boundary_input_unresolved"
         );
         assert_eq!(
             iterator_packet["limitation_category"],
+            "activation_boundary_input_unresolved"
+        );
+        assert_eq!(
+            member_packet["limitation_category"],
             "activation_boundary_input_unresolved"
         );
         assert_eq!(
@@ -87955,12 +88052,20 @@ covered_by = ["cargo xtask check-file-policy"]
             "analysis/iterator-boundary-operand-resolution"
         );
         assert_eq!(
+            member_packet["repair_route"],
+            "analysis/local-member-boundary-operand-resolution"
+        );
+        assert_eq!(
             local_packet["sample_canonical_gap_ids"][0],
             "gap:idx-offset-local"
         );
         assert_eq!(
             iterator_packet["sample_canonical_gap_ids"][0],
             "gap:idx-offset-iterator"
+        );
+        assert_eq!(
+            member_packet["sample_canonical_gap_ids"][0],
+            "gap:call-name-member"
         );
         assert_eq!(value["packets"].as_array().map(Vec::len), Some(0));
         Ok(())
@@ -88300,15 +88405,15 @@ covered_by = ["cargo xtask check-file-policy"]
                 "analysis/same-file-owner-call-tracing",
                 "call_presence"
             ),
-            "same_file_only_call_presence_method_chain_missing_owner_call"
+            "same_file_only_call_presence_receiver_method_missing_owner_call"
         );
         assert_eq!(
             crate::static_limitation_repair_route_for_subroute(
                 "activation_owner_call_absent_same_file_only",
-                "same_file_only_call_presence_method_chain_missing_owner_call",
+                "same_file_only_call_presence_receiver_method_missing_owner_call",
                 "analysis/same-file-owner-call-tracing",
             ),
-            "analysis/same-file-method-chain-owner-call-tracing"
+            "analysis/same-file-receiver-method-owner-call-tracing"
         );
         assert_eq!(
             crate::static_limitation_subroute(
@@ -88437,6 +88542,25 @@ covered_by = ["cargo xtask check-file-policy"]
             same_file_claims
                 .iter()
                 .any(|claim| claim == "do not treat same-file proximity as owner-call evidence")
+        );
+
+        let receiver_method_unlock = crate::static_limitation_unlock_condition(
+            "activation_owner_call_absent_same_file_only",
+            "same_file_only_call_presence_receiver_method_missing_owner_call",
+            "analysis/same-file-receiver-method-owner-call-tracing",
+        );
+        assert!(receiver_method_unlock.contains("receiver method call"));
+        assert!(receiver_method_unlock.contains("bounded direct or helper owner-call path"));
+        assert!(receiver_method_unlock.contains("non-actionable"));
+
+        let receiver_method_claims = crate::static_limitation_backlog_packet_non_claims(
+            "activation_owner_call_absent_same_file_only",
+            Some("same_file_only_call_presence_receiver_method_missing_owner_call"),
+        );
+        assert!(
+            receiver_method_claims
+                .iter()
+                .any(|claim| claim == "do not treat receiver method text as owner-call evidence")
         );
     }
 
@@ -92920,7 +93044,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["top_limitation_routes"][0]["unlock_condition"],
-            "implement `analysis/local-computed-boundary-operand-resolution` so local, iterator, or computed operands can be resolved before candidate values are recommended"
+            "implement `analysis/local-computed-boundary-operand-resolution` so local, member-access, iterator, or computed operands can be resolved before candidate values are recommended"
         );
         assert_eq!(
             value["top_limitation_routes"][0]["sample_sources"][0]["evidence_class"],

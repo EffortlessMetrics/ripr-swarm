@@ -1436,6 +1436,15 @@ git diff --check
   stability eval where a unittest return-value repair routes to one existing
   test method, verifies with `python -m unittest`, exports a bounded test-only
   packet, and closes the canonical Python gap through `ripr outcome`.
+- Returned Python dict field discriminators now prefer a literal-valued field
+  over a pass-through field in multi-field return literals, so
+  `{"name": name, "status": "active"}` routes to the missing discriminator
+  `status == "active"` instead of the non-discriminating `name == name`.
+- The corpus now adds `unittest_dict_field_receipt` as a post-promotion
+  stability eval where a unittest returned-dict field repair routes to one
+  existing test method, verifies with `python -m unittest`, exports a bounded
+  test-only packet, and closes the canonical Python field/object gap through
+  `ripr outcome`.
 - The corpus now adds `api_json_detail_pytest_receipt` as a post-promotion
   stability eval where an API response JSON detail repair routes to one
   existing pytest method, verifies with a focused `pytest` command, exports a
@@ -1462,6 +1471,12 @@ git diff --check
   strengthens to exact `pytest.raises(..., match=...)` evidence, verifies with
   a focused `pytest` command, exports a bounded test-only packet, and closes
   the canonical Python exception gap through `ripr outcome`.
+- The corpus now adds `custom_exception_pytest_receipt` as a post-promotion
+  stability eval where a broad `pytest.raises(ExpiredCouponError)` observer
+  strengthens to exact `pytest.raises(..., match=...)` evidence for a custom
+  exception type, verifies with a focused `pytest` command, exports a bounded
+  test-only packet, and closes the canonical Python exception gap through
+  `ripr outcome`.
 - The corpus now adds `unittest_exception_path_receipt` as a post-promotion
   stability eval where a broad `self.assertRaises(ValueError)` observer
   strengthens to exact `self.assertRaisesRegex(...)` evidence, verifies with
@@ -1514,16 +1529,28 @@ git diff --check
   future eval that lacks packet scope, stop conditions, or forbidden-file
   protection fails the checked quality gate instead of counting as usable.
 - `cargo xtask dogfood` now requires the receipt-backed async return-value,
-  pytest exception, unittest exception, API JSON detail, Flask route JSON
-  detail, FastAPI route JSON detail, API exception-response, and unittest
-  return-value eval rows in addition to the original boundary/API/CLI/mixed
-  cases, so those Python closure proofs cannot disappear from the corpus
-  without failing the checked dogfood gate.
+  pytest exception, custom exception, unittest exception, API JSON detail,
+  log output, argparse CLI output, Click CLI output, Typer CLI output,
+  CLI exit-code, Flask route JSON detail, FastAPI route JSON detail, API
+  exception-response, unittest return-value, and unittest dict-field eval rows in addition to the original
+  boundary/API/CLI/mixed cases, so those Python closure proofs cannot
+  disappear from the corpus without failing the checked dogfood gate.
+- The corpus now adds `log_output_pytest_receipt` as a post-promotion
+  stability eval where a changed `logger.warning(...)` side effect routes to a
+  log-output repair card, exports a bounded test-only packet, verifies with a
+  focused pytest/caplog command, and closes the canonical Python
+  call/output-effect gap through `ripr outcome`.
 - The corpus now adds `cli_exit_code_pytest_receipt` as a post-promotion
   stability eval where a changed literal `sys.exit(2)` side effect routes to a
   CLI exit-code repair card, exports a bounded test-only packet, verifies with
   focused pytest, and closes the canonical Python call/output-effect gap
   through `ripr outcome`.
+- The corpus now adds `argparse_cli_output_pytest_receipt` as a
+  post-promotion stability eval where a changed static `print(...)` side
+  effect inside an argparse-shaped command routes to a CLI output repair card,
+  exports a bounded test-only packet, verifies with focused pytest, and closes
+  the canonical Python call/output-effect gap through `ripr outcome` without
+  RIPR importing argparse or executing parser setup.
 - The corpus now adds `click_cli_output_pytest_receipt` as a post-promotion
   stability eval where a changed `click.echo("shipment queued")` side effect
   routes to a CLI output repair card, exports a bounded test-only packet,
