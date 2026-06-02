@@ -114,9 +114,12 @@ Assertions / oracles the adapter must recognise:
 
 - `expect(actual).toBe(expected)` and `.toEqual` / `.toStrictEqual` →
   exact-value oracle
-- `expect(...).toThrow(...)` → error-path oracle
-- `expect(...).resolves.toBe(...)` and `.rejects.toThrow(...)` →
-  async-aware exact/error oracle
+- bare `expect(...).toThrow()` / `.rejects.toThrow()` → broad
+  error-path oracle
+- literal `expect(...).toThrow("...")` / `.rejects.toThrow("...")`
+  and safe `.rejects.toMatchObject({ ... })` payloads → exact
+  error-variant oracle
+- `expect(...).resolves.toBe(...)` → async-aware exact-value oracle
 - `expect(mockFn).toHaveBeenCalledWith(...)` and `toHaveBeenCalledTimes`
   → side-effect/call oracle
 - `expect(...).toMatchSnapshot()` and `.toMatchInlineSnapshot()` →
@@ -129,7 +132,14 @@ import-reference match, file-path proximity, and call-graph proximity at
 the syntax level. Direct owner-call matches must be token-aware: a top-level
 function owner can match `applyDiscount(...)`, but string/comment mentions and
 arbitrary object-method calls such as `order.applyDiscount(...)` must not make
-the test related.
+the test related. Method owners may use a bounded receiver relation only when
+the test constructs a local receiver with `new ClassName(...)` or a named import
+alias for that class and then calls `receiver.method(...)`. Static class-method
+owners may use a bounded direct class member relation only when the test calls
+`ClassName.method(...)` through the same-file class name or an unshadowed named
+import alias. Factory returns, dependency injection, mocked modules, prototype
+aliases, namespace chains, and dynamic property access remain advisory or
+unsupported.
 
 ## Probe Facts
 
@@ -290,6 +300,7 @@ TypeScript adapter contributes:
 - `language_adapter_typescript_oracle_snapshot_weak`
 - `language_adapter_typescript_oracle_smoke`
 - `language_adapter_typescript_related_imported_owner_call`
+- `language_adapter_typescript_related_method_receiver_call`
 - `language_adapter_typescript_probe_predicate`
 - `language_adapter_typescript_probe_return_value`
 - `language_adapter_typescript_probe_error_path`

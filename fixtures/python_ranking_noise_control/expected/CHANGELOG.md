@@ -59,3 +59,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+refresh pytest boundary repair-card parameterization guidance
+
+Command:
+`cargo xtask goldens bless python_ranking_noise_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending
+
+Reason:
+pytest boundary parameter row wording uses equal input value
+
+Command:
+`cargo xtask goldens bless python_ranking_noise_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

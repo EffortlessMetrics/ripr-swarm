@@ -1,6 +1,6 @@
 # RIPR-PROP-0017: Python Repair Routing Lane
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / swarm
 
@@ -53,12 +53,15 @@ Linked work items:
 - `dogfood/python-real-repo-evals`
 - `metrics/python-repair-routing-quality`
 - `campaign/python-usable-alpha-promotion`
+- `dogfood/python-stability-evals-v1`
 
 Support-tier impact:
 
-- None for this charter. Python remains `preview` until a later
-  support-tier PR promotes a specific scoped claim with fixture, dogfood,
-  calibration, receipt, policy, and rollback evidence.
+- The charter itself did not promote Python. The later
+  [usable-alpha closeout](../handoffs/2026-05-31-python-repair-routing-usable-alpha-closeout.md)
+  promotes only the scoped Python repair-routing loop to `usable alpha` with
+  fixture, dogfood, receipt, metric, support-tier, and rollback evidence.
+  Broader Python static facts remain `preview`.
 
 Policy impact:
 
@@ -186,7 +189,7 @@ Python support uses these tiers:
 | Tier | Meaning for Python |
 | --- | --- |
 | `unsupported` | RIPR may route around the repo or emit an unavailable-adapter/config limitation. No Python repair cards. |
-| `preview` | Opt-in syntax-first Python evidence is visible, advisory, and not a gate input. Current support lives here. |
+| `preview` | Opt-in syntax-first Python evidence is visible, advisory, and not a gate input. Broader Python static facts still live here. |
 | `usable alpha` | Common pytest/unittest repair-routing loops are fixture-backed, dogfooded, receipt-backed, and surfaced consistently, but remain static/advisory. |
 | `stable` | Reserved for a later policy-approved claim with stronger evidence, long-running dogfood, low false-actionable rate, rollback proof, and support-tier signoff. |
 
@@ -355,8 +358,9 @@ Evidence must scale with the support claim:
   agent packet surfaces when those surfaces change;
 - dogfood on controlled and real Python repos before promotion;
 - metrics for top-1/top-3 actionable precision, verify-command validity,
-  concrete-discriminator rate, related-test-location rate, false-actionable
-  rate, crash rate, static-limit distribution, and receipt closure rate;
+  agent-packet boundary validity, concrete-discriminator rate,
+  related-test-location rate, false-actionable rate, crash rate,
+  static-limit distribution, and receipt closure rate;
 - before/after receipts proving at least one real Python gap closes before
   claiming `usable alpha`.
 
@@ -399,14 +403,14 @@ Evidence must scale with the support claim:
 
 ## Exit criteria
 
-This proposal can move to `accepted` only after:
+This proposal moved to `accepted` after:
 
 - Python repair-routing slices land through at least a documented usable-alpha
   promotion or an explicit superseding closeout;
 - the linked implementation plan records PRs, proof commands, remaining
   limits, and next work;
-- support tiers either still say Python is `preview`, or a dedicated
-  support-tier PR promotes a scoped Python claim with evidence;
+- a dedicated support-tier PR promoted only the scoped Python repair-routing
+  loop with evidence while broader Python static facts remained `preview`;
 - dogfood evidence includes at least one useful real Python repair card and at
   least one receipt-backed closed or improved canonical gap;
 - public docs state what Python repair-routing proves and does not prove;

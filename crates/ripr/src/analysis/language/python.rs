@@ -77,6 +77,9 @@ struct PythonOwner {
     owner_kind: Option<OwnerKind>,
     decorators: Vec<String>,
     imports: Vec<PythonImport>,
+    cli_receiver_names: Vec<String>,
+    route_paths: Vec<String>,
+    dynamic_route_decorators: Vec<String>,
 }
 
 impl PythonOwner {
@@ -1344,6 +1347,8 @@ fn owner_from_function(
         .class_context
         .map(|class| format!("{class}.{name}"))
         .unwrap_or_else(|| name.to_string());
+    let route_paths = collect_static_route_paths(context.source, decorators);
+    let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -1357,6 +1362,9 @@ fn owner_from_function(
         owner_kind: Some(owner_kind),
         decorators,
         imports: context.imports.to_vec(),
+        cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
+        route_paths,
+        dynamic_route_decorators,
     }
 }
 
@@ -1379,6 +1387,9 @@ fn owner_from_class(
         owner_kind: None,
         decorators: decorator_names(decorators),
         imports: context.imports.to_vec(),
+        cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
+        route_paths: collect_static_route_paths(context.source, decorators),
+        dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
     }
 }
 
@@ -1397,6 +1408,9 @@ fn module_owner(
         owner_kind: Some(OwnerKind::ModuleFunction),
         decorators: Vec::new(),
         imports: imports.to_vec(),
+        cli_receiver_names: collect_static_cli_receiver_names(source, imports),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
     }
 }
 
@@ -1565,6 +1579,42 @@ fn is_pytest_class(class: &ast::StmtClassDef) -> bool {
 
 fn decorator_names(decorators: &[Expr]) -> Vec<String> {
     decorators.iter().filter_map(expr_full_name).collect()
+}
+
+fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter_map(|decorator| {
+            let name = expr_full_name(decorator)?;
+            if !is_static_route_decorator(&name) {
+                return None;
+            }
+            route_decorator_literal_argument(source, decorator, &name)
+        })
+        .collect()
+}
+
+fn collect_dynamic_route_decorators(source: &str, decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter_map(|decorator| {
+            let name = expr_full_name(decorator)?;
+            if !is_static_route_decorator(&name) {
+                return None;
+            }
+            route_decorator_literal_argument(source, decorator, &name)
+                .is_none()
+                .then_some(name)
+        })
+        .collect()
+}
+
+fn route_decorator_literal_argument(source: &str, decorator: &Expr, name: &str) -> Option<String> {
+    let text = text_for_range(source, decorator.range());
+    let after_name = text
+        .strip_prefix(name)
+        .or_else(|| text.find(name).and_then(|idx| text.get(idx + name.len()..)))?;
+    first_parenthesized_string_argument(after_name.trim_start())
 }
 
 fn expr_full_name(expr: &Expr) -> Option<String> {
@@ -1935,6 +1985,7 @@ fn looks_like_custom_assertion_helper(name: &str) -> bool {
 enum PythonRelationKind {
     SyntacticCall,
     ImportAliasCall,
+    ApiClientRouteCall,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -1945,6 +1996,7 @@ impl PythonRelationKind {
         match self {
             Self::SyntacticCall => 5,
             Self::ImportAliasCall => 4,
+            Self::ApiClientRouteCall => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -1952,7 +2004,10 @@ impl PythonRelationKind {
     }
 
     fn uses_oracle(self) -> bool {
-        matches!(self, Self::SyntacticCall | Self::ImportAliasCall)
+        matches!(
+            self,
+            Self::SyntacticCall | Self::ImportAliasCall | Self::ApiClientRouteCall
+        )
     }
 
     fn is_uncertain(self) -> bool {
@@ -1963,6 +2018,7 @@ impl PythonRelationKind {
         match self {
             Self::SyntacticCall => "syntactic_call",
             Self::ImportAliasCall => "import_alias_call",
+            Self::ApiClientRouteCall => "api_client_route_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -2139,6 +2195,9 @@ fn related_test_relation(test: &PythonTest, owner: &PythonOwner) -> Option<Pytho
     if import_alias_calls_owner(test, owner) {
         return Some(PythonRelationKind::ImportAliasCall);
     }
+    if api_client_route_calls_owner(test, owner) {
+        return Some(PythonRelationKind::ApiClientRouteCall);
+    }
     if same_stem_related(test, owner) {
         return Some(PythonRelationKind::SameStem);
     }
@@ -2177,6 +2236,57 @@ fn imported_module_matches_owner(import: &PythonImport, owner: &PythonOwner) -> 
         .file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| import.imported.rsplit('.').next() == Some(stem))
+}
+
+fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    owner
+        .route_paths
+        .iter()
+        .any(|route| body_calls_api_client_route(&test.body_text, route))
+}
+
+fn body_calls_api_client_route(body_text: &str, route: &str) -> bool {
+    [
+        "client.get",
+        "client.post",
+        "client.put",
+        "client.patch",
+        "client.delete",
+        "client.options",
+        "client.head",
+    ]
+    .into_iter()
+    .any(|callee| contains_python_call_with_first_string_argument(body_text, callee, route))
+}
+
+fn contains_python_call_with_first_string_argument(
+    text: &str,
+    callee: &str,
+    expected: &str,
+) -> bool {
+    text.match_indices(callee).any(|(idx, _)| {
+        if !python_callee_start_has_boundary(text, idx)
+            || python_prefix_hides_code(line_prefix_before(text, idx))
+        {
+            return false;
+        }
+        let Some(argument) = first_parenthesized_string_argument(
+            text.get(idx + callee.len()..)
+                .unwrap_or_default()
+                .trim_start(),
+        ) else {
+            return false;
+        };
+        argument == expected
+    })
+}
+
+fn first_parenthesized_string_argument(text: &str) -> Option<String> {
+    let body = text.strip_prefix('(')?.trim_start();
+    let literal = first_python_string_literal(body)?;
+    body.starts_with(&literal)
+        .then(|| python_string_literal_value(&literal))
+        .flatten()
 }
 
 fn contains_call_name(body_text: &str, call_name: &str) -> bool {
@@ -2360,10 +2470,22 @@ fn static_limit_for_change(
             missing: "Static limit `metaprogramming`: the Python preview adapter saw metaprogramming syntax and does not infer runtime-created behavior.".to_string(),
         });
     }
+    if let Some(decorator) = owner.dynamic_route_decorators.first() {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::DecoratorIndirection,
+            evidence: format!(
+                "static_limit decorator_indirection: dynamic_route_registration `{decorator}`"
+            ),
+            missing: format!(
+                "Static limit `dynamic_route_registration`: owner `{}` uses dynamic route registration `{decorator}`; syntax-first preview evidence cannot safely match client calls to a concrete route path.",
+                owner.qualified_name
+            ),
+        });
+    }
     if let Some(decorator) = owner
         .decorators
         .iter()
-        .find(|decorator| !is_transparent_owner_decorator(decorator))
+        .find(|decorator| !is_transparent_owner_decorator_for_owner(decorator, owner))
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -2513,6 +2635,16 @@ fn is_transparent_owner_decorator(decorator: &str) -> bool {
         || decorator == "classmethod"
         || decorator == "async_def"
         || is_static_route_decorator(decorator)
+        || is_static_cli_decorator(decorator)
+}
+
+fn is_transparent_owner_decorator_for_owner(decorator: &str, owner: &PythonOwner) -> bool {
+    is_transparent_owner_decorator(decorator)
+        || is_static_cli_decorator_with_import_context(
+            decorator,
+            &owner.imports,
+            &owner.cli_receiver_names,
+        )
 }
 
 fn is_static_route_decorator(decorator: &str) -> bool {
@@ -2546,6 +2678,72 @@ fn is_static_route_decorator(decorator: &str) -> bool {
         || receiver_name.ends_with("_router")
         || receiver_name.ends_with("_routes")
         || receiver_name.ends_with("_bp")
+}
+
+fn is_static_cli_decorator(decorator: &str) -> bool {
+    matches!(
+        decorator,
+        "click.command"
+            | "click.group"
+            | "click.option"
+            | "click.argument"
+            | "typer.command"
+            | "typer.callback"
+    )
+}
+
+fn is_static_cli_decorator_with_import_context(
+    decorator: &str,
+    imports: &[PythonImport],
+    cli_receiver_names: &[String],
+) -> bool {
+    if is_static_cli_decorator(decorator) {
+        return true;
+    }
+    let Some((receiver, method)) = decorator.rsplit_once('.') else {
+        return false;
+    };
+    if !matches!(method, "command" | "callback") || !imports.iter().any(has_typer_import) {
+        return false;
+    }
+    let receiver_name = receiver.rsplit('.').next().unwrap_or(receiver);
+    cli_receiver_names
+        .iter()
+        .any(|candidate| candidate == receiver_name)
+}
+
+fn has_typer_import(import: &PythonImport) -> bool {
+    import.imported == "typer" && import.alias == "typer"
+}
+
+fn collect_static_cli_receiver_names(source: &str, imports: &[PythonImport]) -> Vec<String> {
+    if !imports.iter().any(has_typer_import) {
+        return Vec::new();
+    }
+    let mut receivers: Vec<String> = source
+        .lines()
+        .filter_map(|line| {
+            let text = line.trim();
+            let (lhs, rhs) = split_python_assignment(text)?;
+            if !is_simple_python_identifier(lhs) || !contains_python_call_shape(rhs, "typer.Typer")
+            {
+                return None;
+            }
+            Some(lhs.to_string())
+        })
+        .collect();
+    receivers.sort();
+    receivers.dedup();
+    receivers
+}
+
+fn is_simple_python_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn test_has_mocked_module(test: &PythonTest) -> bool {
@@ -2689,6 +2887,7 @@ fn related_candidates_have_opaque_custom_assertion_limit(
 fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
+            && !line_uses_known_static_cli_symbol(text, import)
             && (text.contains(&format!("{}(", import.alias))
                 || text.contains(&format!("{}.", import.alias)))
     })
@@ -2699,8 +2898,25 @@ fn is_known_mock_constructor_import(import: &PythonImport) -> bool {
         || matches!(import.alias.as_str(), "Mock" | "MagicMock")
 }
 
+fn line_uses_known_static_cli_symbol(text: &str, import: &PythonImport) -> bool {
+    let alias = import.alias.as_str();
+    match import.imported.as_str() {
+        "click" if alias == "click" => contains_python_call_shape(text, "click.echo"),
+        "typer" if alias == "typer" => contains_python_call_shape(text, "typer.echo"),
+        "sys" if alias == "sys" => {
+            contains_python_call_shape(text, "sys.exit")
+                || contains_python_call_shape(text, "sys.stdout.write")
+                || contains_python_call_shape(text, "sys.stderr.write")
+        }
+        _ => false,
+    }
+}
+
 fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
     let trimmed = line_text.trim_start();
+    if is_python_cli_exit_line(trimmed) {
+        return (ProbeFamily::SideEffect, DeltaKind::Effect);
+    }
     if (trimmed.contains(" if ") && trimmed.contains(" else "))
         || trimmed.starts_with("if ")
         || trimmed.starts_with("elif ")
@@ -2721,7 +2937,9 @@ fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
     {
         return (ProbeFamily::ErrorPath, DeltaKind::Control);
     }
-    if python_return_dict_field_discriminator(trimmed).is_some() {
+    if python_return_dict_field_discriminator(trimmed).is_some()
+        || python_return_constructor_field_discriminator(trimmed).is_some()
+    {
         return (ProbeFamily::FieldConstruction, DeltaKind::Value);
     }
     if trimmed.starts_with("return ") || trimmed == "return" {
@@ -2744,6 +2962,9 @@ fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
         {
             return (ProbeFamily::FieldConstruction, DeltaKind::Value);
         }
+        if python_assignment_constructor_field_parts(trimmed).is_some() {
+            return (ProbeFamily::FieldConstruction, DeltaKind::Value);
+        }
         let rhs = trimmed[eq_idx + 1..].trim();
         if looks_like_call_expression(rhs) {
             return (ProbeFamily::SideEffect, DeltaKind::Effect);
@@ -2763,6 +2984,10 @@ fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) {
 
 fn contains_mock_initializer(text: &str) -> bool {
     text.contains("Mock(") || text.contains("MagicMock(")
+}
+
+fn is_python_cli_exit_line(text: &str) -> bool {
+    python_exit_code_discriminator(text).is_some()
 }
 
 fn looks_like_call_expression(text: &str) -> bool {
@@ -3005,9 +3230,10 @@ fn python_missing_discriminators(
     probe_family: &ProbeFamily,
     line: usize,
     line_text: &str,
+    owner: &PythonOwner,
     flow_sink: Option<&FlowSinkFact>,
 ) -> Vec<MissingDiscriminatorFact> {
-    let Some(value) = python_missing_discriminator_value(probe_family, line_text) else {
+    let Some(value) = python_missing_discriminator_value(probe_family, line_text, owner) else {
         return Vec::new();
     };
 
@@ -3021,12 +3247,13 @@ fn python_missing_discriminators(
 fn python_missing_discriminator_value(
     probe_family: &ProbeFamily,
     line_text: &str,
+    owner: &PythonOwner,
 ) -> Option<String> {
     match probe_family {
         ProbeFamily::Predicate => python_boundary_discriminator(line_text),
         ProbeFamily::ReturnValue => python_return_value_discriminator(line_text),
         ProbeFamily::ErrorPath => python_exception_discriminator(line_text),
-        ProbeFamily::FieldConstruction => python_field_value_discriminator(line_text),
+        ProbeFamily::FieldConstruction => python_field_value_discriminator(line_text, owner),
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
             python_output_or_call_discriminator(line_text)
         }
@@ -3092,10 +3319,24 @@ fn python_exception_discriminator(line_text: &str) -> Option<String> {
     }
 }
 
-fn python_field_value_discriminator(line_text: &str) -> Option<String> {
+fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Option<String> {
     let text = line_text.trim();
-    if let Some(discriminator) = python_return_dict_field_discriminator(text) {
-        return Some(discriminator);
+    if let Some((field, value)) = python_return_dict_field_parts(text) {
+        if !owner.route_paths.is_empty() {
+            return Some(format!("response.json()[\"{field}\"] == {value}"));
+        }
+        return Some(format!("{field} == {value}"));
+    }
+    if let Some((_constructor, field, value)) = python_return_constructor_field_parts(text) {
+        return Some(format!("result.{field} == {value}"));
+    }
+    if let Some((target, _constructor, field, value)) =
+        python_assignment_constructor_field_parts(text)
+    {
+        if !owner.route_paths.is_empty() {
+            return python_route_response_field_discriminator(&field, &value);
+        }
+        return Some(format!("{target}.{field} == {value}"));
     }
     let (lhs, rhs) = split_python_assignment(text)?;
     if lhs.is_empty() || rhs.is_empty() {
@@ -3104,39 +3345,383 @@ fn python_field_value_discriminator(line_text: &str) -> Option<String> {
     Some(format!("{lhs} == {rhs}"))
 }
 
+fn python_route_response_field_discriminator(field: &str, value: &str) -> Option<String> {
+    match field {
+        "status" | "status_code" => Some(format!("response.status_code == {value}")),
+        "detail" => Some(format!("response.json()[\"detail\"] == {value}")),
+        _ => Some(format!("response.{field} == {value}")),
+    }
+}
+
 fn python_return_dict_field_discriminator(line_text: &str) -> Option<String> {
+    let (key, value) = python_return_dict_field_parts(line_text)?;
+    Some(format!("{key} == {value}"))
+}
+
+fn python_return_constructor_field_discriminator(line_text: &str) -> Option<String> {
+    let (_constructor, field, value) = python_return_constructor_field_parts(line_text)?;
+    Some(format!("result.{field} == {value}"))
+}
+
+fn python_return_dict_field_parts(line_text: &str) -> Option<(String, String)> {
     let expression = line_text.trim().strip_prefix("return ")?.trim();
     let body = expression
         .strip_prefix('{')?
         .trim_start()
         .trim_end_matches('}')
         .trim_end();
-    let (raw_key, rest) = body.split_once(':')?;
-    let key = raw_key.trim().trim_matches('"').trim_matches('\'');
-    let value = rest
-        .split(',')
-        .next()
-        .unwrap_or(rest)
-        .trim()
-        .trim_end_matches('}')
-        .trim();
+    let mut fallback = None;
+    for segment in top_level_python_segments(body) {
+        let Some((key, value)) = python_dict_field_segment_parts(segment) else {
+            continue;
+        };
+        if fallback.is_none() {
+            fallback = Some((key.to_string(), value.to_string()));
+        }
+        if is_literal_python_model_field_value(value) {
+            return Some((key.to_string(), value.to_string()));
+        }
+    }
+    fallback
+}
+
+fn top_level_python_segments(text: &str) -> Vec<&str> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut segment_start = 0usize;
+    let mut segments = Vec::new();
+    for (idx, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                segments.push(text[segment_start..idx].trim());
+                segment_start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    segments.push(text[segment_start..].trim());
+    segments
+}
+
+fn python_dict_field_segment_parts(segment: &str) -> Option<(&str, &str)> {
+    let colon = top_level_colon(segment)?;
+    let key = segment[..colon].trim().trim_matches('"').trim_matches('\'');
+    let value = segment[colon + 1..].trim().trim_end_matches('}').trim();
     if key.is_empty() || value.is_empty() {
         None
     } else {
-        Some(format!("{key} == {value}"))
+        Some((key, value))
     }
+}
+
+fn python_return_constructor_field_parts(line_text: &str) -> Option<(String, String, String)> {
+    let expression = line_text.trim().strip_prefix("return ")?.trim();
+    let (constructor, args) = split_python_constructor_call(expression)?;
+    if !is_python_constructor_callee(constructor) {
+        return None;
+    }
+    let (field, value) = first_python_keyword_argument(args)?;
+    if !is_simple_python_model_field_value(value) {
+        return None;
+    }
+    Some((
+        constructor.to_string(),
+        field.to_string(),
+        value.to_string(),
+    ))
+}
+
+fn python_assignment_constructor_field_parts(
+    line_text: &str,
+) -> Option<(String, String, String, String)> {
+    let (target, expression) = split_python_assignment(line_text.trim())?;
+    if !is_simple_python_identifier(target) {
+        return None;
+    }
+    let (constructor, args) = split_python_constructor_call(expression)?;
+    if !is_python_constructor_callee(constructor) {
+        return None;
+    }
+    let (field, value) = first_python_keyword_argument(args)?;
+    if !is_simple_python_model_field_value(value) {
+        return None;
+    }
+    Some((
+        target.to_string(),
+        constructor.to_string(),
+        field.to_string(),
+        value.to_string(),
+    ))
+}
+
+fn split_python_constructor_call(expression: &str) -> Option<(&str, &str)> {
+    let expression = expression.trim();
+    if !looks_like_call_expression(expression) {
+        return None;
+    }
+    let open = expression.find('(')?;
+    let close = expression.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let callee = expression[..open].trim();
+    let args = expression[open + 1..close].trim();
+    (!callee.is_empty() && !args.is_empty()).then_some((callee, args))
+}
+
+fn is_python_constructor_callee(callee: &str) -> bool {
+    let last_segment = callee.rsplit('.').next().unwrap_or(callee).trim();
+    let mut chars = last_segment.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_uppercase())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn first_python_keyword_argument(args: &str) -> Option<(&str, &str)> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut segment_start = 0usize;
+    for (idx, ch) in args.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                if let Some(parts) = python_keyword_argument_parts(&args[segment_start..idx]) {
+                    return Some(parts);
+                }
+                segment_start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    python_keyword_argument_parts(&args[segment_start..])
+}
+
+fn python_keyword_argument_parts(segment: &str) -> Option<(&str, &str)> {
+    let segment = segment.trim();
+    let equals = top_level_equals(segment)?;
+    let field = segment[..equals].trim();
+    let value = segment[equals + 1..].trim();
+    (is_simple_python_identifier(field) && !value.is_empty()).then_some((field, value))
+}
+
+fn top_level_equals(text: &str) -> Option<usize> {
+    top_level_delimiter(text, '=')
+}
+
+fn top_level_colon(text: &str) -> Option<usize> {
+    top_level_delimiter(text, ':')
+}
+
+fn top_level_delimiter(text: &str, delimiter: char) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if ch == delimiter && depth == 0 => return Some(idx),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_simple_python_model_field_value(value: &str) -> bool {
+    let value = value.trim();
+    is_literal_python_model_field_value(value) || is_simple_python_identifier(value)
+}
+
+fn is_literal_python_model_field_value(value: &str) -> bool {
+    let value = value.trim();
+    python_string_literal_value(value).is_some()
+        || matches!(value, "True" | "False" | "None")
+        || is_simple_python_numeric_literal(value)
+}
+
+fn is_simple_python_numeric_literal(value: &str) -> bool {
+    let value = value.trim().strip_prefix('-').unwrap_or(value.trim());
+    if value.is_empty() {
+        return false;
+    }
+    let mut digits = 0usize;
+    let mut dots = 0usize;
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            digits += 1;
+        } else if ch == '.' {
+            dots += 1;
+            if dots > 1 {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    digits > 0
 }
 
 fn python_output_or_call_discriminator(line_text: &str) -> Option<String> {
     let text = line_text.trim();
+    if let Some(exit_code) = python_exit_code_discriminator(text) {
+        return Some(format!("exit_code == {exit_code}"));
+    }
     let literal = first_python_string_literal(text)?;
-    if text.starts_with("print(") {
+    if python_stdout_output_call(text) {
+        Some(format!("stdout contains {literal}"))
+    } else if python_stderr_output_call(text) {
+        Some(format!("stderr contains {literal}"))
+    } else if python_cli_output_call(text) || text.starts_with("print(") {
         Some(format!("output contains {literal}"))
     } else if text.contains("logger.") || text.contains("logging.") {
         Some(format!("log contains {literal}"))
     } else {
         Some(format!("call includes {literal}"))
     }
+}
+
+fn python_cli_output_call(text: &str) -> bool {
+    contains_python_call_shape(text, "click.echo") || contains_python_call_shape(text, "typer.echo")
+}
+
+fn python_stdout_output_call(text: &str) -> bool {
+    contains_python_call_shape(text, "sys.stdout.write")
+}
+
+fn python_stderr_output_call(text: &str) -> bool {
+    contains_python_call_shape(text, "sys.stderr.write")
+}
+
+fn python_exit_code_discriminator(text: &str) -> Option<String> {
+    let text = text.trim();
+    if let Some(argument) = first_python_call_argument(text, "sys.exit") {
+        return normalize_python_exit_code(argument);
+    }
+    if let Some(rest) = text.strip_prefix("raise SystemExit") {
+        let rest = rest.trim_start();
+        if let Some(argument) = first_parenthesized_argument(rest) {
+            return normalize_python_exit_code(argument);
+        }
+    }
+    None
+}
+
+fn first_python_call_argument<'a>(text: &'a str, callee: &str) -> Option<&'a str> {
+    let idx = text.find(callee)?;
+    if !python_callee_start_has_boundary(text, idx)
+        || python_prefix_hides_code(line_prefix_before(text, idx))
+    {
+        return None;
+    }
+    first_parenthesized_argument(text.get(idx + callee.len()..)?.trim_start())
+}
+
+fn first_parenthesized_argument(text: &str) -> Option<&str> {
+    let body = text.strip_prefix('(')?;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (idx, ch) in body.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' if depth == 0 => {
+                let argument = body[..idx].split(',').next()?.trim();
+                return (!argument.is_empty()).then_some(argument);
+            }
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn normalize_python_exit_code(argument: &str) -> Option<String> {
+    let value = argument.trim();
+    if value == "None" {
+        return Some("0".to_string());
+    }
+    if value.chars().all(|ch| ch.is_ascii_digit()) {
+        return Some(value.to_string());
+    }
+    None
 }
 
 fn split_python_assignment(text: &str) -> Option<(&str, &str)> {
@@ -3181,6 +3766,21 @@ fn first_python_string_literal(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn python_string_literal_value(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let mut chars = trimmed.chars();
+    let quote = chars.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    if !trimmed.ends_with(quote) || trimmed.len() < quote.len_utf8() * 2 {
+        return None;
+    }
+    trimmed
+        .get(quote.len_utf8()..trimmed.len() - quote.len_utf8())
+        .map(str::to_string)
 }
 
 fn strip_python_control_prefix(line_text: &str) -> String {
@@ -3468,7 +4068,7 @@ fn classify_change(
         && matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
     {
-        python_missing_discriminators(&family, line, line_text, flow_sink.as_ref())
+        python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())
     } else {
         Vec::new()
     };
@@ -4151,6 +4751,10 @@ def test_notifies_callback():
         assert_eq!(family, ProbeFamily::FieldConstruction);
         assert_eq!(delta, DeltaKind::Value);
 
+        let (family, delta) = classify_probe_shape("    return User(active=True)");
+        assert_eq!(family, ProbeFamily::FieldConstruction);
+        assert_eq!(delta, DeltaKind::Value);
+
         let (family, delta) = classify_probe_shape("    notifier(\"receipt.sent\", order_id)");
         assert_eq!(family, ProbeFamily::SideEffect);
         assert_eq!(delta, DeltaKind::Effect);
@@ -4158,6 +4762,292 @@ def test_notifies_callback():
         let (family, delta) = classify_probe_shape("    callback = MagicMock(name=\"receipt\")");
         assert_eq!(family, ProbeFamily::SideEffect);
         assert_eq!(delta, DeltaKind::Effect);
+    }
+
+    #[test]
+    fn return_dict_field_parts_prefer_literal_changed_value_candidates() {
+        assert_eq!(
+            python_return_dict_field_parts("return {\"name\": name, \"status\": \"active\"}"),
+            Some(("status".to_string(), "\"active\"".to_string()))
+        );
+        assert_eq!(
+            python_return_dict_field_discriminator(
+                "return {\"name\": name, \"status\": \"active\"}"
+            )
+            .as_deref(),
+            Some("status == \"active\"")
+        );
+        assert_eq!(
+            python_return_dict_field_parts(
+                "return {\"label\": \"ready, set\", \"status\": status}"
+            ),
+            Some(("label".to_string(), "\"ready, set\"".to_string()))
+        );
+        assert_eq!(
+            python_return_dict_field_parts("return {\"status\": status}"),
+            Some(("status".to_string(), "status".to_string()))
+        );
+    }
+
+    #[test]
+    fn return_dict_field_parts_handle_nested_segments_and_literal_kinds() {
+        assert_eq!(
+            top_level_python_segments(
+                "\"payload\": {\"status\": \"active, pending\"}, \"note\": \"a,b\""
+            ),
+            vec![
+                "\"payload\": {\"status\": \"active, pending\"}",
+                "\"note\": \"a,b\""
+            ]
+        );
+        assert_eq!(
+            top_level_python_segments("\"label\": \"ready\\\"set\", \"status\": status"),
+            vec!["\"label\": \"ready\\\"set\"", "\"status\": status"]
+        );
+        assert_eq!(
+            python_dict_field_segment_parts("\"url\": \"https://example.test/a:b\""),
+            Some(("url", "\"https://example.test/a:b\""))
+        );
+        assert_eq!(python_dict_field_segment_parts("\"status\""), None);
+        assert!(is_literal_python_model_field_value("True"));
+        assert!(is_literal_python_model_field_value("-1.5"));
+        assert!(!is_literal_python_model_field_value("status"));
+        assert_eq!(
+            python_return_dict_field_parts(
+                "return {\"status\": status, invalid_segment, \"count\": total}"
+            ),
+            Some(("status".to_string(), "status".to_string()))
+        );
+        assert_eq!(
+            python_return_dict_field_parts("return {\"payload\": make_payload(a, b)}"),
+            Some(("payload".to_string(), "make_payload(a, b)".to_string()))
+        );
+        assert_eq!(python_return_dict_field_parts("return {}"), None);
+    }
+
+    #[test]
+    fn constructor_keyword_field_parts_accept_simple_model_field_values() {
+        assert_eq!(
+            python_return_constructor_field_parts("return User(active=True)"),
+            Some(("User".to_string(), "active".to_string(), "True".to_string()))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return models.User(name=\"Ada\")"),
+            Some((
+                "models.User".to_string(),
+                "name".to_string(),
+                "\"Ada\"".to_string()
+            ))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return _User(score=-1.5)"),
+            Some(("_User".to_string(), "score".to_string(), "-1.5".to_string()))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(plan=default_plan)"),
+            Some((
+                "User".to_string(),
+                "plan".to_string(),
+                "default_plan".to_string()
+            ))
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(label=\"a=b\")"),
+            Some((
+                "User".to_string(),
+                "label".to_string(),
+                "\"a=b\"".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn constructor_keyword_field_parts_fail_closed_for_ambiguous_shapes() {
+        assert_eq!(
+            python_return_constructor_field_parts("return build_user(active=True)"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(\"Ada\")"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(profile.active=True)"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("return User(active=build_active())"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts(
+                "return User(config={\"active\": True}, active=True)"
+            ),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_parts("value = User(active=True)"),
+            None
+        );
+    }
+
+    #[test]
+    fn first_python_keyword_argument_skips_positional_and_nested_arguments() {
+        assert_eq!(
+            first_python_keyword_argument("factory(a=b), active=True"),
+            Some(("active", "True"))
+        );
+        assert_eq!(
+            first_python_keyword_argument("name=\"Ada, Lovelace\", active=True"),
+            Some(("name", "\"Ada, Lovelace\""))
+        );
+        assert_eq!(
+            first_python_keyword_argument("metadata={\"a\": \"b,c\"}, active=True"),
+            Some(("metadata", "{\"a\": \"b,c\"}"))
+        );
+        assert_eq!(first_python_keyword_argument("factory(a=b), user"), None);
+    }
+
+    #[test]
+    fn classify_change_uses_constructor_keyword_field_discriminator() -> Result<(), String> {
+        let source = r#"
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    active: bool
+
+def build_user():
+    return User(active=True)
+"#;
+        let owners = extract_owners(Path::new("src/users.py"), source);
+        let tests = extract_tests(
+            Path::new("tests/test_users.py"),
+            r#"
+from src.users import build_user
+
+def test_build_user_smoke():
+    user = build_user()
+    assert user
+"#,
+        );
+
+        let Some(finding) = classify_change(
+            Path::new("src/users.py"),
+            9,
+            "    return User(active=True)",
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed constructor return inside owner should classify".to_string());
+        };
+
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+        assert_eq!(
+            finding
+                .activation
+                .missing_discriminators
+                .first()
+                .map(|missing| missing.value.as_str()),
+            Some("result.active == True")
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|entry| entry == "missing_discriminator: result.active == True")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn constructor_keyword_field_helpers_stay_bounded_and_fail_closed() {
+        assert_eq!(
+            python_return_constructor_field_discriminator("return User(active=True)").as_deref(),
+            Some("result.active == True")
+        );
+        assert_eq!(
+            python_return_constructor_field_discriminator("return models.User(score=-1.5)")
+                .as_deref(),
+            Some("result.score == -1.5")
+        );
+        assert_eq!(
+            split_python_constructor_call("User(active=True)"),
+            Some(("User", "active=True"))
+        );
+        assert_eq!(split_python_constructor_call("User()"), None);
+        assert_eq!(split_python_constructor_call("(User(active=True))"), None);
+        assert!(is_python_constructor_callee("models.User"));
+        assert!(is_python_constructor_callee("_PrivateUser"));
+        assert!(!is_python_constructor_callee("make_user"));
+        assert_eq!(
+            first_python_keyword_argument("ignored, active=True"),
+            Some(("active", "True"))
+        );
+        assert_eq!(
+            first_python_keyword_argument("label=\"a,b=c\", active=False"),
+            Some(("label", "\"a,b=c\""))
+        );
+        assert_eq!(
+            first_python_keyword_argument("meta={\"threshold\": \"a=b,c\"}"),
+            Some(("meta", "{\"threshold\": \"a=b,c\"}"))
+        );
+        assert_eq!(python_keyword_argument_parts("not keyword"), None);
+        assert_eq!(top_level_equals("metadata={\"a\": \"b=c\"}"), Some(8));
+        assert_eq!(top_level_equals("metadata"), None);
+        assert!(is_simple_python_model_field_value("\"active\""));
+        assert!(is_simple_python_model_field_value("True"));
+        assert!(is_simple_python_model_field_value("None"));
+        assert!(is_simple_python_model_field_value("-1.25"));
+        assert!(is_simple_python_model_field_value(".5"));
+        assert!(!is_simple_python_model_field_value("."));
+        assert!(!is_simple_python_model_field_value("-"));
+        assert!(!is_simple_python_model_field_value("1.2.3"));
+        assert!(!is_simple_python_model_field_value("make_value()"));
+        assert_eq!(
+            python_return_constructor_field_discriminator("return make_user(active=True)"),
+            None
+        );
+        assert_eq!(
+            python_return_constructor_field_discriminator("return User(active=make_value())"),
+            None
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts(
+                "response = Response(status_code=422, detail=\"coupon expired\")"
+            ),
+            Some((
+                "response".to_string(),
+                "Response".to_string(),
+                "status_code".to_string(),
+                "422".to_string()
+            ))
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts("response.body = Response(status_code=422)"),
+            None
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts("response = make_response(status_code=422)"),
+            None
+        );
+        assert_eq!(
+            python_assignment_constructor_field_parts("response = Response(detail=message())"),
+            None
+        );
+        assert_eq!(
+            python_route_response_field_discriminator("status_code", "422").as_deref(),
+            Some("response.status_code == 422")
+        );
+        assert_eq!(
+            python_route_response_field_discriminator("detail", "\"coupon expired\"").as_deref(),
+            Some("response.json()[\"detail\"] == \"coupon expired\"")
+        );
+        assert_eq!(
+            python_route_response_field_discriminator("headers", "expected_headers").as_deref(),
+            Some("response.headers == expected_headers")
+        );
     }
 
     #[test]
@@ -4364,6 +5254,37 @@ def test_notifies_callback():
         assert_eq!(
             finding.related_tests[0].oracle_strength,
             OracleStrength::Strong
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn classify_click_output_change_as_repairable_cli_gap() -> Result<(), String> {
+        let finding = classify_change(
+            Path::new("src/commands.py"),
+            5,
+            "    click.echo(\"shipment queued\")",
+            &extract_owners(
+                Path::new("src/commands.py"),
+                "import click\n\n@click.command()\ndef ship():\n    click.echo(\"shipment queued\")\n",
+            ),
+            &extract_tests(
+                Path::new("tests/test_commands.py"),
+                "from src.commands import ship\n\n\
+                 def test_ship_smoke(capsys):\n    ship()\n    captured = capsys.readouterr()\n    assert captured.out\n",
+            ),
+        )
+        .ok_or_else(|| "click output change should classify".to_string())?;
+
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.static_limit_kind, None);
+        assert_eq!(
+            missing_discriminator_values(&finding),
+            vec!["output contains \"shipment queued\""]
+        );
+        assert_eq!(
+            evidence_value(&finding, "suggested_verify_command: "),
+            Some("pytest tests/test_commands.py::test_ship_smoke")
         );
         Ok(())
     }

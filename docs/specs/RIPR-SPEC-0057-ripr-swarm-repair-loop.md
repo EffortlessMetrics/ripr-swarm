@@ -185,13 +185,22 @@ The backlog may include `limitation_backlog_packets[]` for analyzer work. Those
 packets must include limitation category, repair route, signal count, sample
 canonical gap IDs or source samples when available, dominant evidence class, why
 the item is not actionable, the analyzer unlock condition, and non-claims. Packet
-identity is route-grained so one limitation category can produce separate
-analyzer backlog packets for separate repair routes. They remain non-actionable
-and must not be placed in `top_ready_packets`.
+identity is route- and subroute-grained when `limitation_subroute` is available,
+so one limitation category can produce separate analyzer backlog packets for
+separate repair routes or expression-shaped repair queues. They remain
+non-actionable and must not be placed in `top_ready_packets`.
+The bounded packet set must keep samples for each packet-backed top repair
+route even when that route's representative packet would otherwise fall below
+the highest-volume subroute cutoff. Report-only runtime diagnostics remain in
+runtime status/run-limitations instead of appearing as sample-less limitation
+routes.
 Readiness may project the leading analyzer backlog routes as
-`top_limitation_routes[]`. That projection is separate from
-`repair_route_quality[]`, which is attempt-outcome evidence; limitation routes
-remain non-actionable until the full public packet contract is satisfied.
+`top_limitation_routes[]`. That projection carries `why_not_actionable`, unlock
+conditions, non-claims, and sample subroutes, and the top next action must
+preserve the same non-actionability reason when routing analyzer work. It is
+separate from `repair_route_quality[]`, which is attempt-outcome evidence;
+limitation routes remain non-actionable until the full public packet contract is
+satisfied.
 When readiness consumes older or external backlog packets that omit
 presentation-only route fields, it must preserve the non-actionable boundary by
 filling standard non-claims, fallback why-not-actionable text, fallback unlock
@@ -374,12 +383,13 @@ missing-evidence-field counts remain latest-attempt projections. Stored
 `summary`, `repair_route_quality[]`, and `top_missing_evidence_fields[]` rows are
 summary output; they must not override recomputed latest-attempt state if the
 two disagree.
-Repair-route quality rows should carry sample packet IDs and canonical gap IDs
-for failing latest attempts when available, and readiness should point
-`improve_repair_route_quality` at the derived route-quality backlog packet while
-preserving the first failed-attempt sample in the reason text. Route-quality
-work should start from a concrete failed attempt without re-queuing that failed
-repair packet as swarm-ready work.
+Repair-route quality rows should carry sample packet IDs, sample attempt IDs,
+and canonical gap IDs for failing latest attempts when available, and readiness
+should point `improve_repair_route_quality` at the derived route-quality
+backlog packet while preserving the first failed-attempt sample in
+`next_actions[].attempt_id` and the reason text. Route-quality work should
+start from a concrete failed attempt without re-queuing that failed repair
+packet as swarm-ready work.
 Attempt-ledger reports should also project `historical_repair_route_quality[]`,
 `historical_language_repair_route_quality[]`, and
 `top_historical_failing_repair_routes[]` from durable full attempt history. These
@@ -391,8 +401,8 @@ missing-evidence rows.
 Attempt-ledger and readiness reports should also project
 `repair_route_quality_backlog[]` from the top failing repair routes. Each row is
 an analyzer/report improvement packet with a stable `packet_id`,
-`improvement_route`, failure counts, dominant failure reason, sample packet and
-canonical gap IDs, an unlock condition, and non-claims. These rows are not
+`improvement_route`, failure counts, dominant failure reason, sample packet IDs,
+sample attempt IDs, canonical gap IDs, an unlock condition, and non-claims. These rows are not
 public repair packets, are not swarm-ready work, and must not change badge, PR,
 LSP, or CI authority.
 The explicit `missing_verify_result` summary count is the closeout counter for
@@ -697,8 +707,14 @@ Current implementation coverage:
   pins route-grained analyzer backlog packet identity when one limitation
   category has multiple repair routes.
 - `xtask::tests::ripr_swarm_readiness_routes_static_limitation_backlog_when_no_ready_packets`
-  pins readiness `top_limitation_routes[]` and sample packet routing without
-  making limitation backlog packets swarm-ready.
+  pins readiness `top_limitation_routes[]`, why-not-actionable projection,
+  subroute-preserving top action text, and sample packet routing without making
+  limitation backlog packets swarm-ready.
+- `xtask::tests::lane1_static_limitation_backlog_keeps_samples_for_each_top_repair_route`
+  pins that bounded backlog packets keep inspectable samples for each
+  packet-backed top repair route even when a low-count route falls below the
+  highest-volume subroute cutoff, while report-only runtime diagnostics stay out
+  of the packet-backed projection.
 - `xtask::tests::ripr_swarm_readiness_hardens_legacy_limitation_backlog_packets`
   pins readiness fallback non-claims, non-actionability text, unlock conditions,
   and explicit unknown evidence classes for older limitation backlog packets.

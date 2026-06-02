@@ -61,6 +61,7 @@ struct TypeScriptOwner {
     start_line: usize,
     end_line: usize,
     owner_kind: OwnerKind,
+    class_name: Option<String>,
     decorated: bool,
     imports: Vec<TypeScriptImport>,
 }
@@ -125,6 +126,9 @@ struct TypeScriptParseLimit {
 enum TypeScriptRelationKind {
     DirectOwnerCall,
     ImportedOwnerCall,
+    ModuleValueReference,
+    ReceiverOwnerCall,
+    ClassMethodCall,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -135,6 +139,9 @@ impl TypeScriptRelationKind {
         match self {
             Self::DirectOwnerCall => 5,
             Self::ImportedOwnerCall => 4,
+            Self::ModuleValueReference => 4,
+            Self::ReceiverOwnerCall => 4,
+            Self::ClassMethodCall => 4,
             Self::SameFileProximity => 3,
             Self::DescribeName => 2,
             Self::TestName => 1,
@@ -142,7 +149,14 @@ impl TypeScriptRelationKind {
     }
 
     fn uses_oracle(self) -> bool {
-        matches!(self, Self::DirectOwnerCall | Self::ImportedOwnerCall)
+        matches!(
+            self,
+            Self::DirectOwnerCall
+                | Self::ImportedOwnerCall
+                | Self::ModuleValueReference
+                | Self::ReceiverOwnerCall
+                | Self::ClassMethodCall
+        )
     }
 
     fn is_uncertain(self) -> bool {
@@ -153,6 +167,9 @@ impl TypeScriptRelationKind {
         match self {
             Self::DirectOwnerCall => "direct_owner_call",
             Self::ImportedOwnerCall => "imported_owner_call",
+            Self::ModuleValueReference => "module_value_reference",
+            Self::ReceiverOwnerCall => "receiver_owner_call",
+            Self::ClassMethodCall => "class_method_call",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",
@@ -183,6 +200,7 @@ struct TypeScriptAssertion {
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
     mock_payload: Option<TypeScriptMockPayload>,
+    error_payload: Option<TypeScriptErrorPayload>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,6 +233,35 @@ impl TypeScriptMockPayload {
 enum TypeScriptMockPayloadKind {
     CalledWith,
     CalledTimes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TypeScriptErrorPayload {
+    expected: String,
+    kind: TypeScriptErrorPayloadKind,
+}
+
+impl TypeScriptErrorPayload {
+    fn oracle_text(&self) -> String {
+        match self.kind {
+            TypeScriptErrorPayloadKind::ThrowsLiteral => {
+                format!("expect(...).toThrow({})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::RejectsThrowLiteral => {
+                format!("await expect(...).rejects.toThrow({})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::RejectsMatchObject => {
+                format!("await expect(...).rejects.toMatchObject({})", self.expected)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TypeScriptErrorPayloadKind {
+    ThrowsLiteral,
+    RejectsThrowLiteral,
+    RejectsMatchObject,
 }
 
 fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) {
@@ -545,6 +592,7 @@ fn owner_from_variable_declarator(
             start_line: line_for_offset(source, declarator.span.start as usize),
             end_line: line_for_offset(source, declarator.span.end as usize),
             owner_kind: OwnerKind::ModuleFunction,
+            class_name: None,
             decorated: false,
             imports: imports.to_vec(),
         }),
@@ -566,6 +614,7 @@ fn owner_from_function(
         start_line: line_for_offset(source, func.span.start as usize),
         end_line: line_for_offset(source, func.span.end as usize),
         owner_kind,
+        class_name: None,
         decorated,
         imports: imports.to_vec(),
     }
@@ -586,6 +635,7 @@ fn owner_from_arrow(
         start_line: line_for_offset(source, owner_start as usize),
         end_line: line_for_offset(source, arrow.span.end as usize),
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
+        class_name: None,
         decorated,
         imports: imports.to_vec(),
     }
@@ -599,9 +649,20 @@ fn owners_from_class(
 ) -> Vec<TypeScriptOwner> {
     let mut owners = Vec::new();
     let class_decorated = !class.decorators.is_empty();
+    let class_name = class
+        .id
+        .as_ref()
+        .map(|identifier| identifier.name.as_str().to_string());
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
-            && let Some(owner) = owner_from_method(method, file, source, class_decorated, imports)
+            && let Some(owner) = owner_from_method(
+                method,
+                file,
+                source,
+                class_decorated,
+                class_name.as_deref(),
+                imports,
+            )
         {
             owners.push(owner);
         }
@@ -614,6 +675,7 @@ fn owner_from_method(
     file: &Path,
     source: &str,
     class_decorated: bool,
+    class_name: Option<&str>,
     imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
     if method.computed {
@@ -630,6 +692,7 @@ fn owner_from_method(
         } else {
             OwnerKind::Method
         },
+        class_name: class_name.map(str::to_string),
         decorated: class_decorated || !method.decorators.is_empty(),
         imports: imports.to_vec(),
     })
@@ -784,6 +847,12 @@ fn extract_imports_from_statements(
 fn push_unique_import(out: &mut Vec<TypeScriptImport>, import: TypeScriptImport) {
     if !out.iter().any(|existing| existing == &import) {
         out.push(import);
+    }
+}
+
+fn push_unique_string(out: &mut Vec<String>, value: String) {
+    if !out.iter().any(|existing| existing == &value) {
+        out.push(value);
     }
 }
 
@@ -1112,10 +1181,16 @@ fn expect_assertion_from_expression(
     // Inner shape is either `expect(...)` directly or an
     // `expect(...).resolves` / `.rejects` chain.
     let inner = &outer_member.object;
+    let async_modifier = expect_assertion_chain_modifier(inner);
     let expect_call = expect_call_from_assertion_inner(inner)?;
 
-    let (oracle_kind, oracle_strength) = oracle_for_matcher(matcher);
     let mock_payload = mock_payload_from_assertion(matcher, expect_call, outer_call, source);
+    let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
+    let (oracle_kind, oracle_strength) = if error_payload.is_some() {
+        (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else {
+        oracle_for_matcher(matcher)
+    };
     Some(TypeScriptAssertion {
         matcher: matcher.to_string(),
         argument_count: outer_call.arguments.len(),
@@ -1123,7 +1198,18 @@ fn expect_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload,
+        error_payload,
     })
+}
+
+fn expect_assertion_chain_modifier<'a>(inner: &'a Expression<'a>) -> Option<&'a str> {
+    match inner {
+        Expression::StaticMemberExpression(inner_member) => {
+            Some(inner_member.property.name.as_str())
+                .filter(|modifier| *modifier == "resolves" || *modifier == "rejects")
+        }
+        _ => None,
+    }
 }
 
 fn expect_call_from_assertion_inner<'a>(
@@ -1182,6 +1268,53 @@ fn mock_payload_from_assertion(
                 expected,
                 kind: TypeScriptMockPayloadKind::CalledTimes,
             })
+        }
+        _ => None,
+    }
+}
+
+fn error_payload_from_assertion(
+    matcher: &str,
+    async_modifier: Option<&str>,
+    matcher_call: &oxc_ast::ast::CallExpression<'_>,
+    source: &str,
+) -> Option<TypeScriptErrorPayload> {
+    match (async_modifier, matcher) {
+        (None, "toThrow" | "toThrowError") if matcher_call.arguments.len() == 1 => {
+            let expected =
+                safe_error_literal_payload_text(matcher_call.arguments.first()?, source)?;
+            Some(TypeScriptErrorPayload {
+                expected,
+                kind: TypeScriptErrorPayloadKind::ThrowsLiteral,
+            })
+        }
+        (Some("rejects"), "toThrow" | "toThrowError") if matcher_call.arguments.len() == 1 => {
+            let expected =
+                safe_error_literal_payload_text(matcher_call.arguments.first()?, source)?;
+            Some(TypeScriptErrorPayload {
+                expected,
+                kind: TypeScriptErrorPayloadKind::RejectsThrowLiteral,
+            })
+        }
+        (Some("rejects"), "toMatchObject") if matcher_call.arguments.len() == 1 => {
+            let expected = safe_error_object_payload_text(matcher_call.arguments.first()?, source)?;
+            Some(TypeScriptErrorPayload {
+                expected,
+                kind: TypeScriptErrorPayloadKind::RejectsMatchObject,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn safe_error_literal_payload_text(arg: &Argument<'_>, source: &str) -> Option<String> {
+    matches!(arg, Argument::StringLiteral(_)).then(|| source_text_for_argument(arg, source))?
+}
+
+fn safe_error_object_payload_text(arg: &Argument<'_>, source: &str) -> Option<String> {
+    match arg {
+        Argument::ObjectExpression(object) if safe_mock_expected_object(object) => {
+            source_text_for_argument(arg, source)
         }
         _ => None,
     }
@@ -1320,6 +1453,18 @@ fn owner_call_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> Option<TypeScriptRelationKind> {
+    if owner.owner_kind == OwnerKind::ModuleFunction {
+        return module_initializer_observer_relation(test, owner)
+            .then_some(TypeScriptRelationKind::ModuleValueReference);
+    }
+    if owner.owner_kind == OwnerKind::Method {
+        return receiver_owner_call_relation(test, owner)
+            .then_some(TypeScriptRelationKind::ReceiverOwnerCall);
+    }
+    if owner.owner_kind == OwnerKind::ClassMethod {
+        return class_method_owner_call_relation(test, owner)
+            .then_some(TypeScriptRelationKind::ClassMethodCall);
+    }
     if contains_call_name(&test.body_text, &owner.name)
         && !owner_name_shadowed_by_unrelated_import(test, owner)
     {
@@ -1332,6 +1477,162 @@ fn owner_call_relation(
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
     None
+}
+
+fn module_initializer_observer_relation(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {
+    if owner.owner_kind != OwnerKind::ModuleFunction || test_mocks_owner_module(test, owner) {
+        return false;
+    }
+    if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
+        && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        && expect_actual_references_identifier(&test.body_text, &owner.name)
+    {
+        return true;
+    }
+    test.imports_in_file.iter().any(|import| {
+        if !import_source_matches_owner(import, &test.file, owner) {
+            return false;
+        }
+        if import.namespace {
+            return expect_actual_references_member(&test.body_text, &import.local, &owner.name);
+        }
+        import.imported.as_deref() == Some(owner.name.as_str())
+            && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && expect_actual_references_identifier(&test.body_text, &import.local)
+    })
+}
+
+fn receiver_owner_call_relation(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {
+    if owner.owner_kind != OwnerKind::Method || test_mocks_owner_module(test, owner) {
+        return false;
+    }
+    let constructor_names = constructor_names_for_method_owner(test, owner);
+    if constructor_names.is_empty() {
+        return false;
+    }
+    receiver_names_for_constructor_calls(&test.body_text, &constructor_names)
+        .iter()
+        .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
+}
+
+fn class_method_owner_call_relation(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {
+    if owner.owner_kind != OwnerKind::ClassMethod || test_mocks_owner_module(test, owner) {
+        return false;
+    }
+    let class_names = class_names_for_class_method_owner(test, owner);
+    if class_names.is_empty() {
+        return false;
+    }
+    class_names
+        .iter()
+        .any(|class_name| contains_member_call_name(&test.body_text, class_name, &owner.name))
+}
+
+fn class_names_for_class_method_owner(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+) -> Vec<String> {
+    let Some(class_name) = owner.class_name.as_deref() else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
+        && !local_identifier_declared_in_test_body(&test.body_text, class_name)
+    {
+        push_unique_string(&mut names, class_name.to_string());
+    }
+    for import in &test.imports_in_file {
+        if import.namespace || !import_source_matches_owner(import, &test.file, owner) {
+            continue;
+        }
+        if import.imported.as_deref() == Some(class_name)
+            && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+        {
+            push_unique_string(&mut names, import.local.clone());
+        }
+    }
+    names
+}
+
+fn constructor_names_for_method_owner(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+) -> Vec<String> {
+    let Some(class_name) = owner.class_name.as_deref() else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    if normalized_module_path(&test.file) == normalized_module_path(&owner.file) {
+        push_unique_string(&mut names, class_name.to_string());
+    }
+    for import in &test.imports_in_file {
+        if import.namespace || !import_source_matches_owner(import, &test.file, owner) {
+            continue;
+        }
+        if import.imported.as_deref() == Some(class_name) {
+            push_unique_string(&mut names, import.local.clone());
+        }
+    }
+    names
+}
+
+fn receiver_names_for_constructor_calls(
+    body_text: &str,
+    constructor_names: &[String],
+) -> Vec<String> {
+    let mut receiver_names = Vec::new();
+    for line in body_text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        let Some(after_keyword) = ["const ", "let ", "var "]
+            .into_iter()
+            .find_map(|keyword| trimmed.strip_prefix(keyword))
+        else {
+            continue;
+        };
+        let Some((declaration, initializer)) = after_keyword.split_once('=') else {
+            continue;
+        };
+        let Some(receiver_name) = receiver_name_from_declaration(declaration) else {
+            continue;
+        };
+        if constructor_names
+            .iter()
+            .any(|constructor| contains_new_constructor_call(initializer, constructor))
+        {
+            push_unique_string(&mut receiver_names, receiver_name);
+        }
+    }
+    receiver_names
+}
+
+fn receiver_name_from_declaration(declaration: &str) -> Option<String> {
+    if declaration.contains(',') {
+        return None;
+    }
+    let name = declaration.split(':').next()?.trim();
+    is_safe_javascript_identifier(name).then(|| name.to_string())
+}
+
+fn contains_new_constructor_call(text: &str, constructor_name: &str) -> bool {
+    let needle = format!("new {constructor_name}(");
+    text.match_indices(&needle).any(|(idx, _)| {
+        text[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+            && !line_prefix_looks_like_comment_or_string(text, idx)
+            && !inside_block_comment(text, idx)
+    })
+}
+
+fn test_mocks_owner_module(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {
+    test.mocks_in_file.iter().any(|source| {
+        normalized_relative_import_module(&test.file, source)
+            .is_some_and(|module| module == normalized_module_path(&owner.file))
+    })
 }
 
 fn heuristic_relation(
@@ -1501,6 +1802,78 @@ fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &s
     })
 }
 
+fn expect_actual_references_identifier(body_text: &str, identifier: &str) -> bool {
+    is_safe_javascript_identifier(identifier)
+        && expect_actual_slices(body_text).iter().any(|actual| {
+            actual.trim_start().starts_with(identifier)
+                && actual
+                    .trim_start()
+                    .get(identifier.len()..)
+                    .and_then(|rest| rest.chars().next())
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+        })
+}
+
+fn expect_actual_references_member(
+    body_text: &str,
+    object_name: &str,
+    property_name: &str,
+) -> bool {
+    if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(property_name)
+    {
+        return false;
+    }
+    let reference = format!("{object_name}.{property_name}");
+    expect_actual_slices(body_text).iter().any(|actual| {
+        actual.trim_start().starts_with(&reference)
+            && actual
+                .trim_start()
+                .get(reference.len()..)
+                .and_then(|rest| rest.chars().next())
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+    })
+}
+
+fn expect_actual_slices(body_text: &str) -> Vec<&str> {
+    body_text
+        .match_indices("expect(")
+        .filter_map(|(idx, _)| {
+            if line_prefix_looks_like_comment_or_string(body_text, idx)
+                || inside_block_comment(body_text, idx)
+            {
+                return None;
+            }
+            body_text.get(idx + "expect(".len()..)
+        })
+        .collect()
+}
+
+fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
+    body_text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        !trimmed.starts_with("//") && declaration_line_declares_identifier(trimmed, identifier)
+    })
+}
+
+fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
+    ["const ", "let ", "var ", "function "]
+        .into_iter()
+        .filter_map(|keyword| line.strip_prefix(keyword))
+        .filter_map(|after| {
+            after
+                .split(|ch: char| {
+                    ch == ':'
+                        || ch == '='
+                        || ch == '('
+                        || ch == ','
+                        || ch == ';'
+                        || ch.is_whitespace()
+                })
+                .find(|part| !part.is_empty())
+        })
+        .any(|declared| declared == identifier)
+}
+
 fn has_member_call_boundary(body_text: &str, idx: usize) -> bool {
     body_text[..idx]
         .chars()
@@ -1654,6 +2027,9 @@ fn similarity_key_contains(haystack: &str, needle: &str) -> bool {
 fn assertion_oracle_text(assertion: &TypeScriptAssertion) -> String {
     if let Some(mock_payload) = &assertion.mock_payload {
         return mock_payload.oracle_text();
+    }
+    if let Some(error_payload) = &assertion.error_payload {
+        return error_payload.oracle_text();
     }
     if matches!(assertion.matcher.as_str(), "toThrow" | "toThrowError")
         && assertion.argument_count == 0
@@ -2838,6 +3214,12 @@ fn classify_change(
                 mock_payload_oracle.as_deref(),
             )
         }
+        _ if owner.owner_kind == OwnerKind::ModuleFunction => {
+            format!(
+                "TypeScript preview advisory: related module-initializer observer reaches `{}` but no safe target shape is available; add an exact value assertion for the exported value and keep the finding advisory until repair-card fields are complete.",
+                owner.name
+            )
+        }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
         }
@@ -2917,12 +3299,16 @@ fn classify_change(
 
 fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
-        OwnerKind::Method | OwnerKind::ClassMethod => format!(
-            "No trusted TypeScript method relation for `{}`. Object method calls stay ambiguous in preview until method related-test matching lands.",
+        OwnerKind::Method => format!(
+            "No trusted TypeScript method receiver relation for `{}`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, prototype aliases, and dynamic property access stay ambiguous in preview.",
+            owner.name
+        ),
+        OwnerKind::ClassMethod => format!(
+            "No trusted TypeScript class-method relation for `{}`. Direct same-file or imported `Class.method(...)` calls are supported, but local shadows, mocked modules, namespace chains, dynamic member access, and missing class-name context stay ambiguous in preview.",
             owner.name
         ),
         OwnerKind::ModuleFunction => format!(
-            "No trusted TypeScript module-initializer relation for `{}`. Identifier-reference observers stay missing context until module-value related-test matching lands.",
+            "No trusted TypeScript module-initializer observer for `{}`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.",
             owner.name
         ),
         _ => format!(
@@ -2934,11 +3320,14 @@ fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
 
 fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
-        OwnerKind::Method | OwnerKind::ClassMethod => {
-            "TypeScript preview advisory: method owner relation is missing context; add an exact method observer only after the adapter can safely relate the receiver shape.".to_string()
+        OwnerKind::Method => {
+            "TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, mocked modules, prototype aliases, and dynamic property access advisory.".to_string()
+        }
+        OwnerKind::ClassMethod => {
+            "TypeScript preview advisory: class-method relation is missing context; use a direct same-file or imported `Class.method(...)` observer when safe, and keep local shadows, mocked modules, namespace chains, dynamic member access, and missing class-name context advisory.".to_string()
         }
         OwnerKind::ModuleFunction => {
-            "TypeScript preview advisory: module initializer relation is missing context; add an exact value observer and keep the finding advisory until identifier-reference matching lands.".to_string()
+            "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.".to_string()
         }
         _ => {
             "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
@@ -3212,6 +3601,7 @@ mod tests {
             start_line: 1,
             end_line: 20,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         }
@@ -3225,6 +3615,7 @@ mod tests {
             oracle_kind: OracleKind::SmokeOnly,
             oracle_strength: OracleStrength::Smoke,
             mock_payload: None,
+            error_payload: None,
         }
     }
 
@@ -3244,6 +3635,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn class_method_no_static_path_guidance_names_current_supported_boundary() {
+        let mut owner = test_owner("build", "src/owners.ts");
+        owner.owner_kind = OwnerKind::ClassMethod;
+        owner.class_name = Some("Cart".to_string());
+
+        let missing = no_static_path_missing(&owner);
+        let recommendation = no_static_path_recommendation(&owner);
+
+        assert!(
+            missing
+                .contains("Direct same-file or imported `Class.method(...)` calls are supported")
+        );
+        assert!(missing.contains("local shadows"));
+        assert!(missing.contains("dynamic member access"));
+        assert!(!missing.contains("class-method related-test matching lands"));
+        assert!(
+            recommendation.contains("direct same-file or imported `Class.method(...)` observer")
+        );
+        assert!(recommendation.contains("namespace chains"));
+        assert!(!recommendation.contains("class-method related-test matching lands"));
+    }
+
     fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         TypeScriptTest {
             name: format!("{owner_name} records status"),
@@ -3261,6 +3675,7 @@ mod tests {
                 oracle_kind: OracleKind::MockExpectation,
                 oracle_strength: OracleStrength::Medium,
                 mock_payload: None,
+                error_payload: None,
             }],
             mocks_in_file: Vec::new(),
             imports_in_file: Vec::new(),
@@ -3289,6 +3704,7 @@ mod tests {
                 oracle_kind,
                 oracle_strength,
                 mock_payload: None,
+                error_payload: None,
             }],
             mocks_in_file: Vec::new(),
             imports_in_file: Vec::new(),
@@ -3310,6 +3726,7 @@ mod tests {
                 oracle_kind: OracleKind::ExactValue,
                 oracle_strength: OracleStrength::Strong,
                 mock_payload: None,
+                error_payload: None,
             }],
             mocks_in_file: Vec::new(),
             imports_in_file: Vec::new(),
@@ -3598,6 +4015,7 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3640,6 +4058,7 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3661,6 +4080,414 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
     }
 
     #[test]
+    fn find_related_tests_matches_bounded_method_receiver_calls() {
+        let owner = TypeScriptOwner {
+            name: "total".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 5,
+            end_line: 8,
+            owner_kind: OwnerKind::Method,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart as Subject } from "../src/owners";
+
+test("cart total observes receiver", () => {
+    const cart = new Subject();
+    expect(cart.total()).toBe(1);
+});
+"#,
+        );
+
+        let candidates = related_test_candidates(&owner, &tests);
+        let related = find_related_tests(&owner, &tests);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].relation,
+            TypeScriptRelationKind::ReceiverOwnerCall
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].name, "cart total observes receiver");
+        assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+    }
+
+    #[test]
+    fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners() {
+        let owner = TypeScriptOwner {
+            name: "total".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 5,
+            end_line: 8,
+            owner_kind: OwnerKind::Method,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+test("cart total through factory stays ambiguous", () => {
+    const cart = makeCart();
+    expect(cart.total()).toBe(1);
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "total".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 5,
+            end_line: 8,
+            owner_kind: OwnerKind::Method,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+test("cart total through dynamic method stays ambiguous", () => {
+    const cart = new Cart();
+    const method = "total";
+    expect(cart[method]()).toBe(1);
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "total".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 5,
+            end_line: 8,
+            owner_kind: OwnerKind::Method,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+vi.mock("../src/owners");
+
+test("mocked cart total stays ambiguous", () => {
+    const cart = new Cart();
+    expect(cart.total()).toBe(1);
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_matches_bounded_class_method_calls() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart as Subject } from "../src/owners";
+
+test("static build observes class method", () => {
+    expect(Subject.build()).toBeDefined();
+});
+"#,
+        );
+
+        let candidates = related_test_candidates(&owner, &tests);
+        let related = find_related_tests(&owner, &tests);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].relation,
+            TypeScriptRelationKind::ClassMethodCall
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].name, "static build observes class method");
+        assert_eq!(related[0].oracle_kind, OracleKind::SmokeOnly);
+        assert_eq!(related[0].oracle_strength, OracleStrength::Smoke);
+    }
+
+    #[test]
+    fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+test("shadowed static build stays ambiguous", () => {
+    const Cart = { build: () => "shadow" };
+    expect(Cart.build()).toBe("shadow");
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_matches_same_file_class_method_calls() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("src/owners.ts"),
+            r#"test("same file static build observes class method", () => {
+    expect(Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let candidates = related_test_candidates(&owner, &tests);
+        let related = find_related_tests(&owner, &tests);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].relation,
+            TypeScriptRelationKind::ClassMethodCall
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].name,
+            "same file static build observes class method"
+        );
+    }
+
+    #[test]
+    fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import * as Owners from "../src/owners";
+
+test("namespace static build stays ambiguous", () => {
+    expect(Owners.Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: Some("Cart".to_string()),
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+vi.mock("../src/owners");
+
+test("mocked static build stays ambiguous", () => {
+    expect(Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_requires_class_name_for_class_method_calls() {
+        let owner = TypeScriptOwner {
+            name: "build".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 10,
+            end_line: 12,
+            owner_kind: OwnerKind::ClassMethod,
+            class_name: None,
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { Cart } from "../src/owners";
+
+test("unknown class static build stays ambiguous", () => {
+    expect(Cart.build()).toBeDefined();
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn find_related_tests_matches_module_initializer_named_import_observer() {
+        let owner = TypeScriptOwner {
+            name: "DEFAULT_RATE".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 15,
+            end_line: 15,
+            owner_kind: OwnerKind::ModuleFunction,
+            class_name: None,
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { DEFAULT_RATE as rate } from "../src/owners";
+
+test("rate value observes initializer", () => {
+    expect(rate).toBe(0.09);
+});
+"#,
+        );
+
+        let candidates = related_test_candidates(&owner, &tests);
+        let related = find_related_tests(&owner, &tests);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].relation,
+            TypeScriptRelationKind::ModuleValueReference
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].name, "rate value observes initializer");
+        assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+    }
+
+    #[test]
+    fn find_related_tests_matches_module_initializer_namespace_observer() {
+        let owner = TypeScriptOwner {
+            name: "DEFAULT_RATE".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 15,
+            end_line: 15,
+            owner_kind: OwnerKind::ModuleFunction,
+            class_name: None,
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import * as owners from "../src/owners";
+
+test("rate value observes namespace initializer", () => {
+    expect(owners.DEFAULT_RATE).toBe(0.09);
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].name, "rate value observes namespace initializer");
+        assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
+    }
+
+    #[test]
+    fn find_related_tests_keeps_module_initializer_shadow_and_non_expect_references_unrelated() {
+        let owner = TypeScriptOwner {
+            name: "DEFAULT_RATE".to_string(),
+            file: PathBuf::from("src/owners.ts"),
+            start_line: 15,
+            end_line: 15,
+            owner_kind: OwnerKind::ModuleFunction,
+            class_name: None,
+            decorated: false,
+            imports: Vec::new(),
+        };
+        let tests = extract_tests(
+            Path::new("tests/owners.test.ts"),
+            r#"import { DEFAULT_RATE } from "../src/owners";
+
+test("shadowed rate stays ambiguous", () => {
+    const DEFAULT_RATE = 0.1;
+    expect(DEFAULT_RATE).toBe(0.1);
+});
+
+test("derived rate stays ambiguous", () => {
+    const actual = DEFAULT_RATE;
+    expect(actual).toBe(0.09);
+});
+
+test("string mention stays ambiguous", () => {
+    expect("DEFAULT_RATE").toBe("DEFAULT_RATE");
+});
+"#,
+        );
+
+        let related = find_related_tests(&owner, &tests);
+
+        assert!(related.is_empty());
+    }
+
+    #[test]
     fn find_related_tests_matches_named_import_alias_calls() {
         let owner = TypeScriptOwner {
             name: "applyDiscount".to_string(),
@@ -3668,6 +4495,7 @@ it("beta", () => { expect(otherHelper()).toBe(true); });
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3695,6 +4523,7 @@ test("alias import observes threshold", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3722,6 +4551,7 @@ test("namespace import observes threshold", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3758,6 +4588,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3786,6 +4617,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3827,6 +4659,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3891,6 +4724,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3917,6 +4751,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -3962,6 +4797,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -4274,6 +5110,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -4312,6 +5149,7 @@ test("type only import", () => {
                 start_line: 1,
                 end_line: 5,
                 owner_kind: OwnerKind::Function,
+                class_name: None,
                 decorated: false,
                 imports: Vec::new(),
             },
@@ -4321,6 +5159,7 @@ test("type only import", () => {
                 start_line: 1,
                 end_line: 5,
                 owner_kind: OwnerKind::Function,
+                class_name: None,
                 decorated: false,
                 imports: Vec::new(),
             },
@@ -4678,7 +5517,7 @@ test("type only import", () => {
     }
 
     #[test]
-    fn extract_tests_keeps_payload_tothrow_broad_until_payload_is_inspected() {
+    fn extract_tests_maps_literal_tothrow_to_exact_error_variant_oracle() {
         let tests = extract_tests(
             Path::new("tests/lib.test.ts"),
             r#"test("throws", () => {
@@ -4690,8 +5529,120 @@ test("type only import", () => {
         assert_eq!(tests[0].assertions.len(), 1);
         assert_eq!(tests[0].assertions[0].matcher, "toThrow");
         assert_eq!(tests[0].assertions[0].argument_count, 1);
+        assert_eq!(
+            tests[0].assertions[0].oracle_kind,
+            OracleKind::ExactErrorVariant
+        );
+        assert_eq!(
+            tests[0].assertions[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(
+            tests[0].assertions[0]
+                .error_payload
+                .as_ref()
+                .map(TypeScriptErrorPayload::oracle_text)
+                .as_deref(),
+            Some("expect(...).toThrow(\"empty user\")")
+        );
+    }
+
+    #[test]
+    fn extract_tests_keeps_dynamic_tothrow_payload_broad() {
+        let tests = extract_tests(
+            Path::new("tests/lib.test.ts"),
+            r#"test("throws", () => {
+    expect(() => parseUser("")).toThrow(message);
+});
+"#,
+        );
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].assertions.len(), 1);
+        assert_eq!(tests[0].assertions[0].matcher, "toThrow");
+        assert_eq!(tests[0].assertions[0].argument_count, 1);
         assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::BroadError);
         assert_eq!(tests[0].assertions[0].oracle_strength, OracleStrength::Weak);
+        assert!(tests[0].assertions[0].error_payload.is_none());
+    }
+
+    #[test]
+    fn extract_tests_maps_rejects_tothrow_literal_to_exact_error_variant_oracle() {
+        let tests = extract_tests(
+            Path::new("tests/lib.test.ts"),
+            r#"test("rejects", async () => {
+    await expect(loadProfile("")).rejects.toThrow("missing id");
+});
+"#,
+        );
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].assertions.len(), 1);
+        assert_eq!(tests[0].assertions[0].matcher, "toThrow");
+        assert_eq!(
+            tests[0].assertions[0].oracle_kind,
+            OracleKind::ExactErrorVariant
+        );
+        assert_eq!(
+            tests[0].assertions[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(
+            tests[0].assertions[0]
+                .error_payload
+                .as_ref()
+                .map(TypeScriptErrorPayload::oracle_text)
+                .as_deref(),
+            Some("await expect(...).rejects.toThrow(\"missing id\")")
+        );
+    }
+
+    #[test]
+    fn extract_tests_maps_rejects_match_object_literal_to_exact_error_variant_oracle() {
+        let tests = extract_tests(
+            Path::new("tests/lib.test.ts"),
+            r#"test("rejects", async () => {
+    await expect(loadProfile("")).rejects.toMatchObject({ code: "E_AUTH" });
+});
+"#,
+        );
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].assertions.len(), 1);
+        assert_eq!(tests[0].assertions[0].matcher, "toMatchObject");
+        assert_eq!(
+            tests[0].assertions[0].oracle_kind,
+            OracleKind::ExactErrorVariant
+        );
+        assert_eq!(
+            tests[0].assertions[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(
+            tests[0].assertions[0]
+                .error_payload
+                .as_ref()
+                .map(TypeScriptErrorPayload::oracle_text)
+                .as_deref(),
+            Some("await expect(...).rejects.toMatchObject({ code: \"E_AUTH\" })")
+        );
+    }
+
+    #[test]
+    fn extract_tests_keeps_dynamic_rejects_match_object_unbounded() {
+        let tests = extract_tests(
+            Path::new("tests/lib.test.ts"),
+            r#"test("rejects", async () => {
+    await expect(loadProfile("")).rejects.toMatchObject({ code });
+});
+"#,
+        );
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].assertions.len(), 1);
+        assert_eq!(tests[0].assertions[0].matcher, "toMatchObject");
+        assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::Unknown);
+        assert_eq!(
+            tests[0].assertions[0].oracle_strength,
+            OracleStrength::Unknown
+        );
+        assert!(tests[0].assertions[0].error_payload.is_none());
     }
 
     #[test]
@@ -4738,6 +5689,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -4755,6 +5707,7 @@ test("type only import", () => {
                 oracle_kind: OracleKind::ExactValue,
                 oracle_strength: OracleStrength::Strong,
                 mock_payload: None,
+                error_payload: None,
             }],
             mocks_in_file: Vec::new(),
             imports_in_file: Vec::new(),
@@ -4792,6 +5745,7 @@ test("type only import", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -4820,6 +5774,7 @@ test("type only import", () => {
             start_line: 10,
             end_line: 20,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -5396,6 +6351,7 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -5435,6 +6391,7 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -5461,6 +6418,7 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };
@@ -5488,6 +6446,7 @@ test("alpha", () => {
             start_line: 1,
             end_line: 5,
             owner_kind: OwnerKind::Function,
+            class_name: None,
             decorated: false,
             imports: Vec::new(),
         };

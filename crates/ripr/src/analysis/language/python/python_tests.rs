@@ -343,6 +343,7 @@ def test_pytest_shapes(client, caplog, capsys, monkeypatch):
     assert (result.kind or result["kind"]) == "paid"
     assert capsys.readouterr().out == "ok\n"
     assert response.status_code == 422
+    assert response.json()["detail"] == "coupon expired"
     assert flag
     assert_valid(result)
 "#;
@@ -445,6 +446,325 @@ fn route_decorators_are_transparent_but_arbitrary_decorators_limit() {
             "expected non-route decorator `{decorator}` to remain a static limit"
         );
     }
+}
+
+#[test]
+fn route_owner_collects_static_and_dynamic_route_metadata() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("app/checkout.py"),
+        r#"
+api = object()
+prefix = "/v1"
+
+def route_path():
+    return "/checkout"
+
+@api.post("/checkout")
+def checkout():
+    return {"detail": "ok"}
+
+@api.get(route_path())
+def dynamic_checkout():
+    return {"detail": "ok"}
+
+@api.post(prefix + "/checkout")
+def expression_checkout():
+    return {"detail": "ok"}
+"#,
+    );
+
+    let checkout = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or_else(|| "expected checkout owner".to_string())?;
+    assert_eq!(checkout.route_paths, vec!["/checkout".to_string()]);
+    assert!(checkout.dynamic_route_decorators.is_empty());
+
+    let dynamic = owners
+        .iter()
+        .find(|owner| owner.name == "dynamic_checkout")
+        .ok_or_else(|| "expected dynamic_checkout owner".to_string())?;
+    assert!(dynamic.route_paths.is_empty());
+    assert_eq!(
+        dynamic.dynamic_route_decorators,
+        vec!["api.get".to_string()]
+    );
+
+    let expression = owners
+        .iter()
+        .find(|owner| owner.name == "expression_checkout")
+        .ok_or_else(|| "expected expression_checkout owner".to_string())?;
+    assert!(expression.route_paths.is_empty());
+    assert_eq!(
+        expression.dynamic_route_decorators,
+        vec!["api.post".to_string()]
+    );
+    Ok(())
+}
+
+#[test]
+fn api_client_route_relation_maps_client_calls_to_route_owner() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("app/checkout.py"),
+        r#"
+api = object()
+
+@api.post("/checkout")
+def checkout(payload):
+    return {"detail": "coupon expired"}
+"#,
+    );
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "checkout")
+        .ok_or_else(|| "expected checkout owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        r#"
+def test_expired_coupon_response_smoke(client):
+    response = client.post("/checkout", json={"expired": True})
+    assert response
+"#,
+    );
+
+    let candidates = related_test_candidates(owner, &tests);
+    let relation = candidates
+        .first()
+        .map(|candidate| candidate.relation)
+        .ok_or_else(|| "expected related API client route candidate".to_string())?;
+    assert_eq!(relation, PythonRelationKind::ApiClientRouteCall);
+    assert!(relation.uses_oracle());
+
+    let related = find_related_tests(owner, &tests);
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].oracle_kind, OracleKind::SmokeOnly);
+    assert_eq!(related[0].oracle_strength, OracleStrength::Smoke);
+    Ok(())
+}
+
+#[test]
+fn classify_change_uses_response_json_discriminator_for_api_route_returns() -> Result<(), String> {
+    let source = r#"
+api = object()
+
+@api.post("/checkout")
+def checkout(payload):
+    if payload.get("expired"):
+        return {"detail": "coupon expired"}
+    return {"detail": "ok"}
+"#;
+    let owners = extract_owners(Path::new("app/checkout.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        r#"
+def test_expired_coupon_response_smoke(client):
+    response = client.post("/checkout", json={"expired": True})
+    assert response
+"#,
+    );
+
+    let Some(finding) = classify_change(
+        Path::new("app/checkout.py"),
+        7,
+        "        return {\"detail\": \"coupon expired\"}",
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed route return inside owner should classify".to_string());
+    };
+
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding
+            .activation
+            .missing_discriminators
+            .first()
+            .map(|missing| missing.value.as_str()),
+        Some("response.json()[\"detail\"] == \"coupon expired\"")
+    );
+    assert!(finding.evidence.iter().any(|entry| entry
+        == "related_test_relation: api_client_route_call (test_expired_coupon_response_smoke)"));
+    Ok(())
+}
+
+#[test]
+fn classify_change_uses_status_discriminator_for_route_response_constructor_assignment()
+-> Result<(), String> {
+    let source = r#"
+class Response:
+    def __init__(self, status_code, detail):
+        self.status_code = status_code
+        self.detail = detail
+
+api = object()
+
+@api.post("/checkout")
+def checkout(payload):
+    if payload.get("expired"):
+        response = Response(status_code=422, detail="coupon expired")
+        return response
+    return Response(status_code=200, detail="ok")
+"#;
+    let owners = extract_owners(Path::new("app/checkout.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        r#"
+def test_expired_coupon_response_smoke(client):
+    response = client.post("/checkout", json={"expired": True})
+    assert response
+"#,
+    );
+
+    let Some(finding) = classify_change(
+        Path::new("app/checkout.py"),
+        12,
+        "        response = Response(status_code=422, detail=\"coupon expired\")",
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed route response constructor should classify".to_string());
+    };
+
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert_eq!(
+        finding
+            .activation
+            .missing_discriminators
+            .first()
+            .map(|missing| missing.value.as_str()),
+        Some("response.status_code == 422")
+    );
+    assert!(finding.evidence.iter().any(|entry| entry
+        == "related_test_relation: api_client_route_call (test_expired_coupon_response_smoke)"));
+    Ok(())
+}
+
+#[test]
+fn classify_change_dynamic_route_registration_fails_closed() -> Result<(), String> {
+    let source = r#"
+api = object()
+
+def route_path():
+    return "/checkout"
+
+@api.post(route_path())
+def checkout(payload):
+    if payload.get("expired"):
+        return {"detail": "coupon expired"}
+    return {"detail": "ok"}
+"#;
+    let owners = extract_owners(Path::new("app/checkout.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        r#"
+def test_expired_coupon_response_smoke(client):
+    response = client.post("/checkout", json={"expired": True})
+    assert response
+"#,
+    );
+
+    let Some(finding) = classify_change(
+        Path::new("app/checkout.py"),
+        10,
+        "        return {\"detail\": \"coupon expired\"}",
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed dynamic route return inside owner should classify".to_string());
+    };
+
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::DecoratorIndirection)
+    );
+    assert!(finding.canonical_gap.is_none());
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|entry| entry.contains("dynamic_route_registration")),
+        "expected dynamic-route limitation in {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn cli_decorators_are_transparent_only_for_static_cli_shapes() -> Result<(), String> {
+    for decorator in [
+        "click.command",
+        "click.group",
+        "click.option",
+        "click.argument",
+        "typer.command",
+        "typer.callback",
+    ] {
+        assert!(
+            is_transparent_owner_decorator(decorator),
+            "expected CLI decorator `{decorator}` to be transparent"
+        );
+    }
+
+    let typer_owners = extract_owners(
+        Path::new("src/commands.py"),
+        "import typer\n\napp = typer.Typer()\n\n@app.command()\ndef ship():\n    print(\"sent\")\n",
+    );
+    let typer_owner = typer_owners
+        .iter()
+        .find(|owner| owner.name == "ship")
+        .ok_or_else(|| "expected Typer command owner".to_string())?;
+    assert!(
+        is_transparent_owner_decorator_for_owner("app.command", typer_owner),
+        "Typer app.command should be transparent when a typer import is present"
+    );
+    assert_eq!(typer_owner.cli_receiver_names, vec!["app".to_string()]);
+
+    let custom_owners = extract_owners(
+        Path::new("src/custom.py"),
+        "import typer\n\napp = object()\n\n@app.command()\ndef ship():\n    print(\"sent\")\n",
+    );
+    let custom_owner = custom_owners
+        .iter()
+        .find(|owner| owner.name == "ship")
+        .ok_or_else(|| "expected custom command owner".to_string())?;
+    assert!(
+        !is_transparent_owner_decorator_for_owner("app.command", custom_owner),
+        "custom app.command should remain a decorator-indirection limit"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn cli_output_discriminators_cover_echo_streams_and_exit_codes() {
+    assert_eq!(
+        python_output_or_call_discriminator("click.echo(\"shipment queued\")").as_deref(),
+        Some("output contains \"shipment queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("typer.echo(\"shipment queued\")").as_deref(),
+        Some("output contains \"shipment queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("sys.stdout.write(\"shipment queued\")").as_deref(),
+        Some("stdout contains \"shipment queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("sys.stderr.write(\"shipment failed\")").as_deref(),
+        Some("stderr contains \"shipment failed\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("sys.exit(2)").as_deref(),
+        Some("exit_code == 2")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("raise SystemExit(2)").as_deref(),
+        Some("exit_code == 2")
+    );
+    assert_eq!(python_output_or_call_discriminator("sys.exit(code)"), None);
 }
 
 #[test]
@@ -716,6 +1036,9 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         owner_kind: Some(OwnerKind::Function),
         decorators: Vec::new(),
         imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -969,6 +1292,9 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         owner_kind: Some(OwnerKind::Function),
         decorators: Vec::new(),
         imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -998,6 +1324,9 @@ fn same_stem_related_handles_missing_stems() {
         owner_kind: Some(OwnerKind::Function),
         decorators: Vec::new(),
         imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
     };
     let test = PythonTest {
         name: "test_x".to_string(),
