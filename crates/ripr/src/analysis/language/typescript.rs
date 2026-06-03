@@ -4464,12 +4464,18 @@ fn bun_cross_language_stop_reasons(verdict: TypeScriptBunBridgeVerdict) -> Vec<S
 }
 
 fn bun_cross_language_recommendation(hint: &TypeScriptBunBridgeHint) -> String {
+    let no_new_test_guidance = if hint.verdict == TypeScriptBunBridgeVerdict::TsDiscriminated {
+        " no new test suggested;"
+    } else {
+        ""
+    };
     format!(
-        "TypeScript cross-language preview: state `{}` for Rust seam `{}` `{}`; action `{}`; suggested_test_file `{}`; authority preview/advisory only.",
+        "TypeScript cross-language preview: state `{}` for Rust seam `{}` `{}`; action `{}`;{} suggested_test_file `{}`; authority preview/advisory only.",
         hint.verdict.cross_language_state(),
         hint.rust_owner,
         hint.rust_boundary,
         hint.verdict.expected_action(),
+        no_new_test_guidance,
         hint.verdict.suggested_test_file()
     )
 }
@@ -5451,13 +5457,13 @@ test("blob copies shared and resizable buffers", async () => {
         );
         assert_evidence_contains(
             &finding,
-            "typescript_bun_ub_bridge_verdict: ts_discriminated missing_discriminators=none action=no_new_test_needed",
+            "typescript_bun_ub_bridge_verdict: ts_discriminated missing_discriminators=none action=no_missing_bridge_discriminator",
         );
         assert!(
             finding
                 .recommended_next_step
                 .as_deref()
-                .is_some_and(|step| step.contains("no_new_test_needed"))
+                .is_some_and(|step| step.contains("no new test suggested"))
         );
         Ok(())
     }
