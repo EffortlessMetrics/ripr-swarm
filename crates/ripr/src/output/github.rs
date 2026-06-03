@@ -73,6 +73,15 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(", suggested shape `");
             message.push_str(&card.suggested_assertion_shape);
             message.push_str("` (advisory preview; no repair packet).");
+            if let Some(grip) = &card.bun_cross_language_grip {
+                message.push_str(" Bun cross-language grip: ");
+                message.push_str(&grip.state);
+                message.push_str("; action `");
+                message.push_str(&grip.action);
+                message.push_str("`; suggested test file `");
+                message.push_str(&grip.suggested_test_file);
+                message.push_str("` (preview advisory).");
+            }
         }
         out.push_str(&format!(
             "::{annotation_level} file={},line={},title={}::{}\n",
