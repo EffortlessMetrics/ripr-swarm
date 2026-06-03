@@ -7624,6 +7624,14 @@ fn routed_rust_workflow_contract_violations(
         }
     }
 
+    let toolchain_temp_steps = workflow.matches("name: Prepare toolchain temp").count();
+    let toolchain_temp_mkdirs = workflow.matches("run: mkdir -p \"$TMPDIR\"").count();
+    if toolchain_temp_steps < 3 || toolchain_temp_mkdirs < 3 {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must include `Prepare toolchain temp` before setup for all three self-hosted implementation jobs; found {toolchain_temp_steps} step(s) and {toolchain_temp_mkdirs} mkdir command(s)"
+        ));
+    }
+
     if workflow.contains("repos/${REPOSITORY}/actions/runners")
         || workflow.contains("repos/$REPOSITORY/actions/runners")
         || workflow.contains("repos/EffortlessMetrics/ripr-swarm/actions/runners")
@@ -71055,10 +71063,19 @@ jobs:
           echo rust-medium rust-16gb rust-large
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
   rust-github:
     if: needs.route.outputs.router_target == 'github'
   result:
@@ -71130,6 +71147,11 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             violations
                 .iter()
                 .any(|violation| { violation.contains("slurped idle runner query") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("Prepare toolchain temp") })
         );
         assert!(
             violations
