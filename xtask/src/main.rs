@@ -8669,8 +8669,8 @@ const CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES: &[(&str, &str)] = &[
         "cross_language_target_unresolved",
     ),
     (
-        "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation",
-        "bridge_unknown",
+        "bun_array_buffer_copy_to_unshared_configured_bridge_advisory",
+        "rust_ungripped_ts_discriminated",
     ),
 ];
 
@@ -48516,9 +48516,21 @@ fn cross_language_oracle_graph_profile_errors(
                         .to_string(),
                 );
             }
-            if case.expected_state != "bridge_unknown" {
+            if !matches!(
+                case.expected_state.as_str(),
+                "bridge_unknown" | "rust_ungripped_ts_discriminated"
+            ) {
                 errors.push(
-                    "bun_array_buffer_copy_to_unshared profile must remain bridge_unknown until a binding edge is proven"
+                    "bun_array_buffer_copy_to_unshared profile must be bridge_unknown or rust_ungripped_ts_discriminated"
+                        .to_string(),
+                );
+            }
+            if case.expected_state == "rust_ungripped_ts_discriminated"
+                && (case.binding_edge_kind != "configured_bridge"
+                    || case.binding_edge_confidence != "configured_hint")
+            {
+                errors.push(
+                    "bun_array_buffer_copy_to_unshared advisory witness requires a configured bridge"
                         .to_string(),
                 );
             }
@@ -78591,7 +78603,7 @@ fn exact_owner_call_has_external_expected_value() {
             assert_eq!(value["cases_total"], serde_json::Value::from(7));
             assert_eq!(
                 value["cross_language_oracle_graph_complete_advisory_witnesses"],
-                serde_json::Value::from(1)
+                serde_json::Value::from(2)
             );
             assert_eq!(
                 value["cross_language_oracle_graph_missing_discriminator_limitations"],
@@ -78603,7 +78615,7 @@ fn exact_owner_call_has_external_expected_value() {
             );
             assert_eq!(
                 value["cross_language_oracle_graph_bridge_unknown_limitations"],
-                serde_json::Value::from(2)
+                serde_json::Value::from(1)
             );
             assert_eq!(
                 value["cross_language_oracle_graph_mention_only_limitations"],
@@ -78667,20 +78679,32 @@ fn exact_owner_call_has_external_expected_value() {
             let copy_to_unshared = rows
                 .iter()
                 .find(|row| {
-                    row["case_id"] == "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation"
+                    row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
                 })
-                .ok_or_else(|| "missing copy_to_unshared bridge-unknown row".to_string())?;
+                .ok_or_else(|| "missing copy_to_unshared configured bridge row".to_string())?;
             assert_eq!(
                 copy_to_unshared["profile"],
                 "bun_array_buffer_copy_to_unshared"
             );
+            assert_eq!(
+                copy_to_unshared["observed_state"],
+                "rust_ungripped_ts_discriminated"
+            );
+            assert_eq!(
+                copy_to_unshared["binding_edge_confidence"],
+                "configured_hint"
+            );
             assert!(
                 copy_to_unshared["missing_graph_legs"]
                     .as_array()
-                    .is_some_and(|legs| {
-                        legs.iter()
-                            .any(|item| item == "binding_or_ffi_edge:copy_to_unshared")
-                    })
+                    .is_some_and(Vec::is_empty)
+            );
+            assert_eq!(copy_to_unshared["suggested_test_file"], "not_applicable");
+            assert_eq!(copy_to_unshared["repair_packet_ready"], false);
+            assert_eq!(copy_to_unshared["public_projection_eligible"], false);
+            assert_eq!(
+                copy_to_unshared["repair_route"],
+                "manual-review/cross-language-advisory-witness"
             );
 
             let mut markdown = String::new();
@@ -79048,20 +79072,33 @@ fn exact_owner_call_has_external_expected_value() {
             "copy_to_unshared bridge-unknown profile should validate: {errors:?}"
         );
 
-        let mut wrong_state = case.clone();
-        wrong_state.expected_state = "rust_ungripped_ts_discriminated".to_string();
-        wrong_state.gap_state = "already_observed".to_string();
-        wrong_state.limitation_category = "not_applicable".to_string();
-        wrong_state.repair_route = "manual-review/cross-language-advisory-witness".to_string();
-        wrong_state.binding_edge_kind = "configured_bridge".to_string();
-        wrong_state.binding_edge_confidence = "configured_hint".to_string();
-        wrong_state.raw_evidence_refs = valid_cross_language_oracle_graph_raw_refs(true);
-        wrong_state.missing_graph_legs.clear();
-        wrong_state.unlock_condition = "not_applicable".to_string();
-        let errors = super::cross_language_oracle_graph_case_errors(&wrong_state);
+        let mut configured_case = case.clone();
+        configured_case.expected_state = "rust_ungripped_ts_discriminated".to_string();
+        configured_case.gap_state = "already_observed".to_string();
+        configured_case.limitation_category = "not_applicable".to_string();
+        configured_case.repair_route = "manual-review/cross-language-advisory-witness".to_string();
+        configured_case.binding_edge_kind = "configured_bridge".to_string();
+        configured_case.binding_edge_confidence = "configured_hint".to_string();
+        configured_case.raw_evidence_refs = valid_cross_language_oracle_graph_raw_refs(true);
+        configured_case.missing_graph_legs.clear();
+        configured_case.unlock_condition = "not_applicable".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&configured_case);
+        assert!(
+            errors.is_empty(),
+            "copy_to_unshared configured advisory witness should validate: {errors:?}"
+        );
+
+        let mut missing_bridge = configured_case.clone();
+        missing_bridge.binding_edge_kind = "unresolved".to_string();
+        missing_bridge.binding_edge_confidence = "unknown".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&missing_bridge);
         assert_contains_error(
             &errors,
-            "bun_array_buffer_copy_to_unshared profile must remain bridge_unknown",
+            "rust_ungripped_ts_discriminated requires configured bridge confidence",
+        );
+        assert_contains_error(
+            &errors,
+            "bun_array_buffer_copy_to_unshared advisory witness requires a configured bridge",
         );
 
         let mut wrong_shape = case.clone();
@@ -96164,7 +96201,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_complete_advisory_witnesses"],
-            serde_json::Value::from(1)
+            serde_json::Value::from(2)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_missing_discriminator_limitations"],
@@ -96176,7 +96213,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_bridge_unknown_limitations"],
-            serde_json::Value::from(2)
+            serde_json::Value::from(1)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
@@ -106497,7 +106534,7 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(route_quality["status"], "pass");
         assert_eq!(
             route_quality["cross_language_oracle_graph_complete_advisory_witnesses"],
-            serde_json::Value::from(1)
+            serde_json::Value::from(2)
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_missing_discriminator_limitations"],
@@ -106509,7 +106546,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_bridge_unknown_limitations"],
-            serde_json::Value::from(2)
+            serde_json::Value::from(1)
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_mention_only_limitations"],
@@ -106537,11 +106574,14 @@ covered_by = ["cargo xtask check-file-policy"]
             route_quality["rows"]
                 .as_array()
                 .is_some_and(|rows| rows.iter().any(|row| {
-                    row["case_id"] == "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation"
-                        && row["missing_graph_legs"].as_array().is_some_and(|legs| {
-                            legs.iter()
-                                .any(|leg| leg == "binding_or_ffi_edge:copy_to_unshared")
-                        })
+                    row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+                        && row["observed_state"] == "rust_ungripped_ts_discriminated"
+                        && row["binding_edge_confidence"] == "configured_hint"
+                        && row["missing_graph_legs"]
+                            .as_array()
+                            .is_some_and(Vec::is_empty)
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
                 }))
         );
 
