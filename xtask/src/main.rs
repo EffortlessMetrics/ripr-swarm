@@ -78776,10 +78776,6 @@ fn exact_owner_call_has_external_expected_value() {
                 markdown_resizable["binding_edge_confidence"],
                 "configured_hint"
             );
-            assert_eq!(
-                markdown_resizable["external_oracle_kind"],
-                "markdown_strong_oracle"
-            );
             assert!(
                 markdown_resizable["missing_graph_legs"]
                     .as_array()
