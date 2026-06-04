@@ -431,6 +431,7 @@ struct TypeScriptBunBridgeProfile {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TypeScriptBunBridgeProfileKind {
     BlobArrayBuffer,
+    ArrayBufferCopyToUnshared,
     MarkdownResizableArrayBuffer,
 }
 
@@ -438,13 +439,16 @@ impl TypeScriptBunBridgeProfileKind {
     fn display_name(self) -> &'static str {
         match self {
             Self::BlobArrayBuffer => "Bun Blob",
+            Self::ArrayBufferCopyToUnshared => "Bun ArrayBuffer copy_to_unshared",
             Self::MarkdownResizableArrayBuffer => "Bun MarkdownObject",
         }
     }
 
     fn ts_test_file(self) -> &'static str {
         match self {
-            Self::BlobArrayBuffer => BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
+            Self::BlobArrayBuffer | Self::ArrayBufferCopyToUnshared => {
+                BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            }
             Self::MarkdownResizableArrayBuffer => BUN_MARKDOWN_RESIZABLE_TS_TEST_FILE,
         }
     }
@@ -455,6 +459,9 @@ impl TypeScriptBunBridgeProfileKind {
                 line_text.contains("array_buffer.shared")
                     && line_text.contains("array_buffer.resizable")
             }
+            Self::ArrayBufferCopyToUnshared => {
+                line_text_matches_bun_copy_to_unshared_boundary(line_text)
+            }
             Self::MarkdownResizableArrayBuffer => {
                 line_text.contains("self.0.resizable") && line_text.contains("!self.0.shared")
             }
@@ -463,14 +470,16 @@ impl TypeScriptBunBridgeProfileKind {
 
     fn expected_sinks(self) -> Vec<String> {
         match self {
-            Self::BlobArrayBuffer => vec!["stable_byte_copy".to_string()],
+            Self::BlobArrayBuffer | Self::ArrayBufferCopyToUnshared => {
+                vec!["stable_byte_copy".to_string()]
+            }
             Self::MarkdownResizableArrayBuffer => vec!["markdown_output".to_string()],
         }
     }
 
     fn required_oracles(self) -> Vec<String> {
         match self {
-            Self::BlobArrayBuffer => vec![
+            Self::BlobArrayBuffer | Self::ArrayBufferCopyToUnshared => vec![
                 "shared_array_buffer".to_string(),
                 "resizable_array_buffer".to_string(),
                 "stable_byte_copy_oracle".to_string(),
@@ -503,6 +512,9 @@ impl TypeScriptBunBridgeProfileKind {
             Self::BlobArrayBuffer => {
                 "TypeScript Blob ArrayBuffer integration evidence contains a stable-byte observer."
             }
+            Self::ArrayBufferCopyToUnshared => {
+                "TypeScript Blob ArrayBuffer copy evidence contains a stable-byte observer."
+            }
             Self::MarkdownResizableArrayBuffer => {
                 "TypeScript Bun markdown integration evidence contains a strong output observer."
             }
@@ -513,6 +525,9 @@ impl TypeScriptBunBridgeProfileKind {
         match self {
             Self::BlobArrayBuffer => {
                 "TypeScript evidence discriminates SharedArrayBuffer and resizable ArrayBuffer branches for the configured Rust seam."
+            }
+            Self::ArrayBufferCopyToUnshared => {
+                "TypeScript evidence discriminates SharedArrayBuffer and resizable ArrayBuffer copy semantics for the configured Rust seam."
             }
             Self::MarkdownResizableArrayBuffer => {
                 "TypeScript evidence discriminates a resizable non-shared ArrayBuffer for the configured Rust seam."
@@ -525,6 +540,9 @@ impl TypeScriptBunBridgeProfileKind {
             Self::BlobArrayBuffer => {
                 "TypeScript evidence is missing the resizable ArrayBuffer discriminator for the configured Rust seam."
             }
+            Self::ArrayBufferCopyToUnshared => {
+                "TypeScript evidence is missing the resizable ArrayBuffer copy discriminator for the configured Rust seam."
+            }
             Self::MarkdownResizableArrayBuffer => {
                 "TypeScript evidence is missing the resizable non-shared ArrayBuffer discriminator for the configured Rust seam."
             }
@@ -536,6 +554,12 @@ impl TypeScriptBunBridgeProfileKind {
             Self::BlobArrayBuffer => {
                 format!(
                     "configured Bun Blob bridge to {}",
+                    normalized_path(ts_test_file)
+                )
+            }
+            Self::ArrayBufferCopyToUnshared => {
+                format!(
+                    "configured Bun copy_to_unshared bridge to {}",
                     normalized_path(ts_test_file)
                 )
             }
@@ -553,6 +577,10 @@ const BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE: &str = "test/js/web/fetch/blob.test.ts
 const BUN_BLOB_ARRAY_BUFFER_RUST_FILE: &str = "src/jsc/Blob.rs";
 const BUN_BLOB_ARRAY_BUFFER_RUST_OWNER: &str = "Blob::from_js_without_defer_gc";
 const BUN_BLOB_ARRAY_BUFFER_RUST_BOUNDARY: &str = "array_buffer.shared || array_buffer.resizable";
+const BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_FILE: &str = "src/jsc/array_buffer.rs";
+const BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_OWNER: &str = "copy_to_unshared";
+const BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_BOUNDARY: &str =
+    "SharedArrayBuffer and resizable ArrayBuffer copy semantics";
 
 const BUN_BLOB_ARRAY_BUFFER_BRIDGE_PROFILE: TypeScriptBunBridgeProfile =
     TypeScriptBunBridgeProfile {
@@ -569,6 +597,16 @@ const BUN_MARKDOWN_RESIZABLE_RUST_FILE: &str = "src/runtime/api/MarkdownObject.r
 const BUN_MARKDOWN_RESIZABLE_RUST_OWNER: &str = "MarkdownObject::to_string";
 const BUN_MARKDOWN_RESIZABLE_RUST_BOUNDARY: &str = "self.0.resizable && !self.0.shared";
 
+const BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_BRIDGE_PROFILE: TypeScriptBunBridgeProfile =
+    TypeScriptBunBridgeProfile {
+        confidence: TypeScriptBunBridgeConfidence::ConfiguredHint,
+        kind: TypeScriptBunBridgeProfileKind::ArrayBufferCopyToUnshared,
+        rust_file: BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_FILE,
+        rust_owner: BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_OWNER,
+        rust_boundary: BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_BOUNDARY,
+        ts_test_file: BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
+    };
+
 const BUN_MARKDOWN_RESIZABLE_BRIDGE_PROFILE: TypeScriptBunBridgeProfile =
     TypeScriptBunBridgeProfile {
         kind: TypeScriptBunBridgeProfileKind::MarkdownResizableArrayBuffer,
@@ -579,6 +617,11 @@ const BUN_MARKDOWN_RESIZABLE_BRIDGE_PROFILE: TypeScriptBunBridgeProfile =
         ts_test_file: BUN_MARKDOWN_RESIZABLE_TS_TEST_FILE,
     };
 
+const BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES: &[TypeScriptBunBridgeProfile] = &[
+    BUN_BLOB_ARRAY_BUFFER_BRIDGE_PROFILE,
+    BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_BRIDGE_PROFILE,
+    BUN_MARKDOWN_RESIZABLE_BRIDGE_PROFILE,
+];
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct TypeScriptBunArrayBufferObservation {
     shared_array_buffer: bool,
@@ -4440,16 +4483,13 @@ fn bun_cross_language_finding_for_changed_rust_line(
     line_text: &str,
     all_tests: &[TypeScriptTest],
 ) -> Option<Finding> {
-    [
-        BUN_BLOB_ARRAY_BUFFER_BRIDGE_PROFILE,
-        BUN_MARKDOWN_RESIZABLE_BRIDGE_PROFILE,
-    ]
-    .into_iter()
-    .find_map(|profile| {
-        bun_cross_language_finding_for_changed_rust_line_with_profile(
-            file, line, line_text, all_tests, profile,
-        )
-    })
+    BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
+        .iter()
+        .find_map(|profile| {
+            bun_cross_language_finding_for_changed_rust_line_with_profile(
+                file, line, line_text, all_tests, *profile,
+            )
+        })
 }
 
 fn bun_cross_language_finding_for_changed_rust_line_with_profile(
@@ -4594,6 +4634,15 @@ fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         owner_kind: Some(OwnerKind::Function),
         static_limit_kind: None,
     })
+}
+
+fn line_text_matches_bun_copy_to_unshared_boundary(line_text: &str) -> bool {
+    if line_text.contains(BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_OWNER) {
+        return true;
+    }
+    let lower = line_text.to_ascii_lowercase();
+    (lower.contains("sharedarraybuffer") && lower.contains("resizable"))
+        || (lower.contains("shared") && lower.contains("resizable") && lower.contains("copy"))
 }
 
 fn typescript_bun_cross_language_actionability(
@@ -5700,15 +5749,31 @@ mod tests {
         source: &str,
         confidence: TypeScriptBunBridgeConfidence,
     ) -> Result<Finding, String> {
-        let tests = extract_tests(Path::new(BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE), source);
-        let profile = TypeScriptBunBridgeProfile {
+        bun_cross_language_finding_for_source_with_profile_and_confidence(
+            source,
+            BUN_BLOB_ARRAY_BUFFER_BRIDGE_PROFILE,
             confidence,
-            ..BUN_BLOB_ARRAY_BUFFER_BRIDGE_PROFILE
-        };
-        bun_cross_language_finding_for_changed_rust_line_with_profile(
-            Path::new(BUN_BLOB_ARRAY_BUFFER_RUST_FILE),
             3420,
             "    if (array_buffer.shared || array_buffer.resizable) {",
+        )
+    }
+
+    fn bun_cross_language_finding_for_source_with_profile_and_confidence(
+        source: &str,
+        profile: TypeScriptBunBridgeProfile,
+        confidence: TypeScriptBunBridgeConfidence,
+        rust_line: usize,
+        line_text: &str,
+    ) -> Result<Finding, String> {
+        let tests = extract_tests(Path::new(profile.ts_test_file), source);
+        let profile = TypeScriptBunBridgeProfile {
+            confidence,
+            ..profile
+        };
+        bun_cross_language_finding_for_changed_rust_line_with_profile(
+            Path::new(profile.rust_file),
+            rust_line,
+            line_text,
             &tests,
             profile,
         )
@@ -6520,6 +6585,100 @@ test("blob copies shared and resizable buffers", async () => {
                 .as_deref()
                 .is_some_and(|step| step.contains("analysis/cross-language-oracle-visibility"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_rust_copy_to_unshared_projects_configured_bridge_evidence() -> Result<(), String> {
+        let source = r#"
+test("blob copies shared and resizable buffers through copy path", async () => {
+  const shared = new SharedArrayBuffer(4);
+  const growable = new ArrayBuffer(4, { maxByteLength: 8 });
+  const blob = new Blob([new Uint8Array(shared), new Uint8Array(growable)]);
+  const copied = new Uint8Array(await blob.arrayBuffer());
+  expect([...copied]).toEqual([0, 0, 0, 0]);
+});
+"#;
+        let finding = bun_cross_language_finding_for_source_with_profile_and_confidence(
+            source,
+            BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_BRIDGE_PROFILE,
+            TypeScriptBunBridgeConfidence::ConfiguredHint,
+            341,
+            "pub fn copy_to_unshared(buffer: JSValue) -> JSValue {",
+        )?;
+
+        assert!(matches!(finding.class, ExposureClass::Exposed));
+        assert_eq!(
+            finding.probe.location.file,
+            PathBuf::from(BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_RUST_FILE)
+        );
+        assert_evidence_contains(&finding, "rust_owner=copy_to_unshared");
+        assert_evidence_contains(
+            &finding,
+            "rust_file=src/jsc/array_buffer.rs rust_owner=copy_to_unshared",
+        );
+        assert_evidence_contains(
+            &finding,
+            "typescript_bun_ub_cross_language_grip: state=rust_ungripped_ts_discriminated",
+        );
+        assert_evidence_contains(
+            &finding,
+            "typescript_bun_ub_bridge_verdict: ts_discriminated missing_discriminators=none action=no_missing_bridge_discriminator",
+        );
+        assert_evidence_contains(
+            &finding,
+            "raw_evidence_ref: leg=binding_edge;file=src/jsc/array_buffer.rs;line=341;kind=configured_bridge;",
+        );
+        assert_evidence_contains(&finding, "raw_evidence_ref: leg=external_callsite;");
+        assert_evidence_contains(&finding, "raw_evidence_ref: leg=external_oracle;");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|entry| !entry.starts_with("missing_graph_legs:")),
+            "configured copy_to_unshared bridge must not report missing graph legs: {:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("no new test suggested"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_rust_copy_to_unshared_unknown_bridge_stays_limitation() -> Result<(), String> {
+        let source = r#"
+test("blob copies shared and resizable buffers through copy path", async () => {
+  const shared = new SharedArrayBuffer(4);
+  const growable = new ArrayBuffer(4, { maxByteLength: 8 });
+  const blob = new Blob([new Uint8Array(shared), new Uint8Array(growable)]);
+  const copied = new Uint8Array(await blob.arrayBuffer());
+  expect([...copied]).toEqual([0, 0, 0, 0]);
+});
+"#;
+        let finding = bun_cross_language_finding_for_source_with_profile_and_confidence(
+            source,
+            BUN_ARRAY_BUFFER_COPY_TO_UNSHARED_BRIDGE_PROFILE,
+            TypeScriptBunBridgeConfidence::Unknown,
+            341,
+            "pub fn copy_to_unshared(buffer: JSValue) -> JSValue {",
+        )?;
+
+        assert!(matches!(finding.class, ExposureClass::StaticUnknown));
+        assert_evidence_contains(
+            &finding,
+            "typescript_bun_ub_bridge_hint: confidence=unknown rust_file=src/jsc/array_buffer.rs rust_owner=copy_to_unshared",
+        );
+        assert_evidence_contains(
+            &finding,
+            "typescript_bun_ub_cross_language_grip: state=bridge_unknown",
+        );
+        assert_evidence_contains(&finding, "missing_graph_legs: binding_or_ffi_edge");
+        assert_evidence_lacks(&finding, "raw_evidence_ref: leg=binding_edge;");
+        assert_evidence_contains(&finding, "suggested_test_file=not_applicable");
         Ok(())
     }
 

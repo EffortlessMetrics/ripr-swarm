@@ -48527,23 +48527,24 @@ fn cross_language_oracle_graph_profile_errors(
                         .to_string(),
                 );
             }
-            if !matches!(
-                case.expected_state.as_str(),
-                "bridge_unknown" | "rust_ungripped_ts_discriminated"
-            ) {
-                errors.push(
-                    "bun_array_buffer_copy_to_unshared profile must be bridge_unknown or rust_ungripped_ts_discriminated"
+            match case.expected_state.as_str() {
+                "bridge_unknown" => {}
+                "rust_ungripped_ts_discriminated" => {
+                    if !matches!(
+                        case.binding_edge_kind.as_str(),
+                        "configured_bridge" | "ffi_binding"
+                    ) || case.binding_edge_confidence == "unknown"
+                    {
+                        errors.push(
+                            "bun_array_buffer_copy_to_unshared configured route requires configured or generated binding edge evidence"
+                                .to_string(),
+                        );
+                    }
+                }
+                _ => errors.push(
+                    "bun_array_buffer_copy_to_unshared profile only supports bridge_unknown or rust_ungripped_ts_discriminated in this preview slice"
                         .to_string(),
-                );
-            }
-            if case.expected_state == "rust_ungripped_ts_discriminated"
-                && (case.binding_edge_kind != "configured_bridge"
-                    || case.binding_edge_confidence != "configured_hint")
-            {
-                errors.push(
-                    "bun_array_buffer_copy_to_unshared advisory witness requires a configured bridge"
-                        .to_string(),
-                );
+                ),
             }
         }
         "bun_markdown_resizable_array_buffer" => {
@@ -79132,7 +79133,7 @@ fn exact_owner_call_has_external_expected_value() {
     #[test]
     fn cross_language_oracle_graph_validates_copy_to_unshared_profile() {
         let mut case = valid_cross_language_oracle_graph_case();
-        case.name = "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation".to_string();
+        case.name = "bun_array_buffer_copy_to_unshared_configured_bridge_advisory".to_string();
         case.source = "#910-copy-to-unshared".to_string();
         case.profile = "bun_array_buffer_copy_to_unshared".to_string();
         case.rust_file = "src/jsc/array_buffer.rs".to_string();
@@ -79140,50 +79141,42 @@ fn exact_owner_call_has_external_expected_value() {
         case.rust_owner = "copy_to_unshared".to_string();
         case.rust_boundary =
             "SharedArrayBuffer and resizable ArrayBuffer copy semantics".to_string();
-        case.expected_state = "bridge_unknown".to_string();
-        case.gap_state = "static_limitation".to_string();
-        case.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
-        case.repair_route = "analysis/cross-language-oracle-visibility".to_string();
-        case.binding_edge_kind = "unresolved".to_string();
-        case.binding_edge_confidence = "unknown".to_string();
-        case.missing_graph_legs = vec!["binding_or_ffi_edge:copy_to_unshared".to_string()];
-        case.unlock_condition = "Name the copy_to_unshared bridge".to_string();
-        case.raw_evidence_refs
-            .retain(|raw_ref| raw_ref.leg != "binding_edge");
 
         let errors = super::cross_language_oracle_graph_case_errors(&case);
         assert!(
             errors.is_empty(),
-            "copy_to_unshared bridge-unknown profile should validate: {errors:?}"
+            "copy_to_unshared configured bridge profile should validate: {errors:?}"
         );
 
-        let mut configured_case = case.clone();
-        configured_case.expected_state = "rust_ungripped_ts_discriminated".to_string();
-        configured_case.gap_state = "already_observed".to_string();
-        configured_case.limitation_category = "not_applicable".to_string();
-        configured_case.repair_route = "manual-review/cross-language-advisory-witness".to_string();
-        configured_case.binding_edge_kind = "configured_bridge".to_string();
-        configured_case.binding_edge_confidence = "configured_hint".to_string();
-        configured_case.raw_evidence_refs = valid_cross_language_oracle_graph_raw_refs(true);
-        configured_case.missing_graph_legs.clear();
-        configured_case.unlock_condition = "not_applicable".to_string();
-        let errors = super::cross_language_oracle_graph_case_errors(&configured_case);
+        let mut bridge_unknown = case.clone();
+        bridge_unknown.name =
+            "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation".to_string();
+        bridge_unknown.expected_state = "bridge_unknown".to_string();
+        bridge_unknown.gap_state = "static_limitation".to_string();
+        bridge_unknown.limitation_category =
+            "cross_language_oracle_visibility_unresolved".to_string();
+        bridge_unknown.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+        bridge_unknown.binding_edge_kind = "unresolved".to_string();
+        bridge_unknown.binding_edge_confidence = "unknown".to_string();
+        bridge_unknown.missing_graph_legs =
+            vec!["binding_or_ffi_edge:copy_to_unshared".to_string()];
+        bridge_unknown.unlock_condition = "Name the copy_to_unshared bridge".to_string();
+        bridge_unknown
+            .raw_evidence_refs
+            .retain(|raw_ref| raw_ref.leg != "binding_edge");
+        let errors = super::cross_language_oracle_graph_case_errors(&bridge_unknown);
         assert!(
             errors.is_empty(),
-            "copy_to_unshared configured advisory witness should validate: {errors:?}"
+            "copy_to_unshared bridge-unknown profile should still validate without a binding edge: {errors:?}"
         );
 
-        let mut missing_bridge = configured_case.clone();
-        missing_bridge.binding_edge_kind = "unresolved".to_string();
-        missing_bridge.binding_edge_confidence = "unknown".to_string();
-        let errors = super::cross_language_oracle_graph_case_errors(&missing_bridge);
+        let mut unproven_credit = case.clone();
+        unproven_credit.binding_edge_kind = "unresolved".to_string();
+        unproven_credit.binding_edge_confidence = "unknown".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&unproven_credit);
         assert_contains_error(
             &errors,
-            "rust_ungripped_ts_discriminated requires configured bridge confidence",
-        );
-        assert_contains_error(
-            &errors,
-            "bun_array_buffer_copy_to_unshared advisory witness requires a configured bridge",
+            "bun_array_buffer_copy_to_unshared configured route requires configured or generated binding edge evidence",
         );
 
         let mut wrong_shape = case.clone();
