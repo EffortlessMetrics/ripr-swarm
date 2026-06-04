@@ -8672,6 +8672,10 @@ const CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES: &[(&str, &str)] = &[
         "bun_array_buffer_copy_to_unshared_configured_bridge_advisory",
         "rust_ungripped_ts_discriminated",
     ),
+    (
+        "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
+        "rust_ungripped_ts_discriminated",
+    ),
 ];
 
 const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -48183,13 +48187,20 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
                         .to_string(),
                 );
             }
-            if !case.shared_array_buffer
-                || !case.resizable_array_buffer
-                || !case.view_backed_blob_input
-                || !case.stable_byte_copy_oracle
-            {
+            let blob_discriminated = case.shared_array_buffer
+                && case.resizable_array_buffer
+                && case.view_backed_blob_input
+                && case.stable_byte_copy_oracle;
+            let markdown_discriminated = case.profile == "bun_markdown_resizable_array_buffer"
+                && case.resizable_array_buffer
+                && case
+                    .external_entrypoints
+                    .iter()
+                    .any(|entrypoint| entrypoint.contains("Bun.markdown"))
+                && case.external_oracle_kind == "markdown_strong_oracle";
+            if !blob_discriminated && !markdown_discriminated {
                 errors.push(
-                    "rust_ungripped_ts_discriminated requires shared, resizable, Blob input, and stable-byte oracle facts"
+                    "rust_ungripped_ts_discriminated requires either the Blob shared/resizable stable-byte facts or the Bun markdown resizable strong-oracle profile facts"
                         .to_string(),
                 );
             }
@@ -48536,8 +48547,48 @@ fn cross_language_oracle_graph_profile_errors(
                 ),
             }
         }
+        "bun_markdown_resizable_array_buffer" => {
+            if !case.rust_file.ends_with("MarkdownObject.rs") {
+                errors.push(
+                    "rust_file must identify the Bun MarkdownObject Rust seam".to_string(),
+                );
+            }
+            if case.rust_owner != "MarkdownObject::to_string" {
+                errors.push(
+                    "rust_owner must pin MarkdownObject::to_string for the Bun markdown route"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("self.0.resizable")
+                || !case.rust_boundary.contains("!self.0.shared")
+            {
+                errors.push(
+                    "rust_boundary must include self.0.resizable and !self.0.shared".to_string(),
+                );
+            }
+            if case.expected_state != "rust_ungripped_ts_discriminated" {
+                errors.push(
+                    "bun_markdown_resizable_array_buffer profile currently only admits the complete advisory witness shape"
+                        .to_string(),
+                );
+            }
+            if case.binding_edge_kind != "configured_bridge"
+                || case.binding_edge_confidence != "configured_hint"
+            {
+                errors.push(
+                    "bun_markdown_resizable_array_buffer advisory witness requires a configured bridge"
+                        .to_string(),
+                );
+            }
+            if case.external_oracle_kind != "markdown_strong_oracle" {
+                errors.push(
+                    "bun_markdown_resizable_array_buffer requires markdown_strong_oracle external evidence"
+                        .to_string(),
+                );
+            }
+        }
         other => errors.push(format!(
-            "profile must be bun_blob_array_buffer or bun_array_buffer_copy_to_unshared, got {other}"
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, or bun_markdown_resizable_array_buffer, got {other}"
         )),
     }
 }
@@ -78601,10 +78652,10 @@ fn exact_owner_call_has_external_expected_value() {
         with_repo_cwd(|| {
             let value = super::cross_language_oracle_route_quality_report_value();
             assert_eq!(value["status"], "pass");
-            assert_eq!(value["cases_total"], serde_json::Value::from(7));
+            assert_eq!(value["cases_total"], serde_json::Value::from(8));
             assert_eq!(
                 value["cross_language_oracle_graph_complete_advisory_witnesses"],
-                serde_json::Value::from(2)
+                serde_json::Value::from(3)
             );
             assert_eq!(
                 value["cross_language_oracle_graph_missing_discriminator_limitations"],
@@ -78624,7 +78675,7 @@ fn exact_owner_call_has_external_expected_value() {
             );
             assert_eq!(
                 value["cross_language_oracle_graph_public_packet_exclusions"],
-                serde_json::Value::from(7)
+                serde_json::Value::from(8)
             );
             assert_eq!(
                 value["repair_packet_ready_cases"],
@@ -78707,12 +78758,46 @@ fn exact_owner_call_has_external_expected_value() {
                 copy_to_unshared["repair_route"],
                 "manual-review/cross-language-advisory-witness"
             );
+            let markdown_resizable = rows
+                .iter()
+                .find(|row| {
+                    row["case_id"]
+                        == "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+                })
+                .ok_or_else(|| "missing Bun markdown configured bridge row".to_string())?;
+            assert_eq!(
+                markdown_resizable["profile"],
+                "bun_markdown_resizable_array_buffer"
+            );
+            assert_eq!(
+                markdown_resizable["observed_state"],
+                "rust_ungripped_ts_discriminated"
+            );
+            assert_eq!(
+                markdown_resizable["binding_edge_confidence"],
+                "configured_hint"
+            );
+            assert!(
+                markdown_resizable["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+            );
+            assert_eq!(markdown_resizable["suggested_test_file"], "not_applicable");
+            assert_eq!(markdown_resizable["repair_packet_ready"], false);
+            assert_eq!(markdown_resizable["public_projection_eligible"], false);
+            assert_eq!(
+                markdown_resizable["repair_route"],
+                "manual-review/cross-language-advisory-witness"
+            );
 
             let mut markdown = String::new();
             super::cross_language_oracle_route_quality_push_markdown(&mut markdown, &value);
             assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
             assert!(markdown.contains("Complete advisory witnesses"));
             assert!(markdown.contains("bun_blob_missing_resizable_oracle_limitation"));
+            assert!(
+                markdown.contains("bun_markdown_resizable_array_buffer_configured_bridge_advisory")
+            );
             assert!(markdown.contains("Missing external oracle limitations"));
             assert!(markdown.contains("binding_or_ffi_edge"));
             assert!(markdown.contains("preview/advisory route-quality evidence only"));
@@ -78907,7 +78992,7 @@ fn exact_owner_call_has_external_expected_value() {
         let errors = super::cross_language_oracle_graph_case_errors(&advisory);
         assert_contains_error(
             &errors,
-            "rust_ungripped_ts_discriminated requires shared, resizable, Blob input, and stable-byte oracle facts",
+            "rust_ungripped_ts_discriminated requires either the Blob shared/resizable stable-byte facts or the Bun markdown resizable strong-oracle profile facts",
         );
         assert_contains_error(
             &errors,
@@ -79117,7 +79202,7 @@ fn exact_owner_call_has_external_expected_value() {
         let errors = super::cross_language_oracle_graph_case_errors(&unknown_profile);
         assert_contains_error(
             &errors,
-            "profile must be bun_blob_array_buffer or bun_array_buffer_copy_to_unshared",
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, or bun_markdown_resizable_array_buffer",
         );
     }
 
@@ -96194,7 +96279,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_complete_advisory_witnesses"],
-            serde_json::Value::from(2)
+            serde_json::Value::from(3)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_missing_discriminator_limitations"],
@@ -96210,7 +96295,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(7)
+            serde_json::Value::from(8)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["repair_packet_ready_cases"],
@@ -106527,7 +106612,7 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(route_quality["status"], "pass");
         assert_eq!(
             route_quality["cross_language_oracle_graph_complete_advisory_witnesses"],
-            serde_json::Value::from(2)
+            serde_json::Value::from(3)
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_missing_discriminator_limitations"],
@@ -106547,7 +106632,7 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(7)
+            serde_json::Value::from(8)
         );
         assert_eq!(
             route_quality["repair_packet_ready_cases"],
@@ -106568,6 +106653,22 @@ covered_by = ["cargo xtask check-file-policy"]
                 .as_array()
                 .is_some_and(|rows| rows.iter().any(|row| {
                     row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+                        && row["observed_state"] == "rust_ungripped_ts_discriminated"
+                        && row["binding_edge_confidence"] == "configured_hint"
+                        && row["missing_graph_legs"]
+                            .as_array()
+                            .is_some_and(Vec::is_empty)
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"]
+                        == "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+                        && row["profile"] == "bun_markdown_resizable_array_buffer"
                         && row["observed_state"] == "rust_ungripped_ts_discriminated"
                         && row["binding_edge_confidence"] == "configured_hint"
                         && row["missing_graph_legs"]
