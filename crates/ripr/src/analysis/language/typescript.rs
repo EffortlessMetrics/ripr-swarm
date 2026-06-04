@@ -6070,7 +6070,7 @@ test("blob records shared and growable inputs without byte oracle", () => {
         );
         assert_evidence_contains(
             &finding,
-            "unlock_condition: connect the partial Blob observer evidence",
+            "unlock_condition: Connect the partial Blob observer evidence to a stable byte oracle",
         );
         assert_evidence_contains(&finding, "raw_evidence_ref: leg=rust_seam;");
         assert_evidence_contains(&finding, "raw_evidence_ref: leg=binding_edge;");
