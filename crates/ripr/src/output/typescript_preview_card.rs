@@ -583,7 +583,7 @@ mod tests {
             "repair_route: analysis/cross-language-oracle-visibility".to_string(),
             "missing_actionability_fields: external_oracle_path, verify_command, receipt_command, allowed_edit_surface, raw_evidence_refs".to_string(),
             "missing_graph_legs: external_oracle:stable_byte_copy".to_string(),
-            "unlock_condition: connect the partial Blob observer evidence to both a Blob-backed external callsite and stable-byte oracle before crediting the Rust seam".to_string(),
+            "unlock_condition: Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement.".to_string(),
             "evidence_needed_to_promote: Blob input, stable-byte observer, binding or FFI route, verify command, receipt command, raw evidence refs, and edit constraints".to_string(),
             "raw_evidence_ref: leg=rust_seam;file=src/jsc/Blob.rs;line=42;kind=rust_boundary;source_id=probe:src_jsc_Blob_rs:42:typescript_bun_ub_cross_language_preview;owner=Blob::from_js_without_defer_gc;sample=array_buffer.shared || array_buffer.resizable".to_string(),
             "raw_evidence_ref: leg=binding_edge;file=src/jsc/Blob.rs;line=42;kind=configured_bridge;source_id=probe:src_jsc_Blob_rs:42:typescript_bun_ub_cross_language_preview;owner=Blob::from_js_without_defer_gc;sample=configured Bun Blob bridge to test/js/web/fetch/blob.test.ts".to_string(),

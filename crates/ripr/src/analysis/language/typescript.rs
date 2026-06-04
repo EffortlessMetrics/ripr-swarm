@@ -4586,7 +4586,7 @@ fn typescript_bun_cross_language_actionability_evidence(
             missing_graph_legs.join(", ")
         ));
     }
-    if let Some(unlock_condition) = bun_cross_language_unlock_condition(hint.verdict) {
+    if let Some(unlock_condition) = bun_cross_language_unlock_condition(hint.verdict, facts) {
         evidence.push(format!("unlock_condition: {unlock_condition}"));
     }
     evidence.extend(raw_refs.into_iter().skip(1));
@@ -4793,22 +4793,41 @@ fn bun_cross_language_missing_graph_legs(
 
 fn bun_cross_language_unlock_condition(
     verdict: TypeScriptBunBridgeVerdict,
-) -> Option<&'static str> {
+    facts: &[TypeScriptBunArrayBufferFact],
+) -> Option<String> {
     match verdict {
         TypeScriptBunBridgeVerdict::TsDiscriminated => None,
         TypeScriptBunBridgeVerdict::TsMissingResizable
         | TypeScriptBunBridgeVerdict::TsMissingShared
         | TypeScriptBunBridgeVerdict::TsMissingSharedAndResizable => Some(
-            "identify the missing external TypeScript discriminator(s) and connect them through analysis/cross-language-oracle-visibility before any repair packet projection",
+            "identify the missing external TypeScript discriminator(s) and connect them through analysis/cross-language-oracle-visibility before any repair packet projection".to_string(),
         ),
         TypeScriptBunBridgeVerdict::TsMentionNotObserver => Some(
-            "connect a Blob-backed external callsite and stable-byte oracle to the Rust seam before crediting token mentions",
+            "connect a Blob-backed external callsite and stable-byte oracle to the Rust seam before crediting token mentions".to_string(),
         ),
-        TypeScriptBunBridgeVerdict::TsMissingExternalOracle => Some(
-            "connect the partial Blob observer evidence to both a Blob-backed external callsite and stable-byte oracle before crediting the Rust seam",
-        ),
+        TypeScriptBunBridgeVerdict::TsMissingExternalOracle => {
+            let missing_callsite = first_bun_array_buffer_fact(
+                facts,
+                TypeScriptBunArrayBufferFactKind::ViewBackedBlobInput,
+            )
+            .is_none();
+            let missing_oracle = first_bun_array_buffer_fact(
+                facts,
+                TypeScriptBunArrayBufferFactKind::StableByteCopyOracle,
+            )
+            .is_none();
+            let missing_edge = match (missing_callsite, missing_oracle) {
+                (true, false) => "a Blob-backed external callsite",
+                (false, true) => "a stable byte oracle",
+                (true, true) => "a Blob-backed external callsite and stable byte oracle",
+                (false, false) => "the external oracle path",
+            };
+            Some(format!(
+                "Connect the partial Blob observer evidence to {missing_edge} before crediting the Rust seam or suggesting placement."
+            ))
+        }
         TypeScriptBunBridgeVerdict::BridgeUnknown => Some(
-            "name the binding or FFI edge from the Rust seam to the external test before crediting external discriminators",
+            "name the binding or FFI edge from the Rust seam to the external test before crediting external discriminators".to_string(),
         ),
     }
 }

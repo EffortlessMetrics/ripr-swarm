@@ -347,6 +347,7 @@ Current related metrics:
 - `cross_language_projection_exclusions`
 - `cross_language_oracle_graph_complete_advisory_witnesses`
 - `cross_language_oracle_graph_missing_discriminator_limitations`
+- `cross_language_oracle_graph_missing_external_oracle_limitations`
 - `cross_language_oracle_graph_bridge_unknown_limitations`
 - `cross_language_oracle_graph_mention_only_limitations`
 - `cross_language_oracle_graph_public_packet_exclusions`
