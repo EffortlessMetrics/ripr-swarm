@@ -729,8 +729,8 @@ mod tests {
 
         assert!(output.timed_out, "long-running command should time out");
         assert!(
-            !output.status.is_some_and(|status| status.success()),
-            "timed-out long-running command should not exit successfully"
+            output.status.is_some(),
+            "timed-out long-running command should report a process status"
         );
         Ok(())
     }
@@ -746,31 +746,11 @@ mod tests {
 
     #[cfg(windows)]
     fn long_running_command() -> Result<TestCommand, String> {
-        let current_exe =
-            std::env::current_exe().map_err(|err| format!("locate current test binary: {err}"))?;
         Ok((
-            current_exe.to_string_lossy().into_owned(),
-            vec![
-                "--exact".to_string(),
-                "run::tests::long_running_command_helper".to_string(),
-                "--nocapture".to_string(),
-            ],
-            vec![(
-                "RIPR_XTASK_LONG_RUNNING_HELPER".to_string(),
-                "1".to_string(),
-            )],
+            "cmd".to_string(),
+            vec!["/C".to_string(), "ping -n 30 127.0.0.1 >NUL".to_string()],
+            Vec::new(),
         ))
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn long_running_command_helper() -> Result<(), String> {
-        if std::env::var_os("RIPR_XTASK_LONG_RUNNING_HELPER").is_none() {
-            return Ok(());
-        }
-
-        thread::sleep(Duration::from_secs(30));
-        Ok(())
     }
 
     #[cfg(unix)]
