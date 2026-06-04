@@ -11752,7 +11752,8 @@ The checked surface-projection alignment receipts are read from
 plus static-limitation backlog routes across swarm-attempt-ledger and
 swarm-readiness so `canonical_gap_id`, `packet_id`, `repair_kind`, verify
 command, receipt command/state when present, outcome, limitation route, and
-`top_next_action` stay aligned while badge, LSP, PR, and CI remain advisory
+`top_next_action` stay aligned while badge, CLI, LSP, PR comment,
+review-comment, and CI remain advisory
 consumers instead of independent ranking or gate authorities.
 The checked real repair attempt receipts are read from
 `fixtures/real-repair-attempts/` and record several repo-local Lane 1 repair
@@ -11771,11 +11772,11 @@ false-actionable and crash rates, receipt closure rate, and unsupported
 limitation distribution. Eval cases with fewer than three ranked repair-card
 findings must include an explicit limit reason.
 The checked user-surface projection receipts are read from
-`fixtures/user-surface-projection-alignment/` and prove badge, LSP, PR comment,
-and CI projection examples share the same canonical gap, packet or limitation
-backlog identity, repair kind, verify command, receipt command, and top next
-action while remaining advisory and never treating raw finding totals as
-headline product truth.
+`fixtures/user-surface-projection-alignment/` and prove badge, CLI, LSP,
+PR comment, review-comment, and CI projection examples share the same canonical
+gap, packet or limitation backlog identity, repair kind, verify command,
+receipt command, and top next action while remaining advisory and never treating
+raw finding totals as headline product truth.
 The calibrated-gate dogfood case expects a non-zero evaluator exit only for the
 explicit blocking mode and treats that as healthy when the written decision
 report has the expected `blocked` status and count.

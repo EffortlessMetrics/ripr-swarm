@@ -19,8 +19,10 @@
       ],
       "advisory_consumers": [
         "badge",
+        "cli",
         "lsp",
         "pr_comment",
+        "review_comment",
         "ci"
       ],
       "expected": {
@@ -156,7 +158,7 @@
           "orphaned_receipts": []
         }
       },
-      "reason": "A single improved receipt should keep the same canonical gap, packet, repair kind, verify command, receipt command/state, and top readiness route while badge, LSP, PR, and CI remain advisory consumers."
+      "reason": "A single improved receipt should keep the same canonical gap, packet, repair kind, verify command, receipt command/state, and top readiness route while badge, CLI, LSP, PR comment, review-comment, and CI remain advisory consumers."
     },
     {
       "id": "receipt_unchanged_route_quality_alignment",
@@ -173,8 +175,10 @@
       ],
       "advisory_consumers": [
         "badge",
+        "cli",
         "lsp",
         "pr_comment",
+        "review_comment",
         "ci"
       ],
       "expected": {
@@ -332,8 +336,10 @@
       ],
       "advisory_consumers": [
         "badge",
+        "cli",
         "lsp",
         "pr_comment",
+        "review_comment",
         "ci"
       ],
       "expected": {
@@ -495,8 +501,10 @@
       ],
       "advisory_consumers": [
         "badge",
+        "cli",
         "lsp",
         "pr_comment",
+        "review_comment",
         "ci"
       ],
       "expected": {

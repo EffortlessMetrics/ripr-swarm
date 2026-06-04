@@ -8695,7 +8695,8 @@ const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] 
     ("dynamic_dispatch_limit", "named_static_limitation"),
 ];
 
-const USER_SURFACE_PROJECTION_REQUIRED_SURFACES: &[&str] = &["badge", "lsp", "pr_comment", "ci"];
+const USER_SURFACE_PROJECTION_REQUIRED_SURFACES: &[&str] =
+    &["badge", "cli", "lsp", "pr_comment", "review_comment", "ci"];
 const USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES: &[&str] = &[
     "full",
     "limited_large_cache_skip",
@@ -52745,7 +52746,7 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     }
 
     body.push_str("## User Surface Projection Alignment Receipts\n\n");
-    body.push_str("These receipts validate that badge, LSP, PR comment, and CI projection examples consume canonical repair state for full runs and canonical runtime state for limited runs instead of independently interpreting raw findings. They keep all four surfaces advisory by default and require limited/stale state visibility.\n\n");
+    body.push_str("These receipts validate that badge, CLI, LSP, PR comment, review-comment, and CI projection examples consume canonical repair state for full runs and canonical runtime state for limited runs instead of independently interpreting raw findings. They keep all six surfaces advisory by default and require limited/stale state visibility.\n\n");
     body.push_str("- Default CI blocking: no\n");
     body.push_str("- Receipt input: `fixtures/user-surface-projection-alignment/corpus.json`\n\n");
     body.push_str(
@@ -80189,8 +80190,9 @@ fn exact_owner_call_has_external_expected_value() {
                 .map(|scenario| scenario.surface.as_str())
                 .collect::<std::collections::BTreeSet<_>>();
 
-            let missing = ["badge", "lsp", "pr_comment", "ci"]
-                .into_iter()
+            let missing = super::USER_SURFACE_PROJECTION_REQUIRED_SURFACES
+                .iter()
+                .copied()
                 .filter(|surface| !surfaces.contains(surface))
                 .collect::<Vec<_>>();
 
@@ -80225,8 +80227,9 @@ fn exact_owner_call_has_external_expected_value() {
                 .map(|scenario| scenario.surface.as_str())
                 .collect::<std::collections::BTreeSet<_>>();
 
-            let missing = ["badge", "lsp", "pr_comment", "ci"]
-                .into_iter()
+            let missing = super::USER_SURFACE_PROJECTION_REQUIRED_SURFACES
+                .iter()
+                .copied()
                 .filter(|surface| !surfaces.contains(surface))
                 .collect::<Vec<_>>();
 
@@ -80256,8 +80259,10 @@ fn exact_owner_call_has_external_expected_value() {
             expected_top_next_action_kind: "attempt_ready_packet".to_string(),
             advisory_consumers: vec![
                 "badge".to_string(),
+                "cli".to_string(),
                 "lsp".to_string(),
                 "pr_comment".to_string(),
+                "review_comment".to_string(),
                 "ci".to_string(),
             ],
             must_not_change: Vec::new(),
