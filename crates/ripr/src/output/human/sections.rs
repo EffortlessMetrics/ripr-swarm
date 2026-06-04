@@ -138,6 +138,15 @@ fn push_preview_actionability(out: &mut String, actionability: &PreviewActionabi
             actionability.missing_actionability_fields.join(", ")
         ));
     }
+    if !actionability.missing_graph_legs.is_empty() {
+        out.push_str(&format!(
+            "  missing graph legs: {}\n",
+            actionability.missing_graph_legs.join(", ")
+        ));
+    }
+    if let Some(unlock_condition) = &actionability.unlock_condition {
+        out.push_str(&format!("  unlock condition: {unlock_condition}\n"));
+    }
     out.push_str(&format!(
         "  evidence needed: {}\n",
         actionability.evidence_needed_to_promote
@@ -151,6 +160,9 @@ fn push_preview_actionability(out: &mut String, actionability: &PreviewActionabi
 
 fn push_raw_ref(out: &mut String, raw_ref: &PreviewRawEvidenceRef) {
     if let (Some(file), Some(line)) = (raw_ref.file.as_deref(), raw_ref.line) {
+        if let Some(leg) = &raw_ref.leg {
+            out.push_str(&format!("{leg} "));
+        }
         out.push_str(&format!("{file}:{line}"));
         if let Some(kind) = &raw_ref.kind {
             out.push_str(&format!(" ({kind})"));
@@ -160,6 +172,9 @@ fn push_raw_ref(out: &mut String, raw_ref: &PreviewRawEvidenceRef) {
         }
         if let Some(owner) = &raw_ref.owner {
             out.push_str(&format!(" owner={owner}"));
+        }
+        if let Some(sample) = &raw_ref.sample {
+            out.push_str(&format!(" sample={sample}"));
         }
     } else {
         out.push_str(&raw_ref.raw);
@@ -240,6 +255,55 @@ fn push_typescript_preview_card(out: &mut String, card: &TypeScriptPreviewCard) 
         "  oracle: {} ({})\n",
         card.oracle_kind, card.oracle_strength
     ));
+    if let Some(grip) = &card.bun_cross_language_grip {
+        out.push_str("  Bun cross-language grip:\n");
+        out.push_str(&format!("    state: {}\n", grip.state));
+        out.push_str(&format!(
+            "    Rust seam: {} owner={} boundary={}\n",
+            grip.rust_file, grip.rust_owner, grip.rust_boundary
+        ));
+        out.push_str(&format!(
+            "    TypeScript evidence: {} verdict={} confidence={}\n",
+            grip.ts_test_file, grip.ts_verdict, grip.bridge_confidence
+        ));
+        if !grip.missing_discriminators.is_empty() {
+            out.push_str(&format!(
+                "    missing discriminators: {}\n",
+                grip.missing_discriminators.join(", ")
+            ));
+        }
+        if !grip.missing_graph_legs.is_empty() {
+            out.push_str(&format!(
+                "    missing graph legs: {}\n",
+                grip.missing_graph_legs.join(", ")
+            ));
+        }
+        if let Some(unlock_condition) = &grip.unlock_condition {
+            out.push_str(&format!("    unlock condition: {unlock_condition}\n"));
+        }
+        out.push_str(&format!(
+            "    limitation category: {}\n",
+            grip.limitation_category
+        ));
+        out.push_str(&format!("    repair route: {}\n", grip.repair_route));
+        out.push_str(&format!("    action: {}\n", grip.action));
+        out.push_str(&format!(
+            "    suggested test file: {}\n",
+            grip.suggested_test_file
+        ));
+        if let Some(placement) = &grip.placement {
+            out.push_str(&format!(
+                "    placement: rank {} {}\n",
+                placement.rank, placement.suggested_test_file
+            ));
+            out.push_str(&format!("    placement reason: {}\n", placement.reason));
+        }
+        out.push_str(&format!("    authority: {}\n", grip.authority_boundary));
+        out.push_str(&format!(
+            "    repair packet ready: {}\n",
+            grip.repair_packet_ready
+        ));
+    }
     if let Some(discriminator) = &card.missing_discriminator {
         out.push_str(&format!("  missing discriminator: {discriminator}\n"));
     }

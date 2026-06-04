@@ -4287,15 +4287,15 @@ Closeout:
 
 Campaign ID: `self-hosted-routed-runner-proof`
 
-Status: active.
+Status: closed.
 
-First Useful PR Loop Continuation is closed and archived. The current issue
-board has no product or analyzer PR queue, but it does have one live
-repo-owned cutover gap: [#34](https://github.com/EffortlessMetrics/ripr-swarm/issues/34)
-tracks CX53/CX43 self-hosted routed Rust proof, and
-[#24](https://github.com/EffortlessMetrics/ripr-swarm/issues/24) tracks the
-larger source-to-swarm cutover boundary. This repo-ops campaign selects that
-work without reopening product behavior, release, badge, source promotion, or
+First Useful PR Loop Continuation is closed and archived. This repo-ops
+campaign selected the live cutover gap where
+[#34](https://github.com/EffortlessMetrics/ripr-swarm/issues/34) tracked
+CX53/CX43 self-hosted routed Rust proof and
+[#24](https://github.com/EffortlessMetrics/ripr-swarm/issues/24) tracked the
+larger source-to-swarm cutover boundary. It closed that proof gap without
+reopening product behavior, release, badge, source promotion, or
 branch-protection scope.
 
 Objective:
@@ -4326,9 +4326,9 @@ Work items:
 | Work item | Status | Notes |
 | --- | --- | --- |
 | `goals/self-hosted-routed-runner-proof-activation` | done | Select #34/#24 as the active repo-owned successor after no-current-goal without changing analyzer, product, release, badge, source-promotion, or branch-protection behavior. |
-| `ops/current-routed-proof-refresh` | done | Current routed proof is recorded on #34 and #24 as the issue ledger. Hosted-fallback evidence remains current when that ledger records `target=github` and CX53/CX43 skipped. Recent receipts record both runner visibility/API failure and no idle image-ready CX53/CX43 runner availability; neither is CX53/CX43 execution proof. |
-| `ops/cx53-cx43-proof-closeout` | blocked | Requires CX53/CX43 self-hosted proof or an org-visible accepted runner-readiness/visibility blocker before proof can close. |
-| `campaign/self-hosted-routed-runner-proof-closeout` | blocked | Close only after #34/#24 carry proof or an accepted bounded blocker, plus branch-protection and source/swarm authority status. |
+| `ops/current-routed-proof-refresh` | done | Current routed proof was recorded on #34 and #24 as the issue ledger while the lane was still hosted-fallback-only. Later proof replaced that blocker. |
+| `ops/cx53-cx43-proof-closeout` | done | #920 run `26859058862` proved CX53 with `target=cx53`, `reason=cx53_idle`, and `Ripr Rust Small Result` success; #921 post-merge run `26860129004` proved CX43 with `target=cx43`, `reason=cx43_idle`, and `Ripr Rust Small Result` success. |
+| `campaign/self-hosted-routed-runner-proof-closeout` | done | [Self-hosted routed runner proof closeout](handoffs/2026-06-03-self-hosted-routed-runner-proof-closeout.md) records the issue-linked proof, branch-protection status, source/swarm authority boundary, and remaining #24 operational follow-up. |
 
 Commands:
 
@@ -4349,6 +4349,12 @@ rtk cargo xtask check-pr
 rtk git diff --check
 ```
 
+Closeout:
+
+- [Self-hosted routed runner proof closeout](handoffs/2026-06-03-self-hosted-routed-runner-proof-closeout.md)
+  records the CX53/CX43 proof runs, #24/#34 issue ledger updates, unchanged
+  branch-protection boundary, and remaining non-goal follow-ups.
+
 Blocking conditions:
 
 - analyzer truth changes
@@ -4364,3 +4370,484 @@ Blocking conditions:
 - mutation execution
 - runtime adequacy, coverage adequacy, proof-of-correctness, policy
   eligibility, gate pass/fail, or merge-readiness claims
+
+## Lane 1 Campaign: Real-Repo Trust Readiness
+
+Campaign ID: `lane1-real-repo-trust-readiness`
+
+Status: closed. `.ripr/goals/active.toml` now records `status = "closed"`
+and `no_current_goal = true`; the closeout audit is
+[Lane 1 Real-Repo Trust Readiness closeout](handoffs/2026-06-03-lane1-real-repo-trust-readiness-closeout.md).
+
+The self-hosted routed runner proof campaign is closed and archived. Live
+release handoff state says source `ripr` 0.8.0 has already been tagged and
+published, so this campaign treats the new real-repo issue batch as
+post-release trust debt and possible hotfix work. It must not imply that the
+published 0.8.0 tag already fixed behavior that lands afterward.
+
+The issue batch:
+
+- [#913](https://github.com/EffortlessMetrics/ripr-swarm/issues/913):
+  review-comments Markdown omits file:line next to seam IDs.
+- [#912](https://github.com/EffortlessMetrics/ripr-swarm/issues/912) and
+  [#909](https://github.com/EffortlessMetrics/ripr-swarm/issues/909): large
+  monorepos exceed the seam-cache entry limit and cache skips are too easy to
+  miss.
+- [#908](https://github.com/EffortlessMetrics/ripr-swarm/issues/908),
+  [#910](https://github.com/EffortlessMetrics/ripr-swarm/issues/910), and
+  [#911](https://github.com/EffortlessMetrics/ripr-swarm/issues/911):
+  cross-language, TypeScript-tested, binding, and FFI seams can be reported or
+  routed as misleading Rust repair work.
+
+Objective:
+
+```text
+Make RIPR's evidence-to-repair foundation honest on large and mixed-language
+repositories: review surfaces must be navigable, large seam-cache limits must
+be explicit named limitations, and cross-language or binding/FFI seams must
+fail closed instead of emitting wrong Rust repair work.
+```
+
+End state:
+
+- Review-facing seam rows include source file and line/span, or an explicit
+  `source_location_unresolved` limitation route.
+- Large seam-cache skips report observed seam count, configured limit,
+  downstream consumability, and a repair/configuration route.
+- Rust seams reached through TypeScript, binding, or FFI surfaces fail closed
+  as named limitations until RIPR can prove external oracle visibility or a
+  language-aware target.
+- Public repair-packet queues exclude unresolved cross-language packets.
+- Release-line notes and issue labels stay honest about what shipped in the
+  already-published 0.8.0 tag.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `release/real-repo-trust-issue-triage` | done | Classify #913, #912/#909, and #908/#910/#911; link duplicate/overlap clusters; label release-line blockers or post-0.8 follow-ups honestly; update release/freeze non-claims. |
+| `report/review-comments-source-locations` | done | Review-comments Markdown rows now carry file:line/span or an explicit unknown-location limitation route. |
+| `cache/large-seam-cache-skip-limitation` | done | Large seam-cache skips are named, counted, configured, and preserved as limited state. |
+| `analysis/cross-language-oracle-visibility-limitation` | done | TS-tested Rust and binding/FFI seams route to named limitations when external oracle visibility is unresolved. |
+| `report/binding-ffi-target-placement-fail-closed` | done | Suppress unrelated Rust suggested-test placement for binding/FFI or externally tested seams. |
+
+Commands:
+
+```bash
+rtk cargo xtask check-goals
+rtk cargo xtask goals next
+rtk cargo xtask check-doc-index
+rtk cargo xtask markdown-links
+rtk cargo xtask check-static-language
+rtk cargo xtask check-doc-roles
+rtk cargo xtask check-pr
+rtk git diff --check
+```
+
+Blocking conditions:
+
+- forcing actionability without the public repair-packet fields;
+- suggesting unrelated Rust tests for binding/FFI seams;
+- hiding cache skips or representing limited input as full;
+- claiming full cross-language oracle proof before the analyzer route exists;
+- changing provider, autonomous edit, mutation-execution, badge, default CI
+  blocking, source release, publishing, signing, marketplace, or install-doc
+  behavior without explicit authorization.
+
+Closeout:
+
+- [Lane 1 Real-Repo Trust Readiness closeout](handoffs/2026-06-03-lane1-real-repo-trust-readiness-closeout.md)
+- The closed manifest archive is
+  `.ripr/goals/archive/2026-06-03-lane1-real-repo-trust-readiness.toml`.
+- #909, #908, #910, and #911 remain broader follow-up routes for scalable seam
+  cache, cross-language oracle graph proof, and language-aware repair target
+  inference. They are not completed by this closeout.
+
+## Lane 1 Campaign: Large-Repo Runtime Completeness
+
+Campaign ID: `lane1-large-repo-runtime-completeness`
+
+Status: closed. `.ripr/goals/active.toml` records `status = "closed"` and
+`no_current_goal = true`; the closeout audit is
+[Lane 1 Large-Repo Runtime Completeness closeout](handoffs/2026-06-03-lane1-large-repo-runtime-completeness-closeout.md).
+
+This campaign is scoped to the live #909 follow-up: make large-repo
+repo-exposure warm paths useful without turning sampled, timeout, incomplete,
+or otherwise limited runs into full repo truth. It does not reopen the
+published 0.8.0 release claim boundary and does not claim full large-monorepo
+optimization until diff-scoped review runtime is separately validated.
+
+Objective:
+
+```text
+Make the full classified seam cache usable for large repo-exposure results by
+storing entries above RIPR_REPO_SEAM_CACHE_LIMIT as bounded shard files, loading
+only complete key-matched shard sets, and keeping the remaining large-repo
+runtime work visible as named follow-ups.
+```
+
+End state:
+
+- Full classified seam cache entries larger than the active limit write a
+  manifest plus bounded shard files under `target/ripr/cache` instead of
+  skipping the entire cache store.
+- Warm loads stitch shards only when the manifest and every shard match the
+  current cache key.
+- Missing, corrupt, or mismatched shard sets are ignored as corrupt cache state
+  and fall back to cold compute.
+- `RIPR_REPO_SEAM_CACHE_LIMIT` remains a positive integer tuning knob, now
+  bounding shard size rather than silently disabling large cache entries.
+- Cache report shard summaries and diff-scoped large-repo review fast paths
+  are implemented as explicit large-repo surfaces without turning scoped
+  review input into full-repo truth.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `cache/large-repo-sharded-seam-cache` | done | Full repo seam cache entries above `RIPR_REPO_SEAM_CACHE_LIMIT` now write and reload bounded shard files; corrupt/incomplete shard sets fail closed; docs describe shard-size semantics. |
+| `report/large-repo-cache-shard-summary` | done | Cache reports now summarize sharded seam-cache families with shard counts, manifest counts, bytes, largest shard sets, and orphan/incomplete shard sets. |
+| `analysis/diff-scoped-large-repo-review-fast-path` | done | Review-comments default diff rendering now classifies changed production files plus bounded immediate callers, emits `analysis_scope.run_status = "limited_diff_scope"`, and reports `review_comments_diff_scope_only` rather than full-repo truth. |
+
+Commands:
+
+```bash
+rtk cargo test -p ripr seam_cache -- --test-threads=1
+rtk cargo test -p ripr seam_inventory -- --test-threads=1
+rtk cargo test -p xtask cache -- --test-threads=1
+rtk cargo xtask cache report
+rtk cargo xtask check-goals
+rtk cargo xtask goals next
+rtk cargo xtask check-doc-index
+rtk cargo xtask markdown-links
+rtk cargo xtask check-static-language
+rtk cargo xtask check-pr
+rtk git diff --check
+```
+
+Blocking conditions:
+
+- representing sampled, stale, timeout, runner-failure, incomplete, or
+  cache-preflight-limited runs as full;
+- using raw findings as product truth without canonical evidence items;
+- creating public repair packets from static limitations;
+- claiming full large-monorepo optimization before diff-scoped review runtime
+  is validated;
+- changing source release, publish, signing, marketplace, or install-doc
+  behavior without explicit release authorization.
+
+Closeout:
+
+- [Lane 1 Large-Repo Runtime Completeness closeout](handoffs/2026-06-03-lane1-large-repo-runtime-completeness-closeout.md)
+- The closed manifest archive is
+  `.ripr/goals/archive/2026-06-03-lane1-large-repo-runtime-completeness.toml`.
+- Future cross-language oracle graph or language-aware placement work should
+  open a successor issue-backed manifest rather than extending this closed
+  #909 campaign.
+
+## Lane 1 Campaign: Language-Aware Placement Navigation
+
+Campaign ID: `lane1-language-aware-placement-navigation`
+
+Status: complete. The
+[Lane 1 Language-Aware Placement Navigation closeout](handoffs/2026-06-03-lane1-language-aware-placement-navigation-closeout.md)
+records the closed campaign; `.ripr/goals/active.toml` now records
+`status = "closed"` and `no_current_goal = true`, with the closed manifest
+archived at
+`.ripr/goals/archive/2026-06-03-lane1-language-aware-placement-navigation.toml`.
+
+This campaign is scoped to live #911: suggested-test placement must stop being
+confident in the wrong language or crate, while still becoming more useful when
+RIPR has explicit external observer target evidence. It follows #931, which
+made binding/FFI target placement fail closed. It does not reopen the published
+0.8.0 release claim boundary and does not claim full cross-language oracle graph
+proof.
+
+Objective:
+
+```text
+Make suggested-test placement safe and useful for binding, FFI, and externally
+tested seams by routing known external target evidence as navigation-only
+limitation context, while keeping unknown targets fail-closed instead of
+emitting unrelated Rust test files or repair packets.
+```
+
+End state:
+
+- Ordinary Rust seams with direct Rust-side test context continue to suggest
+  only locally supported Rust test targets.
+- Binding, FFI, or externally tested seams with explicit configured external
+  observer evidence can surface a navigation-only target file and route without
+  becoming public repair packets.
+- Binding, FFI, or externally tested seams without explicit target evidence keep
+  suggested test placement unknown or not applicable with a named blocked route.
+- LSP, review-comments, and agent packet surfaces suppress repair actions
+  whenever allowed edit surface, verify command, receipt command, or target
+  shape is unresolved.
+- Readiness and route-quality surfaces preserve language-aware target-placement
+  limitations as limitations rather than actionability.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `goals/language-aware-placement-navigation-activation` | done | Select #911 as the first Lane 1 successor after `lane1-large-repo-runtime-completeness` closed with `no_current_goal = true`, without changing analyzer behavior, repair-packet authority, release claims, gates, badges, or source distribution authority. |
+| `report/language-aware-placement-navigation` | done | #938 surfaces explicit configured external observer target evidence as navigation-only limitation context in review-comments, LSP static-limit notes, and packet-adjacent targeted-test briefs, while unknown targets keep a named blocked route and no repair action, verify command, receipt command, or allowed edit surface. |
+| `report/language-aware-placement-route-quality` | done | #940 summarizes language-aware placement limits and navigation-only external target evidence in readiness, route-quality, and calibration outputs without promoting unresolved or preview external targets into public repair packets. |
+| `campaign/language-aware-placement-closeout` | done | Close #911 with issue state, claim boundaries, validation evidence, remaining #908/#910 cross-language oracle graph work, and no successor unless current repo-owned state selects one. |
+
+Commands:
+
+```bash
+rtk cargo test -p ripr suggested_test -- --test-threads=1
+rtk cargo test -p ripr typescript_preview_card_projects_bun_cross_language_grip -- --test-threads=1
+rtk cargo test -p ripr lsp --lib
+rtk cargo xtask ripr-swarm readiness
+rtk cargo xtask evidence-quality-scorecard
+rtk cargo xtask check-output-contracts
+rtk cargo xtask check-goals
+rtk cargo xtask goals next
+rtk cargo xtask check-doc-index
+rtk cargo xtask markdown-links
+rtk cargo xtask check-static-language
+rtk cargo xtask check-doc-roles
+rtk cargo xtask check-pr
+rtk git diff --check
+```
+
+Blocking conditions:
+
+- suggesting unrelated Rust test files for binding or FFI seams;
+- inferring TypeScript, Python, or other external test targets without explicit
+  bridge or observer evidence;
+- creating public repair packets from navigation-only external target evidence;
+- inventing verify commands, receipt commands, candidate values, or allowed edit
+  surfaces for unresolved external targets;
+- claiming full cross-language oracle graph proof or runtime coverage proof;
+- changing provider, autonomous edit, mutation-execution, badge, default CI
+  blocking, source release, publishing, signing, marketplace, or install-doc
+  behavior without explicit authorization.
+
+Closeout:
+
+- [Lane 1 Language-Aware Placement Navigation closeout](handoffs/2026-06-03-lane1-language-aware-placement-navigation-closeout.md)
+- The closed manifest archive is
+  `.ripr/goals/archive/2026-06-03-lane1-language-aware-placement-navigation.toml`.
+- Future cross-language oracle graph work should continue through #908/#910 or
+  fresh issue-backed manifests rather than extending this closed #911 campaign.
+
+## Lane 1 Campaign: Cross-Language Oracle Graph Readiness
+
+Campaign ID: `lane1-cross-language-oracle-graph-readiness`
+
+Status: folded into the active post-0.8 operating loop after the bounded
+SPEC-0062, corpus, TS discriminator, and binding-route witness slices landed.
+`.ripr/goals/active.toml` now selects
+`lane1-post-08-operating-loop` so diff-first real-repo operation can happen
+before broader route-quality and cross-language graph promotion work.
+
+This campaign is scoped to live #910 and related #908: Rust seams exercised by
+TypeScript, binding, or FFI surfaces need an explicit oracle graph before RIPR
+can treat external evidence as more than advisory limitation context. It follows
+#930, #938, and #940: unresolved oracle visibility and target placement already
+fail closed, while
+[RIPR-SPEC-0062: Cross-Language Oracle Graph](specs/RIPR-SPEC-0062-cross-language-oracle-graph.md)
+now names the bounded Bun Blob graph shape needed to unlock trustworthy
+actionability. It does not reopen the published 0.8.0 release claim boundary and
+does not promote TypeScript or JavaScript preview evidence to a support tier.
+
+Objective:
+
+```text
+Make cross-language oracle visibility explicit for Rust seams exercised by
+TypeScript, binding, or FFI surfaces: distinguish missing external
+discriminators, unknown bridge routes, and complete advisory witnesses, then
+only move toward actionability when the Rust seam, binding edge, external
+callsite, external assertion/oracle, verify command, receipt command, raw
+evidence refs, and edit constraints are all named.
+```
+
+End state:
+
+- TS-tested Rust seam samples carry a bounded oracle graph shape: Rust seam,
+  boundary, binding or FFI edge, external callsite, external assertion or
+  oracle, and raw evidence refs.
+- Complete configured external witnesses can be reported as advisory external
+  observation without creating public repair packets, generated tests, gates,
+  badges, baselines, or support-tier promotion.
+- Missing discriminator, mention-only, unknown bridge, and unresolved target
+  cases stay static limitations with named repair routes and samples.
+- Readiness, scorecard, review, LSP, and PR surfaces preserve cross-language
+  oracle routes as limitations until public repair-packet fields exist.
+- Full actionability remains blocked unless verify command, receipt command,
+  allowed edit surface, must-not-change guardrails, confidence, and raw evidence
+  refs are present.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `goals/cross-language-oracle-graph-activation` | done | Select #910/#908 as the next Lane 1 successor after `lane1-language-aware-placement-navigation` closed with `no_current_goal = true`, without changing analyzer behavior, repair-packet authority, release claims, gates, badges, support tiers, or source distribution authority. |
+| `spec/cross-language-oracle-graph-v1` | done | [RIPR-SPEC-0062](specs/RIPR-SPEC-0062-cross-language-oracle-graph.md) defines the bounded #910/#908 graph contract for the configured Bun Blob route: required Rust seam, boundary, binding or FFI edge, external TypeScript callsite, external assertion/oracle, raw evidence refs, allowed states, and fail-closed non-claims before changing analyzer behavior. |
+| `fixtures/cross-language-oracle-graph-corpus` | done | `fixtures/cross-language-oracle-graph-corpus` pins the #910/#908 Bun Blob graph corpus with Rust seam samples, boundary text, binding/FFI hints, external TypeScript callsites, external oracle/assertion samples, advisory or limitation states, structured raw evidence refs, and fail-closed non-claims before analyzer behavior changes. |
+| `analysis/cross-language-ts-discriminator-witness` | done | For the bounded configured Bun Blob route, complete TS discriminator witnesses stay preview-advisory with graph-leg raw refs, while missing-discriminator and mention-only evidence remain cross-language oracle visibility limitations with named missing graph legs and no public repair packets. |
+| `analysis/cross-language-binding-route-witness` | done | Configured Bun Blob routes now credit a structured `binding_edge` raw ref, while complete TypeScript discriminators with unknown bridge confidence stay `bridge_unknown` static limitations with missing `binding_or_ffi_edge`, no binding raw ref, no placement, and no public repair packet. |
+| `report/cross-language-oracle-route-quality` | done | Readiness and evidence-quality scorecard outputs summarize complete advisory witnesses, missing discriminators, unknown bridges, mention-only limitations, and public packet exclusions without treating cross-language preview evidence as repair-ready. |
+| `report/bun-ub-calibration` | done | `cargo xtask bun-ub-calibration` writes an operator-readable preview/advisory JSON/Markdown receipt for the Bun Blob TypeScript calibration corpus, including TS-discriminated, missing-discriminator, mention-not-observer, bridge_unknown, missing graph leg, non-claim, and `repair_packet_ready=false` rows. |
+| `output/bun-ub-missing-discriminator-placement` | done | Configured Bun Blob missing shared/resizable discriminator rows now name `test/js/web/fetch/blob.test.ts` as advisory TypeScript placement in preview cards, route-quality rows, and Bun UB calibration receipts while bridge-unknown, mention-only, partial-oracle, and target-unresolved rows remain `suggested_test_file=not_applicable` with no public repair packet. |
+| `dogfood/bun-ub-cross-language-witness-receipts` | done | `fixtures/bun-ub-cross-language-dogfood` and `cargo xtask dogfood` now record the #31648 known-good, stripped-resizable, and maxByteLength mention-only operator receipts, including before/after review behavior, manual verdict, advisory action, placement, and `repair_packet_ready=false`. |
+| `docs/bun-ub-typescript-preview-runbook` | done | `docs/BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md` gives Bun operators the copyable advisory loop for configuring the preview, running diff-scoped evidence, interpreting TS-discriminated, missing-discriminator, mention-only, bridge-unknown, and FFI panic-boundary limitation states, and checking calibration/dogfood receipts without runtime Bun, generated tests, public repair packets, gates, badges, baselines, RIPR Zero, or support-tier promotion. |
+| `campaign/cross-language-oracle-graph-closeout` | deferred | Closeout is deferred until the broader post-0.8 loop reaches the cross-language graph and surface-alignment slices, or a narrower issue-backed closeout is selected. |
+
+Focused correction campaign ID:
+`typescript-bun-081-placement-receipt-correction`.
+
+Commands:
+
+```bash
+rtk cargo xtask check-spec-format
+rtk cargo xtask check-spec-numbering
+rtk cargo xtask check-traceability
+rtk cargo test -p xtask cross_language_oracle_graph_corpus_cases_are_checked -- --test-threads=1
+rtk cargo test -p xtask typescript_bun_ub_calibration_cases_are_checked -- --test-threads=1
+rtk cargo test -p xtask dogfood_bun_ub_cross_language -- --test-threads=1
+rtk cargo test -p xtask bun_ub_calibration -- --test-threads=1
+rtk cargo xtask bun-ub-calibration
+rtk cargo xtask dogfood
+rtk cargo test -p ripr typescript_preview_card_projects_bun_cross_language_grip -- --test-threads=1
+rtk cargo xtask ripr-swarm readiness
+rtk cargo xtask evidence-quality-scorecard
+rtk cargo xtask check-output-contracts
+rtk cargo xtask check-goals
+rtk cargo xtask goals next
+rtk cargo xtask check-doc-index
+rtk cargo xtask markdown-links
+rtk cargo xtask check-static-language
+rtk cargo xtask check-doc-roles
+rtk cargo xtask check-pr
+rtk git diff --check
+```
+
+Blocking conditions:
+
+- classifying TS-tested Rust seams as actionable from preview evidence alone;
+- suggesting Rust or external-language test targets without explicit bridge and
+  observer evidence;
+- inventing binding edges, external callsites, external oracles, verify
+  commands, receipt commands, candidate values, or allowed edit surfaces;
+- creating public repair packets from advisory cross-language witnesses;
+- claiming full cross-language oracle graph proof or runtime coverage proof
+  before the graph is explicitly named and verified;
+- changing provider, autonomous edit, mutation-execution, badge, default CI
+  blocking, support tier, source release, publishing, signing, marketplace, or
+  install-doc behavior without explicit authorization.
+
+## Lane 1 Campaign: Post-0.8 Evidence-To-Repair Operating Loop
+
+Campaign ID: `lane1-post-08-operating-loop`
+
+Status: closed. `.ripr/goals/active.toml` records `status = "closed"` and
+`no_current_goal = true`. The archived manifest lives at
+`.ripr/goals/archive/2026-06-04-lane1-post-08-operating-loop.toml`, and the
+closeout handoff is
+`docs/handoffs/2026-06-04-lane1-post-08-operating-loop-closeout.md`.
+
+The closed manifest records that live queue hygiene,
+#913, #909/#912, Bun UB calibration reporting, diff-first changed-surface mode,
+cross-language oracle fail-closed routing, language-aware target placement
+navigation, the bounded cross-language oracle graph, repair-packet guidance
+quality, attempt-ledger outcome hardening, real repair/analyzer-attempt
+dogfood, route-quality metrics, and surface canonical-state alignment are
+complete in the current repo state. No successor campaign is selected.
+
+Objective:
+
+```text
+Make RIPR's post-0.8 Lane 1 operating loop useful on real large and
+mixed-language repositories: route safe repair packets, fail closed into named
+limitation backlog items, record receipts and outcomes, and use route quality
+to choose the next analyzer work.
+```
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `repo/post-08-queue-hygiene` | done | Live state confirms #680, #582, and the same-file method-chain route split chain are merged or closed; stale local branches from merged PRs and two stale remote heads were pruned. |
+| `review/review-comments-file-line` | done | #913 is closed by #926; review-comments source locations are no longer the next active slice. |
+| `cache/large-seam-cache-explicit` | done | #912 and #909 are closed by the large-cache post-0.8 chain through #936, including explicit skip state and sharded cache follow-ups. |
+| `report/bun-ub-calibration` | done | Inserted before diff-first for the 0.8.1 TypeScript/Bun patch line: the xtask report turns the Bun Blob calibration corpus into advisory JSON/Markdown operator receipts without public repair-packet, gate, badge, runtime, or support-tier authority. |
+| `ripr/diff-first-changed-surface-mode` | done | `ripr diff --base <ref> --head <ref>` emits diff-complete changed-file and changed-seam evidence before full-repo analysis and preserves full-repo limited state. |
+| `analysis/cross-language-oracle-fail-closed` | done | Existing evidence-record, packet-queue, readiness, and scorecard coverage routes unresolved external oracle paths to named limitations rather than wrong-language repair packets. |
+| `report/language-aware-target-placement-v1` | done | #938 through #941 already closed language-aware placement navigation: explicit external observer targets are navigation-only and unresolved binding/FFI targets stay limitations with no LSP repair action. |
+| `analysis/cross-language-oracle-graph-v1` | done | SPEC-0062, the cross-language oracle graph corpus, TS discriminator witness routes, unknown-bridge limitation routing, route-quality report, and Bun UB calibration receipt now validate the bounded configured Bun Blob graph route, including partial external callsites that still lack stable oracle evidence; broader generic graph support remains non-claimed. |
+| `analysis/repair-packet-guidance-quality` | done | Existing swarm-plan packet corpus and focused tests require typed repair route, target shape, verify command, receipt command, allowed edit surface, must-not-change boundaries, confidence, raw evidence refs, and fail-closed missing-field wording before a packet can be queued. |
+| `report/attempt-ledger-outcome-hardening` | done | SPEC-0057, the real-repair-attempts corpus, attempt-ledger report, readiness report, and focused xtask tests preserve latest and historical `not_attempted`, `attempted_no_receipt`, `receipt_present`, `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`, `unknown`, stale synthetic placeholder cleanup, gap mismatch, latest-attempt projection, and orphan-receipt routing. |
+| `dogfood/real-repair-analyzer-attempts` | done | The real-repair-attempts dogfood corpus and report record 67 repo-local repair or analyzer-route attempts with verify command, receipt route when applicable, before/after state, outcome, must-not-change boundaries, raw evidence refs, and operator notes; the set includes 61 improved, 2 resolved, 2 unchanged, and 2 attempted-without-receipt rows, while readiness keeps the latest 36 improved and 2 resolved packets current and preserves older non-success attempts in durable history. |
+| `report/route-quality-metrics` | done | Readiness and scorecard reports expose repair-route quality, language repair-route quality, top failing repair routes, top missing evidence fields, top limitation routes, limitation route quality, and cross-language oracle route quality. Current readiness derives 38 attempted packets, 36 improved packets, 2 resolved packets, and durable historical non-success counts from real-repair attempts, while focused route-quality tests cover non-empty failing, missing-field, and limitation-route fixtures. |
+| `surface/canonical-state-alignment` | done | Existing surface-projection and user-surface-projection dogfood corpora prove CLI-adjacent, review, LSP/editor, PR comment, badge, and CI examples consume the same canonical repair or limitation state, preserve `canonical_gap_id`, runtime status, receipt state, route-quality non-success cases, and missing-receipt cases, and keep raw findings as supporting evidence rather than product truth. |
+| `campaign/lane1-post-08-closeout` | done | [Lane 1 Post-0.8 Evidence-To-Repair Operating Loop closeout](handoffs/2026-06-04-lane1-post-08-operating-loop-closeout.md) records what users can trust, what remains advisory, what remains non-actionable, validation commands, open issues, explicit non-claims, the archived manifest, and no selected successor. |
+
+Non-claims:
+
+- no provider integration;
+- no autonomous edits;
+- no mutation execution;
+- no default blocking CI or badge semantic switch;
+- no source release, publish, tag, signing, marketplace, or install-doc work
+  without explicit release authorization.
+
+Closeout:
+
+- [Lane 1 Post-0.8 Evidence-To-Repair Operating Loop closeout](handoffs/2026-06-04-lane1-post-08-operating-loop-closeout.md)
+
+## Lane 1 Campaign: Cross-Language Oracle Follow-Up
+
+Campaign ID: `lane1-cross-language-oracle-followup`
+
+Status: closed. `.ripr/goals/active.toml` records `status = "closed"` and
+`no_current_goal = true`. The archived manifest lives at
+`.ripr/goals/archive/2026-06-04-lane1-cross-language-oracle-followup.toml`.
+
+This campaign extends cross-language oracle evidence only through measured,
+profile-backed graph slices. It must not convert TypeScript, binding, FFI, or
+external-oracle evidence into public repair packets until the graph legs and
+canonical actionability fields are explicit.
+
+Objective:
+
+```text
+Make #908/#910 cross-language oracle follow-ups more useful by adding measured
+graph profiles beyond the bounded Bun Blob route while preserving the rule that
+external-language evidence is advisory or a named limitation until every graph
+leg and public repair-packet field is explicit.
+```
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `fixtures/cross-language-copy-to-unshared-profile` | done | Selects the #908/#910 follow-up and pins the `copy_to_unshared` TypeScript-exercised Rust seam as a profile-backed `bridge_unknown` limitation with source locations, missing binding edge, repair route, unlock condition, raw evidence refs, and no public repair-packet fields. |
+| `report/configured-cross-language-ts-placement` | done | Surfaces `test/js/web/fetch/blob.test.ts` only for configured Bun Blob missing-discriminator rows while keeping the result advisory: no public projection, verify command, receipt command, allowed edit surface, wrong Rust test target, or repair packet. |
+| `analysis/cross-language-copy-to-unshared-bridge-route` | done | Adds configured bridge evidence for the `copy_to_unshared` profile and credits the external TypeScript oracle only as a preview/advisory witness; the row still has no verify command, receipt command, allowed edit surface, suggested test file, public projection eligibility, or repair packet. |
+| `analysis/bun-markdown-resizable-cross-language-profile` | done | Adds the #951 `MarkdownObject::to_string` configured `Bun.markdown` profile and credits `test/js/bun/md/md-edge-cases.test.ts` only as a preview/advisory witness when resizable ArrayBuffer, configured bridge, callsite, and strong markdown oracle evidence are present; weak markdown oracle evidence remains a named limitation, and the route still has no suggested test file, verify command, receipt command, allowed edit surface, public projection eligibility, repair packet, or generic TypeScript proof claim. |
+| `dogfood/bun-blob-witness-receipts` | done | Records checked Bun Blob cross-language dogfood receipts for complete advisory, missing-discriminator, bridge-unknown, and partial-oracle cases while preserving advisory-only authority, route-quality counters, non-claims, and no public repair packets. |
+| `fixtures/bun-ffi-negative-offset-panic-boundary-profile` | done | Adds the #950 Bun FFI `FFIObject::read` negative-offset panic-boundary profile as a named static limitation with source locations, FFI binding sample, missing negative-offset panic oracle, missing safe external observer target, unlock condition, raw evidence refs, and no suggested test file, verify command, receipt command, allowed edit surface, public projection eligibility, or repair packet. |
+| `dogfood/bun-ffi-panic-boundary-receipt` | done | Records a checked Bun FFI negative-offset panic-boundary dogfood receipt for #950/#974 that proves the route stays a named limitation with unresolved negative-offset oracle and safe observer target evidence, no suggested test file, no verify command, no receipt command, no allowed edit surface, and no public repair packet. |
+
+Non-claims:
+
+- no generic cross-language oracle proof;
+- no runtime Bun execution;
+- no generated tests;
+- no public repair packet from preview or limitation evidence;
+- no provider integration;
+- no autonomous edits;
+- no mutation execution;
+- no default blocking CI or badge semantic switch;
+- no source release, publish, tag, signing, marketplace, or install-doc work
+  without explicit release authorization.
+
+Closeout:
+
+- [Lane 1 Cross-Language Oracle Follow-Up closeout](handoffs/2026-06-04-lane1-cross-language-oracle-followup-closeout.md)

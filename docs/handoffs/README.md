@@ -55,6 +55,15 @@ the handoff covers (e.g. `2026-05-04-campaign-4a-closeout.md`).
 
 ## Current Handoffs
 
+- [Lane 1 Cross-Language Oracle Follow-Up closeout](2026-06-04-lane1-cross-language-oracle-followup-closeout.md)
+- [Lane 1 Post-0.8 Evidence-To-Repair Operating Loop closeout](2026-06-04-lane1-post-08-operating-loop-closeout.md)
+- [Lane 1 Language-Aware Placement Navigation closeout](2026-06-03-lane1-language-aware-placement-navigation-closeout.md)
+- [Lane 1 Large-Repo Runtime Completeness closeout](2026-06-03-lane1-large-repo-runtime-completeness-closeout.md)
+- [Lane 1 Real-Repo Trust Readiness closeout](2026-06-03-lane1-real-repo-trust-readiness-closeout.md)
+- [Bun UB TypeScript Preview closeout](2026-06-03-bun-ub-typescript-preview-closeout.md)
+- [Self-Hosted Routed Runner Proof closeout](2026-06-03-self-hosted-routed-runner-proof-closeout.md)
+- [0.8.0 source release](2026-06-02-0.8.0-source-release.md)
+- [0.8.0 release freeze](2026-06-02-0.8.0-release-freeze.md)
 - [0.8.0 swarm freeze](0.8.0-swarm-freeze.md)
 - [Python Repair Routing usable-alpha closeout](2026-05-31-python-repair-routing-usable-alpha-closeout.md)
 - [TypeScript Preview Completion closeout](2026-05-30-typescript-preview-completion-closeout.md)

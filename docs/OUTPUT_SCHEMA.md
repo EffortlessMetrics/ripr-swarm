@@ -23,6 +23,12 @@ standard SARIF `version: "2.1.0"` envelope rather than `schema_version: "0.1"`.
 Adding SARIF must not change the existing human, JSON, GitHub annotation,
 badge, LSP, or context schemas.
 
+`ripr check --format github` emits GitHub Actions workflow-command text rather
+than JSON. For Python preview findings, that message may append either an
+eligible repair-card summary or a no-action/static-limit summary. No-action
+annotation text explicitly says no repair card or agent packet was emitted, and
+remains advisory review context rather than verify, receipt, or gate authority.
+
 ## Check Output
 
 `ripr check --json` emits:
@@ -456,18 +462,41 @@ The evidence-first fields are additive in schema `0.1`:
   Current fields are `authority_boundary` (`"preview_advisory_only"`),
   `repair_packet_ready` (`false` for this preview slice), `gap_state`,
   `actionability_category`, `why_not_actionable`, `repair_route`,
-  `missing_actionability_fields[]`, `evidence_needed_to_promote`, and
-  `raw_evidence_refs[]`. Raw evidence refs carry the original raw string plus
-  parsed `file`, `line`, `kind`, `source_id`, and optional `owner` when present.
+  `missing_actionability_fields[]`, `missing_graph_legs[]`, nullable
+  `unlock_condition`, `evidence_needed_to_promote`, and `raw_evidence_refs[]`.
+  Raw evidence refs carry the original raw string plus parsed `file`, `line`,
+  `kind`, `source_id`, optional `owner`, optional graph `leg`, and optional
+  source `sample` when present.
 - `typescript_preview_card` is an additive optional object for TypeScript and
   JavaScript preview findings that already have structured
   `preview_actionability`. It is an advisory card, not a repair packet. The v1
   card carries `card_version`, `source`, `language`, `language_status`,
   `authority_boundary`, `owner`, optional `owner_kind`, `probe_family`,
   `changed_behavior`, optional `related_test`, `oracle_kind`,
-  `oracle_strength`, optional `missing_discriminator`,
-  `suggested_assertion_shape`, `static_limits`, nullable `verify.command`,
-  `why_not_actionable`, `repair_route`, `repair_packet_ready`, and `limits`.
+  `oracle_strength`, optional `bun_cross_language_grip`, optional
+  `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
+  nullable `verify.command`, `why_not_actionable`, `repair_route`,
+  `repair_packet_ready`, and `limits`. The optional
+  `bun_cross_language_grip` object is limited to configured Bun Blob preview
+  evidence and carries `state`, `rust_seam.file`, `rust_seam.owner`,
+  `rust_seam.boundary`, `typescript_evidence.test_file`,
+  `typescript_evidence.verdict`, `typescript_evidence.bridge_confidence`,
+  `typescript_evidence.missing_discriminators[]`, `limitation_category`,
+  `repair_route`, `missing_graph_legs[]`, nullable `unlock_condition`,
+  `raw_evidence_refs[]`, `action`, `suggested_test_file`, optional
+  `placement`, `authority_boundary`, and `repair_packet_ready`. The current
+  configured Bun Blob route may name `test/js/web/fetch/blob.test.ts` as
+  advisory placement when shared/resizable boundary discriminators are missing
+  on a configured bridge. Mention-only, partial external-oracle,
+  bridge-unknown, and unresolved target cases stay at
+  `suggested_test_file=not_applicable`, emit no `placement`, no verify or
+  receipt command, no allowed edit surface, and no public repair packet until
+  the full public packet fields exist. Configured bridge evidence is a
+  credited `raw_evidence_refs[].leg = "binding_edge"`; a `bridge_unknown`
+  limitation must omit that credited binding raw ref and instead name
+  `binding_or_ffi_edge` in `missing_graph_legs[]`. It is not a generated test,
+  source edit, runtime command, Rust-test placement, gate, badge, baseline, or
+  repair packet.
   `repair_packet_ready` remains `false` for this preview slice, and nullable
   `verify.command` must not be interpreted as a delegated repair route.
 - `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
@@ -2495,10 +2524,16 @@ Field contract:
   `lane1_repo_exposure_large_cache_preflight_skip` with `run_status =
   "limited_large_cache_skip"`, `downstream_consumable = false`, and a repair
   route through `cargo xtask cache report` and `cargo xtask cache gc --dry-run`.
-  A completed audit may also report
+  Current repo seam cache writes entries larger than
+  `RIPR_REPO_SEAM_CACHE_LIMIT` as bounded shard files under `target/ripr/cache`.
+  Older audit artifacts or older cache-store implementations may still report
   `lane1_repo_exposure_cache_store_skipped_large_entry` when the live
   repo-exposure run emitted complete evidence but skipped a full classified
-  seam cache store because the entry exceeded the bounded cache-store limit.
+  seam cache store. That compatibility limitation carries structured
+  `observed_seams` and `cache_limit` fields in addition to the compatibility
+  `input` string, and its repair route names `cargo xtask cache report` plus
+  `RIPR_REPO_SEAM_CACHE_LIMIT` configuration when a machine has enough
+  disk/time budget for larger cache shard writes.
   The default sampled repo-exposure path records `limited_sampled_input` with
   `lane1_repo_exposure_sampled` and input such as
   `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful
@@ -3786,6 +3821,14 @@ regenerates or inspects the limiting input, for example
 `cargo xtask lane1-evidence-audit` for sampled, timed-out, runner-failed, or
 incomplete repo-exposure generation and cache report/GC commands for large cache
 limits.
+Readiness also includes `cross_language_oracle_route_quality`, a SPEC-0062
+preview-only summary over the checked Bun Blob cross-language oracle graph
+corpus. This section counts complete advisory witnesses, missing discriminator
+limitations, mention-only limitations, unknown bridge limitations, and public
+packet exclusions while keeping all rows `repair_packet_ready = false`. It is
+operator route-quality evidence only; it does not create repair packets, verify
+commands, receipt commands, source edits, generated tests, gates, badges, or
+support-tier claims.
 
 ```json
 {
@@ -3995,6 +4038,55 @@ limits.
       "sample_missing_receipt_reasons": []
     }
   ],
+  "cross_language_oracle_route_quality": {
+    "status": "pass",
+    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "cases_total": 9,
+    "passing_cases": 9,
+    "failing_cases": 0,
+    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
+    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
+    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
+    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
+    "cross_language_oracle_graph_mention_only_limitations": 1,
+    "cross_language_oracle_graph_panic_boundary_limitations": 1,
+    "cross_language_oracle_graph_public_packet_exclusions": 9,
+    "repair_packet_ready_cases": 0,
+    "authority_boundary": "preview_advisory_only",
+    "non_claims": [
+      "not a public repair packet",
+      "not badge or gate input",
+      "not runtime Bun execution",
+      "not generated tests",
+      "not source edits",
+      "not full cross-language proof",
+      "not support-tier promotion"
+    ],
+    "rows": [
+      {
+        "case_id": "bun_blob_bridge_unknown_limitation",
+        "expected_state": "bridge_unknown",
+        "observed_state": "bridge_unknown",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": ["binding_or_ffi_edge"],
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "unlock_condition": "Name a configured or generated binding edge from the TypeScript Blob surface to Blob::from_js_without_defer_gc."
+      },
+      {
+        "case_id": "bun_blob_missing_external_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_external_oracle",
+        "observed_state": "rust_ungripped_ts_missing_external_oracle",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": ["external_oracle:stable_byte_copy"],
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
+      }
+    ]
+  },
   "top_failing_repair_routes": [
     {
       "language": null,
@@ -4190,6 +4282,14 @@ matching `static_limitations.by_category` rows as static limitations even if an
 older or partial audit summary did not increment `summary.static_limitations_total`.
 This keeps limited artifacts visible in the headline static-limitation count
 instead of presenting a misleading zero.
+The scorecard also includes `cross_language_oracle_route_quality`, the same
+SPEC-0062 preview-only route-quality summary emitted by swarm readiness. It is
+included so evidence-quality readers can see whether the checked Bun Blob
+cross-language corpus is credited, missing a discriminator, mention-only, bridge
+unknown, or excluded from public repair packets without running a separate
+analyzer path. It remains advisory and does not change gate, badge, baseline,
+repair-packet, generated-test, source-edit, provider, runtime, or support-tier
+authority.
 
 ```json
 {
@@ -4382,6 +4482,48 @@ instead of presenting a misleading zero.
     "public_projection_excluded_packets": 0,
     "projection_exclusion_reasons": []
   },
+  "cross_language_oracle_route_quality": {
+    "status": "pass",
+    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "cases_total": 9,
+    "passing_cases": 9,
+    "failing_cases": 0,
+    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
+    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
+    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
+    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
+    "cross_language_oracle_graph_mention_only_limitations": 1,
+    "cross_language_oracle_graph_panic_boundary_limitations": 1,
+    "cross_language_oracle_graph_public_packet_exclusions": 9,
+    "repair_packet_ready_cases": 0,
+    "authority_boundary": "preview_advisory_only",
+    "rows": [
+      {
+        "case_id": "bun_blob_missing_resizable_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_discriminator",
+        "observed_state": "rust_ungripped_ts_missing_discriminator",
+        "status": "pass",
+        "missing_discriminators": ["resizable_array_buffer"],
+        "missing_graph_legs": [
+          "boundary_discriminator:resizable_array_buffer"
+        ],
+        "repair_packet_ready": false,
+        "unlock_condition": "Prove a TypeScript Blob observer for a resizable ArrayBuffer on the configured bridge before placement or actionability is suggested."
+      },
+      {
+        "case_id": "bun_blob_missing_external_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_external_oracle",
+        "observed_state": "rust_ungripped_ts_missing_external_oracle",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": [
+          "external_oracle:stable_byte_copy"
+        ],
+        "repair_packet_ready": false,
+        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
+      }
+    ]
+  },
   "recommended_repairs": [
     {
       "slice": "analysis/related-test-ranking-audit-fixes",
@@ -4465,6 +4607,14 @@ Field contract:
   exclusion reasons such as missing receipt paths. This is advisory
   badge-readiness evidence only; it does not switch public badges or PR/CI
   rendering.
+- `cross_language_oracle_route_quality` - the checked SPEC-0062 Bun Blob route
+  summary. It reports complete advisory witnesses, missing discriminator
+  limitations, mention-only limitations, unknown bridge limitations, public
+  packet exclusions, row-level missing graph legs, unlock conditions, and
+  `repair_packet_ready=false`. It is preview/advisory evidence only and does not
+  create public repair packets, verify commands, receipt commands, source edits,
+  generated tests, runtime execution, gates, badges, baselines, RIPR Zero, or
+  support-tier claims.
 - `evidence_class_work_queue` - the audit-derived
   `finding_alignment.coverage.evidence_class_work_queue` section carried
   forward so the scorecard names the next evidence classes to burn down from
@@ -5308,14 +5458,19 @@ ripr review-comments \
 ```
 
 The command is a pure renderer. The default path joins existing static seam
-evidence with the changed-line diff. When `--gap-ledger` is supplied, the
-command does not rerun analysis; it renders changed-line repair cards only from
-explicit `GapRecord` entries with `projection_eligibility.pr_comment.eligible =
-true`, PR-local scope, a stable anchor, a dedupe fingerprint, a repair route,
-and verification commands. It does not post to GitHub, run mutation testing,
-refresh LSP state, edit source files, or generate tests. CI can use the JSON to
-write a job summary and emit check annotations by default. Inline PR review
-comments require a custom explicit opt-in publisher.
+evidence with the changed-line diff, but it reports a scoped review input
+instead of full-repo truth: changed production files plus bounded immediate
+caller files. The JSON and Markdown carry `analysis_scope.run_status =
+"limited_diff_scope"` and the `review_comments_diff_scope_only` limitation
+route so large-repo users can see the narrowed basis. When `--gap-ledger` is
+supplied, the command does not rerun analysis; it renders changed-line repair
+cards only from explicit `GapRecord` entries with
+`projection_eligibility.pr_comment.eligible = true`, PR-local scope, a stable
+anchor, a dedupe fingerprint, a repair route, and verification commands. It
+does not post to GitHub, run mutation testing, refresh LSP state, edit source
+files, or generate tests. CI can use the JSON to write a job summary and emit
+check annotations by default. Inline PR review comments require a custom
+explicit opt-in publisher.
 
 JSON shape:
 
@@ -5330,6 +5485,24 @@ JSON shape:
   "mode": "draft",
   "inputs": {
     "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
+  },
+  "analysis_scope": {
+    "scope": "diff_scoped_changed_files",
+    "run_status": "limited_diff_scope",
+    "basis": "changed_production_files_plus_immediate_callers",
+    "changed_files": ["src/pricing.rs"],
+    "changed_lines": 1,
+    "changed_owner_functions": 1,
+    "changed_production_files": ["src/pricing.rs"],
+    "immediate_caller_files": ["src/checkout.rs"],
+    "scoped_production_files": ["src/pricing.rs", "src/checkout.rs"],
+    "total_rust_files": 412000,
+    "total_production_files": 411000,
+    "production_files_considered": 2,
+    "classified_seams_considered": 7,
+    "downstream_consumable": true,
+    "limitation": "review_comments_diff_scope_only",
+    "repair_route": "analysis/diff-scoped-large-repo-review-fast-path"
   },
   "limits": {
     "max_inline_comments": 3,
@@ -5355,6 +5528,14 @@ JSON shape:
       "kind": "predicate_boundary",
       "grip_class": "weakly_gripped",
       "severity": "warning",
+      "source_location": {
+        "file": "src/pricing.rs",
+        "limitation": null,
+        "line": 88,
+        "repair_route": null,
+        "span": null,
+        "status": "resolved"
+      },
       "reason": "Related tests reach and observe the owner but miss the equality boundary.",
       "missing_discriminator": "amount == discount_threshold",
       "suggested_test": {
@@ -5401,6 +5582,15 @@ Field contract:
   and RIPR analysis mode used to render the report.
 - `inputs.gap_ledger` - optional explicit gap decision ledger used for
   repair-card projection. It is present only when `--gap-ledger` is supplied.
+- `analysis_scope` - optional scoped-input metadata for renderer paths that
+  run analysis. The default diff renderer emits `scope =
+  "diff_scoped_changed_files"`, `run_status = "limited_diff_scope"`, changed
+  files, changed owner count, changed production files, immediate caller files,
+  total production-file counts, the classified seam count considered, and the
+  `review_comments_diff_scope_only` limitation route. This makes the report
+  useful on large repos without representing the scoped review as full-repo
+  evidence. Gap-ledger rendering may omit this field because its authority is
+  the supplied ledger artifact.
 - `limits.max_inline_comments` - default cap for changed-line annotations.
 - `limits.max_summary_items` - default cap for total recommendations.
 - `summary.comments` - count of guidance items with safe changed-line
@@ -5425,6 +5615,11 @@ Field contract:
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
+- `comments[].source_location` - canonical source coordinate for the seam or
+  gap record rendered next to the seam ID in Markdown. When resolution is not
+  available, `status` is `"source_location_unresolved"`, `file` and `line`
+  render as unknown, `limitation` is `"source_location_unresolved"`, and
+  `repair_route` is `"analysis/source-location-resolution"`.
 - `comments[].reason` - short static-evidence explanation for why a focused
   test would be useful.
 - `comments[].missing_discriminator` - missing value, branch, variant, or
@@ -5439,9 +5634,10 @@ Field contract:
   comment body instead of raw static classes. It carries gap kind, changed
   behavior when available, why the gap matters, the bounded repair route,
   evidence IDs, verification commands, source artifact, and authority boundary.
-- `summary_only[]` - same recommendation shape without `placement`. CI should
-  show these in the Markdown/job summary but must not invent a changed-line
-  annotation for them.
+- `summary_only[]` - same recommendation shape without `placement`. These rows
+  still carry `source_location` for navigable Markdown and JSON parity. CI
+  should show these in the Markdown/job summary but must not invent a
+  changed-line annotation for them.
 - `suppressed[]` - bounded records for recommendations hidden by caps or
   nearby test changes.
 - `warnings[]` - selection warnings from the agent brief selection path.
@@ -5626,6 +5822,115 @@ Existing-comment metadata may be supplied to plan upsert behavior:
 Generated CI may upload and summarize the publish plan only when explicit
 configuration requests `plan` or `inline` mode. The default remains job summary,
 check annotations, and uploaded artifacts without durable PR comments.
+
+## Bun UB TypeScript Calibration Report
+
+The Bun UB TypeScript calibration report is a repo-local operator receipt for
+the preview Bun Blob / `ArrayBuffer` stable-byte corpus. It summarizes whether
+the calibrated cases are TS-discriminated, missing shared/resizable
+discriminators, mention-only rather than observed, or blocked by an unknown
+bridge. It is advisory preview evidence only.
+
+The repo-local report command is:
+
+```text
+cargo xtask bun-ub-calibration \
+  --corpus fixtures/typescript-bun-ub-calibration/corpus.json \
+  --out target/ripr/reports/bun-ub-calibration.json \
+  --out-md target/ripr/reports/bun-ub-calibration.md
+```
+
+With defaults, `cargo xtask bun-ub-calibration` writes:
+
+```text
+target/ripr/reports/bun-ub-calibration.json
+target/ripr/reports/bun-ub-calibration.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "bun-ub-calibration",
+  "status": "pass",
+  "source_path": "fixtures/typescript-bun-ub-calibration/corpus.json",
+  "authority_boundary": "preview_advisory_only",
+  "summary": {
+    "cases_total": 7,
+    "passing_cases": 7,
+    "failing_cases": 0,
+    "ts_discriminated_cases": 1,
+    "ts_missing_resizable_cases": 1,
+    "ts_missing_shared_cases": 1,
+    "ts_missing_shared_and_resizable_cases": 1,
+    "ts_missing_external_oracle_cases": 1,
+    "ts_mention_not_observer_cases": 1,
+    "bridge_unknown_cases": 1,
+    "missing_discriminator_cases": 3,
+    "public_packet_exclusions": 7,
+    "repair_packet_ready_cases": 0
+  },
+  "operator_question": "This Rust/FFI seam changed. Do Bun's TypeScript integration tests discriminate the boundary that would catch the stable-byte bug?",
+  "calibration_boundary": "Bun UB TypeScript calibration is preview/advisory only...",
+  "non_claims": [
+    "no provider calls",
+    "no source edits",
+    "no generated tests",
+    "no runtime Bun execution",
+    "no mutation execution",
+    "no default gates",
+    "no public badge contribution",
+    "no baseline authority",
+    "no RIPR Zero authority",
+    "no support-tier promotion",
+    "no public repair packet",
+    "no full cross-language proof"
+  ],
+  "rows": [
+    {
+      "case_id": "bun_blob_resizable_missing",
+      "source": "#31648-stripped-resizable",
+      "expected_state": "ts_missing_resizable",
+      "observed_state": "ts_missing_resizable",
+      "status": "pass",
+      "rust_seam": {
+        "file": "src/jsc/Blob.rs",
+        "owner": "Blob::from_js_without_defer_gc",
+        "boundary": "array_buffer.shared || array_buffer.resizable"
+      },
+      "typescript_evidence": {
+        "test_file": "test/js/web/fetch/blob.test.ts",
+        "entrypoints": ["new Blob", "blob.arrayBuffer"],
+        "shared_array_buffer": true,
+        "resizable_array_buffer": false,
+        "view_backed_blob_input": true,
+        "stable_byte_copy_oracle": true,
+        "max_byte_length_mention_only": false
+      },
+      "bridge_confidence": "configured_hint",
+      "expected_action": "route_cross_language_oracle_visibility_limitation",
+      "expected_missing_discriminators": ["resizable_array_buffer"],
+      "missing_discriminators": ["resizable_array_buffer"],
+      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "suggested_shape": "add or inspect a resizable ArrayBuffer Blob stable-byte discriminator in the configured TypeScript observer file; keep repair_packet_ready=false until verify, receipt, and edit-surface evidence exists",
+      "authority_boundary": "preview_advisory_only",
+      "repair_packet_ready": false,
+      "non_claims": ["runtime Bun execution", "generated tests"],
+      "reason": "Missing the resizable ArrayBuffer discriminator in the manifest calibration case.",
+      "errors": []
+    }
+  ]
+}
+```
+
+`status` is `pass` only when every row matches its expected state and no row is
+`repair_packet_ready`. `bridge_unknown` rows name `binding_or_ffi_edge` in
+`missing_graph_legs[]`; mention-only rows name
+`external_blob_or_stable_byte_observer`. The report does not run Bun, `tsc`,
+`tsserver`, mutation, providers, generated tests, source edits, gates, badges,
+baselines, RIPR Zero, or support-tier promotion.
 
 ## Recommendation Calibration Report
 
@@ -11415,6 +11720,7 @@ fixtures/surface-projection-alignment/corpus.json
 fixtures/real-repair-attempts/corpus.json
 fixtures/python-real-repo-evals/corpus.json
 fixtures/user-surface-projection-alignment/corpus.json
+fixtures/bun-ub-cross-language-dogfood/corpus.json
 ```
 
 The report is advisory. It runs `ripr check --mode fast` against stable fixture
@@ -11468,6 +11774,15 @@ validity, concrete-discriminator and test-location coverage,
 false-actionable and crash rates, receipt closure rate, and unsupported
 limitation distribution. Eval cases with fewer than three ranked repair-card
 findings must include an explicit limit reason.
+The checked Bun UB cross-language witness receipts are read from
+`fixtures/bun-ub-cross-language-dogfood/` and record the calibrated
+#31648-shaped known-good, stripped-resizable, and maxByteLength mention-only
+operator cases. The `bun_ub_cross_language_witnesses` JSON section includes
+`default_ci_blocking: false`, `preview_authority: "advisory"`, summary counts,
+case ids, source calibration cases, route-quality cases, Rust seam fields,
+observed state, missing discriminators or graph legs, suggested TypeScript test
+file, manual verdict, operator action, bridge and placement verdicts, proof
+mode, raw evidence refs, non-claims, and `repair_packet_ready: false`.
 The checked user-surface projection receipts are read from
 `fixtures/user-surface-projection-alignment/` and prove badge, LSP, PR comment,
 and CI projection examples share the same canonical gap, packet or limitation

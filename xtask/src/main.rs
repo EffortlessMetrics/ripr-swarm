@@ -1240,6 +1240,65 @@ struct DogfoodTypescriptPreviewRepairLoopRun {
 }
 
 #[derive(Debug)]
+struct DogfoodBunUbCrossLanguageScenario {
+    name: String,
+    source_case: String,
+    route_quality_case: String,
+    rust_file: String,
+    rust_owner: String,
+    rust_boundary: String,
+    ts_test_file: String,
+    expected_state: String,
+    observed_state: String,
+    missing_discriminators: Vec<String>,
+    missing_graph_legs: Vec<String>,
+    suggested_test_file: String,
+    manual_verdict: String,
+    operator_action: String,
+    review_before: String,
+    review_after: String,
+    bridge_verdict: String,
+    placement_verdict: String,
+    proof_mode: String,
+    receipt_state: String,
+    repair_packet_ready: bool,
+    authority_boundary: String,
+    raw_evidence_refs: Vec<String>,
+    non_claims: Vec<String>,
+    reason: String,
+}
+
+#[derive(Debug)]
+struct DogfoodBunUbCrossLanguageRun {
+    name: String,
+    source_case: String,
+    route_quality_case: String,
+    rust_file: String,
+    rust_owner: String,
+    rust_boundary: String,
+    ts_test_file: String,
+    expected_state: String,
+    observed_state: String,
+    missing_discriminators: Vec<String>,
+    missing_graph_legs: Vec<String>,
+    suggested_test_file: String,
+    manual_verdict: String,
+    operator_action: String,
+    review_before: String,
+    review_after: String,
+    bridge_verdict: String,
+    placement_verdict: String,
+    proof_mode: String,
+    receipt_state: String,
+    repair_packet_ready: bool,
+    authority_boundary: String,
+    raw_evidence_refs: Vec<String>,
+    non_claims: Vec<String>,
+    reason: String,
+    errors: Vec<String>,
+}
+
+#[derive(Debug)]
 struct TypeScriptPreviewFalseActionableAuditCase {
     name: String,
     source_fixture: String,
@@ -1263,6 +1322,95 @@ struct TypeScriptPreviewFalseActionableAuditCase {
     raw_evidence_refs: Vec<String>,
     non_claims: Vec<String>,
     reason: String,
+}
+
+#[derive(Clone, Debug)]
+struct TypeScriptBunUbCalibrationCase {
+    name: String,
+    source: String,
+    language: String,
+    language_status: String,
+    rust_file: String,
+    rust_owner: String,
+    rust_boundary: String,
+    ts_test_file: String,
+    ts_entrypoints: Vec<String>,
+    shared_array_buffer: bool,
+    resizable_array_buffer: bool,
+    view_backed_blob_input: bool,
+    stable_byte_copy_oracle: bool,
+    max_byte_length_mention_only: bool,
+    expected_verdict: String,
+    expected_missing_discriminators: Vec<String>,
+    bridge_confidence: String,
+    expected_action: String,
+    suggested_test_file: String,
+    suggested_shape: Option<String>,
+    repair_packet_ready: bool,
+    authority_boundary: String,
+    non_claims: Vec<String>,
+    reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BunUbCalibrationArgs {
+    corpus: PathBuf,
+    out: PathBuf,
+    out_md: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct CrossLanguageOracleGraphCase {
+    name: String,
+    source: String,
+    profile: String,
+    language: String,
+    language_status: String,
+    rust_file: String,
+    rust_line: Option<usize>,
+    rust_owner: String,
+    rust_boundary: String,
+    binding_edge_kind: String,
+    binding_edge_confidence: String,
+    external_callsite_file: String,
+    external_callsite_line: Option<usize>,
+    external_entrypoints: Vec<String>,
+    shared_array_buffer: bool,
+    resizable_array_buffer: bool,
+    view_backed_blob_input: bool,
+    stable_byte_copy_oracle: bool,
+    max_byte_length_mention_only: bool,
+    external_oracle_file: String,
+    external_oracle_line: Option<usize>,
+    external_oracle_kind: String,
+    oracle_strength: String,
+    expected_state: String,
+    gap_state: String,
+    limitation_category: String,
+    repair_route: String,
+    authority_boundary: String,
+    public_projection_eligible: bool,
+    repair_packet_ready: bool,
+    suggested_test_file: String,
+    allowed_edit_surface: Vec<String>,
+    verify_command: Option<String>,
+    receipt_command: Option<String>,
+    missing_discriminators: Vec<String>,
+    missing_graph_legs: Vec<String>,
+    unlock_condition: String,
+    raw_evidence_refs: Vec<CrossLanguageOracleGraphRawRef>,
+    non_claims: Vec<String>,
+    reason: String,
+}
+
+#[derive(Clone, Debug)]
+struct CrossLanguageOracleGraphRawRef {
+    leg: String,
+    file: String,
+    line: Option<usize>,
+    kind: String,
+    source_id: String,
+    sample: String,
 }
 
 #[derive(Debug)]
@@ -1346,6 +1494,7 @@ struct DogfoodReportInputs<'a> {
     python_static_limit_eval_runs: &'a [DogfoodPythonStaticLimitEvalRun],
     python_no_action_eval_runs: &'a [DogfoodPythonNoActionEvalRun],
     typescript_preview_repair_loop_runs: &'a [DogfoodTypescriptPreviewRepairLoopRun],
+    bun_ub_cross_language_runs: &'a [DogfoodBunUbCrossLanguageRun],
     user_surface_projection_runs: &'a [DogfoodUserSurfaceProjectionRun],
     pr_inline_comment_runs: &'a [DogfoodPrInlineCommentRun],
 }
@@ -5698,6 +5847,8 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
             matches!(
                 name,
                 "actionable-gap-outcomes-corpus"
+                    | "bun-ub-cross-language-dogfood"
+                    | "cross-language-oracle-graph-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
@@ -5712,6 +5863,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "real-repair-attempts"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
                     | "user-surface-projection-alignment"
@@ -7435,6 +7587,7 @@ fn check_workflows_impl() -> Result<(), String> {
             &text,
             &runtime_allowlist,
         ));
+        violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
                 violations.push(format!(
@@ -7485,6 +7638,62 @@ fn check_workflows_impl() -> Result<(), String> {
     )
 }
 
+fn workflow_bare_self_hosted_violations(path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("runs-on:")
+            && lower.contains('[')
+            && lower.contains("self-hosted")
+            && lower.contains("linux")
+            && lower.contains("x64")
+        {
+            violations.push(format!(
+                "{path}:{} bare inline self-hosted/linux/x64 runs-on is forbidden; use explicit group and capacity labels",
+                index + 1
+            ));
+        }
+
+        if line.trim() != "- self-hosted" {
+            continue;
+        }
+        let end = (index + 17).min(lines.len());
+        let start = index.saturating_sub(8);
+        let window = &lines[start..end];
+        let has_linux = window.iter().any(|candidate| candidate.trim() == "- linux");
+        let has_x64 = window.iter().any(|candidate| candidate.trim() == "- x64");
+        let has_group = window
+            .iter()
+            .any(|candidate| candidate.trim_start().starts_with("group: em-ci-"));
+        let has_capacity = window.iter().any(|candidate| {
+            matches!(
+                candidate.trim(),
+                "- em-ci"
+                    | "- ci-nano"
+                    | "- policy-nano"
+                    | "- workflow-nano"
+                    | "- rust-tiny"
+                    | "- rust-medium"
+                    | "- rust-large"
+                    | "- rust-16gb"
+                    | "- cx23"
+                    | "- cx33"
+                    | "- cx43"
+                    | "- cx53"
+                    | "- cpx42"
+            )
+        });
+        if has_linux && has_x64 && !(has_group && has_capacity) {
+            violations.push(format!(
+                "{path}:{} bare self-hosted block lacks group/capacity labels",
+                index + 1
+            ));
+        }
+    }
+    violations
+}
+
 fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>, String> {
     let workflow_path = Path::new(".github/workflows/routed-rust.yml");
     if !workflow_path.exists() {
@@ -7526,28 +7735,48 @@ fn routed_rust_workflow_contract_violations(
             "runner read token fallback",
             "secrets.EM_RUNNER_READ_TOKEN || github.token",
         ),
+        ("slurped idle runner query", "jq -s -e --arg model"),
         ("trusted fork fallback reason", "fork_or_untrusted_pr"),
         ("runner API fallback reason", "runner_api_failed"),
         ("no-idle fallback reason", "no_idle_runner"),
         (
-            "runner image readiness fallback reason",
-            "runner_image_unavailable",
+            "runner capacity fallback reason",
+            "runner_capacity_unavailable",
         ),
-        ("CX53 idle route reason", "cx53_idle"),
         ("CX43 idle route reason", "cx43_idle"),
-        ("CX53 readiness label", "em-ci-rust-1.95"),
+        ("CPX42 idle route reason", "cpx42_idle"),
+        ("CX53 idle route reason", "cx53_idle"),
+        ("CX43 capacity label", "rust-medium"),
+        ("CPX42 capacity label", "rust-16gb"),
+        ("CX53 capacity label", "rust-large"),
         ("normalized result job", "name: Ripr Rust Small Result"),
-        (
-            "CX53 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx53'",
-        ),
         (
             "CX43 conditional implementation job",
             "if: needs.route.outputs.router_target == 'cx43'",
         ),
         (
+            "CPX42 conditional implementation job",
+            "if: needs.route.outputs.router_target == 'cpx42'",
+        ),
+        (
+            "CX53 conditional implementation job",
+            "if: needs.route.outputs.router_target == 'cx53'",
+        ),
+        (
             "hosted fallback conditional job",
             "if: needs.route.outputs.router_target == 'github'",
+        ),
+        (
+            "CX43 scratch free-space floor",
+            "ci-disk-guard /mnt/ci-scratch 90",
+        ),
+        (
+            "CPX42 scratch free-space floor",
+            "ci-disk-guard /mnt/ci-scratch 80",
+        ),
+        (
+            "CX53 scratch free-space floor",
+            "ci-disk-guard /mnt/ci-scratch 100",
         ),
     ];
 
@@ -7557,6 +7786,26 @@ fn routed_rust_workflow_contract_violations(
                 ".github/workflows/routed-rust.yml is missing {label}: `{snippet}`"
             ));
         }
+    }
+
+    let toolchain_temp_steps = workflow.matches("name: Prepare toolchain temp").count();
+    let toolchain_temp_mkdirs = workflow.matches("run: mkdir -p \"$TMPDIR\"").count();
+    if toolchain_temp_steps < 3 || toolchain_temp_mkdirs < 3 {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must include `Prepare toolchain temp` before setup for all three self-hosted implementation jobs; found {toolchain_temp_steps} step(s) and {toolchain_temp_mkdirs} mkdir command(s)"
+        ));
+    }
+
+    let scratch_cargo_home =
+        "CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}";
+    let scratch_cargo_homes = workflow.matches(scratch_cargo_home).count();
+    let scratch_cargo_home_cleanups = workflow
+        .matches("rm -rf \"$CARGO_HOME\" \"$CARGO_TARGET_DIR\" \"$TMPDIR\"")
+        .count();
+    if scratch_cargo_homes < 3 || scratch_cargo_home_cleanups < 3 {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must use scratch CARGO_HOME and clean it for all three self-hosted implementation jobs; found {scratch_cargo_homes} scratch home(s) and {scratch_cargo_home_cleanups} cleanup command(s)"
+        ));
     }
 
     if workflow.contains("repos/${REPOSITORY}/actions/runners")
@@ -7597,8 +7846,9 @@ fn routed_rust_workflow_contract_violations(
         }
         for forbidden in [
             "Route Ripr Rust Small",
-            "Ripr Rust Small on CX53",
             "Ripr Rust Small on CX43",
+            "Ripr Rust Small on CPX42",
+            "Ripr Rust Small on CX53",
             "Ripr Rust Small on GitHub Hosted",
         ] {
             if settings.contains(forbidden) {
@@ -8029,6 +8279,9 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_real_repair_attempt_fixture_corpus(&mut violations)?;
     validate_python_real_repo_eval_fixture_corpus(&mut violations)?;
     validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
+    validate_typescript_bun_ub_calibration_fixture_corpus(&mut violations)?;
+    validate_cross_language_oracle_graph_fixture_corpus(&mut violations)?;
+    validate_bun_ub_cross_language_dogfood_fixture_corpus(&mut violations)?;
     validate_typescript_preview_repair_loop_fixture_corpus(&mut violations)?;
     validate_typescript_preview_false_actionable_audit_fixture_corpus(&mut violations)?;
     validate_user_surface_projection_alignment_fixture_corpus(&mut violations)?;
@@ -8215,6 +8468,14 @@ const REAL_REPAIR_ATTEMPTS_CORPUS: &str = "fixtures/real-repair-attempts/corpus.
 const PYTHON_REAL_REPO_EVAL_CORPUS: &str = "fixtures/python-real-repo-evals/corpus.json";
 const SURFACE_PROJECTION_ALIGNMENT_CORPUS: &str =
     "fixtures/surface-projection-alignment/corpus.json";
+const TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS: &str =
+    "fixtures/typescript-bun-ub-calibration/corpus.json";
+const CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS: &str =
+    "fixtures/cross-language-oracle-graph-corpus/corpus.json";
+const BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE: &str = "test/js/web/fetch/blob.test.ts";
+const BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE: &str = "unresolved:typescript-test-surface";
+const BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS: &str =
+    "fixtures/bun-ub-cross-language-dogfood/corpus.json";
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_CORPUS: &str =
     "fixtures/typescript-preview-repair-loop/corpus.json";
 const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS: &str =
@@ -8428,6 +8689,77 @@ const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] = &[
     (
         "javascript_already_observed_unchanged",
         "already_observed_unchanged",
+    ),
+];
+
+const TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES: &[(&str, &str)] = &[
+    ("bun_blob_shared_and_resizable_present", "ts_discriminated"),
+    ("bun_blob_resizable_missing", "ts_missing_resizable"),
+    ("bun_blob_shared_missing", "ts_missing_shared"),
+    (
+        "bun_blob_neither_present",
+        "ts_missing_shared_and_resizable",
+    ),
+    (
+        "bun_blob_partial_observer_missing_external_oracle",
+        "ts_missing_external_oracle",
+    ),
+    (
+        "bun_blob_max_byte_length_mention_not_observer",
+        "ts_mention_not_observer",
+    ),
+    ("bun_blob_bridge_unknown_without_hint", "bridge_unknown"),
+];
+
+const CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES: &[(&str, &str)] = &[
+    (
+        "bun_blob_complete_ts_discriminated_advisory",
+        "rust_ungripped_ts_discriminated",
+    ),
+    (
+        "bun_blob_missing_resizable_oracle_limitation",
+        "rust_ungripped_ts_missing_discriminator",
+    ),
+    (
+        "bun_blob_missing_external_oracle_limitation",
+        "rust_ungripped_ts_missing_external_oracle",
+    ),
+    (
+        "bun_blob_mention_not_observer_limitation",
+        "ts_mention_not_observer",
+    ),
+    ("bun_blob_bridge_unknown_limitation", "bridge_unknown"),
+    (
+        "bun_blob_target_unresolved_limitation",
+        "cross_language_target_unresolved",
+    ),
+    (
+        "bun_array_buffer_copy_to_unshared_configured_bridge_advisory",
+        "rust_ungripped_ts_discriminated",
+    ),
+    (
+        "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
+        "rust_ungripped_ts_discriminated",
+    ),
+    (
+        "bun_ffi_negative_offset_panic_boundary_limitation",
+        "public_reachable_panic_boundary_unrevealed",
+    ),
+];
+
+const BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
+    (
+        "bun_blob_31648_known_good",
+        "rust_ungripped_ts_discriminated",
+    ),
+    (
+        "bun_blob_stripped_resizable",
+        "rust_ungripped_ts_missing_discriminator",
+    ),
+    ("bun_blob_mention_only", "ts_mention_not_observer"),
+    (
+        "bun_ffi_negative_offset_panic_boundary",
+        "public_reachable_panic_boundary_unrevealed",
     ),
 ];
 
@@ -9637,6 +9969,267 @@ fn validate_python_real_repo_eval_fixture_corpus_at(
                 "Python real-repo eval corpus is missing no-action case {case_id}"
             )),
         }
+    }
+
+    Ok(())
+}
+
+fn validate_typescript_bun_ub_calibration_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/typescript-bun-ub-calibration");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "TypeScript Bun UB calibration fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    validate_typescript_bun_ub_calibration_fixture_corpus_at(
+        Path::new(TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS),
+        violations,
+    )
+}
+
+fn validate_typescript_bun_ub_calibration_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "TypeScript Bun UB calibration corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let cases = typescript_bun_ub_calibration_cases_at(path);
+    let mut seen = BTreeMap::new();
+    let mut verdicts = BTreeSet::<String>::new();
+    for case in &cases {
+        if seen
+            .insert(case.name.clone(), case.expected_verdict.clone())
+            .is_some()
+        {
+            violations.push(format!(
+                "TypeScript Bun UB calibration case {} is duplicated",
+                case.name
+            ));
+        }
+        verdicts.insert(case.expected_verdict.clone());
+        for error in typescript_bun_ub_calibration_case_errors(case) {
+            violations.push(format!(
+                "TypeScript Bun UB calibration case {}: {error}",
+                case.name
+            ));
+        }
+    }
+
+    for (case_id, verdict) in TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == verdict => {}
+            Some(actual) => violations.push(format!(
+                "TypeScript Bun UB calibration case {case_id} must have expected_verdict {verdict}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "TypeScript Bun UB calibration corpus is missing case {case_id}"
+            )),
+        }
+    }
+    for required in [
+        "ts_discriminated",
+        "ts_missing_shared",
+        "ts_missing_resizable",
+        "ts_missing_external_oracle",
+        "ts_mention_not_observer",
+        "bridge_unknown",
+    ] {
+        if !verdicts.contains(required) {
+            violations.push(format!(
+                "TypeScript Bun UB calibration corpus must include verdict {required}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_cross_language_oracle_graph_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/cross-language-oracle-graph-corpus");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "Cross-language oracle graph fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    validate_cross_language_oracle_graph_fixture_corpus_at(
+        Path::new(CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS),
+        violations,
+    )
+}
+
+fn validate_cross_language_oracle_graph_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "Cross-language oracle graph corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let cases = cross_language_oracle_graph_cases_at(path);
+    let mut seen = BTreeMap::new();
+    let mut states = BTreeSet::<String>::new();
+    for case in &cases {
+        if seen
+            .insert(case.name.clone(), case.expected_state.clone())
+            .is_some()
+        {
+            violations.push(format!(
+                "Cross-language oracle graph case {} is duplicated",
+                case.name
+            ));
+        }
+        states.insert(case.expected_state.clone());
+        for error in cross_language_oracle_graph_case_errors(case) {
+            violations.push(format!(
+                "Cross-language oracle graph case {}: {error}",
+                case.name
+            ));
+        }
+    }
+
+    for (case_id, expected_state) in CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == expected_state => {}
+            Some(actual) => violations.push(format!(
+                "Cross-language oracle graph case {case_id} must have expected_state {expected_state}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "Cross-language oracle graph corpus is missing case {case_id}"
+            )),
+        }
+    }
+    for required in [
+        "rust_ungripped_ts_discriminated",
+        "rust_ungripped_ts_missing_discriminator",
+        "rust_ungripped_ts_missing_external_oracle",
+        "ts_mention_not_observer",
+        "bridge_unknown",
+        "cross_language_target_unresolved",
+        "public_reachable_panic_boundary_unrevealed",
+    ] {
+        if !states.contains(required) {
+            violations.push(format!(
+                "Cross-language oracle graph corpus must include state {required}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_bun_ub_cross_language_dogfood_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/bun-ub-cross-language-dogfood");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "Bun UB cross-language dogfood fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    validate_bun_ub_cross_language_dogfood_fixture_corpus_at(
+        Path::new(BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS),
+        violations,
+    )
+}
+
+fn validate_bun_ub_cross_language_dogfood_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "Bun UB cross-language dogfood corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let scenarios = dogfood_bun_ub_cross_language_scenarios_at(path);
+    let mut seen = BTreeMap::new();
+    let mut observed_states = BTreeSet::<String>::new();
+    let mut packet_ready_cases = 0usize;
+
+    for scenario in &scenarios {
+        if seen
+            .insert(scenario.name.clone(), scenario.observed_state.clone())
+            .is_some()
+        {
+            violations.push(format!(
+                "Bun UB cross-language dogfood case {} is duplicated",
+                scenario.name
+            ));
+        }
+        observed_states.insert(scenario.observed_state.clone());
+        if scenario.repair_packet_ready {
+            packet_ready_cases += 1;
+        }
+        let run = dogfood_bun_ub_cross_language_run(scenario);
+        for error in run.errors {
+            violations.push(format!(
+                "Bun UB cross-language dogfood case {}: {error}",
+                scenario.name
+            ));
+        }
+    }
+
+    for (case_id, observed_state) in BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == observed_state => {}
+            Some(actual) => violations.push(format!(
+                "Bun UB cross-language dogfood case {case_id} must have observed_state {observed_state}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "Bun UB cross-language dogfood corpus is missing case {case_id}"
+            )),
+        }
+    }
+    if scenarios.len() < BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES.len() {
+        violations.push(
+            "Bun UB cross-language dogfood corpus must record the calibrated receipt set"
+                .to_string(),
+        );
+    }
+    for required_state in [
+        "rust_ungripped_ts_discriminated",
+        "rust_ungripped_ts_missing_discriminator",
+        "ts_mention_not_observer",
+        "public_reachable_panic_boundary_unrevealed",
+    ] {
+        if !observed_states.contains(required_state) {
+            violations.push(format!(
+                "Bun UB cross-language dogfood corpus must include state {required_state}"
+            ));
+        }
+    }
+    if packet_ready_cases > 0 {
+        violations
+            .push("Bun UB cross-language dogfood corpus must not claim repair packets".to_string());
     }
 
     Ok(())
@@ -19532,6 +20125,13 @@ const LANE1_BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
 const LANE1_EVIDENCE_AUDIT_SAMPLE_SEAMS_ENV: &str = "RIPR_LANE1_EVIDENCE_AUDIT_SAMPLE_SEAMS";
 const LANE1_EVIDENCE_AUDIT_SAMPLE_SEAM_LIMIT: usize = 5_000;
 const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
+const CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY: &str = "cross_language_target_unresolved";
+const CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE: &str =
+    "analysis/cross-language-test-target-inference";
+const CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY: &str =
+    "cross_language_oracle_visibility_unresolved";
+const CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE: &str =
+    "analysis/cross-language-oracle-visibility";
 const EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED: &str =
     "evidence_quality_scorecard_audit_regeneration_failed";
 
@@ -19692,6 +20292,8 @@ struct Lane1EvidenceAuditRunLimitation {
     category: String,
     phase: String,
     input: String,
+    observed_seams: Option<usize>,
+    cache_limit: Option<usize>,
     summary: String,
     repair_route: String,
     timeout_ms: Option<u128>,
@@ -19983,6 +20585,8 @@ fn lane1_repo_exposure_large_cache_preflight_limitation_for_root(
         category: "lane1_repo_exposure_large_cache_preflight_skip".to_string(),
         phase: "repo_seam_facts_cache".to_string(),
         input: normalize_report_path(&cache_root.display().to_string()),
+        observed_seams: None,
+        cache_limit: None,
         summary: format!(
             "Lane 1 repo-exposure generation was skipped because target/ripr/cache contains {} bytes across {} files, above the configured {} byte cache budget. No user test debt is claimed from this limited artifact.",
             footprint.bytes, footprint.files, max_bytes
@@ -20336,6 +20940,8 @@ fn lane1_limited_repo_exposure_run_limitation(
         category: limitation.category.to_string(),
         phase: "repo_exposure_generation".to_string(),
         input: "repo-exposure-json".to_string(),
+        observed_seams: None,
+        cache_limit: None,
         summary: limitation.summary.to_string(),
         repair_route: limitation.repair_route.to_string(),
         timeout_ms: Some(generation.timeout_ms),
@@ -20360,6 +20966,8 @@ fn lane1_repo_exposure_sample_limit_limitation(
         category: "lane1_repo_exposure_sampled".to_string(),
         phase: "repo_exposure_generation".to_string(),
         input: format!("repo-exposure-json:{}", trace.status),
+        observed_seams: None,
+        cache_limit: None,
         summary: format!(
             "Lane 1 repo-exposure analyzed the bounded seam sample recorded as {}; counts are useful partial evidence and must not be treated as full-repo debt totals.",
             trace.status
@@ -20672,18 +21280,38 @@ fn lane1_repo_exposure_cache_store_limitation(
                 .status
                 .starts_with("ignored_skipped_large_entry_seams_")
     })?;
-    let input = trace
-        .status
-        .strip_prefix("ignored_skipped_large_entry_seams_")
-        .map(|suffix| format!("classified_seams_{suffix}"))
-        .unwrap_or_else(|| trace.status.clone());
+    let parsed = lane1_parse_cache_store_skip_status(&trace.status);
+    let input = match parsed {
+        Some((observed_seams, cache_limit)) => {
+            format!("classified_seams_{observed_seams}_limit_{cache_limit}")
+        }
+        None => trace
+            .status
+            .strip_prefix("ignored_skipped_large_entry_seams_")
+            .map(|suffix| format!("classified_seams_{suffix}"))
+            .unwrap_or_else(|| trace.status.clone()),
+    };
+    let summary = match parsed {
+        Some((observed_seams, cache_limit)) => format!(
+            "Lane 1 repo-exposure skipped the full classified seam cache store because the observed classified seam count ({observed_seams}) exceeded the configured full-cache store limit ({cache_limit}); evidence was still emitted, but later full audit runs may cold-compute until the full cache path is narrowed or configured for this repo."
+        ),
+        None => "Lane 1 repo-exposure skipped the full classified seam cache store because the classified seam count exceeded the bounded full-cache store limit; evidence was still emitted, but later full audit runs may cold-compute until the full cache path is narrowed or configured for this repo.".to_string(),
+    };
+    let repair_route = match parsed {
+        Some((observed_seams, _)) => format!(
+            "run cargo xtask cache report, then set RIPR_REPO_SEAM_CACHE_LIMIT={observed_seams} or higher only when disk and time budget allow; otherwise keep the run limited until cache sharding or payload narrowing lands"
+        ),
+        None => "run cargo xtask cache report, then configure RIPR_REPO_SEAM_CACHE_LIMIT only when disk and time budget allow; otherwise keep the run limited until cache sharding or payload narrowing lands".to_string(),
+    };
 
     Some(Lane1EvidenceAuditRunLimitation {
         category: "lane1_repo_exposure_cache_store_skipped_large_entry".to_string(),
         phase: "repo_exposure_cache_store".to_string(),
         input,
-        summary: "Lane 1 repo-exposure skipped the full classified seam cache store because the classified seam count exceeded the bounded full-cache store limit; evidence was still emitted, but later full audit runs may cold-compute until the full cache path is narrowed.".to_string(),
-        repair_route: "keep using compact/count caches for count-only surfaces; add fixture-backed bounded full-cache serialization or payload narrowing before raising the full classified seam cache store limit".to_string(),
+        observed_seams: parsed.map(|(observed_seams, _)| observed_seams),
+        cache_limit: parsed.map(|(_, cache_limit)| cache_limit),
+        summary,
+        repair_route,
         timeout_ms: Some(generation.timeout_ms),
         duration_ms: Some(generation.duration_ms),
         command: Some(generation.command.clone()),
@@ -20692,6 +21320,12 @@ fn lane1_repo_exposure_cache_store_limitation(
         stderr_bytes: Some(generation.stderr_bytes),
         latency_trace_tail: generation.latency_trace_tail.clone(),
     })
+}
+
+fn lane1_parse_cache_store_skip_status(status: &str) -> Option<(usize, usize)> {
+    let suffix = status.strip_prefix("ignored_skipped_large_entry_seams_")?;
+    let (observed, limit) = suffix.split_once("_limit_")?;
+    Some((observed.parse().ok()?, limit.parse().ok()?))
 }
 
 struct Lane1LimitedRepoExposureLimitation {
@@ -21474,14 +22108,6 @@ impl Lane1EvidenceAuditBuilder {
             audit_actionable_gap_related_test_or_observer(record, canonical_item);
         let candidate_value_or_observer =
             audit_actionable_gap_candidate_value_or_observer(record, canonical_item);
-        let typed_related_target_available = related_test_or_observer
-            .as_ref()
-            .and_then(ripr_swarm_plan_related_target_file)
-            .is_some()
-            || candidate_value_or_observer
-                .as_ref()
-                .and_then(|candidate| ripr_swarm_attempt_related_target_file(candidate))
-                .is_some();
         let raw_evidence_refs = audit_json_array_owned(canonical_item, &["raw_evidence_refs"])
             .or_else(|| audit_json_array_owned(canonical_item, &["raw_findings"]))
             .or_else(|| audit_json_array_owned(record, &["raw_evidence_refs"]))
@@ -21490,6 +22116,19 @@ impl Lane1EvidenceAuditBuilder {
         let static_limitations = audit_json_array_owned(canonical_item, &["static_limitations"])
             .or_else(|| audit_json_array_owned(record, &["static_limitations"]))
             .unwrap_or_default();
+        let cross_language_target_unresolved = audit_static_limitations_has_category(
+            &static_limitations,
+            CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY,
+        );
+        let typed_related_target_available = !cross_language_target_unresolved
+            && (related_test_or_observer
+                .as_ref()
+                .and_then(ripr_swarm_plan_related_target_file)
+                .is_some()
+                || candidate_value_or_observer
+                    .as_ref()
+                    .and_then(|candidate| ripr_swarm_attempt_related_target_file(candidate))
+                    .is_some());
         let confidence_basis = audit_non_empty_string(canonical_item, &["confidence", "basis"])
             .or_else(|| audit_non_empty_string(record, &["calibration", "confidence"]))
             .unwrap_or_else(|| "unknown".to_string());
@@ -21501,6 +22140,7 @@ impl Lane1EvidenceAuditBuilder {
             record,
             canonical_item,
             &related_test_or_observer,
+            cross_language_target_unresolved,
         );
         let gap_state = audit_non_empty_string(canonical_item, &["gap_state"])
             .unwrap_or_else(|| "gap_state_unknown".to_string());
@@ -21531,6 +22171,7 @@ impl Lane1EvidenceAuditBuilder {
                     &raw_evidence_refs,
                 ),
                 static_limitations_count: static_limitations.len(),
+                cross_language_target_unresolved,
             });
         let public_projection_eligible = projection_exclusion_reasons.is_empty();
 
@@ -22053,14 +22694,24 @@ fn lane1_evidence_audit_markdown(report: &Lane1EvidenceAuditReport) -> String {
 
     if !report.run_limitations.is_empty() {
         out.push_str("## Run Limitations\n\n");
-        out.push_str("| Category | Phase | Input | Repair route |\n");
-        out.push_str("| --- | --- | --- | --- |\n");
+        out.push_str(
+            "| Category | Phase | Input | Observed seams | Cache limit | Repair route |\n",
+        );
+        out.push_str("| --- | --- | --- | ---: | ---: | --- |\n");
         for limitation in &report.run_limitations {
             out.push_str(&format!(
-                "| `{}` | `{}` | `{}` | {} |\n",
+                "| `{}` | `{}` | `{}` | {} | {} | {} |\n",
                 audit_markdown_cell(&limitation.category),
                 audit_markdown_cell(&limitation.phase),
                 audit_markdown_cell(&limitation.input),
+                limitation
+                    .observed_seams
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                limitation
+                    .cache_limit
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
                 audit_markdown_cell(&limitation.repair_route)
             ));
         }
@@ -23058,6 +23709,12 @@ fn static_limitation_why_not_actionable(category: &str) -> &'static str {
         "observer_target_unknown" => {
             "the analyzer cannot name a bounded observer target for a safe repair packet"
         }
+        CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY => {
+            "binding, FFI, or external-language target placement is unresolved, so RIPR cannot choose a safe test edit surface"
+        }
+        CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY => {
+            "external-language oracle visibility is unresolved, so static evidence cannot prove the external assertion path"
+        }
         _ => "static evidence is insufficient to provide a bounded repair packet",
     }
 }
@@ -23108,6 +23765,16 @@ fn static_limitation_unlock_condition(
                 "implement `{repair_route}` so the observer target and assertion surface are explicit"
             )
         }
+        CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY => {
+            format!(
+                "implement `{repair_route}` with explicit binding or external observer target evidence before any repair packet names an edit surface"
+            )
+        }
+        CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY => {
+            format!(
+                "implement `{repair_route}` so the Rust seam, binding edge, external callsite, and external oracle can be named before actionability is considered"
+            )
+        }
         _ => format!(
             "implement `{repair_route}` and preserve the item as non-actionable until the packet contract is complete"
         ),
@@ -23148,6 +23815,18 @@ fn static_limitation_backlog_packet_non_claims(
         && subroute.is_some_and(|subroute| subroute.contains("receiver_method"))
     {
         claims.push("do not treat receiver method text as owner-call evidence".to_string());
+    }
+    if category == CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY {
+        claims.push("do not infer TypeScript, Python, or other external test targets".to_string());
+        claims.push("do not suggest unrelated Rust test files".to_string());
+        claims
+            .push("do not promote navigation-only target evidence into repair action".to_string());
+    }
+    if category == CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY {
+        claims.push("do not claim full cross-language oracle proof".to_string());
+        claims.push(
+            "do not count external tests as gripped until the oracle edge is explicit".to_string(),
+        );
     }
     claims
 }
@@ -23281,13 +23960,21 @@ fn lane1_actionable_gap_packets_markdown(report: &Lane1EvidenceAuditReport) -> S
 
     if !report.run_limitations.is_empty() {
         out.push_str("## Run Limitations\n\n");
-        out.push_str("| Category | Phase | Repair route |\n");
-        out.push_str("| --- | --- | --- |\n");
+        out.push_str("| Category | Phase | Observed seams | Cache limit | Repair route |\n");
+        out.push_str("| --- | --- | ---: | ---: | --- |\n");
         for limitation in &report.run_limitations {
             out.push_str(&format!(
-                "| `{}` | `{}` | {} |\n",
+                "| `{}` | `{}` | {} | {} | {} |\n",
                 audit_markdown_cell(&limitation.category),
                 audit_markdown_cell(&limitation.phase),
+                limitation
+                    .observed_seams
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                limitation
+                    .cache_limit
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
                 audit_markdown_cell(&limitation.repair_route)
             ));
         }
@@ -23490,6 +24177,7 @@ struct RiprSwarmReadinessReport {
     blocked_state_routes: Vec<RiprSwarmReadinessBlockedStateRoute>,
     repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
     language_repair_route_quality: Vec<RiprSwarmRepairRouteQualityRow>,
+    cross_language_oracle_route_quality: Value,
     top_failing_repair_routes: Vec<RiprSwarmRepairRouteQualityRow>,
     top_missing_evidence_fields: Vec<RiprSwarmMissingEvidenceFieldRow>,
     next_actions: Vec<RiprSwarmReadinessNextAction>,
@@ -24756,7 +25444,12 @@ fn ripr_swarm_plan_related_target_file(value: &Value) -> Option<String> {
 }
 
 fn ripr_swarm_plan_allowed_edit_surface(packet: &Value) -> Vec<String> {
-    if ripr_swarm_readiness_packet_projection_exclusion(packet, "missing_allowed_edit_surface") {
+    if ripr_swarm_readiness_packet_projection_exclusion(packet, "missing_allowed_edit_surface")
+        || ripr_swarm_readiness_packet_projection_exclusion(
+            packet,
+            CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY,
+        )
+    {
         return Vec::new();
     }
 
@@ -27590,6 +28283,7 @@ fn ripr_swarm_readiness_from_values(
         blocked_state_routes,
         repair_route_quality,
         language_repair_route_quality,
+        cross_language_oracle_route_quality: cross_language_oracle_route_quality_report_value(),
         top_failing_repair_routes,
         top_missing_evidence_fields,
         next_actions,
@@ -28043,6 +28737,10 @@ fn ripr_swarm_readiness_json(report: &RiprSwarmReadinessReport) -> Result<String
         "repair_route_quality": ripr_swarm_repair_route_quality_json(&report.repair_route_quality),
         "language_repair_route_quality": ripr_swarm_repair_route_quality_json(
             &report.language_repair_route_quality
+        ),
+        "cross_language_oracle_route_quality": report.cross_language_oracle_route_quality,
+        "limitation_route_quality": ripr_swarm_limitation_route_quality_json(
+            &report.top_limitation_routes
         ),
         "top_failing_repair_routes": ripr_swarm_repair_route_quality_json(
             &report.top_failing_repair_routes
@@ -28849,6 +29547,94 @@ fn ripr_swarm_limitation_routes_json(rows: &[RiprSwarmLimitationRouteRow]) -> Ve
             })
         })
         .collect()
+}
+
+fn ripr_swarm_limitation_route_quality_json(rows: &[RiprSwarmLimitationRouteRow]) -> Vec<Value> {
+    rows.iter()
+        .map(|row| {
+            serde_json::json!({
+                "repair_route": row.repair_route,
+                "quality_basis": "static_limitation_backlog",
+                "route_state": "non_actionable_limitation",
+                "signal_count": row.signal_count,
+                "sample_packet_id": row.sample_packet_id,
+                "sample_limitation_category": row.sample_limitation_category,
+                "sample_limitation_subroute": row.sample_limitation_subroute,
+                "dominant_evidence_class": row.dominant_evidence_class,
+                "sample_canonical_gap_ids": row.sample_canonical_gap_ids,
+                "sample_sources": row
+                    .sample_sources
+                    .iter()
+                    .map(lane1_static_limitation_backlog_sample_json)
+                    .collect::<Vec<_>>(),
+                "language_aware_placement": ripr_swarm_limitation_route_language_aware_placement_json(row),
+                "why_not_actionable": row.why_not_actionable,
+                "unlock_condition": row.unlock_condition,
+                "packet_policy": "not_public_repair_packet",
+                "non_claims": row.non_claims,
+            })
+        })
+        .collect()
+}
+
+fn ripr_swarm_limitation_route_language_aware_placement_json(
+    row: &RiprSwarmLimitationRouteRow,
+) -> Value {
+    serde_json::json!({
+        "applies": ripr_swarm_limitation_route_is_language_aware(row),
+        "status": ripr_swarm_limitation_route_language_aware_status(row),
+        "navigation_only_external_target_status":
+            ripr_swarm_limitation_route_navigation_only_target_status(row),
+        "repair_route": row.repair_route,
+        "category": row.sample_limitation_category,
+        "non_claim": "navigation-only target evidence is context only until explicit target, verify, receipt, and edit-surface fields are present"
+    })
+}
+
+fn ripr_swarm_limitation_route_is_language_aware(row: &RiprSwarmLimitationRouteRow) -> bool {
+    matches!(
+        row.sample_limitation_category.as_deref(),
+        Some(CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY)
+            | Some(CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY)
+    ) || matches!(
+        row.repair_route.as_str(),
+        CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE
+            | CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE
+    )
+}
+
+fn ripr_swarm_limitation_route_language_aware_status(
+    row: &RiprSwarmLimitationRouteRow,
+) -> &'static str {
+    if row.sample_limitation_category.as_deref() == Some(CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY)
+        || row.repair_route == CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE
+    {
+        "cross_language_target_inference_unresolved"
+    } else if row.sample_limitation_category.as_deref()
+        == Some(CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY)
+        || row.repair_route == CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE
+    {
+        "cross_language_oracle_visibility_unresolved"
+    } else {
+        "not_language_aware_placement_route"
+    }
+}
+
+fn ripr_swarm_limitation_route_navigation_only_target_status(
+    row: &RiprSwarmLimitationRouteRow,
+) -> &'static str {
+    if row.sample_limitation_category.as_deref() == Some(CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY)
+        || row.repair_route == CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE
+    {
+        "requires_explicit_external_observer_target_evidence"
+    } else if row.sample_limitation_category.as_deref()
+        == Some(CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY)
+        || row.repair_route == CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE
+    {
+        "target_context_is_not_oracle_proof"
+    } else {
+        "not_applicable"
+    }
 }
 
 fn ripr_swarm_readiness_top_failing_repair_routes(
@@ -29982,6 +30768,14 @@ fn ripr_swarm_readiness_markdown(report: &RiprSwarmReadinessReport) -> String {
     ripr_swarm_readiness_push_blocked_state_routes_table(&mut out, &report.blocked_state_routes);
     ripr_swarm_push_static_limitation_backlog_markdown(&mut out, &report.static_limitation_backlog);
     ripr_swarm_readiness_push_top_limitation_routes_table(&mut out, &report.top_limitation_routes);
+    ripr_swarm_readiness_push_limitation_route_quality_table(
+        &mut out,
+        &report.top_limitation_routes,
+    );
+    cross_language_oracle_route_quality_push_markdown(
+        &mut out,
+        &report.cross_language_oracle_route_quality,
+    );
     out.push_str("\n## Repair Route Quality\n\n");
     ripr_swarm_push_repair_route_quality_table(&mut out, &report.repair_route_quality);
     out.push_str("## Repair Route Quality By Language\n\n");
@@ -30091,6 +30885,37 @@ fn ripr_swarm_readiness_push_top_limitation_routes_table(
                     .unwrap_or("inspect the analyzer route before attempting repairs")
             ),
             audit_markdown_cell(&row.non_claims.join(", "))
+        ));
+    }
+    out.push('\n');
+}
+
+fn ripr_swarm_readiness_push_limitation_route_quality_table(
+    out: &mut String,
+    rows: &[RiprSwarmLimitationRouteRow],
+) {
+    out.push_str("\n## Limitation Route Quality\n\n");
+    if rows.is_empty() {
+        out.push_str("No limitation-route quality rows are available.\n\n");
+        return;
+    }
+    out.push_str("Limitation-route quality summarizes analyzer backlog routes. These rows are not repair attempts, not public repair packets, and not badge or gate inputs.\n\n");
+    out.push_str("| Repair route | Signals | Route state | Language-aware status | Navigation-only target status | Packet policy | Sample packet | Sample sources | Unlock condition |\n");
+    out.push_str("| --- | ---: | --- | --- | --- | --- | --- | --- | --- |\n");
+    for row in rows {
+        out.push_str(&format!(
+            "| `{}` | {} | `non_actionable_limitation` | `{}` | `{}` | `not_public_repair_packet` | `{}` | {} | {} |\n",
+            audit_markdown_cell(&row.repair_route),
+            row.signal_count,
+            audit_markdown_cell(ripr_swarm_limitation_route_language_aware_status(row)),
+            audit_markdown_cell(ripr_swarm_limitation_route_navigation_only_target_status(row)),
+            audit_markdown_cell(row.sample_packet_id.as_deref().unwrap_or("unknown")),
+            audit_markdown_cell(&ripr_swarm_limitation_route_sample_sources_markdown(row)),
+            audit_markdown_cell(
+                row.unlock_condition
+                    .as_deref()
+                    .unwrap_or("inspect the analyzer route before attempting repairs")
+            ),
         ));
     }
     out.push('\n');
@@ -31349,6 +32174,8 @@ fn lane1_evidence_audit_run_limitation_json(limitation: &Lane1EvidenceAuditRunLi
         "input": limitation.input,
         "input_kind": runtime_status.input_kind,
         "input_path": runtime_status.input_path,
+        "observed_seams": limitation.observed_seams,
+        "cache_limit": limitation.cache_limit,
         "summary": limitation.summary,
         "repair_route": limitation.repair_route,
         "timeout_ms": limitation.timeout_ms,
@@ -31766,6 +32593,7 @@ struct AuditActionableGapProjectionInput<'a> {
     allowed_edit_surface_count: usize,
     raw_evidence_refs_count: usize,
     static_limitations_count: usize,
+    cross_language_target_unresolved: bool,
 }
 
 fn audit_actionable_gap_projection_exclusion_reasons(
@@ -31862,6 +32690,12 @@ fn audit_actionable_gap_projection_exclusion_reasons(
     if input.allowed_edit_surface_count == 0 {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_allowed_edit_surface");
     }
+    if input.cross_language_target_unresolved {
+        audit_push_projection_exclusion_reason(
+            &mut reasons,
+            CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY,
+        );
+    }
     if input.raw_evidence_refs_count == 0 {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_raw_evidence_refs");
     }
@@ -31905,6 +32739,13 @@ fn audit_push_projection_exclusion_reason(reasons: &mut Vec<String>, reason: &st
     }
 }
 
+fn audit_static_limitations_has_category(values: &[Value], category: &str) -> bool {
+    values.iter().any(|value| {
+        value.as_str().is_some_and(|value| value == category)
+            || audit_non_empty_string(value, &["category"]).is_some_and(|value| value == category)
+    })
+}
+
 fn audit_actionable_gap_related_test_or_observer(
     record: &Value,
     canonical_item: &Value,
@@ -31921,7 +32762,12 @@ fn audit_actionable_gap_allowed_edit_surface(
     record: &Value,
     canonical_item: &Value,
     related_test_or_observer: &Option<Value>,
+    cross_language_target_unresolved: bool,
 ) -> Vec<String> {
+    if cross_language_target_unresolved {
+        return Vec::new();
+    }
+
     let mut values = audit_string_array(canonical_item, &["allowed_edit_surface"])
         .or_else(|| audit_string_array(record, &["allowed_edit_surface"]))
         .unwrap_or_default();
@@ -32553,6 +33399,10 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
         "activation_owner_call_unresolved" => "analysis/related-test-ranking-audit-fixes",
         "activation_value_unresolved" => "analysis/value-resolution-audit-fixes",
         "cross_file_constant_unresolved" => "analysis/cross-file-constant-resolution",
+        CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY => CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
+        CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY => {
+            CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE
+        }
         "macro_generated_value" => "analysis/macro-generated-value-fixtures",
         "opaque_helper_call" => "analysis/oracle-semantics-audit-fixes",
         "dynamic_dispatch" => "calibration/runtime-fixtures-v3",
@@ -33017,6 +33867,8 @@ struct EvidenceQualityScorecardReport {
     actionable_gap_top_lists: Value,
     actionable_gap_packet_public_projection: Value,
     evidence_class_work_queue: Value,
+    language_aware_placement_route_quality: Value,
+    cross_language_oracle_route_quality: Value,
     recommended_repairs: Vec<EvidenceQualityRepair>,
     recent_audit_deltas: EvidenceQualityDeltas,
     unknowns: Vec<EvidenceQualityUnknown>,
@@ -33143,6 +33995,8 @@ fn evidence_quality_scorecard_audit_regeneration_failure_report(
             category: EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED.to_string(),
             phase: "scorecard_missing_audit_regeneration".to_string(),
             input: "lane1-evidence-audit.json".to_string(),
+            observed_seams: None,
+            cache_limit: None,
             summary: format!(
                 "Evidence-quality scorecard could not regenerate the required Lane 1 audit: {summary}. No user test debt is claimed from this limited scorecard."
             ),
@@ -33387,6 +34241,9 @@ fn evidence_quality_scorecard_from_values(
             &["finding_alignment", "coverage", "evidence_class_work_queue"],
             serde_json::json!([]),
         ),
+        language_aware_placement_route_quality:
+            evidence_quality_language_aware_placement_route_quality(audit),
+        cross_language_oracle_route_quality: cross_language_oracle_route_quality_report_value(),
         recommended_repairs,
         recent_audit_deltas,
         unknowns,
@@ -33647,6 +34504,116 @@ fn evidence_quality_scorecard_static_limitations_total(audit: &Value) -> usize {
         })
         .unwrap_or(0);
     summary_total.max(category_total)
+}
+
+fn evidence_quality_language_aware_placement_route_quality(audit: &Value) -> Value {
+    let target_unresolved_signals = scorecard_count_at(
+        audit,
+        &[
+            "static_limitations",
+            "by_category",
+            CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY,
+        ],
+    );
+    let target_route_signals = scorecard_count_at(
+        audit,
+        &[
+            "static_limitations",
+            "repair_routes",
+            CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
+        ],
+    );
+    let oracle_unresolved_signals = scorecard_count_at(
+        audit,
+        &[
+            "static_limitations",
+            "by_category",
+            CROSS_LANGUAGE_ORACLE_VISIBILITY_UNRESOLVED_CATEGORY,
+        ],
+    );
+    let oracle_route_signals = scorecard_count_at(
+        audit,
+        &[
+            "static_limitations",
+            "repair_routes",
+            CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE,
+        ],
+    );
+    let navigation_only_external_target_packets =
+        scorecard_navigation_only_external_target_packet_count(audit, false);
+    let navigation_only_external_target_public_promotions =
+        scorecard_navigation_only_external_target_packet_count(audit, true);
+    let projection_exclusions = audit_count_rows_map(
+        audit,
+        &[
+            "finding_alignment",
+            "actionable_gap_packet_public_projection",
+            "projection_exclusion_reasons",
+        ],
+    );
+    let cross_language_projection_exclusions = projection_exclusions
+        .get(CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY)
+        .copied()
+        .unwrap_or_default();
+    let total_language_aware_signals = target_unresolved_signals
+        + target_route_signals
+        + oracle_unresolved_signals
+        + oracle_route_signals
+        + navigation_only_external_target_packets;
+    let status = if navigation_only_external_target_packets > 0 {
+        "navigation_only_context_visible"
+    } else if total_language_aware_signals > 0 {
+        "static_limitation_route_visible"
+    } else {
+        "no_current_signal"
+    };
+    let navigation_only_external_target_status = if navigation_only_external_target_packets > 0 {
+        "explicit_navigation_context_only"
+    } else if target_unresolved_signals > 0 || target_route_signals > 0 {
+        "target_unresolved_no_navigation_target_in_audit"
+    } else {
+        "not_applicable"
+    };
+
+    serde_json::json!({
+        "status": status,
+        "repair_route": CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
+        "cross_language_target_unresolved_signals": target_unresolved_signals,
+        "cross_language_test_target_inference_route_signals": target_route_signals,
+        "cross_language_oracle_visibility_unresolved_signals": oracle_unresolved_signals,
+        "cross_language_oracle_visibility_route_signals": oracle_route_signals,
+        "cross_language_projection_exclusions": cross_language_projection_exclusions,
+        "navigation_only_external_target_packets": navigation_only_external_target_packets,
+        "navigation_only_external_target_public_promotions":
+            navigation_only_external_target_public_promotions,
+        "navigation_only_external_target_status": navigation_only_external_target_status,
+        "calibration_boundary": "static placement limitations and navigation-only targets are not runtime calibration or public repair packets",
+        "non_claims": [
+            "not a public repair packet",
+            "not swarm-ready work",
+            "do not infer external test targets without explicit observer evidence",
+            "do not promote navigation-only context into verify, receipt, or allowed edit surface",
+            "do not claim full cross-language oracle proof"
+        ],
+    })
+}
+
+fn scorecard_navigation_only_external_target_packet_count(
+    audit: &Value,
+    public_only: bool,
+) -> usize {
+    [
+        &["finding_alignment", "actionable_gap_packets"][..],
+        &["actionable_gap_packets"][..],
+        &["packets"][..],
+    ]
+    .iter()
+    .flat_map(|path| audit_array(audit, path))
+    .filter(|packet| audit_get(packet, &["navigation_only_target"]).is_some())
+    .filter(|packet| {
+        !public_only || audit_bool(packet, &["public_projection_eligible"]).unwrap_or(false)
+    })
+    .count()
 }
 
 fn finding_alignment_summary_usize(
@@ -34576,6 +35543,8 @@ fn evidence_quality_scorecard_json(
         "actionable_gap_top_lists": report.actionable_gap_top_lists,
         "actionable_gap_packet_public_projection": report.actionable_gap_packet_public_projection,
         "evidence_class_work_queue": report.evidence_class_work_queue,
+        "language_aware_placement_route_quality": report.language_aware_placement_route_quality,
+        "cross_language_oracle_route_quality": report.cross_language_oracle_route_quality,
         "recommended_repairs": report.recommended_repairs.iter().map(|repair| {
             serde_json::json!({
                 "slice": repair.slice,
@@ -34905,6 +35874,79 @@ fn scorecard_push_top_count_table(out: &mut String, heading: &str, value: &Value
     out.push('\n');
 }
 
+fn scorecard_push_language_aware_placement_route_quality(out: &mut String, value: &Value) {
+    out.push_str("## Language-Aware Placement Route Quality\n\n");
+    out.push_str("This section summarizes cross-language placement and navigation-only target evidence as analyzer route-quality context. It does not create public repair packets, verify commands, receipt commands, or allowed edit surfaces.\n\n");
+    out.push_str("| Metric | Count |\n");
+    out.push_str("| --- | ---: |\n");
+    audit_push_count(
+        out,
+        "Cross-language target unresolved signals",
+        audit_usize(value, &["cross_language_target_unresolved_signals"]).unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Cross-language target-inference route signals",
+        audit_usize(
+            value,
+            &["cross_language_test_target_inference_route_signals"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Cross-language oracle visibility unresolved signals",
+        audit_usize(
+            value,
+            &["cross_language_oracle_visibility_unresolved_signals"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Navigation-only external target packets",
+        audit_usize(value, &["navigation_only_external_target_packets"]).unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Navigation-only public promotions",
+        audit_usize(
+            value,
+            &["navigation_only_external_target_public_promotions"],
+        )
+        .unwrap_or_default(),
+    );
+    out.push('\n');
+    out.push_str(&format!(
+        "- status: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "- repair_route: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("repair_route")
+                .and_then(Value::as_str)
+                .unwrap_or(CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE)
+        )
+    ));
+    out.push_str(&format!(
+        "- navigation_only_external_target_status: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("navigation_only_external_target_status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str("- calibration_boundary: static placement limitations and navigation-only targets are not runtime calibration or public repair packets.\n\n");
+}
+
 fn scorecard_push_evidence_class_work_queue_table(out: &mut String, value: &Value) {
     let rows = value.as_array().map_or(&[][..], Vec::as_slice);
     if rows.is_empty() {
@@ -35230,6 +36272,15 @@ fn evidence_quality_scorecard_markdown(report: &EvidenceQualityScorecardReport) 
         "Projection exclusion reason",
         &report.actionable_gap_packet_public_projection,
         "projection_exclusion_reasons",
+    );
+
+    scorecard_push_language_aware_placement_route_quality(
+        &mut out,
+        &report.language_aware_placement_route_quality,
+    );
+    cross_language_oracle_route_quality_push_markdown(
+        &mut out,
+        &report.cross_language_oracle_route_quality,
     );
 
     out.push_str("## Evidence Class Work Queue\n\n");
@@ -41881,6 +42932,10 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
         .into_iter()
         .map(|scenario| dogfood_typescript_preview_repair_loop_run(&scenario))
         .collect::<Vec<_>>();
+    let bun_ub_cross_language_runs = dogfood_bun_ub_cross_language_scenarios()
+        .into_iter()
+        .map(|scenario| dogfood_bun_ub_cross_language_run(&scenario))
+        .collect::<Vec<_>>();
     let user_surface_projection_runs = dogfood_user_surface_projection_scenarios()
         .into_iter()
         .map(|scenario| dogfood_user_surface_projection_run(&scenario))
@@ -41910,6 +42965,7 @@ pub(crate) fn dogfood_impl() -> Result<(), String> {
         python_static_limit_eval_runs: &python_static_limit_eval_runs,
         python_no_action_eval_runs: &python_no_action_eval_runs,
         typescript_preview_repair_loop_runs: &typescript_preview_repair_loop_runs,
+        bun_ub_cross_language_runs: &bun_ub_cross_language_runs,
         user_surface_projection_runs: &user_surface_projection_runs,
         pr_inline_comment_runs: &pr_inline_comment_runs,
     };
@@ -46161,6 +47217,2484 @@ fn dogfood_push_python_ranked_findings_json(
     }
 }
 
+#[cfg(test)]
+fn typescript_bun_ub_calibration_cases() -> Vec<TypeScriptBunUbCalibrationCase> {
+    typescript_bun_ub_calibration_cases_at(Path::new(TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS))
+}
+
+fn typescript_bun_ub_calibration_cases_at(
+    corpus_path: &Path,
+) -> Vec<TypeScriptBunUbCalibrationCase> {
+    let fallback = |reason: String| {
+        vec![TypeScriptBunUbCalibrationCase {
+            name: "corpus".to_string(),
+            source: "unknown".to_string(),
+            language: "unknown".to_string(),
+            language_status: "unknown".to_string(),
+            rust_file: "unknown".to_string(),
+            rust_owner: "unknown".to_string(),
+            rust_boundary: "unknown".to_string(),
+            ts_test_file: "unknown".to_string(),
+            ts_entrypoints: Vec::new(),
+            shared_array_buffer: false,
+            resizable_array_buffer: false,
+            view_backed_blob_input: false,
+            stable_byte_copy_oracle: false,
+            max_byte_length_mention_only: false,
+            expected_verdict: "unknown".to_string(),
+            expected_missing_discriminators: Vec::new(),
+            bridge_confidence: "unknown".to_string(),
+            expected_action: "unknown".to_string(),
+            suggested_test_file: "unknown".to_string(),
+            suggested_shape: None,
+            repair_packet_ready: true,
+            authority_boundary: "unknown".to_string(),
+            non_claims: Vec::new(),
+            reason,
+        }]
+    };
+
+    let corpus = match read_json_value(corpus_path) {
+        Ok(value) => value,
+        Err(err) => return fallback(err),
+    };
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        return fallback(
+            "TypeScript Bun UB calibration corpus schema_version must be 0.1".to_string(),
+        );
+    }
+    if json_string_field(&corpus, "kind").as_deref() != Some("typescript_bun_ub_calibration_corpus")
+    {
+        return fallback(
+            "TypeScript Bun UB calibration corpus kind must be typescript_bun_ub_calibration_corpus"
+                .to_string(),
+        );
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0027") {
+        return fallback(
+            "TypeScript Bun UB calibration corpus spec must be RIPR-SPEC-0027".to_string(),
+        );
+    }
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        return fallback("TypeScript Bun UB calibration corpus is missing cases array".to_string());
+    };
+
+    cases
+        .iter()
+        .map(|case| {
+            let rust_seam = case.get("rust_seam").unwrap_or(&Value::Null);
+            let observed = case.get("observed_ts_facts").unwrap_or(&Value::Null);
+            TypeScriptBunUbCalibrationCase {
+                name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
+                source: json_string_field(case, "source").unwrap_or_else(|| "unknown".to_string()),
+                language: json_string_field(case, "language")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                language_status: json_string_field(case, "language_status")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                rust_file: json_string_field(rust_seam, "file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                rust_owner: json_string_field(rust_seam, "owner")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                rust_boundary: json_string_field(rust_seam, "boundary")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                ts_test_file: json_string_field(case, "ts_test_file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                ts_entrypoints: json_string_array_field(case, "ts_entrypoints"),
+                shared_array_buffer: json_bool_field(observed, "shared_array_buffer")
+                    .unwrap_or(false),
+                resizable_array_buffer: json_bool_field(observed, "resizable_array_buffer")
+                    .unwrap_or(false),
+                view_backed_blob_input: json_bool_field(observed, "view_backed_blob_input")
+                    .unwrap_or(false),
+                stable_byte_copy_oracle: json_bool_field(observed, "stable_byte_copy_oracle")
+                    .unwrap_or(false),
+                max_byte_length_mention_only: json_bool_field(
+                    observed,
+                    "max_byte_length_mention_only",
+                )
+                .unwrap_or(false),
+                expected_verdict: json_string_field(case, "expected_verdict")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                expected_missing_discriminators: json_string_array_field(
+                    case,
+                    "expected_missing_discriminators",
+                ),
+                bridge_confidence: json_string_field(case, "bridge_confidence")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                expected_action: json_string_field(case, "expected_action")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                suggested_test_file: json_string_field(case, "suggested_test_file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                suggested_shape: json_string_field(case, "suggested_shape"),
+                repair_packet_ready: json_bool_field(case, "repair_packet_ready").unwrap_or(true),
+                authority_boundary: json_string_field(case, "authority_boundary")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                non_claims: json_string_array_field(case, "non_claims"),
+                reason: json_string_field(case, "reason").unwrap_or_else(|| {
+                    "TypeScript Bun UB calibration case did not document a reason".to_string()
+                }),
+            }
+        })
+        .collect()
+}
+
+fn typescript_bun_ub_calibration_case_errors(case: &TypeScriptBunUbCalibrationCase) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (label, value) in [
+        ("case id", &case.name),
+        ("source", &case.source),
+        ("language", &case.language),
+        ("language_status", &case.language_status),
+        ("rust_file", &case.rust_file),
+        ("rust_owner", &case.rust_owner),
+        ("rust_boundary", &case.rust_boundary),
+        ("ts_test_file", &case.ts_test_file),
+        ("expected_verdict", &case.expected_verdict),
+        ("bridge_confidence", &case.bridge_confidence),
+        ("expected_action", &case.expected_action),
+        ("suggested_test_file", &case.suggested_test_file),
+        ("authority_boundary", &case.authority_boundary),
+        ("reason", &case.reason),
+    ] {
+        let unknown_is_valid_bridge_state =
+            label == "bridge_confidence" && case.expected_verdict == "bridge_unknown";
+        if value.trim().is_empty() || (value == "unknown" && !unknown_is_valid_bridge_state) {
+            errors.push(format!("{label} must be present"));
+        }
+    }
+
+    if case.language != "typescript" {
+        errors.push(format!(
+            "language must be typescript for Bun TS calibration, got {}",
+            case.language
+        ));
+    }
+    if case.language_status != "preview" {
+        errors.push("language_status must be preview".to_string());
+    }
+    if case.authority_boundary != "preview_advisory_only" {
+        errors.push("authority_boundary must be preview_advisory_only".to_string());
+    }
+    if case.repair_packet_ready {
+        errors.push("repair_packet_ready must remain false for calibration cases".to_string());
+    }
+    if !typescript_bun_ub_calibration_allowed_verdicts().contains(&case.expected_verdict.as_str()) {
+        errors.push(format!(
+            "expected_verdict must be a Bun UB calibration verdict, got {}",
+            case.expected_verdict
+        ));
+    }
+    if !matches!(
+        case.bridge_confidence.as_str(),
+        "configured_hint" | "heuristic" | "unknown"
+    ) {
+        errors.push(format!(
+            "bridge_confidence must be configured_hint, heuristic, or unknown, got {}",
+            case.bridge_confidence
+        ));
+    }
+    if !case.rust_file.ends_with("Blob.rs") {
+        errors.push("rust_file must identify the Bun Blob Rust seam".to_string());
+    }
+    if case.rust_owner != "Blob::from_js_without_defer_gc" {
+        errors.push(
+            "rust_owner must pin Blob::from_js_without_defer_gc for the #31648 calibration seam"
+                .to_string(),
+        );
+    }
+    if !case.rust_boundary.contains("array_buffer.shared")
+        || !case.rust_boundary.contains("array_buffer.resizable")
+    {
+        errors.push(
+            "rust_boundary must include array_buffer.shared and array_buffer.resizable".to_string(),
+        );
+    }
+    if !case.ts_test_file.starts_with("test/js/") || !case.ts_test_file.ends_with(".test.ts") {
+        errors.push("ts_test_file must be a Bun test/js TypeScript test path".to_string());
+    }
+    if !case.suggested_test_file.starts_with("test/js/")
+        && case.suggested_test_file != "not_applicable"
+    {
+        errors.push("suggested_test_file must be not_applicable or a Bun test/js path".to_string());
+    }
+    if case.non_claims.is_empty() {
+        errors.push("non_claims must keep preview boundary denials visible".to_string());
+    }
+    for required in typescript_bun_ub_calibration_required_non_claims() {
+        if !case
+            .non_claims
+            .iter()
+            .any(|non_claim| non_claim.contains(required))
+        {
+            errors.push(format!("non_claims must deny {required}"));
+        }
+    }
+
+    match case.expected_verdict.as_str() {
+        "ts_discriminated" => {
+            if !case.shared_array_buffer
+                || !case.resizable_array_buffer
+                || !case.view_backed_blob_input
+                || !case.stable_byte_copy_oracle
+            {
+                errors.push(
+                    "ts_discriminated requires shared, resizable, Blob input, and stable-byte oracle facts"
+                        .to_string(),
+                );
+            }
+            if !case.expected_missing_discriminators.is_empty() {
+                errors.push("ts_discriminated must not name missing discriminators".to_string());
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push("ts_discriminated must not suggest a new test file".to_string());
+            }
+        }
+        "ts_missing_resizable" => {
+            if !case.shared_array_buffer || case.resizable_array_buffer {
+                errors.push(
+                    "ts_missing_resizable requires shared present and resizable absent".to_string(),
+                );
+            }
+            require_typescript_bun_ub_missing(
+                case,
+                "resizable_array_buffer",
+                BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
+                &mut errors,
+            );
+        }
+        "ts_missing_shared" => {
+            if case.shared_array_buffer || !case.resizable_array_buffer {
+                errors.push(
+                    "ts_missing_shared requires shared absent and resizable present".to_string(),
+                );
+            }
+            require_typescript_bun_ub_missing(
+                case,
+                "shared_array_buffer",
+                BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
+                &mut errors,
+            );
+        }
+        "ts_missing_shared_and_resizable" => {
+            if case.shared_array_buffer || case.resizable_array_buffer {
+                errors.push(
+                    "ts_missing_shared_and_resizable requires both boundary facts absent"
+                        .to_string(),
+                );
+            }
+            for missing in ["shared_array_buffer", "resizable_array_buffer"] {
+                require_typescript_bun_ub_missing(
+                    case,
+                    missing,
+                    BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
+                    &mut errors,
+                );
+            }
+        }
+        "ts_missing_external_oracle" => {
+            if case.view_backed_blob_input && case.stable_byte_copy_oracle {
+                errors.push(
+                    "ts_missing_external_oracle requires a missing Blob input or stable-byte oracle"
+                        .to_string(),
+                );
+            }
+            if !case.view_backed_blob_input && !case.stable_byte_copy_oracle {
+                errors.push(
+                    "ts_missing_external_oracle requires at least one partial Blob observer fact"
+                        .to_string(),
+                );
+            }
+            if !case.expected_missing_discriminators.is_empty() {
+                errors.push(
+                    "ts_missing_external_oracle must not name boundary discriminators".to_string(),
+                );
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "ts_missing_external_oracle must keep suggested_test_file=not_applicable"
+                        .to_string(),
+                );
+            }
+        }
+        "ts_mention_not_observer" => {
+            if !case.max_byte_length_mention_only {
+                errors.push(
+                    "ts_mention_not_observer must record max_byte_length_mention_only=true"
+                        .to_string(),
+                );
+            }
+            if case.view_backed_blob_input || case.stable_byte_copy_oracle {
+                errors.push(
+                    "ts_mention_not_observer must not count Blob input or stable-byte oracle facts"
+                        .to_string(),
+                );
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "ts_mention_not_observer must keep suggested_test_file=not_applicable"
+                        .to_string(),
+                );
+            }
+        }
+        "bridge_unknown" => {
+            if case.bridge_confidence != "unknown" {
+                errors.push("bridge_unknown requires bridge_confidence=unknown".to_string());
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "bridge_unknown must keep suggested_test_file=not_applicable".to_string(),
+                );
+            }
+        }
+        _ => {}
+    }
+
+    errors
+}
+
+fn require_typescript_bun_ub_missing(
+    case: &TypeScriptBunUbCalibrationCase,
+    missing: &str,
+    suggested_test_file: &str,
+    errors: &mut Vec<String>,
+) {
+    if !case
+        .expected_missing_discriminators
+        .iter()
+        .any(|discriminator| discriminator == missing)
+    {
+        errors.push(format!(
+            "{} must include missing discriminator {}",
+            case.expected_verdict, missing
+        ));
+    }
+    if case.suggested_test_file != suggested_test_file {
+        errors.push(format!(
+            "{} must keep suggested_test_file={}",
+            case.expected_verdict, suggested_test_file
+        ));
+    }
+}
+
+fn typescript_bun_ub_calibration_allowed_verdicts() -> &'static [&'static str] {
+    &[
+        "ts_discriminated",
+        "ts_missing_shared",
+        "ts_missing_resizable",
+        "ts_missing_shared_and_resizable",
+        "ts_missing_external_oracle",
+        "ts_mention_not_observer",
+        "bridge_unknown",
+    ]
+}
+
+fn typescript_bun_ub_calibration_required_non_claims() -> &'static [&'static str] {
+    &[
+        "provider",
+        "source edits",
+        "generated tests",
+        "runtime Bun execution",
+        "mutation execution",
+        "default gates",
+        "public badge",
+        "baseline",
+        "RIPR Zero",
+        "support-tier promotion",
+    ]
+}
+
+pub(crate) fn bun_ub_calibration_impl(args: &[String]) -> Result<(), String> {
+    let args = parse_bun_ub_calibration_args(args)?;
+    let report = bun_ub_calibration_report_value(&args.corpus);
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("failed to render Bun UB calibration JSON: {err}"))?;
+    write_parented_text_file(&args.out, "bun-ub-calibration JSON", &json)?;
+    write_parented_text_file(
+        &args.out_md,
+        "bun-ub-calibration Markdown",
+        &bun_ub_calibration_report_markdown(&report),
+    )
+}
+
+fn parse_bun_ub_calibration_args(args: &[String]) -> Result<BunUbCalibrationArgs, String> {
+    let mut corpus = PathBuf::from(TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS);
+    let mut out = PathBuf::from("target/ripr/reports/bun-ub-calibration.json");
+    let mut out_md = PathBuf::from("target/ripr/reports/bun-ub-calibration.md");
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--corpus" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--corpus`\n{}",
+                        bun_ub_calibration_usage()
+                    ));
+                };
+                corpus = PathBuf::from(value);
+            }
+            "--out" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--out`\n{}",
+                        bun_ub_calibration_usage()
+                    ));
+                };
+                out = PathBuf::from(value);
+            }
+            "--out-md" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--out-md`\n{}",
+                        bun_ub_calibration_usage()
+                    ));
+                };
+                out_md = PathBuf::from(value);
+            }
+            "-h" | "--help" => {
+                return Err(bun_ub_calibration_usage());
+            }
+            other => {
+                return Err(format!(
+                    "unknown bun-ub-calibration argument `{other}`\n{}",
+                    bun_ub_calibration_usage()
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(BunUbCalibrationArgs {
+        corpus,
+        out,
+        out_md,
+    })
+}
+
+fn bun_ub_calibration_usage() -> String {
+    "usage: cargo xtask bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]"
+        .to_string()
+}
+
+fn bun_ub_calibration_report_value(corpus_path: &Path) -> Value {
+    let cases = typescript_bun_ub_calibration_cases_at(corpus_path);
+    let mut rows = Vec::new();
+    let mut passing_cases = 0usize;
+    let mut failing_cases = 0usize;
+    let mut verdict_counts = BTreeMap::<String, usize>::new();
+    let mut missing_discriminator_cases = 0usize;
+    let mut bridge_unknown_cases = 0usize;
+    let mut mention_only_cases = 0usize;
+    let mut public_packet_exclusions = 0usize;
+    let mut repair_packet_ready_cases = 0usize;
+
+    for case in &cases {
+        let observed_state = bun_ub_calibration_observed_state(case);
+        let missing_discriminators =
+            bun_ub_calibration_observed_missing_discriminators(&observed_state);
+        let missing_graph_legs =
+            bun_ub_calibration_missing_graph_legs(case, &observed_state, &missing_discriminators);
+        let mut errors = typescript_bun_ub_calibration_case_errors(case);
+        if observed_state != case.expected_verdict {
+            errors.push(format!(
+                "observed_state {observed_state} did not match expected_verdict {}",
+                case.expected_verdict
+            ));
+        }
+        if case.repair_packet_ready {
+            errors.push("calibration report rows must not be repair-packet-ready".to_string());
+        }
+
+        if errors.is_empty() {
+            passing_cases += 1;
+        } else {
+            failing_cases += 1;
+        }
+        *verdict_counts.entry(observed_state.clone()).or_default() += 1;
+        if !missing_discriminators.is_empty() {
+            missing_discriminator_cases += 1;
+        }
+        if observed_state == "bridge_unknown" {
+            bridge_unknown_cases += 1;
+        }
+        if observed_state == "ts_mention_not_observer" {
+            mention_only_cases += 1;
+        }
+        if !case.repair_packet_ready {
+            public_packet_exclusions += 1;
+        }
+        if case.repair_packet_ready {
+            repair_packet_ready_cases += 1;
+        }
+
+        rows.push(serde_json::json!({
+            "case_id": case.name,
+            "source": case.source,
+            "expected_state": case.expected_verdict,
+            "observed_state": observed_state,
+            "status": if errors.is_empty() { "pass" } else { "fail" },
+            "rust_seam": {
+                "file": case.rust_file,
+                "owner": case.rust_owner,
+                "boundary": case.rust_boundary,
+            },
+            "typescript_evidence": {
+                "test_file": case.ts_test_file,
+                "entrypoints": case.ts_entrypoints,
+                "shared_array_buffer": case.shared_array_buffer,
+                "resizable_array_buffer": case.resizable_array_buffer,
+                "view_backed_blob_input": case.view_backed_blob_input,
+                "stable_byte_copy_oracle": case.stable_byte_copy_oracle,
+                "max_byte_length_mention_only": case.max_byte_length_mention_only,
+            },
+            "bridge_confidence": case.bridge_confidence,
+            "expected_action": case.expected_action,
+            "expected_missing_discriminators": case.expected_missing_discriminators,
+            "missing_discriminators": missing_discriminators,
+            "missing_graph_legs": missing_graph_legs,
+            "suggested_test_file": case.suggested_test_file,
+            "suggested_shape": case.suggested_shape,
+            "authority_boundary": case.authority_boundary,
+            "repair_packet_ready": case.repair_packet_ready,
+            "non_claims": case.non_claims,
+            "reason": case.reason,
+            "errors": errors,
+        }));
+    }
+
+    let status = if cases.is_empty() {
+        "empty"
+    } else if failing_cases == 0 && repair_packet_ready_cases == 0 {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    serde_json::json!({
+        "schema_version": "0.1",
+        "report": "bun-ub-calibration",
+        "status": status,
+        "source_path": normalize_path(corpus_path),
+        "authority_boundary": "preview_advisory_only",
+        "summary": {
+            "cases_total": cases.len(),
+            "passing_cases": passing_cases,
+            "failing_cases": failing_cases,
+            "ts_discriminated_cases": verdict_counts.get("ts_discriminated").copied().unwrap_or_default(),
+            "ts_missing_resizable_cases": verdict_counts.get("ts_missing_resizable").copied().unwrap_or_default(),
+            "ts_missing_shared_cases": verdict_counts.get("ts_missing_shared").copied().unwrap_or_default(),
+            "ts_missing_shared_and_resizable_cases": verdict_counts.get("ts_missing_shared_and_resizable").copied().unwrap_or_default(),
+            "ts_missing_external_oracle_cases": verdict_counts.get("ts_missing_external_oracle").copied().unwrap_or_default(),
+            "ts_mention_not_observer_cases": mention_only_cases,
+            "bridge_unknown_cases": bridge_unknown_cases,
+            "missing_discriminator_cases": missing_discriminator_cases,
+            "public_packet_exclusions": public_packet_exclusions,
+            "repair_packet_ready_cases": repair_packet_ready_cases,
+        },
+        "operator_question": "This Rust/FFI seam changed. Do Bun's TypeScript integration tests discriminate the boundary that would catch the stable-byte bug?",
+        "calibration_boundary": "Bun UB TypeScript calibration is preview/advisory only. It summarizes manifest evidence and does not run Bun, tsc, tsserver, mutation, provider calls, generated tests, source edits, gates, badges, baselines, RIPR Zero, or support-tier promotion.",
+        "non_claims": [
+            "no provider calls",
+            "no source edits",
+            "no generated tests",
+            "no runtime Bun execution",
+            "no mutation execution",
+            "no default gates",
+            "no public badge contribution",
+            "no baseline authority",
+            "no RIPR Zero authority",
+            "no support-tier promotion",
+            "no public repair packet",
+            "no full cross-language proof"
+        ],
+        "rows": rows,
+    })
+}
+
+fn bun_ub_calibration_observed_state(case: &TypeScriptBunUbCalibrationCase) -> String {
+    if case.bridge_confidence == "unknown" {
+        return "bridge_unknown".to_string();
+    }
+    if case.max_byte_length_mention_only
+        && !case.view_backed_blob_input
+        && !case.stable_byte_copy_oracle
+    {
+        return "ts_mention_not_observer".to_string();
+    }
+    if !case.view_backed_blob_input || !case.stable_byte_copy_oracle {
+        if case.view_backed_blob_input || case.stable_byte_copy_oracle {
+            return "ts_missing_external_oracle".to_string();
+        }
+        return "ts_mention_not_observer".to_string();
+    }
+    match (case.shared_array_buffer, case.resizable_array_buffer) {
+        (true, true) => "ts_discriminated",
+        (true, false) => "ts_missing_resizable",
+        (false, true) => "ts_missing_shared",
+        (false, false) => "ts_missing_shared_and_resizable",
+    }
+    .to_string()
+}
+
+fn bun_ub_calibration_observed_missing_discriminators(state: &str) -> Vec<&'static str> {
+    match state {
+        "ts_missing_resizable" => vec!["resizable_array_buffer"],
+        "ts_missing_shared" => vec!["shared_array_buffer"],
+        "ts_missing_shared_and_resizable" => {
+            vec!["shared_array_buffer", "resizable_array_buffer"]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn bun_ub_calibration_missing_graph_legs(
+    case: &TypeScriptBunUbCalibrationCase,
+    state: &str,
+    missing_discriminators: &[&str],
+) -> Vec<String> {
+    match state {
+        "bridge_unknown" => vec!["binding_or_ffi_edge".to_string()],
+        "ts_mention_not_observer" => vec!["external_blob_or_stable_byte_observer".to_string()],
+        "ts_missing_external_oracle" => {
+            let mut missing = Vec::new();
+            if !case.view_backed_blob_input {
+                missing.push("external_callsite:view_backed_blob_input".to_string());
+            }
+            if !case.stable_byte_copy_oracle {
+                missing.push("external_oracle:stable_byte_copy".to_string());
+            }
+            if missing.is_empty() {
+                missing.push("external_oracle_path".to_string());
+            }
+            missing
+        }
+        _ => missing_discriminators
+            .iter()
+            .map(|missing| format!("boundary_discriminator:{missing}"))
+            .collect(),
+    }
+}
+
+fn bun_ub_calibration_report_markdown(value: &Value) -> String {
+    let mut out = String::new();
+    out.push_str("# Bun UB TypeScript Calibration\n\n");
+    out.push_str(&format!(
+        "Status: `{}`\n\n",
+        audit_markdown_cell(
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "- source_path: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("source_path")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "- authority_boundary: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("authority_boundary")
+                .and_then(Value::as_str)
+                .unwrap_or("preview_advisory_only")
+        )
+    ));
+    out.push_str(&format!(
+        "- operator_question: {}\n",
+        audit_markdown_cell(
+            value
+                .get("operator_question")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "- calibration_boundary: {}\n\n",
+        audit_markdown_cell(
+            value
+                .get("calibration_boundary")
+                .and_then(Value::as_str)
+                .unwrap_or("preview/advisory only")
+        )
+    ));
+
+    out.push_str("## Summary\n\n");
+    out.push_str("| Metric | Count |\n");
+    out.push_str("| --- | ---: |\n");
+    let summary = value.get("summary").unwrap_or(&Value::Null);
+    for (label, key) in [
+        ("Cases", "cases_total"),
+        ("Passing cases", "passing_cases"),
+        ("Failing cases", "failing_cases"),
+        ("TS discriminated cases", "ts_discriminated_cases"),
+        ("Missing resizable cases", "ts_missing_resizable_cases"),
+        ("Missing shared cases", "ts_missing_shared_cases"),
+        (
+            "Missing shared and resizable cases",
+            "ts_missing_shared_and_resizable_cases",
+        ),
+        (
+            "Missing external oracle cases",
+            "ts_missing_external_oracle_cases",
+        ),
+        (
+            "Mention-not-observer cases",
+            "ts_mention_not_observer_cases",
+        ),
+        ("Bridge-unknown cases", "bridge_unknown_cases"),
+        ("Missing-discriminator cases", "missing_discriminator_cases"),
+        ("Public packet exclusions", "public_packet_exclusions"),
+        ("Repair-packet-ready cases", "repair_packet_ready_cases"),
+    ] {
+        audit_push_count(
+            &mut out,
+            label,
+            audit_usize(summary, &[key]).unwrap_or_default(),
+        );
+    }
+    out.push('\n');
+
+    let non_claims = audit_markdown_string_array_cell(
+        value
+            .get("non_claims")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    );
+    out.push_str(&format!(
+        "- non_claims: {}\n\n",
+        audit_markdown_cell(&non_claims)
+    ));
+
+    out.push_str("## Cases\n\n");
+    out.push_str("| Case | Expected | Observed | Status | Missing discriminators | Missing graph legs | Suggested file | Repair packet ready |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    let rows = value
+        .get("rows")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if rows.is_empty() {
+        out.push_str("| none |  |  |  |  |  |  |  |\n");
+    }
+    for row in rows {
+        let missing_discriminators = audit_markdown_string_array_cell(
+            row.get("missing_discriminators")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        let missing_graph_legs = audit_markdown_string_array_cell(
+            row.get("missing_graph_legs")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | {} | {} | `{}` | `{}` |\n",
+            audit_markdown_cell(
+                row.get("case_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("expected_state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("observed_state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(&missing_discriminators),
+            audit_markdown_cell(&missing_graph_legs),
+            audit_markdown_cell(
+                row.get("suggested_test_file")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            row.get("repair_packet_ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+fn write_parented_text_file(path: &Path, label: &str, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {} parent: {err}", parent.display()))?;
+    }
+    fs::write(path, contents).map_err(|err| format!("failed to write {label}: {err}"))
+}
+
+#[cfg(test)]
+fn cross_language_oracle_graph_cases() -> Vec<CrossLanguageOracleGraphCase> {
+    cross_language_oracle_graph_cases_at(Path::new(CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS))
+}
+
+fn cross_language_oracle_graph_cases_at(corpus_path: &Path) -> Vec<CrossLanguageOracleGraphCase> {
+    let fallback = |reason: String| {
+        vec![CrossLanguageOracleGraphCase {
+            name: "corpus".to_string(),
+            source: "unknown".to_string(),
+            profile: "unknown".to_string(),
+            language: "unknown".to_string(),
+            language_status: "unknown".to_string(),
+            rust_file: "unknown".to_string(),
+            rust_line: None,
+            rust_owner: "unknown".to_string(),
+            rust_boundary: "unknown".to_string(),
+            binding_edge_kind: "unknown".to_string(),
+            binding_edge_confidence: "unknown".to_string(),
+            external_callsite_file: "unknown".to_string(),
+            external_callsite_line: None,
+            external_entrypoints: Vec::new(),
+            shared_array_buffer: false,
+            resizable_array_buffer: false,
+            view_backed_blob_input: false,
+            stable_byte_copy_oracle: false,
+            max_byte_length_mention_only: false,
+            external_oracle_file: "unknown".to_string(),
+            external_oracle_line: None,
+            external_oracle_kind: "unknown".to_string(),
+            oracle_strength: "unknown".to_string(),
+            expected_state: "unknown".to_string(),
+            gap_state: "unknown".to_string(),
+            limitation_category: "unknown".to_string(),
+            repair_route: "unknown".to_string(),
+            authority_boundary: "unknown".to_string(),
+            public_projection_eligible: true,
+            repair_packet_ready: true,
+            suggested_test_file: "unknown".to_string(),
+            allowed_edit_surface: Vec::new(),
+            verify_command: None,
+            receipt_command: None,
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            unlock_condition: "unknown".to_string(),
+            raw_evidence_refs: Vec::new(),
+            non_claims: Vec::new(),
+            reason,
+        }]
+    };
+
+    let corpus = match read_json_value(corpus_path) {
+        Ok(value) => value,
+        Err(err) => return fallback(err),
+    };
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        return fallback(
+            "Cross-language oracle graph corpus schema_version must be 0.1".to_string(),
+        );
+    }
+    if json_string_field(&corpus, "kind").as_deref() != Some("cross_language_oracle_graph_corpus") {
+        return fallback(
+            "Cross-language oracle graph corpus kind must be cross_language_oracle_graph_corpus"
+                .to_string(),
+        );
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0062") {
+        return fallback(
+            "Cross-language oracle graph corpus spec must be RIPR-SPEC-0062".to_string(),
+        );
+    }
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        return fallback("Cross-language oracle graph corpus is missing cases array".to_string());
+    };
+
+    cases
+        .iter()
+        .map(|case| {
+            let rust_seam = case.get("rust_seam").unwrap_or(&Value::Null);
+            let binding_edge = case.get("binding_edge").unwrap_or(&Value::Null);
+            let external_callsite = case.get("external_callsite").unwrap_or(&Value::Null);
+            let observed = case.get("observed_ts_facts").unwrap_or(&Value::Null);
+            let external_oracle = case.get("external_oracle").unwrap_or(&Value::Null);
+            let expected = case.get("expected").unwrap_or(&Value::Null);
+            CrossLanguageOracleGraphCase {
+                name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
+                source: json_string_field(case, "source").unwrap_or_else(|| "unknown".to_string()),
+                profile: json_string_field(case, "profile")
+                    .unwrap_or_else(|| "bun_blob_array_buffer".to_string()),
+                language: json_string_field(case, "language")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                language_status: json_string_field(case, "language_status")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                rust_file: json_string_field(rust_seam, "file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                rust_line: json_usize_field(rust_seam, "line"),
+                rust_owner: json_string_field(rust_seam, "owner")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                rust_boundary: json_string_field(rust_seam, "boundary")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                binding_edge_kind: json_string_field(binding_edge, "kind")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                binding_edge_confidence: json_string_field(binding_edge, "confidence")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                external_callsite_file: json_string_field(external_callsite, "file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                external_callsite_line: json_usize_field(external_callsite, "line"),
+                external_entrypoints: json_string_array_field(external_callsite, "entrypoints"),
+                shared_array_buffer: json_bool_field(observed, "shared_array_buffer")
+                    .unwrap_or(false),
+                resizable_array_buffer: json_bool_field(observed, "resizable_array_buffer")
+                    .unwrap_or(false),
+                view_backed_blob_input: json_bool_field(observed, "view_backed_blob_input")
+                    .unwrap_or(false),
+                stable_byte_copy_oracle: json_bool_field(observed, "stable_byte_copy_oracle")
+                    .unwrap_or(false),
+                max_byte_length_mention_only: json_bool_field(
+                    observed,
+                    "max_byte_length_mention_only",
+                )
+                .unwrap_or(false),
+                external_oracle_file: json_string_field(external_oracle, "file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                external_oracle_line: json_usize_field(external_oracle, "line"),
+                external_oracle_kind: json_string_field(external_oracle, "kind")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                oracle_strength: json_string_field(external_oracle, "strength")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                expected_state: json_string_field(expected, "state")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                gap_state: json_string_field(expected, "gap_state")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                limitation_category: json_string_field(expected, "limitation_category")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                repair_route: json_string_field(expected, "repair_route")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                authority_boundary: json_string_field(expected, "authority_boundary")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                public_projection_eligible: json_bool_field(expected, "public_projection_eligible")
+                    .unwrap_or(true),
+                repair_packet_ready: json_bool_field(expected, "repair_packet_ready")
+                    .unwrap_or(true),
+                suggested_test_file: json_string_field(expected, "suggested_test_file")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                allowed_edit_surface: json_string_array_field(expected, "allowed_edit_surface"),
+                verify_command: json_string_field(expected, "verify_command"),
+                receipt_command: json_string_field(expected, "receipt_command"),
+                missing_discriminators: json_string_array_field(expected, "missing_discriminators"),
+                missing_graph_legs: json_string_array_field(expected, "missing_graph_legs"),
+                unlock_condition: json_string_field(expected, "unlock_condition")
+                    .unwrap_or_else(|| "unknown".to_string()),
+                raw_evidence_refs: cross_language_oracle_graph_raw_refs(case),
+                non_claims: json_string_array_field(case, "non_claims"),
+                reason: json_string_field(case, "reason").unwrap_or_else(|| {
+                    "Cross-language oracle graph case did not document a reason".to_string()
+                }),
+            }
+        })
+        .collect()
+}
+
+fn cross_language_oracle_graph_raw_refs(case: &Value) -> Vec<CrossLanguageOracleGraphRawRef> {
+    case.get("raw_evidence_refs")
+        .and_then(Value::as_array)
+        .map(|raw_refs| {
+            raw_refs
+                .iter()
+                .map(|raw_ref| CrossLanguageOracleGraphRawRef {
+                    leg: json_string_field(raw_ref, "leg").unwrap_or_else(|| "unknown".to_string()),
+                    file: json_string_field(raw_ref, "file")
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    line: json_usize_field(raw_ref, "line"),
+                    kind: json_string_field(raw_ref, "kind")
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    source_id: json_string_field(raw_ref, "source_id")
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    sample: json_string_field(raw_ref, "sample")
+                        .unwrap_or_else(|| "unknown".to_string()),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (label, value) in [
+        ("case id", &case.name),
+        ("source", &case.source),
+        ("profile", &case.profile),
+        ("language", &case.language),
+        ("language_status", &case.language_status),
+        ("rust_file", &case.rust_file),
+        ("rust_owner", &case.rust_owner),
+        ("rust_boundary", &case.rust_boundary),
+        ("binding_edge_kind", &case.binding_edge_kind),
+        ("binding_edge_confidence", &case.binding_edge_confidence),
+        ("external_callsite_file", &case.external_callsite_file),
+        ("external_oracle_file", &case.external_oracle_file),
+        ("external_oracle_kind", &case.external_oracle_kind),
+        ("oracle_strength", &case.oracle_strength),
+        ("expected_state", &case.expected_state),
+        ("gap_state", &case.gap_state),
+        ("limitation_category", &case.limitation_category),
+        ("repair_route", &case.repair_route),
+        ("authority_boundary", &case.authority_boundary),
+        ("suggested_test_file", &case.suggested_test_file),
+        ("unlock_condition", &case.unlock_condition),
+        ("reason", &case.reason),
+    ] {
+        let unknown_is_valid_bridge_confidence =
+            label == "binding_edge_confidence" && case.expected_state == "bridge_unknown";
+        if value.trim().is_empty() || (value == "unknown" && !unknown_is_valid_bridge_confidence) {
+            errors.push(format!("{label} must be present"));
+        }
+    }
+
+    if case.rust_line.is_none() {
+        errors.push("rust line must be present".to_string());
+    }
+    let external_location_unresolved =
+        cross_language_oracle_graph_external_location_unresolved(case);
+    if case.external_callsite_line.is_none() && !external_location_unresolved {
+        errors.push("external_callsite line must be present".to_string());
+    }
+    if case.external_oracle_line.is_none() && !external_location_unresolved {
+        errors.push("external_oracle line must be present".to_string());
+    }
+    if case.language != "typescript" {
+        errors.push(format!(
+            "language must be typescript for the cross-language oracle graph, got {}",
+            case.language
+        ));
+    }
+    if case.language_status != "preview" {
+        errors.push("language_status must be preview".to_string());
+    }
+    if case.authority_boundary != "preview_advisory_only" {
+        errors.push("authority_boundary must be preview_advisory_only".to_string());
+    }
+    if case.repair_packet_ready {
+        errors.push("repair_packet_ready must remain false for graph cases".to_string());
+    }
+    if case.public_projection_eligible {
+        errors.push("public_projection_eligible must remain false for graph cases".to_string());
+    }
+    let configured_missing_discriminator_placement = case.expected_state
+        == "rust_ungripped_ts_missing_discriminator"
+        && case.suggested_test_file == BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE;
+    if case.suggested_test_file != "not_applicable" && !configured_missing_discriminator_placement {
+        errors.push(
+            "suggested_test_file must be not_applicable or the configured Bun Blob TypeScript test file for missing-discriminator rows"
+                .to_string(),
+        );
+    }
+    if !case.allowed_edit_surface.is_empty() {
+        errors.push("allowed_edit_surface must remain empty".to_string());
+    }
+    if case.verify_command.is_some() {
+        errors.push("verify_command must be omitted for graph cases".to_string());
+    }
+    if case.receipt_command.is_some() {
+        errors.push("receipt_command must be omitted for graph cases".to_string());
+    }
+    if !cross_language_oracle_graph_allowed_states().contains(&case.expected_state.as_str()) {
+        errors.push(format!(
+            "expected_state must be a cross-language oracle graph state, got {}",
+            case.expected_state
+        ));
+    }
+    if !matches!(
+        case.binding_edge_confidence.as_str(),
+        "configured_hint" | "heuristic" | "unknown"
+    ) {
+        errors.push(format!(
+            "binding_edge_confidence must be configured_hint, heuristic, or unknown, got {}",
+            case.binding_edge_confidence
+        ));
+    }
+    if !matches!(
+        case.binding_edge_kind.as_str(),
+        "configured_bridge" | "ffi_binding" | "unresolved"
+    ) {
+        errors.push(format!(
+            "binding_edge_kind must be configured_bridge, ffi_binding, or unresolved, got {}",
+            case.binding_edge_kind
+        ));
+    }
+    cross_language_oracle_graph_profile_errors(case, &mut errors);
+    if external_location_unresolved {
+        if !case.external_callsite_file.starts_with("unresolved:") {
+            errors.push(
+                "unresolved cross-language panic-boundary callsite file must be explicit"
+                    .to_string(),
+            );
+        }
+        if !case.external_oracle_file.starts_with("unresolved:") {
+            errors.push(
+                "unresolved cross-language panic-boundary oracle file must be explicit".to_string(),
+            );
+        }
+    } else {
+        if !case.external_callsite_file.starts_with("test/js/")
+            || !case.external_callsite_file.ends_with(".test.ts")
+        {
+            errors.push(
+                "external_callsite_file must be a Bun test/js TypeScript test path".to_string(),
+            );
+        }
+        if !case.external_oracle_file.starts_with("test/js/")
+            || !case.external_oracle_file.ends_with(".test.ts")
+        {
+            errors.push(
+                "external_oracle_file must be a Bun test/js TypeScript test path".to_string(),
+            );
+        }
+    }
+    if case.external_entrypoints.is_empty() {
+        errors.push("external_entrypoints must name at least one external callsite".to_string());
+    }
+    if case.non_claims.is_empty() {
+        errors.push("non_claims must keep cross-language preview denials visible".to_string());
+    }
+    for required in cross_language_oracle_graph_required_non_claims() {
+        if !case
+            .non_claims
+            .iter()
+            .any(|non_claim| non_claim.contains(required))
+        {
+            errors.push(format!("non_claims must deny {required}"));
+        }
+    }
+    cross_language_oracle_graph_raw_ref_errors(case, &mut errors);
+
+    match case.expected_state.as_str() {
+        "rust_ungripped_ts_discriminated" => {
+            if case.gap_state != "already_observed" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must map to gap_state already_observed"
+                        .to_string(),
+                );
+            }
+            if case.limitation_category != "not_applicable" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must use limitation_category not_applicable"
+                        .to_string(),
+                );
+            }
+            if case.repair_route != "manual-review/cross-language-advisory-witness" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must use manual advisory witness route"
+                        .to_string(),
+                );
+            }
+            let blob_discriminated = case.shared_array_buffer
+                && case.resizable_array_buffer
+                && case.view_backed_blob_input
+                && case.stable_byte_copy_oracle;
+            let markdown_discriminated = case.profile == "bun_markdown_resizable_array_buffer"
+                && case.resizable_array_buffer
+                && case
+                    .external_entrypoints
+                    .iter()
+                    .any(|entrypoint| entrypoint.contains("Bun.markdown"))
+                && case.external_oracle_kind == "markdown_strong_oracle";
+            if !blob_discriminated && !markdown_discriminated {
+                errors.push(
+                    "rust_ungripped_ts_discriminated requires either the Blob shared/resizable stable-byte facts or the Bun markdown resizable strong-oracle profile facts"
+                        .to_string(),
+                );
+            }
+            if case.max_byte_length_mention_only {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must not be mention-only evidence".to_string(),
+                );
+            }
+            if case.binding_edge_confidence != "configured_hint" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated requires configured bridge confidence"
+                        .to_string(),
+                );
+            }
+            if !case.missing_discriminators.is_empty() {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must not name missing discriminators"
+                        .to_string(),
+                );
+            }
+            if !case.missing_graph_legs.is_empty() {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must not name missing graph legs".to_string(),
+                );
+            }
+            if case.unlock_condition != "not_applicable" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must use unlock_condition not_applicable"
+                        .to_string(),
+                );
+            }
+        }
+        "rust_ungripped_ts_missing_discriminator" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_oracle_visibility_unresolved",
+                "analysis/cross-language-oracle-visibility",
+                &mut errors,
+            );
+            if case.missing_discriminators.is_empty() {
+                errors.push(
+                    "rust_ungripped_ts_missing_discriminator must name missing discriminators"
+                        .to_string(),
+                );
+            }
+            if case.name.contains("missing_resizable")
+                && !case
+                    .missing_discriminators
+                    .iter()
+                    .any(|missing| missing == "resizable_array_buffer")
+            {
+                errors.push(
+                    "bun_blob_missing_resizable case must name resizable_array_buffer".to_string(),
+                );
+            }
+            if case.suggested_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
+                errors.push(
+                    "rust_ungripped_ts_missing_discriminator must suggest the configured Bun Blob TypeScript test file"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "boundary_discriminator:resizable_array_buffer",
+            ) {
+                errors.push(
+                    "rust_ungripped_ts_missing_discriminator must name the missing boundary discriminator leg"
+                    .to_string(),
+                );
+            }
+        }
+        "rust_ungripped_ts_missing_external_oracle" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_oracle_visibility_unresolved",
+                "analysis/cross-language-oracle-visibility",
+                &mut errors,
+            );
+            if case.view_backed_blob_input && case.stable_byte_copy_oracle {
+                errors.push(
+                    "rust_ungripped_ts_missing_external_oracle requires a missing Blob input or stable-byte oracle"
+                        .to_string(),
+                );
+            }
+            if !case.view_backed_blob_input && !case.stable_byte_copy_oracle {
+                errors.push(
+                    "rust_ungripped_ts_missing_external_oracle requires at least one partial Blob observer fact"
+                        .to_string(),
+                );
+            }
+            if !case.missing_discriminators.is_empty() {
+                errors.push(
+                    "rust_ungripped_ts_missing_external_oracle must not name missing boundary discriminators"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "external_callsite:view_backed_blob_input",
+            ) && !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "external_oracle:stable_byte_copy",
+            ) {
+                errors.push(
+                    "rust_ungripped_ts_missing_external_oracle must name the missing external observer graph leg"
+                        .to_string(),
+                );
+            }
+        }
+        "ts_mention_not_observer" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_oracle_visibility_unresolved",
+                "analysis/cross-language-oracle-visibility",
+                &mut errors,
+            );
+            if !case.max_byte_length_mention_only {
+                errors.push(
+                    "ts_mention_not_observer must record max_byte_length_mention_only=true"
+                        .to_string(),
+                );
+            }
+            if case.view_backed_blob_input || case.stable_byte_copy_oracle {
+                errors.push(
+                    "ts_mention_not_observer must not count Blob input or stable-byte oracle facts"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "external_callsite:view_backed_blob_input",
+            ) {
+                errors.push(
+                    "ts_mention_not_observer must name the missing external Blob callsite graph leg"
+                        .to_string(),
+                );
+            }
+        }
+        "bridge_unknown" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_oracle_visibility_unresolved",
+                "analysis/cross-language-oracle-visibility",
+                &mut errors,
+            );
+            if case.binding_edge_kind != "unresolved" || case.binding_edge_confidence != "unknown" {
+                errors.push(
+                    "bridge_unknown requires unresolved binding edge and unknown confidence"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(case, "binding_or_ffi_edge") {
+                errors.push("bridge_unknown must name binding_or_ffi_edge as missing".to_string());
+            }
+        }
+        "cross_language_target_unresolved" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_target_unresolved",
+                "analysis/cross-language-test-target-inference",
+                &mut errors,
+            );
+            if !cross_language_oracle_graph_has_missing_leg(case, "safe_external_observer_target") {
+                errors.push(
+                    "cross_language_target_unresolved must name safe_external_observer_target as missing"
+                    .to_string(),
+                );
+            }
+        }
+        "public_reachable_panic_boundary_unrevealed" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_panic_boundary_visibility_unresolved",
+                "analysis/cross-language-panic-boundary-visibility",
+                &mut errors,
+            );
+            if !case
+                .missing_discriminators
+                .iter()
+                .any(|missing| missing == "negative_offset")
+            {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must name negative_offset as the missing discriminator"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "external_oracle:negative_offset_panic_boundary",
+            ) {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must name the missing negative-offset panic oracle leg"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(case, "safe_external_observer_target") {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must name safe_external_observer_target as missing"
+                        .to_string(),
+                );
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must not suggest a test file"
+                        .to_string(),
+                );
+            }
+            if case.external_oracle_kind != "negative_offset_panic_oracle_unresolved" {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must use negative_offset_panic_oracle_unresolved oracle kind"
+                        .to_string(),
+                );
+            }
+            if case.oracle_strength != "missing_boundary" {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must use missing_boundary oracle strength"
+                        .to_string(),
+                );
+            }
+        }
+        _ => {}
+    }
+
+    errors
+}
+
+fn cross_language_oracle_graph_raw_ref_errors(
+    case: &CrossLanguageOracleGraphCase,
+    errors: &mut Vec<String>,
+) {
+    if case.raw_evidence_refs.is_empty() {
+        errors.push("raw_evidence_refs must include structured graph refs".to_string());
+        return;
+    }
+    let raw_legs = case
+        .raw_evidence_refs
+        .iter()
+        .map(|raw_ref| raw_ref.leg.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut required_legs = vec!["rust_seam", "boundary_discriminator"];
+    if !cross_language_oracle_graph_has_missing_leg(
+        case,
+        "external_callsite:view_backed_blob_input",
+    ) {
+        required_legs.push("external_callsite");
+    }
+    if !cross_language_oracle_graph_has_missing_leg(case, "external_oracle:stable_byte_copy") {
+        required_legs.push("external_oracle");
+    }
+    for required in required_legs {
+        if !raw_legs.contains(required) {
+            errors.push(format!("raw_evidence_refs must include {required}"));
+        }
+    }
+    if case.expected_state != "bridge_unknown" && !raw_legs.contains("binding_edge") {
+        errors.push("raw_evidence_refs must include binding_edge".to_string());
+    }
+    if case.expected_state == "bridge_unknown" && raw_legs.contains("binding_edge") {
+        errors.push("bridge_unknown must not claim a binding_edge raw ref".to_string());
+    }
+    for raw_ref in &case.raw_evidence_refs {
+        for (label, value) in [
+            ("raw_evidence_ref leg", &raw_ref.leg),
+            ("raw_evidence_ref file", &raw_ref.file),
+            ("raw_evidence_ref kind", &raw_ref.kind),
+            ("raw_evidence_ref source_id", &raw_ref.source_id),
+            ("raw_evidence_ref sample", &raw_ref.sample),
+        ] {
+            if value.trim().is_empty() || value == "unknown" {
+                errors.push(format!("{label} must be present"));
+            }
+        }
+        if raw_ref.line.is_none() {
+            errors.push(format!(
+                "raw_evidence_ref {} must include line",
+                raw_ref.leg
+            ));
+        }
+    }
+}
+
+fn require_cross_language_oracle_graph_limitation(
+    case: &CrossLanguageOracleGraphCase,
+    category: &str,
+    route: &str,
+    errors: &mut Vec<String>,
+) {
+    if case.gap_state != "static_limitation" {
+        errors.push(format!(
+            "{} must map to gap_state static_limitation",
+            case.expected_state
+        ));
+    }
+    if case.limitation_category != category {
+        errors.push(format!(
+            "{} must use limitation_category {category}",
+            case.expected_state
+        ));
+    }
+    if case.repair_route != route {
+        errors.push(format!(
+            "{} must use repair_route {route}",
+            case.expected_state
+        ));
+    }
+    if case.unlock_condition.trim().is_empty() || case.unlock_condition == "unknown" {
+        errors.push(format!(
+            "{} must document an unlock_condition",
+            case.expected_state
+        ));
+    }
+}
+
+fn cross_language_oracle_graph_has_missing_leg(
+    case: &CrossLanguageOracleGraphCase,
+    leg: &str,
+) -> bool {
+    case.missing_graph_legs
+        .iter()
+        .any(|missing| missing == leg || missing.contains(leg))
+}
+
+fn cross_language_oracle_graph_external_location_unresolved(
+    case: &CrossLanguageOracleGraphCase,
+) -> bool {
+    case.expected_state == "public_reachable_panic_boundary_unrevealed"
+        && cross_language_oracle_graph_has_missing_leg(case, "safe_external_observer_target")
+}
+
+fn cross_language_oracle_graph_allowed_states() -> &'static [&'static str] {
+    &[
+        "rust_ungripped_ts_discriminated",
+        "rust_ungripped_ts_missing_discriminator",
+        "rust_ungripped_ts_missing_external_oracle",
+        "ts_mention_not_observer",
+        "bridge_unknown",
+        "cross_language_target_unresolved",
+        "public_reachable_panic_boundary_unrevealed",
+    ]
+}
+
+fn cross_language_oracle_graph_profile_errors(
+    case: &CrossLanguageOracleGraphCase,
+    errors: &mut Vec<String>,
+) {
+    match case.profile.as_str() {
+        "bun_blob_array_buffer" => {
+            if !case.rust_file.ends_with("Blob.rs") {
+                errors.push("rust_file must identify the Bun Blob Rust seam".to_string());
+            }
+            if case.rust_owner != "Blob::from_js_without_defer_gc" {
+                errors.push(
+                    "rust_owner must pin Blob::from_js_without_defer_gc for the configured Bun Blob route"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("array_buffer.shared")
+                || !case.rust_boundary.contains("array_buffer.resizable")
+            {
+                errors.push(
+                    "rust_boundary must include array_buffer.shared and array_buffer.resizable"
+                        .to_string(),
+                );
+            }
+        }
+        "bun_array_buffer_copy_to_unshared" => {
+            if !case.rust_file.ends_with("array_buffer.rs") {
+                errors.push(
+                    "rust_file must identify the Bun array_buffer Rust seam".to_string(),
+                );
+            }
+            if case.rust_owner != "copy_to_unshared" {
+                errors.push(
+                    "rust_owner must pin copy_to_unshared for the Bun array_buffer route"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("SharedArrayBuffer")
+                || !case.rust_boundary.contains("resizable ArrayBuffer")
+            {
+                errors.push(
+                    "rust_boundary must name SharedArrayBuffer and resizable ArrayBuffer copy semantics"
+                        .to_string(),
+                );
+            }
+            match case.expected_state.as_str() {
+                "bridge_unknown" => {}
+                "rust_ungripped_ts_discriminated" => {
+                    if !matches!(
+                        case.binding_edge_kind.as_str(),
+                        "configured_bridge" | "ffi_binding"
+                    ) || case.binding_edge_confidence == "unknown"
+                    {
+                        errors.push(
+                            "bun_array_buffer_copy_to_unshared configured route requires configured or generated binding edge evidence"
+                                .to_string(),
+                        );
+                    }
+                }
+                _ => errors.push(
+                    "bun_array_buffer_copy_to_unshared profile only supports bridge_unknown or rust_ungripped_ts_discriminated in this preview slice"
+                        .to_string(),
+                ),
+            }
+        }
+        "bun_markdown_resizable_array_buffer" => {
+            if !case.rust_file.ends_with("MarkdownObject.rs") {
+                errors.push(
+                    "rust_file must identify the Bun MarkdownObject Rust seam".to_string(),
+                );
+            }
+            if case.rust_owner != "MarkdownObject::to_string" {
+                errors.push(
+                    "rust_owner must pin MarkdownObject::to_string for the Bun markdown route"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("self.0.resizable")
+                || !case.rust_boundary.contains("!self.0.shared")
+            {
+                errors.push(
+                    "rust_boundary must include self.0.resizable and !self.0.shared".to_string(),
+                );
+            }
+            if case.expected_state != "rust_ungripped_ts_discriminated" {
+                errors.push(
+                    "bun_markdown_resizable_array_buffer profile currently only admits the complete advisory witness shape"
+                        .to_string(),
+                );
+            }
+            if case.binding_edge_kind != "configured_bridge"
+                || case.binding_edge_confidence != "configured_hint"
+            {
+                errors.push(
+                    "bun_markdown_resizable_array_buffer advisory witness requires a configured bridge"
+                        .to_string(),
+                );
+            }
+            if case.external_oracle_kind != "markdown_strong_oracle" {
+                errors.push(
+                    "bun_markdown_resizable_array_buffer requires markdown_strong_oracle external evidence"
+                        .to_string(),
+                );
+            }
+        }
+        "bun_ffi_negative_offset_panic_boundary" => {
+            if !case.rust_file.ends_with("FFIObject.rs") {
+                errors.push(
+                    "rust_file must identify the Bun FFIObject Rust seam".to_string(),
+                );
+            }
+            if case.rust_owner != "FFIObject::read" {
+                errors.push(
+                    "rust_owner must pin FFIObject::read for the Bun FFI negative-offset route"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("usize::try_from")
+                || !case.rust_boundary.contains("expect(\"int cast\")")
+            {
+                errors.push(
+                    "rust_boundary must include usize::try_from and expect(\"int cast\")"
+                        .to_string(),
+                );
+            }
+            if case.expected_state != "public_reachable_panic_boundary_unrevealed" {
+                errors.push(
+                    "bun_ffi_negative_offset_panic_boundary profile currently only supports public_reachable_panic_boundary_unrevealed"
+                        .to_string(),
+                );
+            }
+            if case.binding_edge_kind != "ffi_binding"
+                || !matches!(
+                    case.binding_edge_confidence.as_str(),
+                    "heuristic" | "configured_hint"
+                )
+            {
+                errors.push(
+                    "bun_ffi_negative_offset_panic_boundary requires FFI binding edge evidence"
+                        .to_string(),
+                );
+            }
+            if !case
+                .external_entrypoints
+                .iter()
+                .any(|entrypoint| entrypoint.contains("read.u8"))
+            {
+                errors.push(
+                    "bun_ffi_negative_offset_panic_boundary must name read.u8 as an external entrypoint"
+                        .to_string(),
+                );
+            }
+        }
+        other => errors.push(format!(
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, or bun_ffi_negative_offset_panic_boundary, got {other}"
+        )),
+    }
+}
+
+fn cross_language_oracle_graph_required_non_claims() -> &'static [&'static str] {
+    &[
+        "provider",
+        "source edits",
+        "generated tests",
+        "runtime Bun execution",
+        "mutation execution",
+        "default gates",
+        "public badge",
+        "baseline",
+        "RIPR Zero",
+        "support-tier promotion",
+        "public repair packet",
+        "TypeScript Rust parity",
+        "full cross-language proof",
+        "verify command",
+        "receipt command",
+        "allowed edit surface",
+    ]
+}
+
+fn cross_language_oracle_graph_corpus_path() -> PathBuf {
+    let relative = Path::new(CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS);
+    repo_root()
+        .map(|root| root.join(relative))
+        .unwrap_or_else(|_| relative.to_path_buf())
+}
+
+fn cross_language_oracle_route_quality_report_value() -> Value {
+    let path = cross_language_oracle_graph_corpus_path();
+    cross_language_oracle_route_quality_from_cases(
+        normalize_path(Path::new(CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS)),
+        &cross_language_oracle_graph_cases_at(&path),
+    )
+}
+
+fn cross_language_oracle_route_quality_from_cases(
+    source_path: String,
+    cases: &[CrossLanguageOracleGraphCase],
+) -> Value {
+    let mut complete_advisory_witnesses = 0usize;
+    let mut missing_discriminator_limitations = 0usize;
+    let mut missing_external_oracle_limitations = 0usize;
+    let mut bridge_unknown_limitations = 0usize;
+    let mut mention_only_limitations = 0usize;
+    let mut target_unresolved_limitations = 0usize;
+    let mut panic_boundary_limitations = 0usize;
+    let mut public_packet_exclusions = 0usize;
+    let mut public_projection_eligible_cases = 0usize;
+    let mut repair_packet_ready_cases = 0usize;
+    let mut failing_cases = 0usize;
+
+    let rows = cases
+        .iter()
+        .map(|case| {
+            match case.expected_state.as_str() {
+                "rust_ungripped_ts_discriminated" => complete_advisory_witnesses += 1,
+                "rust_ungripped_ts_missing_discriminator" => missing_discriminator_limitations += 1,
+                "rust_ungripped_ts_missing_external_oracle" => {
+                    missing_external_oracle_limitations += 1;
+                }
+                "bridge_unknown" => bridge_unknown_limitations += 1,
+                "ts_mention_not_observer" => mention_only_limitations += 1,
+                "cross_language_target_unresolved" => target_unresolved_limitations += 1,
+                "public_reachable_panic_boundary_unrevealed" => {
+                    panic_boundary_limitations += 1;
+                }
+                _ => {}
+            }
+            if !case.public_projection_eligible {
+                public_packet_exclusions += 1;
+            } else {
+                public_projection_eligible_cases += 1;
+            }
+            if case.repair_packet_ready {
+                repair_packet_ready_cases += 1;
+            }
+
+            let errors = cross_language_oracle_graph_case_errors(case);
+            let status = if errors.is_empty() {
+                "pass"
+            } else {
+                failing_cases += 1;
+                "fail"
+            };
+            serde_json::json!({
+                "case_id": case.name,
+                "profile": case.profile,
+                "expected_state": case.expected_state,
+                "observed_state": case.expected_state,
+                "status": status,
+                "gap_state": case.gap_state,
+                "limitation_category": case.limitation_category,
+                "repair_route": case.repair_route,
+                "missing_discriminators": case.missing_discriminators,
+                "missing_graph_legs": case.missing_graph_legs,
+                "binding_edge_confidence": case.binding_edge_confidence,
+                "authority_boundary": case.authority_boundary,
+                "public_projection_eligible": case.public_projection_eligible,
+                "repair_packet_ready": case.repair_packet_ready,
+                "suggested_test_file": case.suggested_test_file,
+                "unlock_condition": case.unlock_condition,
+                "reason": case.reason,
+                "errors": errors,
+            })
+        })
+        .collect::<Vec<_>>();
+    let passing_cases = cases.len().saturating_sub(failing_cases);
+    let status = if cases.is_empty() {
+        "empty"
+    } else if failing_cases == 0 && repair_packet_ready_cases == 0 {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    serde_json::json!({
+        "status": status,
+        "source_path": source_path,
+        "cases_total": cases.len(),
+        "passing_cases": passing_cases,
+        "failing_cases": failing_cases,
+        "cross_language_oracle_graph_complete_advisory_witnesses":
+            complete_advisory_witnesses,
+        "cross_language_oracle_graph_missing_discriminator_limitations":
+            missing_discriminator_limitations,
+        "cross_language_oracle_graph_missing_external_oracle_limitations":
+            missing_external_oracle_limitations,
+        "cross_language_oracle_graph_bridge_unknown_limitations": bridge_unknown_limitations,
+        "cross_language_oracle_graph_mention_only_limitations": mention_only_limitations,
+        "cross_language_oracle_graph_target_unresolved_limitations":
+            target_unresolved_limitations,
+        "cross_language_oracle_graph_panic_boundary_limitations":
+            panic_boundary_limitations,
+        "cross_language_oracle_graph_public_packet_exclusions": public_packet_exclusions,
+        "public_projection_eligible_cases": public_projection_eligible_cases,
+        "repair_packet_ready_cases": repair_packet_ready_cases,
+        "authority_boundary": "preview_advisory_only",
+        "calibration_boundary": "SPEC-0062 cross-language oracle graph route quality is preview/advisory only; profile-backed rows do not create public repair packets, gates, badges, verify commands, receipt commands, source edits, generated tests, or runtime execution.",
+        "non_claims": [
+            "not a public repair packet",
+            "not badge or gate input",
+            "not runtime Bun execution",
+            "not generated tests",
+            "not source edits",
+            "not full cross-language proof",
+            "not support-tier promotion"
+        ],
+        "rows": rows,
+    })
+}
+
+fn cross_language_oracle_route_quality_push_markdown(out: &mut String, value: &Value) {
+    out.push_str("## Cross-Language Oracle Route Quality\n\n");
+    out.push_str("This section summarizes the SPEC-0062 profile-backed cross-language oracle graph corpus. It is preview/advisory route-quality evidence only and does not create public repair packets, gates, badges, verify commands, receipt commands, source edits, generated tests, or runtime execution.\n\n");
+    out.push_str("| Metric | Count |\n");
+    out.push_str("| --- | ---: |\n");
+    audit_push_count(
+        out,
+        "Cases",
+        audit_usize(value, &["cases_total"]).unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Passing cases",
+        audit_usize(value, &["passing_cases"]).unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Complete advisory witnesses",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_complete_advisory_witnesses"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Missing discriminator limitations",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_missing_discriminator_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Missing external oracle limitations",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_missing_external_oracle_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Bridge unknown limitations",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_bridge_unknown_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Mention-only limitations",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_mention_only_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Panic boundary limitations",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_panic_boundary_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Public packet exclusions",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_public_packet_exclusions"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Repair-packet-ready cases",
+        audit_usize(value, &["repair_packet_ready_cases"]).unwrap_or_default(),
+    );
+    out.push('\n');
+    out.push_str(&format!(
+        "- status: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "- source_path: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("source_path")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "- authority_boundary: `{}`\n",
+        audit_markdown_cell(
+            value
+                .get("authority_boundary")
+                .and_then(Value::as_str)
+                .unwrap_or("preview_advisory_only")
+        )
+    ));
+    out.push_str(&format!(
+        "- calibration_boundary: {}\n\n",
+        audit_markdown_cell(
+            value
+                .get("calibration_boundary")
+                .and_then(Value::as_str)
+                .unwrap_or("preview/advisory only")
+        )
+    ));
+    let non_claims = audit_markdown_string_array_cell(
+        value
+            .get("non_claims")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    );
+    out.push_str(&format!(
+        "- non_claims: {}\n\n",
+        audit_markdown_cell(&non_claims)
+    ));
+
+    out.push_str("| Case | Expected | Observed | Status | Missing discriminators | Missing graph legs | Repair packet ready | Unlock condition |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    let rows = value
+        .get("rows")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if rows.is_empty() {
+        out.push_str("| none |  |  |  |  |  |  | no corpus rows available |\n");
+    }
+    for row in rows {
+        let case_id = row
+            .get("case_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let expected = row
+            .get("expected_state")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let observed = row
+            .get("observed_state")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let status = row
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let missing_discriminators = audit_markdown_string_array_cell(
+            row.get("missing_discriminators")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        let missing_graph_legs = audit_markdown_string_array_cell(
+            row.get("missing_graph_legs")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        let repair_packet_ready = row
+            .get("repair_packet_ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let unlock_condition = row
+            .get("unlock_condition")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | {} | {} | `{}` | {} |\n",
+            audit_markdown_cell(case_id),
+            audit_markdown_cell(expected),
+            audit_markdown_cell(observed),
+            audit_markdown_cell(status),
+            audit_markdown_cell(&missing_discriminators),
+            audit_markdown_cell(&missing_graph_legs),
+            repair_packet_ready,
+            audit_markdown_cell(unlock_condition),
+        ));
+    }
+    out.push('\n');
+}
+
+fn audit_markdown_string_array_cell(values: &[Value]) -> String {
+    let strings = values
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>();
+    if strings.is_empty() {
+        "none".to_string()
+    } else {
+        strings.join(", ")
+    }
+}
+
+fn dogfood_bun_ub_cross_language_scenarios() -> Vec<DogfoodBunUbCrossLanguageScenario> {
+    dogfood_bun_ub_cross_language_scenarios_at(Path::new(BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS))
+}
+
+fn dogfood_bun_ub_cross_language_scenarios_at(
+    corpus_path: &Path,
+) -> Vec<DogfoodBunUbCrossLanguageScenario> {
+    let fallback = |reason: String| {
+        vec![DogfoodBunUbCrossLanguageScenario {
+            name: "corpus".to_string(),
+            source_case: "unknown".to_string(),
+            route_quality_case: "unknown".to_string(),
+            rust_file: "unknown".to_string(),
+            rust_owner: "unknown".to_string(),
+            rust_boundary: "unknown".to_string(),
+            ts_test_file: "unknown".to_string(),
+            expected_state: "unknown".to_string(),
+            observed_state: "unknown".to_string(),
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            suggested_test_file: "unknown".to_string(),
+            manual_verdict: "unknown".to_string(),
+            operator_action: "unknown".to_string(),
+            review_before: "unknown".to_string(),
+            review_after: "unknown".to_string(),
+            bridge_verdict: "unknown".to_string(),
+            placement_verdict: "unknown".to_string(),
+            proof_mode: "unknown".to_string(),
+            receipt_state: "unknown".to_string(),
+            repair_packet_ready: true,
+            authority_boundary: "unknown".to_string(),
+            raw_evidence_refs: Vec::new(),
+            non_claims: Vec::new(),
+            reason,
+        }]
+    };
+
+    let corpus = match read_json_value(corpus_path) {
+        Ok(value) => value,
+        Err(err) => return fallback(err),
+    };
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        return fallback(
+            "Bun UB cross-language dogfood corpus schema_version must be 0.1".to_string(),
+        );
+    }
+    if json_string_field(&corpus, "kind").as_deref() != Some("bun_ub_cross_language_dogfood_corpus")
+    {
+        return fallback(
+            "Bun UB cross-language dogfood corpus kind must be bun_ub_cross_language_dogfood_corpus"
+                .to_string(),
+        );
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0062") {
+        return fallback(
+            "Bun UB cross-language dogfood corpus spec must be RIPR-SPEC-0062".to_string(),
+        );
+    }
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        return fallback("Bun UB cross-language dogfood corpus is missing cases array".to_string());
+    };
+
+    cases
+        .iter()
+        .map(|case| DogfoodBunUbCrossLanguageScenario {
+            name: json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string()),
+            source_case: json_string_field(case, "source_case")
+                .unwrap_or_else(|| "unknown".to_string()),
+            route_quality_case: json_string_field(case, "route_quality_case")
+                .unwrap_or_else(|| "unknown".to_string()),
+            rust_file: json_string_field(case, "rust_file")
+                .unwrap_or_else(|| "unknown".to_string()),
+            rust_owner: json_string_field(case, "rust_owner")
+                .unwrap_or_else(|| "unknown".to_string()),
+            rust_boundary: json_string_field(case, "rust_boundary")
+                .unwrap_or_else(|| "unknown".to_string()),
+            ts_test_file: json_string_field(case, "ts_test_file")
+                .unwrap_or_else(|| "unknown".to_string()),
+            expected_state: json_string_field(case, "expected_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            observed_state: json_string_field(case, "observed_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            missing_discriminators: json_string_array_field(case, "missing_discriminators"),
+            missing_graph_legs: json_string_array_field(case, "missing_graph_legs"),
+            suggested_test_file: json_string_field(case, "suggested_test_file")
+                .unwrap_or_else(|| "unknown".to_string()),
+            manual_verdict: json_string_field(case, "manual_verdict")
+                .unwrap_or_else(|| "unknown".to_string()),
+            operator_action: json_string_field(case, "operator_action")
+                .unwrap_or_else(|| "unknown".to_string()),
+            review_before: json_string_field(case, "review_before")
+                .unwrap_or_else(|| "unknown".to_string()),
+            review_after: json_string_field(case, "review_after")
+                .unwrap_or_else(|| "unknown".to_string()),
+            bridge_verdict: json_string_field(case, "bridge_verdict")
+                .unwrap_or_else(|| "unknown".to_string()),
+            placement_verdict: json_string_field(case, "placement_verdict")
+                .unwrap_or_else(|| "unknown".to_string()),
+            proof_mode: json_string_field(case, "proof_mode")
+                .unwrap_or_else(|| "unknown".to_string()),
+            receipt_state: json_string_field(case, "receipt_state")
+                .unwrap_or_else(|| "unknown".to_string()),
+            repair_packet_ready: json_bool_field(case, "repair_packet_ready").unwrap_or(true),
+            authority_boundary: json_string_field(case, "authority_boundary")
+                .unwrap_or_else(|| "unknown".to_string()),
+            raw_evidence_refs: json_string_array_field(case, "raw_evidence_refs"),
+            non_claims: json_string_array_field(case, "non_claims"),
+            reason: json_string_field(case, "reason").unwrap_or_else(|| {
+                "Bun UB cross-language dogfood case did not document a reason".to_string()
+            }),
+        })
+        .collect()
+}
+
+fn dogfood_bun_ub_cross_language_run(
+    scenario: &DogfoodBunUbCrossLanguageScenario,
+) -> DogfoodBunUbCrossLanguageRun {
+    let mut errors = Vec::new();
+    for (label, value) in [
+        ("case id", &scenario.name),
+        ("source_case", &scenario.source_case),
+        ("route_quality_case", &scenario.route_quality_case),
+        ("rust_file", &scenario.rust_file),
+        ("rust_owner", &scenario.rust_owner),
+        ("rust_boundary", &scenario.rust_boundary),
+        ("ts_test_file", &scenario.ts_test_file),
+        ("expected_state", &scenario.expected_state),
+        ("observed_state", &scenario.observed_state),
+        ("suggested_test_file", &scenario.suggested_test_file),
+        ("manual_verdict", &scenario.manual_verdict),
+        ("operator_action", &scenario.operator_action),
+        ("review_before", &scenario.review_before),
+        ("review_after", &scenario.review_after),
+        ("bridge_verdict", &scenario.bridge_verdict),
+        ("placement_verdict", &scenario.placement_verdict),
+        ("proof_mode", &scenario.proof_mode),
+        ("receipt_state", &scenario.receipt_state),
+        ("authority_boundary", &scenario.authority_boundary),
+        ("reason", &scenario.reason),
+    ] {
+        if value.trim().is_empty() || value == "unknown" {
+            errors.push(format!("{label} must be present"));
+        }
+    }
+
+    if scenario.name.starts_with("bun_blob_") {
+        if !scenario.source_case.starts_with("bun_blob_") {
+            errors.push("source_case must link to a Bun Blob calibration case".to_string());
+        }
+        if !scenario.route_quality_case.starts_with("bun_blob_") {
+            errors
+                .push("route_quality_case must link to a Bun Blob route-quality case".to_string());
+        }
+        if scenario.rust_file != "src/jsc/Blob.rs" {
+            errors.push("rust_file must stay on the calibrated Bun Blob seam".to_string());
+        }
+        if scenario.rust_owner != "Blob::from_js_without_defer_gc" {
+            errors.push("rust_owner must stay on Blob::from_js_without_defer_gc".to_string());
+        }
+        if scenario.rust_boundary != "array_buffer.shared || array_buffer.resizable" {
+            errors.push(
+                "rust_boundary must stay on array_buffer.shared || array_buffer.resizable"
+                    .to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
+            errors.push(
+                "ts_test_file must stay on the configured Bun Blob TypeScript test file"
+                    .to_string(),
+            );
+        }
+    } else if scenario.name.starts_with("bun_ffi_") {
+        if !scenario.source_case.starts_with("bun_ffi_") {
+            errors.push("source_case must link to a Bun FFI calibration case".to_string());
+        }
+        if !scenario.route_quality_case.starts_with("bun_ffi_") {
+            errors.push("route_quality_case must link to a Bun FFI route-quality case".to_string());
+        }
+        if scenario.rust_file != "src/bun.js/bindings/FFIObject.rs" {
+            errors.push("rust_file must stay on the calibrated Bun FFI seam".to_string());
+        }
+        if scenario.rust_owner != "FFIObject::read" {
+            errors.push("rust_owner must stay on FFIObject::read".to_string());
+        }
+        if !scenario.rust_boundary.contains("usize::try_from")
+            || !scenario.rust_boundary.contains("expect(\"int cast\")")
+        {
+            errors.push(
+                "rust_boundary must stay on the negative-offset FFI panic boundary".to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE {
+            errors.push(
+                "ts_test_file must stay unresolved until a safe FFI TypeScript observer exists"
+                    .to_string(),
+            );
+        }
+    } else {
+        errors.push("case id must start with bun_blob_ or bun_ffi_".to_string());
+    }
+    if scenario.expected_state != scenario.observed_state {
+        errors
+            .push("expected_state and observed_state must match for dogfood receipts".to_string());
+    }
+    if !bun_ub_cross_language_dogfood_allowed_states().contains(&scenario.observed_state.as_str()) {
+        errors.push(format!(
+            "observed_state must be a Bun UB cross-language dogfood state, got {}",
+            scenario.observed_state
+        ));
+    }
+    if scenario.manual_verdict != "agrees" {
+        errors.push("manual_verdict must be agrees".to_string());
+    }
+    if scenario.receipt_state != "closed" {
+        errors.push("receipt_state must be closed".to_string());
+    }
+    if scenario.repair_packet_ready {
+        errors.push("repair_packet_ready must remain false".to_string());
+    }
+    if scenario.authority_boundary != "preview_advisory_only" {
+        errors.push("authority_boundary must be preview_advisory_only".to_string());
+    }
+    if scenario.raw_evidence_refs.len() < 2 {
+        errors
+            .push("raw_evidence_refs must link calibration and route-quality evidence".to_string());
+    }
+    for raw_ref in &scenario.raw_evidence_refs {
+        if !raw_ref.starts_with("fixtures/") || !raw_ref.contains('#') {
+            errors.push(format!(
+                "raw_evidence_refs must be normalized fixture fragment refs, got {raw_ref}"
+            ));
+        }
+    }
+    if scenario.non_claims.is_empty() {
+        errors.push("non_claims must keep preview boundary denials visible".to_string());
+    }
+    for required in bun_ub_cross_language_dogfood_required_non_claims() {
+        if !scenario
+            .non_claims
+            .iter()
+            .any(|non_claim| non_claim.contains(required))
+        {
+            errors.push(format!("non_claims must deny {required}"));
+        }
+    }
+
+    match scenario.observed_state.as_str() {
+        "rust_ungripped_ts_discriminated" => {
+            if !scenario.missing_discriminators.is_empty()
+                || !scenario.missing_graph_legs.is_empty()
+            {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must not list missing evidence".to_string(),
+                );
+            }
+            if scenario.operator_action != "no_missing_bridge_discriminator" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must use action no_missing_bridge_discriminator"
+                        .to_string(),
+                );
+            }
+            if scenario.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must not suggest a test file".to_string(),
+                );
+            }
+            if !scenario.bridge_verdict.contains("credited") {
+                errors.push(
+                    "rust_ungripped_ts_discriminated must document credited bridge evidence"
+                        .to_string(),
+                );
+            }
+        }
+        "rust_ungripped_ts_missing_discriminator" => {
+            if !scenario
+                .missing_discriminators
+                .iter()
+                .any(|missing| missing == "resizable_array_buffer")
+            {
+                errors.push(
+                    "missing-discriminator dogfood must name resizable_array_buffer".to_string(),
+                );
+            }
+            if scenario.suggested_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
+                errors.push(
+                    "missing-discriminator dogfood must suggest the configured Bun Blob TypeScript test file"
+                        .to_string(),
+                );
+            }
+            if !scenario.operator_action.contains("resizable") {
+                errors.push(
+                    "missing-discriminator dogfood action must name the missing resizable case"
+                        .to_string(),
+                );
+            }
+            if !scenario
+                .placement_verdict
+                .contains(BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE)
+            {
+                errors.push(
+                    "missing-discriminator dogfood placement must name blob.test.ts".to_string(),
+                );
+            }
+        }
+        "ts_mention_not_observer" => {
+            if !scenario.missing_discriminators.is_empty() {
+                errors.push(
+                    "ts_mention_not_observer must not turn token text into a missing discriminator"
+                        .to_string(),
+                );
+            }
+            if scenario.suggested_test_file != "not_applicable" {
+                errors.push("ts_mention_not_observer must not suggest placement".to_string());
+            }
+            if scenario.operator_action != "reject_token_mention" {
+                errors.push("ts_mention_not_observer must reject the token mention".to_string());
+            }
+            if !scenario.bridge_verdict.contains("token") {
+                errors.push(
+                    "ts_mention_not_observer must explain that bridge evidence cannot credit a token mention"
+                        .to_string(),
+                );
+            }
+        }
+        "public_reachable_panic_boundary_unrevealed" => {
+            if !scenario
+                .missing_discriminators
+                .iter()
+                .any(|missing| missing == "negative_offset")
+            {
+                errors.push(
+                    "panic-boundary dogfood must name negative_offset as missing".to_string(),
+                );
+            }
+            if !scenario
+                .missing_graph_legs
+                .iter()
+                .any(|missing| missing == "external_oracle:negative_offset_panic_boundary")
+            {
+                errors.push(
+                    "panic-boundary dogfood must keep the negative-offset oracle unresolved"
+                        .to_string(),
+                );
+            }
+            if !scenario
+                .missing_graph_legs
+                .iter()
+                .any(|missing| missing == "safe_external_observer_target")
+            {
+                errors.push(
+                    "panic-boundary dogfood must keep the safe external observer target unresolved"
+                        .to_string(),
+                );
+            }
+            if scenario.suggested_test_file != "not_applicable" {
+                errors.push("panic-boundary dogfood must not suggest placement".to_string());
+            }
+            if scenario.operator_action != "keep_panic_boundary_limitation" {
+                errors.push(
+                    "panic-boundary dogfood action must keep the named limitation".to_string(),
+                );
+            }
+            if scenario.placement_verdict != "not_applicable" {
+                errors.push(
+                    "panic-boundary dogfood placement must remain not_applicable".to_string(),
+                );
+            }
+            if !scenario.bridge_verdict.contains("ffi") {
+                errors.push("panic-boundary dogfood must document the FFI bridge".to_string());
+            }
+            if !scenario.proof_mode.contains("panic_boundary_limitation") {
+                errors.push(
+                    "panic-boundary dogfood proof mode must stay a limitation receipt".to_string(),
+                );
+            }
+        }
+        _ => {}
+    }
+
+    DogfoodBunUbCrossLanguageRun {
+        name: scenario.name.clone(),
+        source_case: scenario.source_case.clone(),
+        route_quality_case: scenario.route_quality_case.clone(),
+        rust_file: scenario.rust_file.clone(),
+        rust_owner: scenario.rust_owner.clone(),
+        rust_boundary: scenario.rust_boundary.clone(),
+        ts_test_file: scenario.ts_test_file.clone(),
+        expected_state: scenario.expected_state.clone(),
+        observed_state: scenario.observed_state.clone(),
+        missing_discriminators: scenario.missing_discriminators.clone(),
+        missing_graph_legs: scenario.missing_graph_legs.clone(),
+        suggested_test_file: scenario.suggested_test_file.clone(),
+        manual_verdict: scenario.manual_verdict.clone(),
+        operator_action: scenario.operator_action.clone(),
+        review_before: scenario.review_before.clone(),
+        review_after: scenario.review_after.clone(),
+        bridge_verdict: scenario.bridge_verdict.clone(),
+        placement_verdict: scenario.placement_verdict.clone(),
+        proof_mode: scenario.proof_mode.clone(),
+        receipt_state: scenario.receipt_state.clone(),
+        repair_packet_ready: scenario.repair_packet_ready,
+        authority_boundary: scenario.authority_boundary.clone(),
+        raw_evidence_refs: scenario.raw_evidence_refs.clone(),
+        non_claims: scenario.non_claims.clone(),
+        reason: scenario.reason.clone(),
+        errors,
+    }
+}
+
+fn bun_ub_cross_language_dogfood_allowed_states() -> &'static [&'static str] {
+    &[
+        "rust_ungripped_ts_discriminated",
+        "rust_ungripped_ts_missing_discriminator",
+        "ts_mention_not_observer",
+        "public_reachable_panic_boundary_unrevealed",
+    ]
+}
+
+fn bun_ub_cross_language_dogfood_required_non_claims() -> &'static [&'static str] {
+    &[
+        "no source edits",
+        "no generated tests",
+        "no runtime Bun execution",
+        "no mutation execution",
+        "no default gates",
+        "badge",
+        "baseline",
+        "RIPR Zero",
+        "support-tier",
+        "public repair packet",
+        "full cross-language proof",
+    ]
+}
+
 fn dogfood_typescript_preview_repair_loop_scenarios()
 -> Vec<DogfoodTypescriptPreviewRepairLoopScenario> {
     dogfood_typescript_preview_repair_loop_scenarios_at(Path::new(
@@ -48337,6 +51871,7 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
     let python_repair_quality =
         dogfood_python_repair_routing_quality_summary(python_real_repo_eval_runs);
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
+    let bun_ub_cross_language_runs = inputs.bun_ub_cross_language_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
 
@@ -48384,6 +51919,9 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
             .any(|run| !run.errors.is_empty())
         || python_repair_quality.gate_status != "pass"
         || typescript_preview_repair_loop_runs
+            .iter()
+            .any(|run| !run.errors.is_empty())
+        || bun_ub_cross_language_runs
             .iter()
             .any(|run| !run.errors.is_empty())
         || user_surface_projection_runs
@@ -48437,6 +51975,7 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     let real_repair_attempt_runs = inputs.real_repair_attempt_runs;
     let python_real_repo_eval_runs = inputs.python_real_repo_eval_runs;
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
+    let bun_ub_cross_language_runs = inputs.bun_ub_cross_language_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
@@ -49113,6 +52652,134 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str(&format!(
             "- Must not change: `{}`\n",
             markdown_cell(&run.must_not_change.join(", "))
+        ));
+        body.push_str(&format!(
+            "- Non-claims: `{}`\n",
+            markdown_cell(&run.non_claims.join(", "))
+        ));
+        body.push_str(&format!("- Reason: {}\n", markdown_cell(&run.reason)));
+        if run.errors.is_empty() {
+            body.push_str("- Receipt validation: pass\n\n");
+        } else {
+            body.push_str(&format!(
+                "- Receipt validation: fail - `{}`\n\n",
+                markdown_cell(&run.errors.join("; "))
+            ));
+        }
+    }
+    let bun_ub_dogfood_total = bun_ub_cross_language_runs.len();
+    let bun_ub_dogfood_discriminated = bun_ub_cross_language_runs
+        .iter()
+        .filter(|run| run.observed_state == "rust_ungripped_ts_discriminated")
+        .count();
+    let bun_ub_dogfood_missing_discriminator = bun_ub_cross_language_runs
+        .iter()
+        .filter(|run| run.observed_state == "rust_ungripped_ts_missing_discriminator")
+        .count();
+    let bun_ub_dogfood_mention_only = bun_ub_cross_language_runs
+        .iter()
+        .filter(|run| run.observed_state == "ts_mention_not_observer")
+        .count();
+    let bun_ub_dogfood_packet_ready = bun_ub_cross_language_runs
+        .iter()
+        .filter(|run| run.repair_packet_ready)
+        .count();
+    body.push_str("## Bun UB Cross-Language Witness Receipts\n\n");
+    body.push_str("These receipts pin the calibrated Bun Blob stable-byte review loop against existing TypeScript/Bun preview route evidence. They record whether the #31648-style seam is TypeScript-discriminated, missing a TypeScript discriminator, or token-only, while staying preview/advisory and packet-ineligible.\n\n");
+    body.push_str("- Default CI blocking: no\n");
+    body.push_str("- Preview authority: advisory\n");
+    body.push_str("- Runtime execution: none\n");
+    body.push_str("- Repair packets: none\n");
+    body.push_str("- Receipt input: `fixtures/bun-ub-cross-language-dogfood/corpus.json`\n");
+    body.push_str(&format!(
+        "- Cases: {}; TS-discriminated: {}; missing discriminator: {}; mention-only: {}; packet-ready: {}\n\n",
+        bun_ub_dogfood_total,
+        bun_ub_dogfood_discriminated,
+        bun_ub_dogfood_missing_discriminator,
+        bun_ub_dogfood_mention_only,
+        bun_ub_dogfood_packet_ready
+    ));
+    body.push_str(
+        "| Case | Source | Route quality | State | Action | Suggested file | Packet ready |\n",
+    );
+    body.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    for run in bun_ub_cross_language_runs {
+        body.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} |\n",
+            markdown_cell(&run.name),
+            markdown_cell(&run.source_case),
+            markdown_cell(&run.route_quality_case),
+            markdown_cell(&run.observed_state),
+            markdown_cell(&run.operator_action),
+            markdown_cell(&run.suggested_test_file),
+            if run.repair_packet_ready { "yes" } else { "no" }
+        ));
+    }
+    body.push('\n');
+    for run in bun_ub_cross_language_runs {
+        body.push_str(&format!("### Bun UB Cross-Language `{}`\n\n", run.name));
+        body.push_str(&format!(
+            "- Rust seam: `{}` / `{}` / `{}`\n",
+            markdown_cell(&run.rust_file),
+            markdown_cell(&run.rust_owner),
+            markdown_cell(&run.rust_boundary)
+        ));
+        body.push_str(&format!(
+            "- TypeScript test file: `{}`\n",
+            markdown_cell(&run.ts_test_file)
+        ));
+        body.push_str(&format!(
+            "- Expected/observed state: `{}` / `{}`\n",
+            markdown_cell(&run.expected_state),
+            markdown_cell(&run.observed_state)
+        ));
+        body.push_str(&format!(
+            "- Missing discriminators: `{}`\n",
+            markdown_cell(&run.missing_discriminators.join(", "))
+        ));
+        body.push_str(&format!(
+            "- Missing graph legs: `{}`\n",
+            markdown_cell(&run.missing_graph_legs.join(", "))
+        ));
+        body.push_str(&format!(
+            "- Suggested test file: `{}`\n",
+            markdown_cell(&run.suggested_test_file)
+        ));
+        body.push_str(&format!(
+            "- Manual verdict: `{}`\n",
+            markdown_cell(&run.manual_verdict)
+        ));
+        body.push_str(&format!(
+            "- Operator action: `{}`\n",
+            markdown_cell(&run.operator_action)
+        ));
+        body.push_str(&format!(
+            "- Review before: {}\n",
+            markdown_cell(&run.review_before)
+        ));
+        body.push_str(&format!(
+            "- Review after: {}\n",
+            markdown_cell(&run.review_after)
+        ));
+        body.push_str(&format!(
+            "- Bridge verdict: `{}`\n",
+            markdown_cell(&run.bridge_verdict)
+        ));
+        body.push_str(&format!(
+            "- Placement verdict: `{}`\n",
+            markdown_cell(&run.placement_verdict)
+        ));
+        body.push_str(&format!(
+            "- Proof mode: `{}`\n",
+            markdown_cell(&run.proof_mode)
+        ));
+        body.push_str(&format!(
+            "- Receipt state: `{}`\n",
+            markdown_cell(&run.receipt_state)
+        ));
+        body.push_str(&format!(
+            "- Authority boundary: `{}`\n",
+            markdown_cell(&run.authority_boundary)
         ));
         body.push_str(&format!(
             "- Non-claims: `{}`\n",
@@ -50414,6 +54081,7 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
     let python_no_action_distribution =
         dogfood_python_no_action_eval_distribution(python_no_action_eval_runs);
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
+    let bun_ub_cross_language_runs = inputs.bun_ub_cross_language_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
     let pr_inline_comment_runs = inputs.pr_inline_comment_runs;
     let first_pr_metrics = dogfood_first_pr_metrics(first_pr_runs);
@@ -51118,6 +54786,149 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str("        \"must_not_change\": [");
         write_json_string_array(&mut body, &run.must_not_change);
         body.push_str("],\n");
+        body.push_str("        \"raw_evidence_refs\": [");
+        write_json_string_array(&mut body, &run.raw_evidence_refs);
+        body.push_str("],\n");
+        body.push_str("        \"non_claims\": [");
+        write_json_string_array(&mut body, &run.non_claims);
+        body.push_str("],\n");
+        body.push_str(&format!(
+            "        \"reason\": \"{}\",\n",
+            json_escape(&run.reason)
+        ));
+        body.push_str("        \"errors\": [");
+        write_json_string_array(&mut body, &run.errors);
+        body.push_str("]\n      }");
+    }
+    body.push_str("\n    ]\n  },\n  \"bun_ub_cross_language_witnesses\": {\n");
+    body.push_str("    \"default_ci_blocking\": false,\n");
+    body.push_str("    \"preview_authority\": \"advisory\",\n");
+    body.push_str("    \"receipt_dir\": \"fixtures/bun-ub-cross-language-dogfood\",\n");
+    body.push_str("    \"summary\": {\n");
+    body.push_str(&format!(
+        "      \"cases\": {},\n",
+        bun_ub_cross_language_runs.len()
+    ));
+    body.push_str(&format!(
+        "      \"ts_discriminated\": {},\n",
+        bun_ub_cross_language_runs
+            .iter()
+            .filter(|run| run.observed_state == "rust_ungripped_ts_discriminated")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"missing_discriminator\": {},\n",
+        bun_ub_cross_language_runs
+            .iter()
+            .filter(|run| run.observed_state == "rust_ungripped_ts_missing_discriminator")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"mention_not_observer\": {},\n",
+        bun_ub_cross_language_runs
+            .iter()
+            .filter(|run| run.observed_state == "ts_mention_not_observer")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"repair_packet_ready\": {}\n",
+        bun_ub_cross_language_runs
+            .iter()
+            .filter(|run| run.repair_packet_ready)
+            .count()
+    ));
+    body.push_str("    },\n    \"cases\": [\n");
+    for (index, run) in bun_ub_cross_language_runs.iter().enumerate() {
+        if index > 0 {
+            body.push_str(",\n");
+        }
+        body.push_str("      {\n");
+        body.push_str(&format!(
+            "        \"name\": \"{}\",\n",
+            json_escape(&run.name)
+        ));
+        body.push_str(&format!(
+            "        \"source_case\": \"{}\",\n",
+            json_escape(&run.source_case)
+        ));
+        body.push_str(&format!(
+            "        \"route_quality_case\": \"{}\",\n",
+            json_escape(&run.route_quality_case)
+        ));
+        body.push_str(&format!(
+            "        \"rust_file\": \"{}\",\n",
+            json_escape(&run.rust_file)
+        ));
+        body.push_str(&format!(
+            "        \"rust_owner\": \"{}\",\n",
+            json_escape(&run.rust_owner)
+        ));
+        body.push_str(&format!(
+            "        \"rust_boundary\": \"{}\",\n",
+            json_escape(&run.rust_boundary)
+        ));
+        body.push_str(&format!(
+            "        \"ts_test_file\": \"{}\",\n",
+            json_escape(&run.ts_test_file)
+        ));
+        body.push_str(&format!(
+            "        \"expected_state\": \"{}\",\n",
+            json_escape(&run.expected_state)
+        ));
+        body.push_str(&format!(
+            "        \"observed_state\": \"{}\",\n",
+            json_escape(&run.observed_state)
+        ));
+        body.push_str("        \"missing_discriminators\": [");
+        write_json_string_array(&mut body, &run.missing_discriminators);
+        body.push_str("],\n");
+        body.push_str("        \"missing_graph_legs\": [");
+        write_json_string_array(&mut body, &run.missing_graph_legs);
+        body.push_str("],\n");
+        body.push_str(&format!(
+            "        \"suggested_test_file\": \"{}\",\n",
+            json_escape(&run.suggested_test_file)
+        ));
+        body.push_str(&format!(
+            "        \"manual_verdict\": \"{}\",\n",
+            json_escape(&run.manual_verdict)
+        ));
+        body.push_str(&format!(
+            "        \"operator_action\": \"{}\",\n",
+            json_escape(&run.operator_action)
+        ));
+        body.push_str(&format!(
+            "        \"review_before\": \"{}\",\n",
+            json_escape(&run.review_before)
+        ));
+        body.push_str(&format!(
+            "        \"review_after\": \"{}\",\n",
+            json_escape(&run.review_after)
+        ));
+        body.push_str(&format!(
+            "        \"bridge_verdict\": \"{}\",\n",
+            json_escape(&run.bridge_verdict)
+        ));
+        body.push_str(&format!(
+            "        \"placement_verdict\": \"{}\",\n",
+            json_escape(&run.placement_verdict)
+        ));
+        body.push_str(&format!(
+            "        \"proof_mode\": \"{}\",\n",
+            json_escape(&run.proof_mode)
+        ));
+        body.push_str(&format!(
+            "        \"receipt_state\": \"{}\",\n",
+            json_escape(&run.receipt_state)
+        ));
+        body.push_str(&format!(
+            "        \"repair_packet_ready\": {},\n",
+            run.repair_packet_ready
+        ));
+        body.push_str(&format!(
+            "        \"authority_boundary\": \"{}\",\n",
+            json_escape(&run.authority_boundary)
+        ));
         body.push_str("        \"raw_evidence_refs\": [");
         write_json_string_array(&mut body, &run.raw_evidence_refs);
         body.push_str("],\n");
@@ -65042,10 +68853,11 @@ mod tests {
         run_output_owned,
     };
     use super::{
-        BadgeArtifactJob, BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection,
-        BadgeCountBreakdown, BadgeEndpointSnapshot, BadgeNativeAuditSnapshot, BadgeNativeSlot,
-        CampaignManifest, Capability, ChangedPath, CheckReport, CheckStatus, CheckViolation,
-        CiFullEvidenceGate, CommandCatalogEntry, CwdCommand, DOC_ARTIFACT_LEDGER,
+        BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob, BadgeBasisReport,
+        BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown, BadgeEndpointSnapshot,
+        BadgeNativeAuditSnapshot, BadgeNativeSlot, CampaignManifest, Capability, ChangedPath,
+        CheckReport, CheckStatus, CheckViolation, CiFullEvidenceGate, CommandCatalogEntry,
+        CwdCommand, DOC_ARTIFACT_LEDGER, DogfoodBunUbCrossLanguageScenario,
         DogfoodEditorFirstPrBridgeRun, DogfoodEditorGapCockpitRun, DogfoodFindingAlignmentRun,
         DogfoodFindingAlignmentScenario, DogfoodFirstActionRun, DogfoodFirstPrRun,
         DogfoodFrontPanelRun, DogfoodGateRun, DogfoodGeneratedCiCockpitRun,
@@ -65071,7 +68883,8 @@ mod tests {
         RepoExposureLatencyTrace, ReportIndexCampaign, ReportIndexEntry,
         ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH,
         SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
-        StaticLanguageMatcher, TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
+        StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
+        TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
         TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
         USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
         WorktreeDoctorFinding, WorktreeDoctorSeverity, actionable_gap_outcomes_json,
@@ -65092,6 +68905,7 @@ mod tests {
         collect_panic_findings, collect_semantic_panic_findings, command_catalog,
         command_catalog_violations, commands_report_json, commands_report_markdown,
         critic_findings, days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
+        dogfood_bun_ub_cross_language_run, dogfood_bun_ub_cross_language_scenarios,
         dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
         dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
         dogfood_editor_gap_cockpit_scenarios, dogfood_finding_alignment_run,
@@ -65200,9 +69014,10 @@ mod tests {
         validate_swarm_plan_packet_fixture_case, validate_swarm_plan_packet_fixture_corpus,
         vscode_compile_command, vscode_extension_dir, vscode_package_command,
         vscode_package_version, vscode_test_e2e_command, windows_absolute_path_tokens,
-        workflow_runtime_violations, worktree, worktree_doctor_findings,
-        write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
-        write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
+        workflow_bare_self_hosted_violations, workflow_runtime_violations, worktree,
+        worktree_doctor_findings, write_badge_artifacts_after_build,
+        write_badge_artifacts_from_diff, write_evidence_health_report_with_runner,
+        write_evidence_health_report_with_runners,
         write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
         write_repo_exposure_summary_report_with_runner,
     };
@@ -70923,6 +74738,47 @@ jobs:
     }
 
     #[test]
+    fn workflow_bare_self_hosted_policy_rejects_linux_x64_without_group() {
+        let workflow = r#"
+jobs:
+  inline:
+    runs-on: [self-hosted, linux, x64]
+  block:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+"#;
+
+        let violations = workflow_bare_self_hosted_violations(".github/workflows/ci.yml", workflow);
+
+        assert_eq!(violations.len(), 2);
+    }
+
+    #[test]
+    fn workflow_bare_self_hosted_policy_accepts_capacity_group() {
+        let workflow = r#"
+jobs:
+  rust:
+    runs-on:
+      group: em-ci-small
+      labels:
+        - self-hosted
+        - linux
+        - x64
+        - em-ci
+        - cx43
+        - rust-medium
+        - trusted-pr
+"#;
+
+        let violations =
+            workflow_bare_self_hosted_violations(".github/workflows/routed-rust.yml", workflow);
+
+        assert!(violations.is_empty());
+    }
+
+    #[test]
     fn routed_rust_workflow_contract_accepts_swarm_shape() {
         let workflow = r#"
 jobs:
@@ -70936,17 +74792,48 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr
           fi
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]?] | length > 0'; }
           gh api --paginate orgs/EffortlessMetrics/actions/runners
           reason=runner_api_failed
           reason=no_idle_runner
-          reason=runner_image_unavailable
-          reason=cx53_idle
+          reason=runner_capacity_unavailable
           reason=cx43_idle
-          echo em-ci-rust-1.95
-  rust-cx53:
-    if: needs.route.outputs.router_target == 'cx53'
+          reason=cpx42_idle
+          reason=cx53_idle
+          echo rust-medium rust-16gb rust-large
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare scratch
+        run: ci-disk-guard /mnt/ci-scratch 90
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+  rust-cpx42:
+    if: needs.route.outputs.router_target == 'cpx42'
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare CPX42 scratch
+        run: ci-disk-guard /mnt/ci-scratch 80
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+  rust-cx53:
+    if: needs.route.outputs.router_target == 'cx53'
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare scratch
+        run: ci-disk-guard /mnt/ci-scratch 100
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-github:
     if: needs.route.outputs.router_target == 'github'
   result:
@@ -71014,6 +74901,21 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             violation.contains("organization runner discovery")
                 || violation.contains("repo-local runner discovery")
         }));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("slurped idle runner query") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("Prepare toolchain temp") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("scratch CARGO_HOME") })
+        );
         assert!(
             violations
                 .iter()
@@ -73440,6 +77342,53 @@ fn exact_owner_call_has_external_expected_value() {
             reason: "sample TypeScript preview repair-loop receipt".to_string(),
             errors: Vec::new(),
         };
+        let bun_ub_cross_language_run = super::DogfoodBunUbCrossLanguageRun {
+            name: "bun_blob_31648_known_good".to_string(),
+            source_case: "bun_blob_shared_and_resizable_present".to_string(),
+            route_quality_case: "bun_blob_complete_ts_discriminated_advisory".to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            ts_test_file: super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string(),
+            expected_state: "rust_ungripped_ts_discriminated".to_string(),
+            observed_state: "rust_ungripped_ts_discriminated".to_string(),
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            suggested_test_file: "not_applicable".to_string(),
+            manual_verdict: "agrees".to_string(),
+            operator_action: "no_missing_bridge_discriminator".to_string(),
+            review_before:
+                "Rust-only review would manually grep for SharedArrayBuffer and maxByteLength"
+                    .to_string(),
+            review_after:
+                "TypeScript/Bun preview credits configured Blob stable-byte witness evidence"
+                    .to_string(),
+            bridge_verdict: "configured_binding_edge_credited".to_string(),
+            placement_verdict: "not_needed".to_string(),
+            proof_mode: "advisory_cross_language_preview".to_string(),
+            receipt_state: "closed".to_string(),
+            repair_packet_ready: false,
+            authority_boundary: "preview_advisory_only".to_string(),
+            raw_evidence_refs: vec![
+                "fixtures/typescript-bun-ub-calibration/corpus.json#bun_blob_shared_and_resizable_present".to_string(),
+                "fixtures/cross-language-oracle-graph-corpus/corpus.json#bun_blob_complete_ts_discriminated_advisory".to_string(),
+            ],
+            non_claims: vec![
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Bun execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+                "no public repair packet".to_string(),
+                "no full cross-language proof".to_string(),
+            ],
+            reason: "sample Bun UB cross-language receipt".to_string(),
+            errors: Vec::new(),
+        };
         let user_surface_projection_run = super::DogfoodUserSurfaceProjectionRun {
             name: "badge_actionable_count_from_canonical_state".to_string(),
             surface: "badge".to_string(),
@@ -73533,6 +77482,7 @@ fn exact_owner_call_has_external_expected_value() {
             dogfood_python_no_action_eval_run(&valid_python_heuristic_no_action_eval_scenario()),
         ];
         let typescript_preview_repair_loop_runs = [typescript_preview_repair_loop_run];
+        let bun_ub_cross_language_runs = [bun_ub_cross_language_run];
         let user_surface_projection_runs = [user_surface_projection_run];
         let preview_projection_runs = DogfoodPreviewProjectionRuns {
             generated_ci_cockpit: &generated_ci_runs,
@@ -73562,6 +77512,7 @@ fn exact_owner_call_has_external_expected_value() {
             python_static_limit_eval_runs: &python_static_limit_eval_runs,
             python_no_action_eval_runs: &python_no_action_eval_runs,
             typescript_preview_repair_loop_runs: &typescript_preview_repair_loop_runs,
+            bun_ub_cross_language_runs: &bun_ub_cross_language_runs,
             user_surface_projection_runs: &user_surface_projection_runs,
             pr_inline_comment_runs: &markdown_pr_inline_comment_runs,
         };
@@ -73586,6 +77537,7 @@ fn exact_owner_call_has_external_expected_value() {
             python_static_limit_eval_runs: &python_static_limit_eval_runs,
             python_no_action_eval_runs: &python_no_action_eval_runs,
             typescript_preview_repair_loop_runs: &typescript_preview_repair_loop_runs,
+            bun_ub_cross_language_runs: &bun_ub_cross_language_runs,
             user_surface_projection_runs: &user_surface_projection_runs,
             pr_inline_comment_runs: &empty_pr_inline_comment_runs,
         };
@@ -73625,6 +77577,8 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(markdown.contains("Top-3 actionable precision: 3 / 3 ranked findings"));
         assert!(markdown.contains("Full top-3 capture cases: 1 / 1 evals"));
         assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
+        assert!(markdown.contains("Bun UB Cross-Language Witness Receipts"));
+        assert!(markdown.contains("bun_blob_31648_known_good"));
         assert!(markdown.contains("User Surface Projection Alignment Receipts"));
         assert!(markdown.contains("PR Inline Comment Publisher Receipts"));
         assert!(markdown.contains("Gate Adoption Receipts"));
@@ -73656,6 +77610,7 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(json.contains("\"agent_packet_present\": false"));
         assert!(json.contains("\"gap_movement\": \"no_receipt\""));
         assert!(json.contains("\"typescript_preview_repair_loop\""));
+        assert!(json.contains("\"bun_ub_cross_language_witnesses\""));
         assert!(json.contains("\"repair_route_quality_metrics_improved\""));
         assert!(json.contains("\"tiny_controlled_pytest_boundary_receipt\""));
         assert!(json.contains("\"typescript_boundary_predicate_proof\""));
@@ -73985,6 +77940,35 @@ fn exact_owner_call_has_external_expected_value() {
                 .get("outcome")
                 .and_then(Value::as_str),
             Some("proof_improved")
+        );
+        let bun_ub_cross_language = value
+            .get("bun_ub_cross_language_witnesses")
+            .ok_or_else(|| "bun_ub_cross_language_witnesses section missing".to_string())?;
+        assert_eq!(
+            bun_ub_cross_language
+                .get("receipt_dir")
+                .and_then(Value::as_str),
+            Some("fixtures/bun-ub-cross-language-dogfood")
+        );
+        let bun_ub_cross_language_summary = bun_ub_cross_language
+            .get("summary")
+            .ok_or_else(|| "bun_ub_cross_language_witnesses summary missing".to_string())?;
+        assert_eq!(
+            bun_ub_cross_language_summary
+                .get("repair_packet_ready")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        let bun_ub_cross_language_cases = bun_ub_cross_language
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "bun_ub_cross_language_witnesses cases missing".to_string())?;
+        assert_eq!(bun_ub_cross_language_cases.len(), 1);
+        assert_eq!(
+            bun_ub_cross_language_cases[0]
+                .get("operator_action")
+                .and_then(Value::as_str),
+            Some("no_missing_bridge_discriminator")
         );
         assert!(json.contains("\"pr_inline_comment_publisher\""));
         Ok(())
@@ -75502,6 +79486,1748 @@ fn exact_owner_call_has_external_expected_value() {
     }
 
     #[test]
+    fn typescript_bun_ub_calibration_cases_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let cases = super::typescript_bun_ub_calibration_cases();
+            for required in TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES {
+                assert!(
+                    cases.iter().any(|case| {
+                        case.name == required.0 && case.expected_verdict == required.1
+                    }),
+                    "{} TypeScript Bun UB calibration case should be checked as {}",
+                    required.0,
+                    required.1
+                );
+            }
+
+            let verdicts = cases
+                .iter()
+                .map(|case| case.expected_verdict.as_str())
+                .collect::<BTreeSet<_>>();
+            for required in [
+                "ts_discriminated",
+                "ts_missing_shared",
+                "ts_missing_resizable",
+                "ts_missing_external_oracle",
+                "ts_mention_not_observer",
+                "bridge_unknown",
+            ] {
+                assert!(
+                    verdicts.contains(required),
+                    "TypeScript Bun UB calibration should include {required}"
+                );
+            }
+
+            for case in cases {
+                let errors = super::typescript_bun_ub_calibration_case_errors(&case);
+                assert!(
+                    errors.is_empty(),
+                    "{} TypeScript Bun UB calibration case should validate: {:?}",
+                    case.name,
+                    errors
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn bun_ub_calibration_report_summarizes_calibrated_states() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let report = super::bun_ub_calibration_report_value(Path::new(
+                super::TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS,
+            ));
+            assert_eq!(report["schema_version"], "0.1");
+            assert_eq!(report["report"], "bun-ub-calibration");
+            assert_eq!(report["status"], "pass");
+            assert_eq!(report["summary"]["cases_total"], serde_json::Value::from(7));
+            assert_eq!(
+                report["summary"]["ts_discriminated_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["ts_missing_resizable_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["ts_missing_shared_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["ts_missing_shared_and_resizable_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["ts_missing_external_oracle_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["ts_mention_not_observer_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["bridge_unknown_cases"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+
+            let rows = report["rows"]
+                .as_array()
+                .ok_or_else(|| "Bun UB calibration rows must be an array".to_string())?;
+            let known_good = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_shared_and_resizable_present")
+                .ok_or_else(|| "missing known-good Bun Blob row".to_string())?;
+            assert_eq!(known_good["observed_state"], "ts_discriminated");
+            assert_eq!(known_good["status"], "pass");
+            assert_eq!(known_good["repair_packet_ready"], false);
+
+            let missing_resizable = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_resizable_missing")
+                .ok_or_else(|| "missing stripped-resizable row".to_string())?;
+            assert_eq!(missing_resizable["observed_state"], "ts_missing_resizable");
+            assert!(
+                missing_resizable["missing_discriminators"]
+                    .as_array()
+                    .is_some_and(|missing| missing
+                        .iter()
+                        .any(|item| item == "resizable_array_buffer"))
+            );
+            assert!(
+                missing_resizable["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| {
+                        legs.iter()
+                            .any(|item| item == "boundary_discriminator:resizable_array_buffer")
+                    })
+            );
+            assert_eq!(
+                missing_resizable["suggested_test_file"],
+                super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            );
+
+            let mention_only = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_max_byte_length_mention_not_observer")
+                .ok_or_else(|| "missing mention-only row".to_string())?;
+            assert_eq!(mention_only["observed_state"], "ts_mention_not_observer");
+            assert!(
+                mention_only["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| {
+                        legs.iter()
+                            .any(|item| item == "external_blob_or_stable_byte_observer")
+                    })
+            );
+
+            let missing_external_oracle = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_partial_observer_missing_external_oracle")
+                .ok_or_else(|| "missing partial-observer row".to_string())?;
+            assert_eq!(
+                missing_external_oracle["observed_state"],
+                "ts_missing_external_oracle"
+            );
+            assert_eq!(
+                missing_external_oracle["suggested_test_file"],
+                "not_applicable"
+            );
+            assert!(
+                missing_external_oracle["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "external_oracle:stable_byte_copy"))
+            );
+
+            let bridge_unknown = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_bridge_unknown_without_hint")
+                .ok_or_else(|| "missing bridge-unknown row".to_string())?;
+            assert_eq!(bridge_unknown["observed_state"], "bridge_unknown");
+            assert!(
+                bridge_unknown["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
+            );
+
+            let markdown = super::bun_ub_calibration_report_markdown(&report);
+            assert!(markdown.contains("# Bun UB TypeScript Calibration"));
+            assert!(markdown.contains("Bun UB TypeScript calibration is preview/advisory only"));
+            assert!(markdown.contains("bun_blob_resizable_missing"));
+            assert!(markdown.contains("Missing external oracle cases"));
+            assert!(markdown.contains("binding_or_ffi_edge"));
+            assert!(markdown.contains("Repair-packet-ready cases"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn bun_ub_calibration_command_writes_markdown_and_json() -> Result<(), String> {
+        with_temp_cwd("bun-ub-calibration-report", |_root| {
+            let out = PathBuf::from("target/ripr/reports/bun-ub-calibration.json");
+            let out_md = PathBuf::from("target/ripr/reports/bun-ub-calibration.md");
+            let corpus = repo_root()?.join(super::TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS);
+            super::bun_ub_calibration_impl(&[
+                "--corpus".to_string(),
+                corpus.to_string_lossy().into_owned(),
+                "--out".to_string(),
+                out.to_string_lossy().into_owned(),
+                "--out-md".to_string(),
+                out_md.to_string_lossy().into_owned(),
+            ])?;
+
+            let json = fs::read_to_string(&out)
+                .map_err(|err| format!("failed to read Bun UB calibration JSON: {err}"))?;
+            let value: Value =
+                serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
+            assert_eq!(value["report"], "bun-ub-calibration");
+            assert_eq!(value["summary"]["cases_total"], serde_json::Value::from(7));
+            assert_eq!(
+                value["summary"]["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+
+            let markdown = fs::read_to_string(&out_md)
+                .map_err(|err| format!("failed to read Bun UB calibration Markdown: {err}"))?;
+            assert!(markdown.contains("# Bun UB TypeScript Calibration"));
+            assert!(markdown.contains("bridge_unknown"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_corpus_cases_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let cases = super::cross_language_oracle_graph_cases();
+            for required in super::CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES {
+                assert!(
+                    cases.iter().any(|case| {
+                        case.name == required.0 && case.expected_state == required.1
+                    }),
+                    "{} cross-language oracle graph case should be checked as {}",
+                    required.0,
+                    required.1
+                );
+            }
+
+            let states = cases
+                .iter()
+                .map(|case| case.expected_state.as_str())
+                .collect::<BTreeSet<_>>();
+            for required in [
+                "rust_ungripped_ts_discriminated",
+                "rust_ungripped_ts_missing_discriminator",
+                "rust_ungripped_ts_missing_external_oracle",
+                "ts_mention_not_observer",
+                "bridge_unknown",
+                "cross_language_target_unresolved",
+            ] {
+                assert!(
+                    states.contains(required),
+                    "cross-language oracle graph should include {required}"
+                );
+            }
+
+            for case in cases {
+                let errors = super::cross_language_oracle_graph_case_errors(&case);
+                assert!(
+                    errors.is_empty(),
+                    "{} cross-language oracle graph case should validate: {:?}",
+                    case.name,
+                    errors
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_corpus_path_is_repo_rooted_for_parallel_cwd_safety()
+    -> Result<(), String> {
+        let path = super::cross_language_oracle_graph_corpus_path();
+        assert!(
+            path.is_absolute(),
+            "corpus read path should not depend on process cwd: {}",
+            path.display()
+        );
+        assert!(
+            path.ends_with(super::CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS),
+            "corpus read path should keep the canonical fixture suffix: {}",
+            path.display()
+        );
+        assert!(
+            path.exists(),
+            "corpus read path should exist: {}",
+            path.display()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cross_language_oracle_route_quality_summarizes_corpus_cases() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let value = super::cross_language_oracle_route_quality_report_value();
+            assert_eq!(value["status"], "pass");
+            assert_eq!(value["cases_total"], serde_json::Value::from(9));
+            assert_eq!(
+                value["cross_language_oracle_graph_complete_advisory_witnesses"],
+                serde_json::Value::from(3)
+            );
+            assert_eq!(
+                value["cross_language_oracle_graph_missing_discriminator_limitations"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                value["cross_language_oracle_graph_missing_external_oracle_limitations"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                value["cross_language_oracle_graph_bridge_unknown_limitations"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                value["cross_language_oracle_graph_mention_only_limitations"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                value["cross_language_oracle_graph_panic_boundary_limitations"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                value["cross_language_oracle_graph_public_packet_exclusions"],
+                serde_json::Value::from(9)
+            );
+            assert_eq!(
+                value["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+
+            let rows = value["rows"]
+                .as_array()
+                .ok_or_else(|| "route-quality rows must be an array".to_string())?;
+            let missing_resizable = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_missing_resizable_oracle_limitation")
+                .ok_or_else(|| "missing resizable route-quality row".to_string())?;
+            assert_eq!(
+                missing_resizable["observed_state"],
+                "rust_ungripped_ts_missing_discriminator"
+            );
+            assert!(
+                missing_resizable["missing_discriminators"]
+                    .as_array()
+                    .is_some_and(|missing| {
+                        missing.iter().any(|item| item == "resizable_array_buffer")
+                    })
+            );
+            assert_eq!(
+                missing_resizable["suggested_test_file"],
+                super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            );
+            let missing_external_oracle = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_missing_external_oracle_limitation")
+                .ok_or_else(|| "missing external oracle route-quality row".to_string())?;
+            assert_eq!(
+                missing_external_oracle["observed_state"],
+                "rust_ungripped_ts_missing_external_oracle"
+            );
+            assert!(
+                missing_external_oracle["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "external_oracle:stable_byte_copy"))
+            );
+            let bridge_unknown = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_blob_bridge_unknown_limitation")
+                .ok_or_else(|| "missing bridge_unknown route-quality row".to_string())?;
+            assert!(
+                bridge_unknown["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
+            );
+            let copy_to_unshared = rows
+                .iter()
+                .find(|row| {
+                    row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+                })
+                .ok_or_else(|| "missing copy_to_unshared configured bridge row".to_string())?;
+            assert_eq!(
+                copy_to_unshared["profile"],
+                "bun_array_buffer_copy_to_unshared"
+            );
+            assert_eq!(
+                copy_to_unshared["observed_state"],
+                "rust_ungripped_ts_discriminated"
+            );
+            assert_eq!(
+                copy_to_unshared["binding_edge_confidence"],
+                "configured_hint"
+            );
+            assert!(
+                copy_to_unshared["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+            );
+            assert_eq!(copy_to_unshared["suggested_test_file"], "not_applicable");
+            assert_eq!(copy_to_unshared["repair_packet_ready"], false);
+            assert_eq!(copy_to_unshared["public_projection_eligible"], false);
+            assert_eq!(
+                copy_to_unshared["repair_route"],
+                "manual-review/cross-language-advisory-witness"
+            );
+            let markdown_resizable = rows
+                .iter()
+                .find(|row| {
+                    row["case_id"]
+                        == "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+                })
+                .ok_or_else(|| "missing Bun markdown configured bridge row".to_string())?;
+            assert_eq!(
+                markdown_resizable["profile"],
+                "bun_markdown_resizable_array_buffer"
+            );
+            assert_eq!(
+                markdown_resizable["observed_state"],
+                "rust_ungripped_ts_discriminated"
+            );
+            assert_eq!(
+                markdown_resizable["binding_edge_confidence"],
+                "configured_hint"
+            );
+            assert!(
+                markdown_resizable["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+            );
+            assert_eq!(markdown_resizable["suggested_test_file"], "not_applicable");
+            assert_eq!(markdown_resizable["repair_packet_ready"], false);
+            assert_eq!(markdown_resizable["public_projection_eligible"], false);
+            assert_eq!(
+                markdown_resizable["repair_route"],
+                "manual-review/cross-language-advisory-witness"
+            );
+            let panic_boundary = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_ffi_negative_offset_panic_boundary_limitation")
+                .ok_or_else(|| "missing Bun FFI panic-boundary limitation row".to_string())?;
+            assert_eq!(
+                panic_boundary["profile"],
+                "bun_ffi_negative_offset_panic_boundary"
+            );
+            assert_eq!(
+                panic_boundary["observed_state"],
+                "public_reachable_panic_boundary_unrevealed"
+            );
+            assert_eq!(
+                panic_boundary["limitation_category"],
+                "cross_language_panic_boundary_visibility_unresolved"
+            );
+            assert_eq!(
+                panic_boundary["repair_route"],
+                "analysis/cross-language-panic-boundary-visibility"
+            );
+            assert_eq!(panic_boundary["suggested_test_file"], "not_applicable");
+            assert_eq!(panic_boundary["repair_packet_ready"], false);
+            assert_eq!(panic_boundary["public_projection_eligible"], false);
+            assert!(
+                panic_boundary["missing_discriminators"]
+                    .as_array()
+                    .is_some_and(|missing| missing.iter().any(|item| item == "negative_offset"))
+            );
+            assert!(
+                panic_boundary["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "external_oracle:negative_offset_panic_boundary"))
+            );
+
+            let mut markdown = String::new();
+            super::cross_language_oracle_route_quality_push_markdown(&mut markdown, &value);
+            assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
+            assert!(markdown.contains("Complete advisory witnesses"));
+            assert!(markdown.contains("bun_blob_missing_resizable_oracle_limitation"));
+            assert!(
+                markdown.contains("bun_markdown_resizable_array_buffer_configured_bridge_advisory")
+            );
+            assert!(markdown.contains("Panic boundary limitations"));
+            assert!(markdown.contains("bun_ffi_negative_offset_panic_boundary_limitation"));
+            assert!(markdown.contains("Missing external oracle limitations"));
+            assert!(markdown.contains("binding_or_ffi_edge"));
+            assert!(markdown.contains("preview/advisory route-quality evidence only"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_rejects_malformed_corpus_files() -> Result<(), String> {
+        let root = temp_dir("cross-language-oracle-graph-malformed");
+        let missing_path = root.join("missing.json");
+        let mut violations = Vec::new();
+        super::validate_cross_language_oracle_graph_fixture_corpus_at(
+            &missing_path,
+            &mut violations,
+        )?;
+        assert_contains_error(&violations, "Cross-language oracle graph corpus is missing");
+
+        for (name, body, reason) in [
+            (
+                "bad-schema",
+                r#"{"schema_version":"0.2","kind":"cross_language_oracle_graph_corpus","spec":"RIPR-SPEC-0062","cases":[]}"#,
+                "schema_version must be 0.1",
+            ),
+            (
+                "bad-kind",
+                r#"{"schema_version":"0.1","kind":"other","spec":"RIPR-SPEC-0062","cases":[]}"#,
+                "kind must be cross_language_oracle_graph_corpus",
+            ),
+            (
+                "bad-spec",
+                r#"{"schema_version":"0.1","kind":"cross_language_oracle_graph_corpus","spec":"RIPR-SPEC-9999","cases":[]}"#,
+                "spec must be RIPR-SPEC-0062",
+            ),
+            (
+                "missing-cases",
+                r#"{"schema_version":"0.1","kind":"cross_language_oracle_graph_corpus","spec":"RIPR-SPEC-0062"}"#,
+                "missing cases array",
+            ),
+        ] {
+            let path = root.join(format!("{name}.json"));
+            write(&path, body);
+            let cases = super::cross_language_oracle_graph_cases_at(&path);
+            assert_contains_error(std::slice::from_ref(&cases[0].reason), reason);
+
+            let mut violations = Vec::new();
+            super::validate_cross_language_oracle_graph_fixture_corpus_at(&path, &mut violations)?;
+            assert_contains_error(
+                &violations,
+                "Cross-language oracle graph case corpus: source must be present",
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_rejects_duplicate_and_required_state_drift() -> Result<(), String>
+    {
+        let root = temp_dir("cross-language-oracle-graph-required-cases");
+        let mut duplicate = valid_cross_language_oracle_graph_case();
+        duplicate.name = "duplicated".to_string();
+        let duplicate_case = cross_language_oracle_graph_case_json(&duplicate);
+        let duplicate_path = root.join("duplicate.json");
+        write(
+            &duplicate_path,
+            &cross_language_oracle_graph_corpus_json(&[duplicate_case.clone(), duplicate_case]),
+        );
+
+        let mut violations = Vec::new();
+        super::validate_cross_language_oracle_graph_fixture_corpus_at(
+            &duplicate_path,
+            &mut violations,
+        )?;
+        assert_contains_error(&violations, "case duplicated is duplicated");
+        assert_contains_error(
+            &violations,
+            "Cross-language oracle graph corpus is missing case bun_blob_complete_ts_discriminated_advisory",
+        );
+        assert_contains_error(
+            &violations,
+            "Cross-language oracle graph corpus must include state bridge_unknown",
+        );
+
+        let wrong_required_path = root.join("wrong-required.json");
+        let mut wrong_required = valid_cross_language_oracle_graph_case();
+        wrong_required.name = "bun_blob_complete_ts_discriminated_advisory".to_string();
+        wrong_required.expected_state = "bridge_unknown".to_string();
+        wrong_required.gap_state = "static_limitation".to_string();
+        wrong_required.limitation_category =
+            "cross_language_oracle_visibility_unresolved".to_string();
+        wrong_required.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+        wrong_required.binding_edge_kind = "unresolved".to_string();
+        wrong_required.binding_edge_confidence = "unknown".to_string();
+        wrong_required
+            .missing_graph_legs
+            .push("binding_or_ffi_edge".to_string());
+        wrong_required
+            .raw_evidence_refs
+            .retain(|raw_ref| raw_ref.leg != "binding_edge");
+        write(
+            &wrong_required_path,
+            &cross_language_oracle_graph_corpus_json(&[cross_language_oracle_graph_case_json(
+                &wrong_required,
+            )]),
+        );
+
+        let mut violations = Vec::new();
+        super::validate_cross_language_oracle_graph_fixture_corpus_at(
+            &wrong_required_path,
+            &mut violations,
+        )?;
+        assert_contains_error(
+            &violations,
+            "case bun_blob_complete_ts_discriminated_advisory must have expected_state rust_ungripped_ts_discriminated, got bridge_unknown",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_rejects_actionability_and_location_holes() {
+        let mut case = valid_cross_language_oracle_graph_case();
+        case.name = " ".to_string();
+        case.source.clear();
+        case.language = "javascript".to_string();
+        case.language_status = "stable".to_string();
+        case.authority_boundary = "gate_ready".to_string();
+        case.repair_packet_ready = true;
+        case.public_projection_eligible = true;
+        case.suggested_test_file = "src/jsc/Blob.rs".to_string();
+        case.allowed_edit_surface
+            .push("test/js/web/fetch/blob.test.ts".to_string());
+        case.verify_command = Some("bun test test/js/web/fetch/blob.test.ts".to_string());
+        case.receipt_command = Some("cargo xtask receipts check".to_string());
+        case.rust_file = "src/lib.rs".to_string();
+        case.rust_line = None;
+        case.rust_owner = "Blob::from_js".to_string();
+        case.rust_boundary = "array_buffer.shared".to_string();
+        case.external_callsite_file = "test/js/web/fetch/blob.test.js".to_string();
+        case.external_callsite_line = None;
+        case.external_oracle_file = "test/js/web/fetch/blob.test.js".to_string();
+        case.external_oracle_line = None;
+        case.external_entrypoints.clear();
+        case.raw_evidence_refs.clear();
+        case.non_claims.clear();
+        case.reason.clear();
+
+        let errors = super::cross_language_oracle_graph_case_errors(&case);
+        for expected in [
+            "case id must be present",
+            "source must be present",
+            "reason must be present",
+            "rust line must be present",
+            "external_callsite line must be present",
+            "external_oracle line must be present",
+            "language must be typescript",
+            "language_status must be preview",
+            "authority_boundary must be preview_advisory_only",
+            "repair_packet_ready must remain false",
+            "public_projection_eligible must remain false",
+            "suggested_test_file must be not_applicable or the configured Bun Blob TypeScript test file for missing-discriminator rows",
+            "allowed_edit_surface must remain empty",
+            "verify_command must be omitted",
+            "receipt_command must be omitted",
+            "rust_file must identify the Bun Blob Rust seam",
+            "rust_owner must pin Blob::from_js_without_defer_gc",
+            "rust_boundary must include array_buffer.shared and array_buffer.resizable",
+            "external_callsite_file must be a Bun test/js TypeScript test path",
+            "external_oracle_file must be a Bun test/js TypeScript test path",
+            "external_entrypoints must name at least one external callsite",
+            "non_claims must keep cross-language preview denials visible",
+            "raw_evidence_refs must include structured graph refs",
+        ] {
+            assert_contains_error(&errors, expected);
+        }
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_rejects_invalid_state_shapes() {
+        let mut advisory = valid_cross_language_oracle_graph_case();
+        advisory.shared_array_buffer = false;
+        advisory.max_byte_length_mention_only = true;
+        advisory.binding_edge_confidence = "unknown".to_string();
+        advisory
+            .missing_discriminators
+            .push("shared_array_buffer".to_string());
+        advisory
+            .missing_graph_legs
+            .push("external_discriminator:shared_array_buffer".to_string());
+        advisory.unlock_condition = "needs more evidence".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&advisory);
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_discriminated requires either the Blob shared/resizable stable-byte facts or the Bun markdown resizable strong-oracle profile facts",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_discriminated must not be mention-only evidence",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_discriminated requires configured bridge confidence",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_discriminated must not name missing discriminators",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_discriminated must not name missing graph legs",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_discriminated must use unlock_condition not_applicable",
+        );
+
+        let mut missing = valid_cross_language_oracle_graph_case();
+        missing.name = "bun_blob_missing_resizable_oracle_limitation".to_string();
+        missing.expected_state = "rust_ungripped_ts_missing_discriminator".to_string();
+        missing.gap_state = "static_limitation".to_string();
+        missing.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+        missing.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+        missing.missing_discriminators.clear();
+        missing.missing_graph_legs.clear();
+        missing.unlock_condition = "Name missing discriminator".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&missing);
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_discriminator must name missing discriminators",
+        );
+        assert_contains_error(
+            &errors,
+            "bun_blob_missing_resizable case must name resizable_array_buffer",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_discriminator must name the missing boundary discriminator leg",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_discriminator must suggest the configured Bun Blob TypeScript test file",
+        );
+
+        let mut missing_external_oracle = valid_cross_language_oracle_graph_case();
+        missing_external_oracle.expected_state =
+            "rust_ungripped_ts_missing_external_oracle".to_string();
+        missing_external_oracle.gap_state = "static_limitation".to_string();
+        missing_external_oracle.limitation_category =
+            "cross_language_oracle_visibility_unresolved".to_string();
+        missing_external_oracle.repair_route =
+            "analysis/cross-language-oracle-visibility".to_string();
+        missing_external_oracle.missing_discriminators = vec!["resizable_array_buffer".to_string()];
+        missing_external_oracle.missing_graph_legs.clear();
+        missing_external_oracle.view_backed_blob_input = true;
+        missing_external_oracle.stable_byte_copy_oracle = true;
+        missing_external_oracle.unlock_condition = "Name external oracle".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&missing_external_oracle);
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_external_oracle requires a missing Blob input or stable-byte oracle",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_external_oracle must not name missing boundary discriminators",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_external_oracle must name the missing external observer graph leg",
+        );
+
+        let mut mention = valid_cross_language_oracle_graph_case();
+        mention.expected_state = "ts_mention_not_observer".to_string();
+        mention.gap_state = "static_limitation".to_string();
+        mention.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+        mention.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+        mention.max_byte_length_mention_only = false;
+        mention.view_backed_blob_input = true;
+        mention.stable_byte_copy_oracle = true;
+        mention.missing_graph_legs.clear();
+        mention.unlock_condition = "Name stable observer".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&mention);
+        assert_contains_error(
+            &errors,
+            "ts_mention_not_observer must record max_byte_length_mention_only=true",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_mention_not_observer must not count Blob input or stable-byte oracle facts",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_mention_not_observer must name the missing external Blob callsite graph leg",
+        );
+
+        let mut bridge = valid_cross_language_oracle_graph_case();
+        bridge.expected_state = "bridge_unknown".to_string();
+        bridge.gap_state = "static_limitation".to_string();
+        bridge.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+        bridge.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+        bridge.binding_edge_kind = "configured_bridge".to_string();
+        bridge.binding_edge_confidence = "configured_hint".to_string();
+        bridge.missing_graph_legs.clear();
+        bridge.unlock_condition = "Name bridge".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&bridge);
+        assert_contains_error(
+            &errors,
+            "bridge_unknown must not claim a binding_edge raw ref",
+        );
+        assert_contains_error(
+            &errors,
+            "bridge_unknown requires unresolved binding edge and unknown confidence",
+        );
+        assert_contains_error(
+            &errors,
+            "bridge_unknown must name binding_or_ffi_edge as missing",
+        );
+
+        let mut target = valid_cross_language_oracle_graph_case();
+        target.expected_state = "cross_language_target_unresolved".to_string();
+        target.gap_state = "static_limitation".to_string();
+        target.limitation_category = "cross_language_target_unresolved".to_string();
+        target.repair_route = "analysis/cross-language-test-target-inference".to_string();
+        target.missing_graph_legs.clear();
+        target.unlock_condition = "Name target".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&target);
+        assert_contains_error(
+            &errors,
+            "cross_language_target_unresolved must name safe_external_observer_target as missing",
+        );
+
+        let mut panic_boundary = valid_cross_language_oracle_graph_case();
+        panic_boundary.profile = "bun_ffi_negative_offset_panic_boundary".to_string();
+        panic_boundary.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+        panic_boundary.rust_line = Some(277);
+        panic_boundary.rust_owner = "FFIObject::read".to_string();
+        panic_boundary.rust_boundary =
+            "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+        panic_boundary.binding_edge_kind = "ffi_binding".to_string();
+        panic_boundary.binding_edge_confidence = "heuristic".to_string();
+        panic_boundary.external_callsite_file = "unresolved:typescript-test-surface".to_string();
+        panic_boundary.external_callsite_line = None;
+        panic_boundary.external_entrypoints = vec!["read.u8(ptr, -1)".to_string()];
+        panic_boundary.external_oracle_file = "unresolved:negative-offset-panic-oracle".to_string();
+        panic_boundary.external_oracle_line = None;
+        panic_boundary.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        panic_boundary.gap_state = "static_limitation".to_string();
+        panic_boundary.limitation_category =
+            "cross_language_panic_boundary_visibility_unresolved".to_string();
+        panic_boundary.repair_route =
+            "analysis/cross-language-panic-boundary-visibility".to_string();
+        panic_boundary.suggested_test_file = "test/js/bun/ffi/ffi.test.ts".to_string();
+        panic_boundary.missing_discriminators.clear();
+        panic_boundary.missing_graph_legs.clear();
+        panic_boundary.external_oracle_kind = "wrong_oracle".to_string();
+        panic_boundary.oracle_strength = "weak".to_string();
+        panic_boundary.unlock_condition = "Name panic oracle".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&panic_boundary);
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must name negative_offset as the missing discriminator",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must name the missing negative-offset panic oracle leg",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must name safe_external_observer_target as missing",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must not suggest a test file",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must use negative_offset_panic_oracle_unresolved oracle kind",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must use missing_boundary oracle strength",
+        );
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_validates_copy_to_unshared_profile() {
+        let mut case = valid_cross_language_oracle_graph_case();
+        case.name = "bun_array_buffer_copy_to_unshared_configured_bridge_advisory".to_string();
+        case.source = "#910-copy-to-unshared".to_string();
+        case.profile = "bun_array_buffer_copy_to_unshared".to_string();
+        case.rust_file = "src/jsc/array_buffer.rs".to_string();
+        case.rust_line = Some(341);
+        case.rust_owner = "copy_to_unshared".to_string();
+        case.rust_boundary =
+            "SharedArrayBuffer and resizable ArrayBuffer copy semantics".to_string();
+
+        let errors = super::cross_language_oracle_graph_case_errors(&case);
+        assert!(
+            errors.is_empty(),
+            "copy_to_unshared configured bridge profile should validate: {errors:?}"
+        );
+
+        let mut bridge_unknown = case.clone();
+        bridge_unknown.name =
+            "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation".to_string();
+        bridge_unknown.expected_state = "bridge_unknown".to_string();
+        bridge_unknown.gap_state = "static_limitation".to_string();
+        bridge_unknown.limitation_category =
+            "cross_language_oracle_visibility_unresolved".to_string();
+        bridge_unknown.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+        bridge_unknown.binding_edge_kind = "unresolved".to_string();
+        bridge_unknown.binding_edge_confidence = "unknown".to_string();
+        bridge_unknown.missing_graph_legs =
+            vec!["binding_or_ffi_edge:copy_to_unshared".to_string()];
+        bridge_unknown.unlock_condition = "Name the copy_to_unshared bridge".to_string();
+        bridge_unknown
+            .raw_evidence_refs
+            .retain(|raw_ref| raw_ref.leg != "binding_edge");
+        let errors = super::cross_language_oracle_graph_case_errors(&bridge_unknown);
+        assert!(
+            errors.is_empty(),
+            "copy_to_unshared bridge-unknown profile should still validate without a binding edge: {errors:?}"
+        );
+
+        let mut unproven_credit = case.clone();
+        unproven_credit.binding_edge_kind = "unresolved".to_string();
+        unproven_credit.binding_edge_confidence = "unknown".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&unproven_credit);
+        assert_contains_error(
+            &errors,
+            "bun_array_buffer_copy_to_unshared configured route requires configured or generated binding edge evidence",
+        );
+
+        let mut wrong_shape = case.clone();
+        wrong_shape.rust_file = "src/jsc/Blob.rs".to_string();
+        wrong_shape.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+        wrong_shape.rust_boundary = "array_buffer.shared || array_buffer.resizable".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_shape);
+        assert_contains_error(
+            &errors,
+            "rust_file must identify the Bun array_buffer Rust seam",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_owner must pin copy_to_unshared for the Bun array_buffer route",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_boundary must name SharedArrayBuffer and resizable ArrayBuffer copy semantics",
+        );
+
+        let mut unknown_profile = case;
+        unknown_profile.profile = "unknown_profile".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&unknown_profile);
+        assert_contains_error(
+            &errors,
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, or bun_ffi_negative_offset_panic_boundary",
+        );
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_validates_bun_ffi_negative_offset_profile() {
+        let mut case = valid_cross_language_oracle_graph_case();
+        case.name = "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+        case.source = "#950-ffi-negative-offset-public-reachable-panic-boundary".to_string();
+        case.profile = "bun_ffi_negative_offset_panic_boundary".to_string();
+        case.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+        case.rust_line = Some(277);
+        case.rust_owner = "FFIObject::read".to_string();
+        case.rust_boundary = "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+        case.binding_edge_kind = "ffi_binding".to_string();
+        case.binding_edge_confidence = "heuristic".to_string();
+        case.external_callsite_file = "unresolved:typescript-test-surface".to_string();
+        case.external_callsite_line = None;
+        case.external_entrypoints = vec!["read.u8(ptr, -1)".to_string()];
+        case.shared_array_buffer = false;
+        case.resizable_array_buffer = false;
+        case.view_backed_blob_input = false;
+        case.stable_byte_copy_oracle = false;
+        case.external_oracle_file = "unresolved:negative-offset-panic-oracle".to_string();
+        case.external_oracle_line = None;
+        case.external_oracle_kind = "negative_offset_panic_oracle_unresolved".to_string();
+        case.oracle_strength = "missing_boundary".to_string();
+        case.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        case.gap_state = "static_limitation".to_string();
+        case.limitation_category =
+            "cross_language_panic_boundary_visibility_unresolved".to_string();
+        case.repair_route = "analysis/cross-language-panic-boundary-visibility".to_string();
+        case.missing_discriminators = vec!["negative_offset".to_string()];
+        case.missing_graph_legs = vec![
+            "external_oracle:negative_offset_panic_boundary".to_string(),
+            "safe_external_observer_target".to_string(),
+        ];
+        case.unlock_condition =
+            "Trace and resolve the negative-offset panic oracle before actionability".to_string();
+        case.raw_evidence_refs = vec![
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "rust_seam".to_string(),
+                file: "src/bun.js/bindings/FFIObject.rs".to_string(),
+                line: Some(277),
+                kind: "rust_panic_boundary".to_string(),
+                source_id: "#950".to_string(),
+                sample: "FFIObject.rs negative-offset conversion panic boundary".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "boundary_discriminator".to_string(),
+                file: "issue:#950".to_string(),
+                line: Some(1),
+                kind: "negative_offset_discriminator_missing".to_string(),
+                source_id: "#950".to_string(),
+                sample: "read.u8(ptr, -1) is the boundary discriminator shape".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "binding_edge".to_string(),
+                file: "src/bun.js/bindings/FFIObject.rs".to_string(),
+                line: Some(277),
+                kind: "ffi_binding".to_string(),
+                source_id: "#950".to_string(),
+                sample: "Bun FFI read reaches the Rust owner through an FFI binding".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_callsite".to_string(),
+                file: "issue:#950".to_string(),
+                line: Some(1),
+                kind: "typescript_ffi_callsite".to_string(),
+                source_id: "#950".to_string(),
+                sample: "read.u8(ptr, -1) is the external callsite sample".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_oracle".to_string(),
+                file: "issue:#950".to_string(),
+                line: Some(1),
+                kind: "typescript_assertion_missing".to_string(),
+                source_id: "#950".to_string(),
+                sample: "no external assertion is proven for the panic boundary".to_string(),
+            },
+        ];
+
+        let errors = super::cross_language_oracle_graph_case_errors(&case);
+        assert!(
+            errors.is_empty(),
+            "Bun FFI negative-offset panic-boundary profile should validate: {errors:?}"
+        );
+
+        let mut wrong_shape = case.clone();
+        wrong_shape.rust_file = "src/jsc/Blob.rs".to_string();
+        wrong_shape.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+        wrong_shape.rust_boundary = "array_buffer.shared || array_buffer.resizable".to_string();
+        wrong_shape.binding_edge_kind = "configured_bridge".to_string();
+        wrong_shape.external_entrypoints = vec!["read.u32(ptr, 0)".to_string()];
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_shape);
+        assert_contains_error(
+            &errors,
+            "rust_file must identify the Bun FFIObject Rust seam",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_owner must pin FFIObject::read for the Bun FFI negative-offset route",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_boundary must include usize::try_from and expect(\"int cast\")",
+        );
+        assert_contains_error(
+            &errors,
+            "bun_ffi_negative_offset_panic_boundary requires FFI binding edge evidence",
+        );
+        assert_contains_error(
+            &errors,
+            "bun_ffi_negative_offset_panic_boundary must name read.u8 as an external entrypoint",
+        );
+
+        let mut wrong_state = case;
+        wrong_state.expected_state = "rust_ungripped_ts_discriminated".to_string();
+        wrong_state.gap_state = "already_observed".to_string();
+        wrong_state.limitation_category = "not_applicable".to_string();
+        wrong_state.repair_route = "manual-review/cross-language-advisory-witness".to_string();
+        wrong_state.missing_discriminators.clear();
+        wrong_state.missing_graph_legs.clear();
+        wrong_state.unlock_condition = "not_applicable".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_state);
+        assert_contains_error(
+            &errors,
+            "bun_ffi_negative_offset_panic_boundary profile currently only supports public_reachable_panic_boundary_unrevealed",
+        );
+    }
+
+    #[test]
+    fn typescript_bun_ub_calibration_rejects_malformed_corpus_files() -> Result<(), String> {
+        let root = temp_dir("typescript-bun-ub-calibration-malformed");
+        let missing_path = root.join("missing.json");
+        let mut violations = Vec::new();
+        super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+            &missing_path,
+            &mut violations,
+        )?;
+        assert_contains_error(
+            &violations,
+            "TypeScript Bun UB calibration corpus is missing",
+        );
+
+        for (name, body, reason) in [
+            (
+                "bad-schema",
+                r#"{"schema_version":"0.2","kind":"typescript_bun_ub_calibration_corpus","spec":"RIPR-SPEC-0027","cases":[]}"#,
+                "schema_version must be 0.1",
+            ),
+            (
+                "bad-kind",
+                r#"{"schema_version":"0.1","kind":"other","spec":"RIPR-SPEC-0027","cases":[]}"#,
+                "kind must be typescript_bun_ub_calibration_corpus",
+            ),
+            (
+                "bad-spec",
+                r#"{"schema_version":"0.1","kind":"typescript_bun_ub_calibration_corpus","spec":"RIPR-SPEC-9999","cases":[]}"#,
+                "spec must be RIPR-SPEC-0027",
+            ),
+            (
+                "missing-cases",
+                r#"{"schema_version":"0.1","kind":"typescript_bun_ub_calibration_corpus","spec":"RIPR-SPEC-0027"}"#,
+                "missing cases array",
+            ),
+        ] {
+            let path = root.join(format!("{name}.json"));
+            write(&path, body);
+            let cases = super::typescript_bun_ub_calibration_cases_at(&path);
+            assert_contains_error(std::slice::from_ref(&cases[0].reason), reason);
+
+            let mut violations = Vec::new();
+            super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+                &path,
+                &mut violations,
+            )?;
+            assert_contains_error(
+                &violations,
+                "TypeScript Bun UB calibration case corpus: language must be present",
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_bun_ub_calibration_rejects_duplicate_and_required_case_drift()
+    -> Result<(), String> {
+        let root = temp_dir("typescript-bun-ub-calibration-required-cases");
+        let mut duplicate = valid_typescript_bun_ub_calibration_case();
+        duplicate.name = "duplicated".to_string();
+        let duplicate_case = typescript_bun_ub_calibration_case_json(&duplicate);
+        let duplicate_path = root.join("duplicate.json");
+        write(
+            &duplicate_path,
+            &typescript_bun_ub_calibration_corpus_json(&[duplicate_case.clone(), duplicate_case]),
+        );
+
+        let mut violations = Vec::new();
+        super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+            &duplicate_path,
+            &mut violations,
+        )?;
+        assert_contains_error(&violations, "case duplicated is duplicated");
+        assert_contains_error(
+            &violations,
+            "TypeScript Bun UB calibration corpus is missing case bun_blob_shared_and_resizable_present",
+        );
+        assert_contains_error(
+            &violations,
+            "TypeScript Bun UB calibration corpus must include verdict ts_missing_resizable",
+        );
+
+        let wrong_required_path = root.join("wrong-required.json");
+        let mut wrong_required = valid_typescript_bun_ub_calibration_case();
+        wrong_required.name = "bun_blob_shared_and_resizable_present".to_string();
+        wrong_required.expected_verdict = "ts_missing_resizable".to_string();
+        wrong_required.resizable_array_buffer = false;
+        wrong_required
+            .expected_missing_discriminators
+            .push("resizable_array_buffer".to_string());
+        wrong_required.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+        write(
+            &wrong_required_path,
+            &typescript_bun_ub_calibration_corpus_json(&[typescript_bun_ub_calibration_case_json(
+                &wrong_required,
+            )]),
+        );
+
+        let mut violations = Vec::new();
+        super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+            &wrong_required_path,
+            &mut violations,
+        )?;
+        assert_contains_error(
+            &violations,
+            "case bun_blob_shared_and_resizable_present must have expected_verdict ts_discriminated, got ts_missing_resizable",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_bun_ub_calibration_rejects_invalid_case_fields() {
+        let mut case = valid_typescript_bun_ub_calibration_case();
+        case.name = " ".to_string();
+        case.language = "javascript".to_string();
+        case.language_status = "stable".to_string();
+        case.authority_boundary = "gate_ready".to_string();
+        case.repair_packet_ready = true;
+        case.expected_verdict = "not_a_verdict".to_string();
+        case.bridge_confidence = "guessed".to_string();
+        case.rust_file = "src/lib.rs".to_string();
+        case.rust_owner = "Blob::from_js".to_string();
+        case.rust_boundary = "array_buffer.shared".to_string();
+        case.ts_test_file = "test/js/web/fetch/blob.test.js".to_string();
+        case.suggested_test_file = "src/jsc/Blob.rs".to_string();
+        case.reason.clear();
+        case.non_claims.clear();
+
+        let errors = super::typescript_bun_ub_calibration_case_errors(&case);
+        for expected in [
+            "case id must be present",
+            "reason must be present",
+            "language must be typescript",
+            "language_status must be preview",
+            "authority_boundary must be preview_advisory_only",
+            "repair_packet_ready must remain false",
+            "expected_verdict must be a Bun UB calibration verdict",
+            "bridge_confidence must be configured_hint, heuristic, or unknown",
+            "rust_file must identify the Bun Blob Rust seam",
+            "rust_owner must pin Blob::from_js_without_defer_gc",
+            "rust_boundary must include array_buffer.shared and array_buffer.resizable",
+            "ts_test_file must be a Bun test/js TypeScript test path",
+            "suggested_test_file must be not_applicable or a Bun test/js path",
+            "non_claims must keep preview boundary denials visible",
+            "non_claims must deny provider",
+        ] {
+            assert_contains_error(&errors, expected);
+        }
+    }
+
+    #[test]
+    fn typescript_bun_ub_calibration_rejects_invalid_verdict_shapes() {
+        let mut discriminated = valid_typescript_bun_ub_calibration_case();
+        discriminated.shared_array_buffer = false;
+        discriminated
+            .expected_missing_discriminators
+            .push("shared_array_buffer".to_string());
+        discriminated.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&discriminated);
+        assert_contains_error(
+            &errors,
+            "ts_discriminated requires shared, resizable, Blob input, and stable-byte oracle facts",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_discriminated must not name missing discriminators",
+        );
+        assert_contains_error(&errors, "ts_discriminated must not suggest a new test file");
+
+        let mut missing_resizable = valid_typescript_bun_ub_calibration_case();
+        missing_resizable.expected_verdict = "ts_missing_resizable".to_string();
+        missing_resizable.shared_array_buffer = false;
+        missing_resizable.resizable_array_buffer = true;
+        missing_resizable.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&missing_resizable);
+        assert_contains_error(
+            &errors,
+            "ts_missing_resizable requires shared present and resizable absent",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_resizable must include missing discriminator resizable_array_buffer",
+        );
+
+        let mut missing_shared = valid_typescript_bun_ub_calibration_case();
+        missing_shared.expected_verdict = "ts_missing_shared".to_string();
+        missing_shared.shared_array_buffer = true;
+        missing_shared.resizable_array_buffer = false;
+        missing_shared.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&missing_shared);
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared requires shared absent and resizable present",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared must include missing discriminator shared_array_buffer",
+        );
+
+        let mut missing_both = valid_typescript_bun_ub_calibration_case();
+        missing_both.expected_verdict = "ts_missing_shared_and_resizable".to_string();
+        missing_both.shared_array_buffer = true;
+        missing_both.resizable_array_buffer = true;
+        missing_both.suggested_test_file = "not_applicable".to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&missing_both);
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared_and_resizable requires both boundary facts absent",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared_and_resizable must include missing discriminator shared_array_buffer",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared_and_resizable must include missing discriminator resizable_array_buffer",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared_and_resizable must keep suggested_test_file=test/js/web/fetch/blob.test.ts",
+        );
+
+        let mut missing_external_oracle = valid_typescript_bun_ub_calibration_case();
+        missing_external_oracle.expected_verdict = "ts_missing_external_oracle".to_string();
+        missing_external_oracle.expected_missing_discriminators =
+            vec!["resizable_array_buffer".to_string()];
+        missing_external_oracle.view_backed_blob_input = true;
+        missing_external_oracle.stable_byte_copy_oracle = true;
+        missing_external_oracle.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&missing_external_oracle);
+        assert_contains_error(
+            &errors,
+            "ts_missing_external_oracle requires a missing Blob input or stable-byte oracle",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_external_oracle must not name boundary discriminators",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_external_oracle must keep suggested_test_file=not_applicable",
+        );
+
+        let mut mention_only = valid_typescript_bun_ub_calibration_case();
+        mention_only.expected_verdict = "ts_mention_not_observer".to_string();
+        mention_only.max_byte_length_mention_only = false;
+        mention_only.view_backed_blob_input = true;
+        mention_only.stable_byte_copy_oracle = true;
+        mention_only.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&mention_only);
+        assert_contains_error(
+            &errors,
+            "ts_mention_not_observer must record max_byte_length_mention_only=true",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_mention_not_observer must not count Blob input or stable-byte oracle facts",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_mention_not_observer must keep suggested_test_file=not_applicable",
+        );
+
+        let mut bridge_unknown = valid_typescript_bun_ub_calibration_case();
+        bridge_unknown.expected_verdict = "bridge_unknown".to_string();
+        bridge_unknown.bridge_confidence = "configured_hint".to_string();
+        bridge_unknown.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        let errors = super::typescript_bun_ub_calibration_case_errors(&bridge_unknown);
+        assert_contains_error(&errors, "bridge_unknown requires bridge_confidence=unknown");
+        assert_contains_error(
+            &errors,
+            "bridge_unknown must keep suggested_test_file=not_applicable",
+        );
+    }
+
+    fn valid_typescript_bun_ub_calibration_case() -> super::TypeScriptBunUbCalibrationCase {
+        super::TypeScriptBunUbCalibrationCase {
+            name: "valid".to_string(),
+            source: "#31648-valid".to_string(),
+            language: "typescript".to_string(),
+            language_status: "preview".to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            ts_test_file: "test/js/web/fetch/blob.test.ts".to_string(),
+            ts_entrypoints: vec!["new Blob".to_string(), "blob.arrayBuffer".to_string()],
+            shared_array_buffer: true,
+            resizable_array_buffer: true,
+            view_backed_blob_input: true,
+            stable_byte_copy_oracle: true,
+            max_byte_length_mention_only: false,
+            expected_verdict: "ts_discriminated".to_string(),
+            expected_missing_discriminators: Vec::new(),
+            bridge_confidence: "configured_hint".to_string(),
+            expected_action: "no_missing_bridge_discriminator".to_string(),
+            suggested_test_file: "not_applicable".to_string(),
+            suggested_shape: None,
+            repair_packet_ready: false,
+            authority_boundary: "preview_advisory_only".to_string(),
+            non_claims: vec![
+                "provider evidence not asserted".to_string(),
+                "source edits not suggested".to_string(),
+                "generated tests not emitted".to_string(),
+                "runtime Bun execution not required".to_string(),
+                "mutation execution not run".to_string(),
+                "default gates unchanged".to_string(),
+                "public badge unchanged".to_string(),
+                "baseline unchanged".to_string(),
+                "RIPR Zero unchanged".to_string(),
+                "support-tier promotion unchanged".to_string(),
+            ],
+            reason: "valid calibration case".to_string(),
+        }
+    }
+
+    fn valid_cross_language_oracle_graph_case() -> super::CrossLanguageOracleGraphCase {
+        super::CrossLanguageOracleGraphCase {
+            name: "valid".to_string(),
+            source: "#910-valid".to_string(),
+            profile: "bun_blob_array_buffer".to_string(),
+            language: "typescript".to_string(),
+            language_status: "preview".to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_line: Some(3420),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            binding_edge_kind: "configured_bridge".to_string(),
+            binding_edge_confidence: "configured_hint".to_string(),
+            external_callsite_file: "test/js/web/fetch/blob.test.ts".to_string(),
+            external_callsite_line: Some(1280),
+            external_entrypoints: vec!["new Blob".to_string(), "blob.arrayBuffer".to_string()],
+            shared_array_buffer: true,
+            resizable_array_buffer: true,
+            view_backed_blob_input: true,
+            stable_byte_copy_oracle: true,
+            max_byte_length_mention_only: false,
+            external_oracle_file: "test/js/web/fetch/blob.test.ts".to_string(),
+            external_oracle_line: Some(1286),
+            external_oracle_kind: "stable_byte_copy".to_string(),
+            oracle_strength: "strong".to_string(),
+            expected_state: "rust_ungripped_ts_discriminated".to_string(),
+            gap_state: "already_observed".to_string(),
+            limitation_category: "not_applicable".to_string(),
+            repair_route: "manual-review/cross-language-advisory-witness".to_string(),
+            authority_boundary: "preview_advisory_only".to_string(),
+            public_projection_eligible: false,
+            repair_packet_ready: false,
+            suggested_test_file: "not_applicable".to_string(),
+            allowed_edit_surface: Vec::new(),
+            verify_command: None,
+            receipt_command: None,
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            unlock_condition: "not_applicable".to_string(),
+            raw_evidence_refs: valid_cross_language_oracle_graph_raw_refs(true),
+            non_claims: vec![
+                "no provider calls".to_string(),
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Bun execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+                "no public repair packet".to_string(),
+                "no TypeScript Rust parity claim".to_string(),
+                "no full cross-language proof".to_string(),
+                "no verify command".to_string(),
+                "no receipt command".to_string(),
+                "no allowed edit surface".to_string(),
+            ],
+            reason: "valid cross-language oracle graph case".to_string(),
+        }
+    }
+
+    fn valid_cross_language_oracle_graph_raw_refs(
+        include_binding: bool,
+    ) -> Vec<super::CrossLanguageOracleGraphRawRef> {
+        let mut raw_refs = vec![
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "rust_seam".to_string(),
+                file: "src/jsc/Blob.rs".to_string(),
+                line: Some(3420),
+                kind: "rust_owner".to_string(),
+                source_id: "#910".to_string(),
+                sample: "Blob::from_js_without_defer_gc checks the ArrayBuffer boundary"
+                    .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "boundary_discriminator".to_string(),
+                file: "test/js/web/fetch/blob.test.ts".to_string(),
+                line: Some(1282),
+                kind: "typescript_discriminator".to_string(),
+                source_id: "#910".to_string(),
+                sample: "SharedArrayBuffer and resizable ArrayBuffer samples are visible"
+                    .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_callsite".to_string(),
+                file: "test/js/web/fetch/blob.test.ts".to_string(),
+                line: Some(1280),
+                kind: "typescript_callsite".to_string(),
+                source_id: "#910".to_string(),
+                sample: "new Blob and blob.arrayBuffer are visible".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_oracle".to_string(),
+                file: "test/js/web/fetch/blob.test.ts".to_string(),
+                line: Some(1286),
+                kind: "typescript_assertion".to_string(),
+                source_id: "#910".to_string(),
+                sample: "stable copied bytes are asserted".to_string(),
+            },
+        ];
+        if include_binding {
+            raw_refs.push(super::CrossLanguageOracleGraphRawRef {
+                leg: "binding_edge".to_string(),
+                file: "src/jsc/Blob.rs".to_string(),
+                line: Some(3420),
+                kind: "configured_bridge".to_string(),
+                source_id: "profiles.bun_ub".to_string(),
+                sample: "configured bridge maps Blob tests to the Rust owner".to_string(),
+            });
+        }
+        raw_refs
+    }
+
+    fn assert_contains_error(errors: &[String], expected: &str) {
+        assert!(
+            errors.iter().any(|error| error.contains(expected)),
+            "expected error containing {expected:?}; got {errors:?}"
+        );
+    }
+
+    fn typescript_bun_ub_calibration_corpus_json(cases: &[String]) -> String {
+        format!(
+            r#"{{
+  "schema_version": "0.1",
+  "kind": "typescript_bun_ub_calibration_corpus",
+  "spec": "RIPR-SPEC-0027",
+  "authority_boundary": "preview_advisory_only",
+  "cases": [{}]
+}}"#,
+            cases.join(",")
+        )
+    }
+
+    fn typescript_bun_ub_calibration_case_json(
+        case: &super::TypeScriptBunUbCalibrationCase,
+    ) -> String {
+        let missing_json = case
+            .expected_missing_discriminators
+            .iter()
+            .map(|discriminator| format!(r#""{discriminator}""#))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let non_claims_json = case
+            .non_claims
+            .iter()
+            .map(|non_claim| format!(r#""{non_claim}""#))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            r#"{{
+  "id": "{id}",
+  "language": "{language}",
+  "language_status": "{language_status}",
+  "rust_seam": {{
+    "file": "{rust_file}",
+    "line": 3420,
+    "owner": "{rust_owner}",
+    "boundary": "{rust_boundary}"
+  }},
+  "ts_test_file": "{ts_test_file}",
+  "observed_ts_facts": {{
+    "shared_array_buffer": {shared},
+    "resizable_array_buffer": {resizable},
+    "view_backed_blob_input": {view_backed_blob_input},
+    "stable_byte_copy_oracle": {stable_byte_copy_oracle},
+    "max_byte_length_mention_only": {max_byte_length_mention_only}
+  }},
+  "expected_verdict": "{expected_verdict}",
+  "expected_missing_discriminators": [{missing_json}],
+  "bridge_confidence": "{bridge_confidence}",
+  "suggested_test_file": "{suggested_test_file}",
+  "repair_packet_ready": {repair_packet_ready},
+  "authority_boundary": "{authority_boundary}",
+  "non_claims": [{non_claims_json}],
+  "reason": "{reason}"
+}}"#,
+            id = case.name,
+            language = case.language,
+            language_status = case.language_status,
+            rust_file = case.rust_file,
+            rust_owner = case.rust_owner,
+            rust_boundary = case.rust_boundary,
+            ts_test_file = case.ts_test_file,
+            shared = case.shared_array_buffer,
+            resizable = case.resizable_array_buffer,
+            view_backed_blob_input = case.view_backed_blob_input,
+            stable_byte_copy_oracle = case.stable_byte_copy_oracle,
+            max_byte_length_mention_only = case.max_byte_length_mention_only,
+            expected_verdict = case.expected_verdict,
+            bridge_confidence = case.bridge_confidence,
+            suggested_test_file = case.suggested_test_file,
+            repair_packet_ready = case.repair_packet_ready,
+            authority_boundary = case.authority_boundary,
+            reason = case.reason
+        )
+    }
+
+    fn cross_language_oracle_graph_corpus_json(cases: &[String]) -> String {
+        format!(
+            r#"{{
+  "schema_version": "0.1",
+  "kind": "cross_language_oracle_graph_corpus",
+  "spec": "RIPR-SPEC-0062",
+  "authority_boundary": "preview_advisory_only",
+  "cases": [{}]
+}}"#,
+            cases.join(",")
+        )
+    }
+
+    fn cross_language_oracle_graph_case_json(case: &super::CrossLanguageOracleGraphCase) -> String {
+        let entrypoints_json = test_json_string_array(&case.external_entrypoints);
+        let allowed_edit_surface_json = test_json_string_array(&case.allowed_edit_surface);
+        let missing_discriminators_json = test_json_string_array(&case.missing_discriminators);
+        let missing_graph_legs_json = test_json_string_array(&case.missing_graph_legs);
+        let raw_refs_json = cross_language_oracle_graph_raw_refs_json(&case.raw_evidence_refs);
+        let non_claims_json = test_json_string_array(&case.non_claims);
+        let verify_command_json = case
+            .verify_command
+            .as_ref()
+            .map(|command| {
+                format!(
+                    r#",
+        "verify_command": "{command}""#
+                )
+            })
+            .unwrap_or_default();
+        let receipt_command_json = case
+            .receipt_command
+            .as_ref()
+            .map(|command| {
+                format!(
+                    r#",
+        "receipt_command": "{command}""#
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            r#"{{
+  "id": "{id}",
+  "source": "{source}",
+  "profile": "{profile}",
+  "language": "{language}",
+  "language_status": "{language_status}",
+  "rust_seam": {{
+    "file": "{rust_file}",
+    "line": {rust_line},
+    "owner": "{rust_owner}",
+    "boundary": "{rust_boundary}"
+  }},
+  "binding_edge": {{
+    "kind": "{binding_edge_kind}",
+    "confidence": "{binding_edge_confidence}"
+  }},
+  "external_callsite": {{
+    "file": "{external_callsite_file}",
+    "line": {external_callsite_line},
+    "entrypoints": [{entrypoints_json}]
+  }},
+  "observed_ts_facts": {{
+    "shared_array_buffer": {shared_array_buffer},
+    "resizable_array_buffer": {resizable_array_buffer},
+    "view_backed_blob_input": {view_backed_blob_input},
+    "stable_byte_copy_oracle": {stable_byte_copy_oracle},
+    "max_byte_length_mention_only": {max_byte_length_mention_only}
+  }},
+  "external_oracle": {{
+    "file": "{external_oracle_file}",
+    "line": {external_oracle_line},
+    "kind": "{external_oracle_kind}",
+    "strength": "{oracle_strength}"
+  }},
+  "expected": {{
+    "state": "{expected_state}",
+    "gap_state": "{gap_state}",
+    "limitation_category": "{limitation_category}",
+    "repair_route": "{repair_route}",
+    "authority_boundary": "{authority_boundary}",
+    "public_projection_eligible": {public_projection_eligible},
+    "repair_packet_ready": {repair_packet_ready},
+    "suggested_test_file": "{suggested_test_file}",
+    "allowed_edit_surface": [{allowed_edit_surface_json}]{verify_command_json}{receipt_command_json},
+    "missing_discriminators": [{missing_discriminators_json}],
+    "missing_graph_legs": [{missing_graph_legs_json}],
+    "unlock_condition": "{unlock_condition}"
+  }},
+  "raw_evidence_refs": [{raw_refs_json}],
+  "non_claims": [{non_claims_json}],
+  "reason": "{reason}"
+}}"#,
+            id = case.name,
+            source = case.source,
+            profile = case.profile,
+            language = case.language,
+            language_status = case.language_status,
+            rust_file = case.rust_file,
+            rust_line = case.rust_line.unwrap_or(0),
+            rust_owner = case.rust_owner,
+            rust_boundary = case.rust_boundary,
+            binding_edge_kind = case.binding_edge_kind,
+            binding_edge_confidence = case.binding_edge_confidence,
+            external_callsite_file = case.external_callsite_file,
+            external_callsite_line = case.external_callsite_line.unwrap_or(0),
+            shared_array_buffer = case.shared_array_buffer,
+            resizable_array_buffer = case.resizable_array_buffer,
+            view_backed_blob_input = case.view_backed_blob_input,
+            stable_byte_copy_oracle = case.stable_byte_copy_oracle,
+            max_byte_length_mention_only = case.max_byte_length_mention_only,
+            external_oracle_file = case.external_oracle_file,
+            external_oracle_line = case.external_oracle_line.unwrap_or(0),
+            external_oracle_kind = case.external_oracle_kind,
+            oracle_strength = case.oracle_strength,
+            expected_state = case.expected_state,
+            gap_state = case.gap_state,
+            limitation_category = case.limitation_category,
+            repair_route = case.repair_route,
+            authority_boundary = case.authority_boundary,
+            public_projection_eligible = case.public_projection_eligible,
+            repair_packet_ready = case.repair_packet_ready,
+            suggested_test_file = case.suggested_test_file,
+            unlock_condition = case.unlock_condition,
+            reason = case.reason
+        )
+    }
+
+    fn cross_language_oracle_graph_raw_refs_json(
+        raw_refs: &[super::CrossLanguageOracleGraphRawRef],
+    ) -> String {
+        raw_refs
+            .iter()
+            .map(|raw_ref| {
+                format!(
+                    r#"{{
+      "leg": "{leg}",
+      "file": "{file}",
+      "line": {line},
+      "kind": "{kind}",
+      "source_id": "{source_id}",
+      "sample": "{sample}"
+    }}"#,
+                    leg = raw_ref.leg,
+                    file = raw_ref.file,
+                    line = raw_ref.line.unwrap_or(0),
+                    kind = raw_ref.kind,
+                    source_id = raw_ref.source_id,
+                    sample = raw_ref.sample
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn test_json_string_array(values: &[String]) -> String {
+        values
+            .iter()
+            .map(|value| format!(r#""{value}""#))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    #[test]
     fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), String> {
         with_repo_cwd(|| {
             let scenarios = dogfood_typescript_preview_repair_loop_scenarios();
@@ -75558,6 +81284,205 @@ fn exact_owner_call_has_external_expected_value() {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn dogfood_bun_ub_cross_language_receipts_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let scenarios = dogfood_bun_ub_cross_language_scenarios();
+            for required in BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES {
+                assert!(
+                    scenarios.iter().any(|scenario| {
+                        scenario.name == required.0 && scenario.observed_state == required.1
+                    }),
+                    "{} Bun UB cross-language dogfood receipt should be checked as {}",
+                    required.0,
+                    required.1
+                );
+            }
+            assert!(
+                scenarios
+                    .iter()
+                    .all(|scenario| !scenario.repair_packet_ready),
+                "Bun UB cross-language dogfood receipts must not claim repair packets"
+            );
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.observed_state == "rust_ungripped_ts_missing_discriminator"
+                        && scenario
+                            .missing_discriminators
+                            .contains(&"resizable_array_buffer".to_string())
+                        && scenario.suggested_test_file == super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+                }),
+                "Bun UB dogfood should suggest blob.test.ts for stripped resizable"
+            );
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.observed_state == "ts_mention_not_observer"
+                        && scenario.operator_action == "reject_token_mention"
+                        && scenario.suggested_test_file == "not_applicable"
+                }),
+                "Bun UB dogfood should reject mention-only token evidence"
+            );
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.observed_state == "public_reachable_panic_boundary_unrevealed"
+                        && scenario
+                            .missing_discriminators
+                            .contains(&"negative_offset".to_string())
+                        && scenario.missing_graph_legs.iter().any(|missing| {
+                            missing == "external_oracle:negative_offset_panic_boundary"
+                        })
+                        && scenario
+                            .missing_graph_legs
+                            .iter()
+                            .any(|missing| missing == "safe_external_observer_target")
+                        && scenario.suggested_test_file == "not_applicable"
+                        && scenario.operator_action == "keep_panic_boundary_limitation"
+                }),
+                "Bun UB dogfood should keep the FFI panic boundary as a limitation"
+            );
+
+            for scenario in scenarios {
+                let run = dogfood_bun_ub_cross_language_run(&scenario);
+                assert!(
+                    run.errors.is_empty(),
+                    "{} Bun UB cross-language dogfood receipt should validate: {:?}",
+                    run.name,
+                    run.errors
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    fn valid_bun_ub_cross_language_dogfood_scenario() -> DogfoodBunUbCrossLanguageScenario {
+        DogfoodBunUbCrossLanguageScenario {
+            name: "bun_blob_31648_known_good".to_string(),
+            source_case: "bun_blob_shared_and_resizable_present".to_string(),
+            route_quality_case: "bun_blob_complete_ts_discriminated_advisory".to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            ts_test_file: super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string(),
+            expected_state: "rust_ungripped_ts_discriminated".to_string(),
+            observed_state: "rust_ungripped_ts_discriminated".to_string(),
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            suggested_test_file: "not_applicable".to_string(),
+            manual_verdict: "agrees".to_string(),
+            operator_action: "no_missing_bridge_discriminator".to_string(),
+            review_before:
+                "Rust-only review would manually grep test/js for SharedArrayBuffer and maxByteLength"
+                    .to_string(),
+            review_after:
+                "TypeScript/Bun preview credits the configured Blob stable-byte witness"
+                    .to_string(),
+            bridge_verdict: "configured_binding_edge_credited".to_string(),
+            placement_verdict: "not_needed".to_string(),
+            proof_mode: "advisory_cross_language_preview".to_string(),
+            receipt_state: "closed".to_string(),
+            repair_packet_ready: false,
+            authority_boundary: "preview_advisory_only".to_string(),
+            raw_evidence_refs: vec![
+                "fixtures/typescript-bun-ub-calibration/corpus.json#bun_blob_shared_and_resizable_present".to_string(),
+                "fixtures/cross-language-oracle-graph-corpus/corpus.json#bun_blob_complete_ts_discriminated_advisory".to_string(),
+            ],
+            non_claims: vec![
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Bun execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+                "no public repair packet".to_string(),
+                "no full cross-language proof".to_string(),
+            ],
+            reason: "sample Bun UB cross-language dogfood receipt".to_string(),
+        }
+    }
+
+    #[test]
+    fn dogfood_bun_ub_cross_language_rejects_overclaiming() {
+        let mut scenario = valid_bun_ub_cross_language_dogfood_scenario();
+        scenario.expected_state = "rust_ungripped_ts_missing_discriminator".to_string();
+        scenario.authority_boundary = "gate_eligible".to_string();
+        scenario.repair_packet_ready = true;
+        scenario.non_claims.clear();
+
+        let report = dogfood_bun_ub_cross_language_run(&scenario)
+            .errors
+            .join("\n");
+        assert!(report.contains("expected_state and observed_state must match"));
+        assert!(report.contains("authority_boundary must be preview_advisory_only"));
+        assert!(report.contains("repair_packet_ready must remain false"));
+        assert!(report.contains("non_claims must keep preview boundary denials visible"));
+
+        let mut missing = valid_bun_ub_cross_language_dogfood_scenario();
+        missing.observed_state = "rust_ungripped_ts_missing_discriminator".to_string();
+        missing.expected_state = "rust_ungripped_ts_missing_discriminator".to_string();
+        missing.operator_action = "suggest_shared_case".to_string();
+        missing.placement_verdict = "not_applicable".to_string();
+        let missing_report = dogfood_bun_ub_cross_language_run(&missing)
+            .errors
+            .join("\n");
+        assert!(missing_report.contains("must name resizable_array_buffer"));
+        assert!(
+            missing_report.contains("must suggest the configured Bun Blob TypeScript test file")
+        );
+        assert!(missing_report.contains("action must name the missing resizable case"));
+
+        let mut mention = valid_bun_ub_cross_language_dogfood_scenario();
+        mention.observed_state = "ts_mention_not_observer".to_string();
+        mention.expected_state = "ts_mention_not_observer".to_string();
+        mention.operator_action = "suggest_typescript_blob_case".to_string();
+        mention.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        mention.missing_discriminators = vec!["resizable_array_buffer".to_string()];
+        mention.bridge_verdict = "configured_binding_edge_credited".to_string();
+        let mention_report = dogfood_bun_ub_cross_language_run(&mention)
+            .errors
+            .join("\n");
+        assert!(mention_report.contains("must not turn token text into a missing discriminator"));
+        assert!(mention_report.contains("must not suggest placement"));
+        assert!(mention_report.contains("must reject the token mention"));
+        assert!(mention_report.contains("cannot credit a token mention"));
+
+        let mut panic_boundary = valid_bun_ub_cross_language_dogfood_scenario();
+        panic_boundary.name = "bun_ffi_negative_offset_panic_boundary".to_string();
+        panic_boundary.source_case =
+            "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+        panic_boundary.route_quality_case =
+            "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+        panic_boundary.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+        panic_boundary.rust_owner = "FFIObject::read".to_string();
+        panic_boundary.rust_boundary =
+            "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+        panic_boundary.ts_test_file = super::BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE.to_string();
+        panic_boundary.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        panic_boundary.observed_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        panic_boundary.missing_discriminators.clear();
+        panic_boundary.missing_graph_legs.clear();
+        panic_boundary.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        panic_boundary.operator_action = "suggest_ffi_test".to_string();
+        panic_boundary.placement_verdict =
+            "suggested_test_file:test/js/bun/ffi/ffi.test.ts".to_string();
+        panic_boundary.bridge_verdict = "unknown".to_string();
+        panic_boundary.proof_mode = "repair_packet_preview".to_string();
+        let panic_boundary_report = dogfood_bun_ub_cross_language_run(&panic_boundary)
+            .errors
+            .join("\n");
+        assert!(panic_boundary_report.contains("must name negative_offset as missing"));
+        assert!(panic_boundary_report.contains("negative-offset oracle unresolved"));
+        assert!(panic_boundary_report.contains("safe external observer target unresolved"));
+        assert!(panic_boundary_report.contains("must not suggest placement"));
+        assert!(panic_boundary_report.contains("must keep the named limitation"));
+        assert!(panic_boundary_report.contains("placement must remain not_applicable"));
+        assert!(panic_boundary_report.contains("must document the FFI bridge"));
+        assert!(panic_boundary_report.contains("proof mode must stay a limitation receipt"));
     }
 
     #[test]
@@ -85899,6 +91824,17 @@ jobs:
             XtaskCommand::VscodeCompile
         );
         assert_eq!(
+            XtaskCommand::parse([
+                "bun-ub-calibration".to_string(),
+                "--out".to_string(),
+                "target/ripr/reports/bun-ub-calibration.json".to_string(),
+            ]),
+            XtaskCommand::BunUbCalibration(vec![
+                "--out".to_string(),
+                "target/ripr/reports/bun-ub-calibration.json".to_string(),
+            ])
+        );
+        assert_eq!(
             XtaskCommand::parse(["vscode-package".to_string()]),
             XtaskCommand::VscodePackage
         );
@@ -85954,6 +91890,7 @@ jobs:
                 XtaskCommand::ReleaseReadiness(vec!["--version".to_string(), "0.5.0".to_string()]),
                 XtaskCommand::TargetedTestOutcome(Vec::new()),
                 XtaskCommand::MutationCalibration(Vec::new()),
+                XtaskCommand::BunUbCalibration(Vec::new()),
                 XtaskCommand::SarifPolicy(Vec::new()),
                 XtaskCommand::Dogfood,
                 XtaskCommand::Critic,
@@ -86518,6 +92455,10 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(commands.contains(&"release-readiness --version <version>"));
         assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
         assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
+        assert!(
+            commands
+                .contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
+        );
         assert!(commands.contains(&"sarif-policy --current <path> [--baseline <path>]"));
         assert!(commands.contains(&"badges [--check] [--gap-ledger <path>]"));
         assert!(commands.contains(&"pr-triage-report"));
@@ -86956,14 +92897,32 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(limitation.phase, "repo_exposure_cache_store");
         assert_eq!(limitation.input, "classified_seams_38927_limit_20000");
+        assert_eq!(limitation.observed_seams, Some(38_927));
+        assert_eq!(limitation.cache_limit, Some(20_000));
         assert!(
             limitation
                 .repair_route
-                .contains("bounded full-cache serialization"),
-            "repair route should point at analyzer/cache work, got {}",
+                .contains("RIPR_REPO_SEAM_CACHE_LIMIT=38927"),
+            "repair route should name the configurable cache limit, got {}",
             limitation.repair_route
         );
         Ok(())
+    }
+
+    #[test]
+    fn lane1_cache_store_skip_status_parser_rejects_malformed_statuses() {
+        for status in [
+            "ignored_skipped_large_entry_seams_38927",
+            "ignored_skipped_large_entry_seams_38927_limit_",
+            "ignored_skipped_large_entry_seams_not-a-number_limit_20000",
+            "skipped_large_entry_seams_38927_limit_20000",
+        ] {
+            assert_eq!(
+                super::lane1_parse_cache_store_skip_status(status),
+                None,
+                "malformed cache-store skip status should not parse: {status}"
+            );
+        }
     }
 
     #[test]
@@ -87116,6 +93075,19 @@ covered_by = ["cargo xtask check-file-policy"]
         assert_eq!(
             value["run_limitations"][0]["input"],
             "classified_seams_38927_limit_20000"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["observed_seams"],
+            serde_json::Value::from(38_927)
+        );
+        assert_eq!(
+            value["run_limitations"][0]["cache_limit"],
+            serde_json::Value::from(20_000)
+        );
+        assert!(
+            value["run_limitations"][0]["repair_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("RIPR_REPO_SEAM_CACHE_LIMIT=38927"))
         );
         assert_eq!(
             value["inputs"]["repo_exposure_generation"]["status"],
@@ -90254,6 +96226,114 @@ covered_by = ["cargo xtask check-file-policy"]
     }
 
     #[test]
+    fn lane1_actionable_gap_packets_fail_closed_for_cross_language_target_unresolved()
+    -> Result<(), String> {
+        let root = temp_dir("lane1-cross-language-target-unresolved");
+        write(&root.join("test/js/web/fetch/blob.test.ts"), "");
+        let root = root.to_string_lossy().to_string();
+        let report = lane1_evidence_audit_from_repo_exposure(
+            &root,
+            r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-cross-language-target-unresolved",
+                  "headline_eligible": true,
+                  "file": "src/jsc/Blob.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-cross-language-target-unresolved",
+                    "canonical_gap_id": "gap:packet-cross-language-target-unresolved",
+                    "location": {"file": "src/jsc/Blob.rs", "line": 88},
+                    "raw_findings": [
+                      {"file": "src/jsc/Blob.rs", "line": 88, "kind": "weakly_exposed", "expression": "array_buffer.shared || array_buffer.resizable"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-cross-language-target-unresolved",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "add_focused_test",
+                      "raw_findings": [
+                        {"file": "src/jsc/Blob.rs", "line": 88, "kind": "weakly_exposed", "expression": "array_buffer.shared || array_buffer.resizable"}
+                      ],
+                      "why": "binding seam has unresolved cross-language test target placement",
+                      "recommended_repair": "Route target inference before suggesting a test file.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(blob_behavior(), expected)"
+                      },
+                      "related_test_or_observer": {
+                        "file": "test/js/web/fetch/blob.test.ts",
+                        "name": "blob copies shared buffers",
+                        "line": 41
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []},
+                      "static_limitations": [
+                        {
+                          "stage": "cross_language_test_target",
+                          "state": "unknown",
+                          "category": "cross_language_target_unresolved",
+                          "repair_route": "analysis/cross-language-test-target-inference",
+                          "reason": "external test target visibility is unresolved"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }"#,
+        )?;
+
+        let packet_json = lane1_actionable_gap_packets_json(&report)?;
+        let packet_value: serde_json::Value =
+            serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+
+        assert_eq!(
+            packet_value["packets"][0]["related_test_or_observer"]["file"],
+            "test/js/web/fetch/blob.test.ts"
+        );
+        assert_eq!(
+            packet_value["packets"][0]["allowed_edit_surface"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            packet_value["packets"][0]["public_projection_eligible"],
+            serde_json::Value::Bool(false)
+        );
+        assert!(
+            packet_value["packets"][0]["projection_exclusion_reasons"]
+                .as_array()
+                .is_some_and(|reasons| reasons
+                    .iter()
+                    .any(|reason| reason == "cross_language_target_unresolved")),
+            "expected cross_language_target_unresolved in {}",
+            packet_value["packets"][0]["projection_exclusion_reasons"]
+        );
+
+        let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+            10,
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            &packet_value,
+        );
+        let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].swarm_state, "blocked_by_static_limitation");
+        assert_eq!(blocked[0].allowed_edit_surface, Vec::<String>::new());
+        assert!(
+            blocked[0]
+                .projection_exclusion_reasons
+                .iter()
+                .any(|reason| reason == "cross_language_target_unresolved")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn lane1_actionable_gap_packets_exclude_missing_canonical_gap_id() -> Result<(), String> {
         let root = temp_dir("lane1-missing-canonical-gap-id");
         write(&root.join("tests/pricing.rs"), "");
@@ -90353,6 +96433,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -90383,6 +96464,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -90413,6 +96495,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 0,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -90443,6 +96526,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -90473,6 +96557,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -90503,6 +96588,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -90558,6 +96644,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
         assert!(reasons.is_empty());
@@ -90589,6 +96676,7 @@ covered_by = ["cargo xtask check-file-policy"]
                 allowed_edit_surface_count: 1,
                 raw_evidence_refs_count: 1,
                 static_limitations_count: 0,
+                cross_language_target_unresolved: false,
             },
         );
 
@@ -91728,6 +97816,38 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from("collect_missing_attempt_receipts")
         );
         assert_eq!(
+            value["cross_language_oracle_route_quality"]["status"],
+            "pass"
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_complete_advisory_witnesses"],
+            serde_json::Value::from(3)
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_missing_discriminator_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_missing_external_oracle_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_bridge_unknown_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_panic_boundary_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
+            serde_json::Value::from(9)
+        );
+        assert_eq!(
+            value["cross_language_oracle_route_quality"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
             value["next_actions"][1]["kind"],
             serde_json::Value::from("inspect_missing_verify_results")
         );
@@ -91770,6 +97890,8 @@ covered_by = ["cargo xtask check-file-policy"]
         let markdown = ripr_swarm_readiness_markdown(&report);
         assert!(markdown.contains("# RIPR Swarm Readiness"));
         assert!(markdown.contains("actionable gaps total"));
+        assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
+        assert!(markdown.contains("bun_blob_bridge_unknown_limitation"));
         assert!(markdown.contains("## Top Next Action"));
         assert!(markdown.contains("## Next Actions"));
         assert!(
@@ -93942,6 +100064,172 @@ covered_by = ["cargo xtask check-file-policy"]
                 .contains("related tests are affinity-ranked but not tied to direct owner calls")
         );
         assert!(markdown.contains("not a public repair packet"));
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_swarm_readiness_surfaces_language_aware_limitation_route_quality() -> Result<(), String>
+    {
+        let swarm_plan = serde_json::json!({
+            "report": "swarm-plan",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "swarm_ready_packets": 0,
+                "blocked_packets": 0,
+                "static_limitation_backlog_packets": 1,
+                "static_limitation_backlog_signals": 7
+            },
+            "source_summary": {
+                "actionable_gaps": 0,
+                "public_projection_eligible_packets": 0
+            },
+            "static_limitation_backlog": {
+                "source": "lane1-evidence-audit.static_limitations",
+                "top_categories": [
+                    {
+                        "category": "cross_language_target_unresolved",
+                        "count": 7,
+                        "repair_route": "analysis/cross-language-test-target-inference"
+                    }
+                ],
+                "top_repair_routes": [
+                    {
+                        "repair_route": "analysis/cross-language-test-target-inference",
+                        "count": 7
+                    }
+                ],
+                "limitation_backlog_packets": [
+                    {
+                        "packet_id": "limitation:cross-language-target:analysis-cross-language-test-target-inference",
+                        "limitation_category": "cross_language_target_unresolved",
+                        "limitation_subroute": "binding_ffi_target_unresolved",
+                        "repair_route": "analysis/cross-language-test-target-inference",
+                        "signal_count": 7,
+                        "dominant_evidence_class": "call_presence",
+                        "why_not_actionable": "external target placement is unresolved",
+                        "unlock_condition": "add explicit external observer target evidence before suggesting edits",
+                        "non_claims": [
+                            "not a public repair packet",
+                            "not swarm-ready work"
+                        ],
+                        "sample_canonical_gap_ids": ["gap:binding-target"],
+                        "sample_sources": [
+                            {
+                                "canonical_gap_id": "gap:binding-target",
+                                "source_file": "src/binding.rs",
+                                "evidence_class": "call_presence",
+                                "line": 88,
+                                "expression": "exported_binding()",
+                                "limitation_reason": "Rust seam is on a binding surface without Rust-side test context"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "top_ready_packets": []
+        });
+        let outcomes = serde_json::json!({
+            "report": "actionable-gap-outcomes",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "outcomes_total": 0,
+                "not_attempted": 0,
+                "orphaned_receipts": 0
+            }
+        });
+        let attempt_ledger = serde_json::json!({
+            "report": "swarm-attempt-ledger",
+            "run_status": "full",
+            "runtime_status": {
+                "state": "full",
+                "downstream_consumable": true
+            },
+            "summary": {
+                "attempts_total": 0,
+                "canonical_gaps_total": 0,
+                "not_attempted": 0,
+                "orphaned_receipts": 0
+            },
+            "attempts": []
+        });
+
+        let report = ripr_swarm_readiness_from_values(
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&outcomes),
+            },
+            RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&attempt_ledger),
+            },
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+            .map_err(|err| err.to_string())?;
+        assert_eq!(value["summary"]["swarm_ready_packets"], 0);
+        assert_eq!(value["summary"]["public_projection_eligible_packets"], 0);
+        assert_eq!(
+            value["limitation_route_quality"][0]["repair_route"],
+            "analysis/cross-language-test-target-inference"
+        );
+        assert_eq!(
+            value["limitation_route_quality"][0]["route_state"],
+            "non_actionable_limitation"
+        );
+        assert_eq!(
+            value["limitation_route_quality"][0]["language_aware_placement"]["status"],
+            "cross_language_target_inference_unresolved"
+        );
+        assert_eq!(
+            value["limitation_route_quality"][0]["language_aware_placement"]["navigation_only_external_target_status"],
+            "requires_explicit_external_observer_target_evidence"
+        );
+        assert_eq!(
+            value["limitation_route_quality"][0]["packet_policy"],
+            "not_public_repair_packet"
+        );
+        assert!(
+            value["limitation_route_quality"][0]
+                .get("public_projection_eligible")
+                .is_none()
+        );
+        assert!(
+            value["limitation_route_quality"][0]
+                .get("swarm_ready")
+                .is_none()
+        );
+        assert!(
+            value["repair_route_quality"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert!(value["top_next_action"]["kind"] == "route_static_limitation_backlog");
+
+        let markdown = ripr_swarm_readiness_markdown(&report);
+        assert!(markdown.contains("## Limitation Route Quality"));
+        assert!(markdown.contains("analysis/cross-language-test-target-inference"));
+        assert!(markdown.contains("cross_language_target_inference_unresolved"));
+        assert!(markdown.contains("requires_explicit_external_observer_target_evidence"));
+        assert!(markdown.contains("not_public_repair_packet"));
+        assert!(markdown.contains("src/binding.rs:88"));
         Ok(())
     }
 
@@ -101116,6 +107404,12 @@ covered_by = ["cargo xtask check-file-policy"]
                 .is_some()
         );
         assert!(value.get("evidence_class_work_queue").is_some());
+        assert!(
+            value
+                .get("language_aware_placement_route_quality")
+                .is_some()
+        );
+        assert!(value.get("cross_language_oracle_route_quality").is_some());
         assert!(value.get("recommended_repairs").is_some());
         assert!(value.get("recent_audit_deltas").is_some());
         assert!(value.get("unknowns").is_some());
@@ -101478,6 +107772,8 @@ covered_by = ["cargo xtask check-file-policy"]
             "Repair kind",
             "Actionable Gap Packet Public Projection Readiness",
             "Projection exclusion reason",
+            "Language-Aware Placement Route Quality",
+            "Cross-Language Oracle Route Quality",
             "Evidence Class Work Queue",
             "Dominant signal",
             "Maturity By Class",
@@ -101715,6 +108011,243 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(markdown.contains("Actionable Gap Packet Public Projection Readiness"));
         assert!(markdown.contains("Public projection eligible packets"));
         assert!(markdown.contains("missing_receipt_command"));
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_quality_scorecard_summarizes_language_aware_placement_route_quality()
+    -> Result<(), String> {
+        let mut audit = scorecard_minimal_audit_value(0, 7, 0, 0, 7);
+        audit
+            .as_object_mut()
+            .ok_or_else(|| "audit should be an object".to_string())?
+            .insert(
+                "static_limitations".to_string(),
+                serde_json::json!({
+                    "by_reason": [],
+                    "by_stage": {},
+                    "by_category": {
+                        "cross_language_target_unresolved": 7,
+                        "cross_language_oracle_visibility_unresolved": 2
+                    },
+                    "repair_routes": {
+                        "analysis/cross-language-test-target-inference": 7,
+                        "analysis/cross-language-oracle-visibility": 2
+                    }
+                }),
+            );
+        audit
+            .as_object_mut()
+            .ok_or_else(|| "audit should be an object".to_string())?
+            .insert(
+                "finding_alignment".to_string(),
+                serde_json::json!({
+                    "summary": {
+                        "raw_signals": 7,
+                        "canonical_items": 7,
+                        "actionable_gaps": 0,
+                        "static_limitations": 7
+                    },
+                    "coverage": {
+                        "static_unknown_without_named_limitation": 0,
+                        "canonical_items_without_repair_route": 0,
+                        "canonical_items_without_verify_command": 0
+                    },
+                    "actionable_gap_packet_public_projection": {
+                        "scope": "emitted_actionable_gap_packets",
+                        "public_projection_eligible_packets": 0,
+                        "public_projection_excluded_packets": 1,
+                        "projection_exclusion_reasons": [
+                            {"label": "cross_language_target_unresolved", "count": 1}
+                        ]
+                    },
+                    "actionable_gap_packets": [
+                        {
+                            "canonical_gap_id": "gap:nav-only",
+                            "public_projection_eligible": false,
+                            "projection_exclusion_reasons": [
+                                "cross_language_target_unresolved"
+                            ],
+                            "navigation_only_target": {
+                                "file": "test/js/web/fetch/blob.test.ts",
+                                "line": 41,
+                                "language": "typescript",
+                                "repair_packet_ready": false
+                            }
+                        }
+                    ]
+                }),
+            );
+
+        let report = evidence_quality_scorecard_from_values(
+            "unix_ms:1".to_string(),
+            scorecard_inputs_for_test(false),
+            &audit,
+            None,
+            None,
+        )?;
+        let json = evidence_quality_scorecard_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        let placement = &value["language_aware_placement_route_quality"];
+
+        assert_eq!(placement["status"], "navigation_only_context_visible");
+        assert_eq!(
+            placement["repair_route"],
+            "analysis/cross-language-test-target-inference"
+        );
+        assert_eq!(
+            placement["cross_language_target_unresolved_signals"],
+            serde_json::Value::from(7)
+        );
+        assert_eq!(
+            placement["cross_language_test_target_inference_route_signals"],
+            serde_json::Value::from(7)
+        );
+        assert_eq!(
+            placement["cross_language_oracle_visibility_unresolved_signals"],
+            serde_json::Value::from(2)
+        );
+        assert_eq!(
+            placement["navigation_only_external_target_packets"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            placement["navigation_only_external_target_public_promotions"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            placement["navigation_only_external_target_status"],
+            "explicit_navigation_context_only"
+        );
+        assert!(placement["non_claims"].as_array().is_some_and(|claims| {
+            claims
+                .iter()
+                .any(|claim| claim == "not a public repair packet")
+        }));
+        assert_eq!(
+            value["summary"]["finding_alignment_actionable_unresolved_canonical_gaps"],
+            serde_json::Value::from(0)
+        );
+
+        let markdown = evidence_quality_scorecard_markdown(&report);
+        assert!(markdown.contains("## Language-Aware Placement Route Quality"));
+        assert!(markdown.contains("analysis/cross-language-test-target-inference"));
+        assert!(markdown.contains("Navigation-only external target packets"));
+        assert!(markdown.contains("navigation_only_external_target_status"));
+        assert!(markdown.contains("not runtime calibration or public repair packets"));
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_quality_scorecard_summarizes_cross_language_oracle_route_quality()
+    -> Result<(), String> {
+        let audit = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+        let report = evidence_quality_scorecard_from_values(
+            "unix_ms:1".to_string(),
+            scorecard_inputs_for_test(false),
+            &audit,
+            None,
+            None,
+        )?;
+        let json = evidence_quality_scorecard_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        let route_quality = &value["cross_language_oracle_route_quality"];
+
+        assert_eq!(route_quality["status"], "pass");
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_complete_advisory_witnesses"],
+            serde_json::Value::from(3)
+        );
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_missing_discriminator_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_missing_external_oracle_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_bridge_unknown_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_mention_only_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_panic_boundary_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            route_quality["cross_language_oracle_graph_public_packet_exclusions"],
+            serde_json::Value::from(9)
+        );
+        assert_eq!(
+            route_quality["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"] == "bun_blob_bridge_unknown_limitation"
+                        && row["missing_graph_legs"]
+                            .as_array()
+                            .is_some_and(|legs| legs.iter().any(|leg| leg == "binding_or_ffi_edge"))
+                }))
+        );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+                        && row["observed_state"] == "rust_ungripped_ts_discriminated"
+                        && row["binding_edge_confidence"] == "configured_hint"
+                        && row["missing_graph_legs"]
+                            .as_array()
+                            .is_some_and(Vec::is_empty)
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"]
+                        == "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+                        && row["profile"] == "bun_markdown_resizable_array_buffer"
+                        && row["observed_state"] == "rust_ungripped_ts_discriminated"
+                        && row["binding_edge_confidence"] == "configured_hint"
+                        && row["missing_graph_legs"]
+                            .as_array()
+                            .is_some_and(Vec::is_empty)
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"] == "bun_ffi_negative_offset_panic_boundary_limitation"
+                        && row["observed_state"] == "public_reachable_panic_boundary_unrevealed"
+                        && row["limitation_category"]
+                            == "cross_language_panic_boundary_visibility_unresolved"
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
+
+        let markdown = evidence_quality_scorecard_markdown(&report);
+        assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
+        assert!(markdown.contains("Missing discriminator limitations"));
+        assert!(markdown.contains("Bridge unknown limitations"));
+        assert!(markdown.contains("Panic boundary limitations"));
+        assert!(markdown.contains("Repair-packet-ready cases"));
+        assert!(markdown.contains("not full cross-language proof"));
         Ok(())
     }
 
