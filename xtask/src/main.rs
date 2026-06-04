@@ -8676,6 +8676,10 @@ const CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES: &[(&str, &str)] = &[
         "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
         "rust_ungripped_ts_discriminated",
     ),
+    (
+        "bun_ffi_negative_offset_panic_boundary_limitation",
+        "public_reachable_panic_boundary_unrevealed",
+    ),
 ];
 
 const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -10042,6 +10046,7 @@ fn validate_cross_language_oracle_graph_fixture_corpus_at(
         "ts_mention_not_observer",
         "bridge_unknown",
         "cross_language_target_unresolved",
+        "public_reachable_panic_boundary_unrevealed",
     ] {
         if !states.contains(required) {
             violations.push(format!(
@@ -48072,10 +48077,12 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
     if case.rust_line.is_none() {
         errors.push("rust line must be present".to_string());
     }
-    if case.external_callsite_line.is_none() {
+    let external_location_unresolved =
+        cross_language_oracle_graph_external_location_unresolved(case);
+    if case.external_callsite_line.is_none() && !external_location_unresolved {
         errors.push("external_callsite line must be present".to_string());
     }
-    if case.external_oracle_line.is_none() {
+    if case.external_oracle_line.is_none() && !external_location_unresolved {
         errors.push("external_oracle line must be present".to_string());
     }
     if case.language != "typescript" {
@@ -48139,16 +48146,33 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
         ));
     }
     cross_language_oracle_graph_profile_errors(case, &mut errors);
-    if !case.external_callsite_file.starts_with("test/js/")
-        || !case.external_callsite_file.ends_with(".test.ts")
-    {
-        errors
-            .push("external_callsite_file must be a Bun test/js TypeScript test path".to_string());
-    }
-    if !case.external_oracle_file.starts_with("test/js/")
-        || !case.external_oracle_file.ends_with(".test.ts")
-    {
-        errors.push("external_oracle_file must be a Bun test/js TypeScript test path".to_string());
+    if external_location_unresolved {
+        if !case.external_callsite_file.starts_with("unresolved:") {
+            errors.push(
+                "unresolved cross-language panic-boundary callsite file must be explicit"
+                    .to_string(),
+            );
+        }
+        if !case.external_oracle_file.starts_with("unresolved:") {
+            errors.push(
+                "unresolved cross-language panic-boundary oracle file must be explicit".to_string(),
+            );
+        }
+    } else {
+        if !case.external_callsite_file.starts_with("test/js/")
+            || !case.external_callsite_file.ends_with(".test.ts")
+        {
+            errors.push(
+                "external_callsite_file must be a Bun test/js TypeScript test path".to_string(),
+            );
+        }
+        if !case.external_oracle_file.starts_with("test/js/")
+            || !case.external_oracle_file.ends_with(".test.ts")
+        {
+            errors.push(
+                "external_oracle_file must be a Bun test/js TypeScript test path".to_string(),
+            );
+        }
     }
     if case.external_entrypoints.is_empty() {
         errors.push("external_entrypoints must name at least one external callsite".to_string());
@@ -48366,6 +48390,57 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
             if !cross_language_oracle_graph_has_missing_leg(case, "safe_external_observer_target") {
                 errors.push(
                     "cross_language_target_unresolved must name safe_external_observer_target as missing"
+                    .to_string(),
+                );
+            }
+        }
+        "public_reachable_panic_boundary_unrevealed" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_panic_boundary_visibility_unresolved",
+                "analysis/cross-language-panic-boundary-visibility",
+                &mut errors,
+            );
+            if !case
+                .missing_discriminators
+                .iter()
+                .any(|missing| missing == "negative_offset")
+            {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must name negative_offset as the missing discriminator"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "external_oracle:negative_offset_panic_boundary",
+            ) {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must name the missing negative-offset panic oracle leg"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(case, "safe_external_observer_target") {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must name safe_external_observer_target as missing"
+                        .to_string(),
+                );
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must not suggest a test file"
+                        .to_string(),
+                );
+            }
+            if case.external_oracle_kind != "negative_offset_panic_oracle_unresolved" {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must use negative_offset_panic_oracle_unresolved oracle kind"
+                        .to_string(),
+                );
+            }
+            if case.oracle_strength != "missing_boundary" {
+                errors.push(
+                    "public_reachable_panic_boundary_unrevealed must use missing_boundary oracle strength"
                         .to_string(),
                 );
             }
@@ -48472,6 +48547,13 @@ fn cross_language_oracle_graph_has_missing_leg(
         .any(|missing| missing == leg || missing.contains(leg))
 }
 
+fn cross_language_oracle_graph_external_location_unresolved(
+    case: &CrossLanguageOracleGraphCase,
+) -> bool {
+    case.expected_state == "public_reachable_panic_boundary_unrevealed"
+        && cross_language_oracle_graph_has_missing_leg(case, "safe_external_observer_target")
+}
+
 fn cross_language_oracle_graph_allowed_states() -> &'static [&'static str] {
     &[
         "rust_ungripped_ts_discriminated",
@@ -48480,6 +48562,7 @@ fn cross_language_oracle_graph_allowed_states() -> &'static [&'static str] {
         "ts_mention_not_observer",
         "bridge_unknown",
         "cross_language_target_unresolved",
+        "public_reachable_panic_boundary_unrevealed",
     ]
 }
 
@@ -48587,8 +48670,56 @@ fn cross_language_oracle_graph_profile_errors(
                 );
             }
         }
+        "bun_ffi_negative_offset_panic_boundary" => {
+            if !case.rust_file.ends_with("FFIObject.rs") {
+                errors.push(
+                    "rust_file must identify the Bun FFIObject Rust seam".to_string(),
+                );
+            }
+            if case.rust_owner != "FFIObject::read" {
+                errors.push(
+                    "rust_owner must pin FFIObject::read for the Bun FFI negative-offset route"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("usize::try_from")
+                || !case.rust_boundary.contains("expect(\"int cast\")")
+            {
+                errors.push(
+                    "rust_boundary must include usize::try_from and expect(\"int cast\")"
+                        .to_string(),
+                );
+            }
+            if case.expected_state != "public_reachable_panic_boundary_unrevealed" {
+                errors.push(
+                    "bun_ffi_negative_offset_panic_boundary profile currently only supports public_reachable_panic_boundary_unrevealed"
+                        .to_string(),
+                );
+            }
+            if case.binding_edge_kind != "ffi_binding"
+                || !matches!(
+                    case.binding_edge_confidence.as_str(),
+                    "heuristic" | "configured_hint"
+                )
+            {
+                errors.push(
+                    "bun_ffi_negative_offset_panic_boundary requires FFI binding edge evidence"
+                        .to_string(),
+                );
+            }
+            if !case
+                .external_entrypoints
+                .iter()
+                .any(|entrypoint| entrypoint.contains("read.u8"))
+            {
+                errors.push(
+                    "bun_ffi_negative_offset_panic_boundary must name read.u8 as an external entrypoint"
+                        .to_string(),
+                );
+            }
+        }
         other => errors.push(format!(
-            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, or bun_markdown_resizable_array_buffer, got {other}"
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, or bun_ffi_negative_offset_panic_boundary, got {other}"
         )),
     }
 }
@@ -48639,6 +48770,7 @@ fn cross_language_oracle_route_quality_from_cases(
     let mut bridge_unknown_limitations = 0usize;
     let mut mention_only_limitations = 0usize;
     let mut target_unresolved_limitations = 0usize;
+    let mut panic_boundary_limitations = 0usize;
     let mut public_packet_exclusions = 0usize;
     let mut public_projection_eligible_cases = 0usize;
     let mut repair_packet_ready_cases = 0usize;
@@ -48656,6 +48788,9 @@ fn cross_language_oracle_route_quality_from_cases(
                 "bridge_unknown" => bridge_unknown_limitations += 1,
                 "ts_mention_not_observer" => mention_only_limitations += 1,
                 "cross_language_target_unresolved" => target_unresolved_limitations += 1,
+                "public_reachable_panic_boundary_unrevealed" => {
+                    panic_boundary_limitations += 1;
+                }
                 _ => {}
             }
             if !case.public_projection_eligible {
@@ -48721,6 +48856,8 @@ fn cross_language_oracle_route_quality_from_cases(
         "cross_language_oracle_graph_mention_only_limitations": mention_only_limitations,
         "cross_language_oracle_graph_target_unresolved_limitations":
             target_unresolved_limitations,
+        "cross_language_oracle_graph_panic_boundary_limitations":
+            panic_boundary_limitations,
         "cross_language_oracle_graph_public_packet_exclusions": public_packet_exclusions,
         "public_projection_eligible_cases": public_projection_eligible_cases,
         "repair_packet_ready_cases": repair_packet_ready_cases,
@@ -48796,6 +48933,15 @@ fn cross_language_oracle_route_quality_push_markdown(out: &mut String, value: &V
         audit_usize(
             value,
             &["cross_language_oracle_graph_mention_only_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Panic boundary limitations",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_panic_boundary_limitations"],
         )
         .unwrap_or_default(),
     );
@@ -78652,7 +78798,7 @@ fn exact_owner_call_has_external_expected_value() {
         with_repo_cwd(|| {
             let value = super::cross_language_oracle_route_quality_report_value();
             assert_eq!(value["status"], "pass");
-            assert_eq!(value["cases_total"], serde_json::Value::from(8));
+            assert_eq!(value["cases_total"], serde_json::Value::from(9));
             assert_eq!(
                 value["cross_language_oracle_graph_complete_advisory_witnesses"],
                 serde_json::Value::from(3)
@@ -78674,8 +78820,12 @@ fn exact_owner_call_has_external_expected_value() {
                 serde_json::Value::from(1)
             );
             assert_eq!(
+                value["cross_language_oracle_graph_panic_boundary_limitations"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
                 value["cross_language_oracle_graph_public_packet_exclusions"],
-                serde_json::Value::from(8)
+                serde_json::Value::from(9)
             );
             assert_eq!(
                 value["repair_packet_ready_cases"],
@@ -78789,6 +78939,41 @@ fn exact_owner_call_has_external_expected_value() {
                 markdown_resizable["repair_route"],
                 "manual-review/cross-language-advisory-witness"
             );
+            let panic_boundary = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_ffi_negative_offset_panic_boundary_limitation")
+                .ok_or_else(|| "missing Bun FFI panic-boundary limitation row".to_string())?;
+            assert_eq!(
+                panic_boundary["profile"],
+                "bun_ffi_negative_offset_panic_boundary"
+            );
+            assert_eq!(
+                panic_boundary["observed_state"],
+                "public_reachable_panic_boundary_unrevealed"
+            );
+            assert_eq!(
+                panic_boundary["limitation_category"],
+                "cross_language_panic_boundary_visibility_unresolved"
+            );
+            assert_eq!(
+                panic_boundary["repair_route"],
+                "analysis/cross-language-panic-boundary-visibility"
+            );
+            assert_eq!(panic_boundary["suggested_test_file"], "not_applicable");
+            assert_eq!(panic_boundary["repair_packet_ready"], false);
+            assert_eq!(panic_boundary["public_projection_eligible"], false);
+            assert!(
+                panic_boundary["missing_discriminators"]
+                    .as_array()
+                    .is_some_and(|missing| missing.iter().any(|item| item == "negative_offset"))
+            );
+            assert!(
+                panic_boundary["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "external_oracle:negative_offset_panic_boundary"))
+            );
 
             let mut markdown = String::new();
             super::cross_language_oracle_route_quality_push_markdown(&mut markdown, &value);
@@ -78798,6 +78983,8 @@ fn exact_owner_call_has_external_expected_value() {
             assert!(
                 markdown.contains("bun_markdown_resizable_array_buffer_configured_bridge_advisory")
             );
+            assert!(markdown.contains("Panic boundary limitations"));
+            assert!(markdown.contains("bun_ffi_negative_offset_panic_boundary_limitation"));
             assert!(markdown.contains("Missing external oracle limitations"));
             assert!(markdown.contains("binding_or_ffi_edge"));
             assert!(markdown.contains("preview/advisory route-quality evidence only"));
@@ -79128,6 +79315,58 @@ fn exact_owner_call_has_external_expected_value() {
             &errors,
             "cross_language_target_unresolved must name safe_external_observer_target as missing",
         );
+
+        let mut panic_boundary = valid_cross_language_oracle_graph_case();
+        panic_boundary.profile = "bun_ffi_negative_offset_panic_boundary".to_string();
+        panic_boundary.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+        panic_boundary.rust_line = Some(277);
+        panic_boundary.rust_owner = "FFIObject::read".to_string();
+        panic_boundary.rust_boundary =
+            "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+        panic_boundary.binding_edge_kind = "ffi_binding".to_string();
+        panic_boundary.binding_edge_confidence = "heuristic".to_string();
+        panic_boundary.external_callsite_file = "unresolved:typescript-test-surface".to_string();
+        panic_boundary.external_callsite_line = None;
+        panic_boundary.external_entrypoints = vec!["read.u8(ptr, -1)".to_string()];
+        panic_boundary.external_oracle_file = "unresolved:negative-offset-panic-oracle".to_string();
+        panic_boundary.external_oracle_line = None;
+        panic_boundary.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        panic_boundary.gap_state = "static_limitation".to_string();
+        panic_boundary.limitation_category =
+            "cross_language_panic_boundary_visibility_unresolved".to_string();
+        panic_boundary.repair_route =
+            "analysis/cross-language-panic-boundary-visibility".to_string();
+        panic_boundary.suggested_test_file = "test/js/bun/ffi/ffi.test.ts".to_string();
+        panic_boundary.missing_discriminators.clear();
+        panic_boundary.missing_graph_legs.clear();
+        panic_boundary.external_oracle_kind = "wrong_oracle".to_string();
+        panic_boundary.oracle_strength = "weak".to_string();
+        panic_boundary.unlock_condition = "Name panic oracle".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&panic_boundary);
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must name negative_offset as the missing discriminator",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must name the missing negative-offset panic oracle leg",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must name safe_external_observer_target as missing",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must not suggest a test file",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must use negative_offset_panic_oracle_unresolved oracle kind",
+        );
+        assert_contains_error(
+            &errors,
+            "public_reachable_panic_boundary_unrevealed must use missing_boundary oracle strength",
+        );
     }
 
     #[test]
@@ -79202,7 +79441,134 @@ fn exact_owner_call_has_external_expected_value() {
         let errors = super::cross_language_oracle_graph_case_errors(&unknown_profile);
         assert_contains_error(
             &errors,
-            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, or bun_markdown_resizable_array_buffer",
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, or bun_ffi_negative_offset_panic_boundary",
+        );
+    }
+
+    #[test]
+    fn cross_language_oracle_graph_validates_bun_ffi_negative_offset_profile() {
+        let mut case = valid_cross_language_oracle_graph_case();
+        case.name = "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+        case.source = "#950-ffi-negative-offset-public-reachable-panic-boundary".to_string();
+        case.profile = "bun_ffi_negative_offset_panic_boundary".to_string();
+        case.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+        case.rust_line = Some(277);
+        case.rust_owner = "FFIObject::read".to_string();
+        case.rust_boundary = "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+        case.binding_edge_kind = "ffi_binding".to_string();
+        case.binding_edge_confidence = "heuristic".to_string();
+        case.external_callsite_file = "unresolved:typescript-test-surface".to_string();
+        case.external_callsite_line = None;
+        case.external_entrypoints = vec!["read.u8(ptr, -1)".to_string()];
+        case.shared_array_buffer = false;
+        case.resizable_array_buffer = false;
+        case.view_backed_blob_input = false;
+        case.stable_byte_copy_oracle = false;
+        case.external_oracle_file = "unresolved:negative-offset-panic-oracle".to_string();
+        case.external_oracle_line = None;
+        case.external_oracle_kind = "negative_offset_panic_oracle_unresolved".to_string();
+        case.oracle_strength = "missing_boundary".to_string();
+        case.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        case.gap_state = "static_limitation".to_string();
+        case.limitation_category =
+            "cross_language_panic_boundary_visibility_unresolved".to_string();
+        case.repair_route = "analysis/cross-language-panic-boundary-visibility".to_string();
+        case.missing_discriminators = vec!["negative_offset".to_string()];
+        case.missing_graph_legs = vec![
+            "external_oracle:negative_offset_panic_boundary".to_string(),
+            "safe_external_observer_target".to_string(),
+        ];
+        case.unlock_condition =
+            "Trace and resolve the negative-offset panic oracle before actionability".to_string();
+        case.raw_evidence_refs = vec![
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "rust_seam".to_string(),
+                file: "src/bun.js/bindings/FFIObject.rs".to_string(),
+                line: Some(277),
+                kind: "rust_panic_boundary".to_string(),
+                source_id: "#950".to_string(),
+                sample: "FFIObject.rs negative-offset conversion panic boundary".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "boundary_discriminator".to_string(),
+                file: "issue:#950".to_string(),
+                line: Some(1),
+                kind: "negative_offset_discriminator_missing".to_string(),
+                source_id: "#950".to_string(),
+                sample: "read.u8(ptr, -1) is the boundary discriminator shape".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "binding_edge".to_string(),
+                file: "src/bun.js/bindings/FFIObject.rs".to_string(),
+                line: Some(277),
+                kind: "ffi_binding".to_string(),
+                source_id: "#950".to_string(),
+                sample: "Bun FFI read reaches the Rust owner through an FFI binding".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_callsite".to_string(),
+                file: "issue:#950".to_string(),
+                line: Some(1),
+                kind: "typescript_ffi_callsite".to_string(),
+                source_id: "#950".to_string(),
+                sample: "read.u8(ptr, -1) is the external callsite sample".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_oracle".to_string(),
+                file: "issue:#950".to_string(),
+                line: Some(1),
+                kind: "typescript_assertion_missing".to_string(),
+                source_id: "#950".to_string(),
+                sample: "no external assertion is proven for the panic boundary".to_string(),
+            },
+        ];
+
+        let errors = super::cross_language_oracle_graph_case_errors(&case);
+        assert!(
+            errors.is_empty(),
+            "Bun FFI negative-offset panic-boundary profile should validate: {errors:?}"
+        );
+
+        let mut wrong_shape = case.clone();
+        wrong_shape.rust_file = "src/jsc/Blob.rs".to_string();
+        wrong_shape.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+        wrong_shape.rust_boundary = "array_buffer.shared || array_buffer.resizable".to_string();
+        wrong_shape.binding_edge_kind = "configured_bridge".to_string();
+        wrong_shape.external_entrypoints = vec!["read.u32(ptr, 0)".to_string()];
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_shape);
+        assert_contains_error(
+            &errors,
+            "rust_file must identify the Bun FFIObject Rust seam",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_owner must pin FFIObject::read for the Bun FFI negative-offset route",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_boundary must include usize::try_from and expect(\"int cast\")",
+        );
+        assert_contains_error(
+            &errors,
+            "bun_ffi_negative_offset_panic_boundary requires FFI binding edge evidence",
+        );
+        assert_contains_error(
+            &errors,
+            "bun_ffi_negative_offset_panic_boundary must name read.u8 as an external entrypoint",
+        );
+
+        let mut wrong_state = case;
+        wrong_state.expected_state = "rust_ungripped_ts_discriminated".to_string();
+        wrong_state.gap_state = "already_observed".to_string();
+        wrong_state.limitation_category = "not_applicable".to_string();
+        wrong_state.repair_route = "manual-review/cross-language-advisory-witness".to_string();
+        wrong_state.missing_discriminators.clear();
+        wrong_state.missing_graph_legs.clear();
+        wrong_state.unlock_condition = "not_applicable".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_state);
+        assert_contains_error(
+            &errors,
+            "bun_ffi_negative_offset_panic_boundary profile currently only supports public_reachable_panic_boundary_unrevealed",
         );
     }
 
@@ -96294,8 +96660,12 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(1)
         );
         assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_panic_boundary_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(8)
+            serde_json::Value::from(9)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["repair_packet_ready_cases"],
@@ -106631,8 +107001,12 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(1)
         );
         assert_eq!(
+            route_quality["cross_language_oracle_graph_panic_boundary_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
             route_quality["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(8)
+            serde_json::Value::from(9)
         );
         assert_eq!(
             route_quality["repair_packet_ready_cases"],
@@ -106678,11 +107052,24 @@ covered_by = ["cargo xtask check-file-policy"]
                         && row["public_projection_eligible"] == false
                 }))
         );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"] == "bun_ffi_negative_offset_panic_boundary_limitation"
+                        && row["observed_state"] == "public_reachable_panic_boundary_unrevealed"
+                        && row["limitation_category"]
+                            == "cross_language_panic_boundary_visibility_unresolved"
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
 
         let markdown = evidence_quality_scorecard_markdown(&report);
         assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
         assert!(markdown.contains("Missing discriminator limitations"));
         assert!(markdown.contains("Bridge unknown limitations"));
+        assert!(markdown.contains("Panic boundary limitations"));
         assert!(markdown.contains("Repair-packet-ready cases"));
         assert!(markdown.contains("not full cross-language proof"));
         Ok(())
