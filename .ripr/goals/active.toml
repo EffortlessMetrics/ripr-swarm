@@ -1,69 +1,76 @@
-id = "typescript-bun-081-placement-receipt-correction"
-title = "TypeScript Bun 0.8.1 Placement Receipt Correction"
-status = "closed"
+id = "lane1-cross-language-oracle-followup"
+title = "Lane 1 Cross-Language Oracle Follow-Up"
+status = "active"
 lane = "lane1"
-issue = "https://github.com/EffortlessMetrics/ripr-swarm/issues/908"
-no_current_goal = true
+issue = "https://github.com/EffortlessMetrics/ripr-swarm/issues/910"
+no_current_goal = false
 
-# Selected after the post-0.8 operating loop closed with `no_current_goal =
-# true`. Live inspection on 2026-06-04 showed the Bun UB route-quality and
-# calibration report commands were present, but configured missing
-# shared/resizable discriminator rows still carried the older
-# `suggested_test_file=not_applicable` receipt. This one-slice correction keeps
-# the preview/advisory and no-public-packet boundary while making the calibrated
-# missing-discriminator rows name the configured TypeScript observer file.
+# Selected after the Lane 1 post-0.8 operating loop closed with
+# no_current_goal = true. Live repo state on 2026-06-04 shows #913, #911,
+# #912, and #909 closed, while #908 and #910 remain open as broader
+# mixed-language oracle follow-ups. This successor must extend cross-language
+# oracle evidence only through measured, profile-backed graph slices and must
+# keep preview/advisory and fail-closed boundaries explicit.
 
 objective = """
-Make the configured Bun Blob / ArrayBuffer TypeScript preview receipts name the
-right advisory TypeScript observer file when shared or resizable discriminator
-evidence is missing, without creating repair packets or widening preview
-authority.
+Make #908/#910 cross-language oracle follow-ups more useful by adding measured
+graph profiles beyond the bounded Bun Blob route while preserving the rule that
+external-language evidence is advisory or a named limitation until every graph
+leg and public repair-packet field is explicit.
 """
 
 end_state = [
-  "configured missing shared/resizable discriminator rows suggest test/js/web/fetch/blob.test.ts as advisory TypeScript placement",
-  "complete discriminated rows keep the bounded no-missing-bridge-discriminator wording",
-  "bridge-unknown, mention-only, partial-oracle, and target-unresolved rows keep suggested_test_file=not_applicable",
-  "all Bun Blob TypeScript preview rows keep repair_packet_ready=false and public_projection_eligible=false where applicable",
-  "route-quality and calibration reports preserve preview/advisory authority and do not suggest Rust test placement",
+  "non-Blob Rust seams exercised through TypeScript, binding, or FFI routes have profile-backed samples instead of generic weak-grip repair guidance",
+  "missing binding, FFI, external callsite, external oracle, or target-placement legs remain named static limitations with source locations and unlock conditions",
+  "complete external witnesses remain preview/advisory until canonical actionability fields exist",
+  "public repair queues, LSP actions, badges, CI, and PR/review surfaces do not project cross-language limitations as repair packets",
 ]
 
 hard_rules = [
-  "do not promote TypeScript or JavaScript beyond preview",
-  "do not emit public repair packets from Bun TypeScript preview evidence",
-  "do not add runtime Bun, tsc, tsserver, Jest, Vitest, mutation execution, generated tests, provider calls, source edits, default gates, badge inputs, baseline authority, RIPR Zero, or support-tier promotion",
-  "do not suggest Rust test placement for the configured Bun Blob observer route",
-  "bridge_unknown remains bridge_unknown with missing binding_or_ffi_edge and no placement",
-  "token mentions remain mention-only and not observers",
+  "do not force actionability",
+  "do not suggest wrong-language or unrelated test files",
+  "do not create public repair packets from preview or limitation evidence",
+  "do not claim generic cross-language oracle proof from one configured profile",
+  "do not add provider integration, autonomous edits, mutation execution, or a default blocking CI or badge semantic switch",
+  "source ripr remains release, signing, publishing, and distribution authority",
 ]
 
 non_goals = [
-  "no full Bun binding graph",
-  "no generic cross-language oracle graph promotion",
-  "no runtime verification command",
-  "no source release, publish, tag, signing, marketplace, or install-doc work",
+  "no generic TypeScript or Bun runtime execution",
+  "no generated tests",
+  "no provider integration",
+  "no autonomous edits",
+  "no mutation execution",
+  "no default blocking CI or badge semantic switch",
+  "no source release, publish, tag, signing, marketplace, or install-doc work without explicit release authorization",
 ]
 
 [[work_item]]
-id = "output/bun-ub-missing-discriminator-placement"
+id = "fixtures/cross-language-copy-to-unshared-profile"
 status = "done"
-branch = "output-bun-ub-missing-discriminator-placement"
+branch = "lane1-cross-language-oracle-followup"
 stackable = false
-acceptance = "Configured Bun Blob missing shared/resizable discriminator cases project advisory TypeScript placement to test/js/web/fetch/blob.test.ts in analyzer preview cards, cross-language route-quality rows, and bun-ub-calibration reports while bridge_unknown, mention-only, partial-oracle, and target-unresolved rows keep suggested_test_file=not_applicable; all rows remain preview/advisory with repair_packet_ready=false and no Rust-test placement."
+acceptance = "Select #908/#910 as the active follow-up and pin a measured `copy_to_unshared` TypeScript-exercised Rust seam as a profile-backed bridge-unknown limitation with source locations, missing binding edge, repair route, unlock condition, raw evidence refs, and no public repair-packet fields."
 commands = [
-  "cargo test -p ripr changed_rust_blob_boundary_projects_missing_resizable_cross_language_grip -- --test-threads=1",
-  "cargo test -p ripr typescript_preview_card_projects_bun_cross_language_grip -- --test-threads=1",
-  "cargo test -p ripr render_finding_includes_bun_cross_language_grip -- --test-threads=1",
-  "cargo test -p ripr render_includes_bun_cross_language_grip_annotation -- --test-threads=1",
-  "cargo test -p ripr sarif_preserves_bun_cross_language_grip_card_properties -- --test-threads=1",
-  "cargo test -p xtask bun_ub_calibration -- --test-threads=1",
   "cargo test -p xtask cross_language_oracle_graph -- --test-threads=1",
-  "cargo xtask bun-ub-calibration",
   "cargo xtask check-fixture-contracts",
-  "cargo xtask check-output-contracts",
-  "cargo xtask check-static-language",
-  "cargo xtask check-traceability",
-  "cargo xtask check-capabilities",
   "cargo xtask check-goals",
   "cargo xtask goals next",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-static-language",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "analysis/cross-language-copy-to-unshared-bridge-route"
+status = "ready"
+branch = "analysis-cross-language-copy-to-unshared-bridge-route"
+stackable = false
+acceptance = "For the profile-backed `copy_to_unshared` case, add explicit configured or generated bridge evidence before crediting the external TypeScript oracle; until that bridge exists, keep the seam as `bridge_unknown` with no verify command, receipt command, allowed edit surface, suggested test file, or public projection eligibility."
+commands = [
+  "cargo test -p ripr cross_language -- --test-threads=1",
+  "cargo test -p xtask cross_language_oracle_graph -- --test-threads=1",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-static-language",
+  "cargo xtask check-pr",
 ]
