@@ -128,7 +128,7 @@ commands = [
 
 [[work_item]]
 id = "report/cross-language-oracle-route-quality"
-status = "ready"
+status = "done"
 branch = "report-cross-language-oracle-route-quality"
 stackable = false
 acceptance = "Readiness and evidence-quality scorecard outputs summarize complete advisory witnesses, missing discriminators, unknown bridges, and public packet exclusions without treating cross-language preview evidence as repair-ready."
@@ -142,7 +142,7 @@ commands = [
 
 [[work_item]]
 id = "campaign/cross-language-oracle-graph-closeout"
-status = "blocked"
+status = "ready"
 branch = "campaign-cross-language-oracle-graph-closeout"
 stackable = false
 blocked_by = ["spec/cross-language-oracle-graph-v1", "fixtures/cross-language-oracle-graph-corpus", "analysis/cross-language-ts-discriminator-witness", "analysis/cross-language-binding-route-witness", "report/cross-language-oracle-route-quality"]
