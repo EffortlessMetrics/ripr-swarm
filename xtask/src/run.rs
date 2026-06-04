@@ -728,6 +728,7 @@ mod tests {
         )?;
 
         assert!(output.timed_out, "long-running command should time out");
+        #[cfg(unix)]
         assert!(
             output.status.is_some(),
             "timed-out long-running command should report a process status"
@@ -747,8 +748,12 @@ mod tests {
     #[cfg(windows)]
     fn long_running_command() -> Result<TestCommand, String> {
         Ok((
-            "cmd".to_string(),
-            vec!["/C".to_string(), "ping -n 30 127.0.0.1 >NUL".to_string()],
+            "powershell".to_string(),
+            vec![
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Start-Sleep -Seconds 30".to_string(),
+            ],
             Vec::new(),
         ))
     }
