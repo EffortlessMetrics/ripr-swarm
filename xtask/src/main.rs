@@ -8473,6 +8473,7 @@ const TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS: &str =
 const CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS: &str =
     "fixtures/cross-language-oracle-graph-corpus/corpus.json";
 const BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE: &str = "test/js/web/fetch/blob.test.ts";
+const BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE: &str = "unresolved:typescript-test-surface";
 const BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS: &str =
     "fixtures/bun-ub-cross-language-dogfood/corpus.json";
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_CORPUS: &str =
@@ -8756,6 +8757,10 @@ const BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
         "rust_ungripped_ts_missing_discriminator",
     ),
     ("bun_blob_mention_only", "ts_mention_not_observer"),
+    (
+        "bun_ffi_negative_offset_panic_boundary",
+        "public_reachable_panic_boundary_unrevealed",
+    ),
 ];
 
 const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -10214,6 +10219,7 @@ fn validate_bun_ub_cross_language_dogfood_fixture_corpus_at(
         "rust_ungripped_ts_discriminated",
         "rust_ungripped_ts_missing_discriminator",
         "ts_mention_not_observer",
+        "public_reachable_panic_boundary_unrevealed",
     ] {
         if !observed_states.contains(required_state) {
             violations.push(format!(
@@ -49400,30 +49406,60 @@ fn dogfood_bun_ub_cross_language_run(
         }
     }
 
-    if !scenario.name.starts_with("bun_blob_") {
-        errors.push("case id must start with bun_blob_".to_string());
-    }
-    if !scenario.source_case.starts_with("bun_blob_") {
-        errors.push("source_case must link to a Bun Blob calibration case".to_string());
-    }
-    if !scenario.route_quality_case.starts_with("bun_blob_") {
-        errors.push("route_quality_case must link to a Bun Blob route-quality case".to_string());
-    }
-    if scenario.rust_file != "src/jsc/Blob.rs" {
-        errors.push("rust_file must stay on the calibrated Bun Blob seam".to_string());
-    }
-    if scenario.rust_owner != "Blob::from_js_without_defer_gc" {
-        errors.push("rust_owner must stay on Blob::from_js_without_defer_gc".to_string());
-    }
-    if scenario.rust_boundary != "array_buffer.shared || array_buffer.resizable" {
-        errors.push(
-            "rust_boundary must stay on array_buffer.shared || array_buffer.resizable".to_string(),
-        );
-    }
-    if scenario.ts_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
-        errors.push(
-            "ts_test_file must stay on the configured Bun Blob TypeScript test file".to_string(),
-        );
+    if scenario.name.starts_with("bun_blob_") {
+        if !scenario.source_case.starts_with("bun_blob_") {
+            errors.push("source_case must link to a Bun Blob calibration case".to_string());
+        }
+        if !scenario.route_quality_case.starts_with("bun_blob_") {
+            errors
+                .push("route_quality_case must link to a Bun Blob route-quality case".to_string());
+        }
+        if scenario.rust_file != "src/jsc/Blob.rs" {
+            errors.push("rust_file must stay on the calibrated Bun Blob seam".to_string());
+        }
+        if scenario.rust_owner != "Blob::from_js_without_defer_gc" {
+            errors.push("rust_owner must stay on Blob::from_js_without_defer_gc".to_string());
+        }
+        if scenario.rust_boundary != "array_buffer.shared || array_buffer.resizable" {
+            errors.push(
+                "rust_boundary must stay on array_buffer.shared || array_buffer.resizable"
+                    .to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
+            errors.push(
+                "ts_test_file must stay on the configured Bun Blob TypeScript test file"
+                    .to_string(),
+            );
+        }
+    } else if scenario.name.starts_with("bun_ffi_") {
+        if !scenario.source_case.starts_with("bun_ffi_") {
+            errors.push("source_case must link to a Bun FFI calibration case".to_string());
+        }
+        if !scenario.route_quality_case.starts_with("bun_ffi_") {
+            errors.push("route_quality_case must link to a Bun FFI route-quality case".to_string());
+        }
+        if scenario.rust_file != "src/bun.js/bindings/FFIObject.rs" {
+            errors.push("rust_file must stay on the calibrated Bun FFI seam".to_string());
+        }
+        if scenario.rust_owner != "FFIObject::read" {
+            errors.push("rust_owner must stay on FFIObject::read".to_string());
+        }
+        if !scenario.rust_boundary.contains("usize::try_from")
+            || !scenario.rust_boundary.contains("expect(\"int cast\")")
+        {
+            errors.push(
+                "rust_boundary must stay on the negative-offset FFI panic boundary".to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE {
+            errors.push(
+                "ts_test_file must stay unresolved until a safe FFI TypeScript observer exists"
+                    .to_string(),
+            );
+        }
+    } else {
+        errors.push("case id must start with bun_blob_ or bun_ffi_".to_string());
     }
     if scenario.expected_state != scenario.observed_state {
         errors
@@ -49549,6 +49585,58 @@ fn dogfood_bun_ub_cross_language_run(
                 );
             }
         }
+        "public_reachable_panic_boundary_unrevealed" => {
+            if !scenario
+                .missing_discriminators
+                .iter()
+                .any(|missing| missing == "negative_offset")
+            {
+                errors.push(
+                    "panic-boundary dogfood must name negative_offset as missing".to_string(),
+                );
+            }
+            if !scenario
+                .missing_graph_legs
+                .iter()
+                .any(|missing| missing == "external_oracle:negative_offset_panic_boundary")
+            {
+                errors.push(
+                    "panic-boundary dogfood must keep the negative-offset oracle unresolved"
+                        .to_string(),
+                );
+            }
+            if !scenario
+                .missing_graph_legs
+                .iter()
+                .any(|missing| missing == "safe_external_observer_target")
+            {
+                errors.push(
+                    "panic-boundary dogfood must keep the safe external observer target unresolved"
+                        .to_string(),
+                );
+            }
+            if scenario.suggested_test_file != "not_applicable" {
+                errors.push("panic-boundary dogfood must not suggest placement".to_string());
+            }
+            if scenario.operator_action != "keep_panic_boundary_limitation" {
+                errors.push(
+                    "panic-boundary dogfood action must keep the named limitation".to_string(),
+                );
+            }
+            if scenario.placement_verdict != "not_applicable" {
+                errors.push(
+                    "panic-boundary dogfood placement must remain not_applicable".to_string(),
+                );
+            }
+            if !scenario.bridge_verdict.contains("ffi") {
+                errors.push("panic-boundary dogfood must document the FFI bridge".to_string());
+            }
+            if !scenario.proof_mode.contains("panic_boundary_limitation") {
+                errors.push(
+                    "panic-boundary dogfood proof mode must stay a limitation receipt".to_string(),
+                );
+            }
+        }
         _ => {}
     }
 
@@ -49587,6 +49675,7 @@ fn bun_ub_cross_language_dogfood_allowed_states() -> &'static [&'static str] {
         "rust_ungripped_ts_discriminated",
         "rust_ungripped_ts_missing_discriminator",
         "ts_mention_not_observer",
+        "public_reachable_panic_boundary_unrevealed",
     ]
 }
 
@@ -81235,6 +81324,24 @@ fn exact_owner_call_has_external_expected_value() {
                 }),
                 "Bun UB dogfood should reject mention-only token evidence"
             );
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.observed_state == "public_reachable_panic_boundary_unrevealed"
+                        && scenario
+                            .missing_discriminators
+                            .contains(&"negative_offset".to_string())
+                        && scenario.missing_graph_legs.iter().any(|missing| {
+                            missing == "external_oracle:negative_offset_panic_boundary"
+                        })
+                        && scenario
+                            .missing_graph_legs
+                            .iter()
+                            .any(|missing| missing == "safe_external_observer_target")
+                        && scenario.suggested_test_file == "not_applicable"
+                        && scenario.operator_action == "keep_panic_boundary_limitation"
+                }),
+                "Bun UB dogfood should keep the FFI panic boundary as a limitation"
+            );
 
             for scenario in scenarios {
                 let run = dogfood_bun_ub_cross_language_run(&scenario);
@@ -81343,6 +81450,39 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(mention_report.contains("must not suggest placement"));
         assert!(mention_report.contains("must reject the token mention"));
         assert!(mention_report.contains("cannot credit a token mention"));
+
+        let mut panic_boundary = valid_bun_ub_cross_language_dogfood_scenario();
+        panic_boundary.name = "bun_ffi_negative_offset_panic_boundary".to_string();
+        panic_boundary.source_case =
+            "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+        panic_boundary.route_quality_case =
+            "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+        panic_boundary.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+        panic_boundary.rust_owner = "FFIObject::read".to_string();
+        panic_boundary.rust_boundary =
+            "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+        panic_boundary.ts_test_file = super::BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE.to_string();
+        panic_boundary.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        panic_boundary.observed_state = "public_reachable_panic_boundary_unrevealed".to_string();
+        panic_boundary.missing_discriminators.clear();
+        panic_boundary.missing_graph_legs.clear();
+        panic_boundary.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        panic_boundary.operator_action = "suggest_ffi_test".to_string();
+        panic_boundary.placement_verdict =
+            "suggested_test_file:test/js/bun/ffi/ffi.test.ts".to_string();
+        panic_boundary.bridge_verdict = "unknown".to_string();
+        panic_boundary.proof_mode = "repair_packet_preview".to_string();
+        let panic_boundary_report = dogfood_bun_ub_cross_language_run(&panic_boundary)
+            .errors
+            .join("\n");
+        assert!(panic_boundary_report.contains("must name negative_offset as missing"));
+        assert!(panic_boundary_report.contains("negative-offset oracle unresolved"));
+        assert!(panic_boundary_report.contains("safe external observer target unresolved"));
+        assert!(panic_boundary_report.contains("must not suggest placement"));
+        assert!(panic_boundary_report.contains("must keep the named limitation"));
+        assert!(panic_boundary_report.contains("placement must remain not_applicable"));
+        assert!(panic_boundary_report.contains("must document the FFI bridge"));
+        assert!(panic_boundary_report.contains("proof mode must stay a limitation receipt"));
     }
 
     #[test]
