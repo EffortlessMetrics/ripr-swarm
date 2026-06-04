@@ -8409,6 +8409,7 @@ const TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS: &str =
     "fixtures/typescript-bun-ub-calibration/corpus.json";
 const CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS: &str =
     "fixtures/cross-language-oracle-graph-corpus/corpus.json";
+const BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE: &str = "test/js/web/fetch/blob.test.ts";
 const TYPESCRIPT_PREVIEW_REPAIR_LOOP_CORPUS: &str =
     "fixtures/typescript-preview-repair-loop/corpus.json";
 const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS: &str =
@@ -47261,7 +47262,7 @@ fn typescript_bun_ub_calibration_case_errors(case: &TypeScriptBunUbCalibrationCa
             require_typescript_bun_ub_missing(
                 case,
                 "resizable_array_buffer",
-                "not_applicable",
+                BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
                 &mut errors,
             );
         }
@@ -47274,7 +47275,7 @@ fn typescript_bun_ub_calibration_case_errors(case: &TypeScriptBunUbCalibrationCa
             require_typescript_bun_ub_missing(
                 case,
                 "shared_array_buffer",
-                "not_applicable",
+                BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
                 &mut errors,
             );
         }
@@ -47286,7 +47287,12 @@ fn typescript_bun_ub_calibration_case_errors(case: &TypeScriptBunUbCalibrationCa
                 );
             }
             for missing in ["shared_array_buffer", "resizable_array_buffer"] {
-                require_typescript_bun_ub_missing(case, missing, "not_applicable", &mut errors);
+                require_typescript_bun_ub_missing(
+                    case,
+                    missing,
+                    BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE,
+                    &mut errors,
+                );
             }
         }
         "ts_missing_external_oracle" => {
@@ -47327,9 +47333,22 @@ fn typescript_bun_ub_calibration_case_errors(case: &TypeScriptBunUbCalibrationCa
                         .to_string(),
                 );
             }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "ts_mention_not_observer must keep suggested_test_file=not_applicable"
+                        .to_string(),
+                );
+            }
         }
-        "bridge_unknown" if case.bridge_confidence != "unknown" => {
-            errors.push("bridge_unknown requires bridge_confidence=unknown".to_string());
+        "bridge_unknown" => {
+            if case.bridge_confidence != "unknown" {
+                errors.push("bridge_unknown requires bridge_confidence=unknown".to_string());
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "bridge_unknown must keep suggested_test_file=not_applicable".to_string(),
+                );
+            }
         }
         _ => {}
     }
@@ -47506,7 +47525,7 @@ fn bun_ub_calibration_report_value(corpus_path: &Path) -> Value {
         if observed_state == "ts_mention_not_observer" {
             mention_only_cases += 1;
         }
-        if case.suggested_test_file == "not_applicable" {
+        if !case.repair_packet_ready {
             public_packet_exclusions += 1;
         }
         if case.repair_packet_ready {
@@ -48064,8 +48083,14 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
     if case.public_projection_eligible {
         errors.push("public_projection_eligible must remain false for graph cases".to_string());
     }
-    if case.suggested_test_file != "not_applicable" {
-        errors.push("suggested_test_file must be not_applicable".to_string());
+    let configured_missing_discriminator_placement = case.expected_state
+        == "rust_ungripped_ts_missing_discriminator"
+        && case.suggested_test_file == BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE;
+    if case.suggested_test_file != "not_applicable" && !configured_missing_discriminator_placement {
+        errors.push(
+            "suggested_test_file must be not_applicable or the configured Bun Blob TypeScript test file for missing-discriminator rows"
+                .to_string(),
+        );
     }
     if !case.allowed_edit_surface.is_empty() {
         errors.push("allowed_edit_surface must remain empty".to_string());
@@ -48224,6 +48249,12 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
             {
                 errors.push(
                     "bun_blob_missing_resizable case must name resizable_array_buffer".to_string(),
+                );
+            }
+            if case.suggested_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
+                errors.push(
+                    "rust_ungripped_ts_missing_discriminator must suggest the configured Bun Blob TypeScript test file"
+                        .to_string(),
                 );
             }
             if !cross_language_oracle_graph_has_missing_leg(
@@ -78336,7 +78367,10 @@ fn exact_owner_call_has_external_expected_value() {
                             .any(|item| item == "boundary_discriminator:resizable_array_buffer")
                     })
             );
-            assert_eq!(missing_resizable["suggested_test_file"], "not_applicable");
+            assert_eq!(
+                missing_resizable["suggested_test_file"],
+                super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            );
 
             let mention_only = rows
                 .iter()
@@ -78550,6 +78584,10 @@ fn exact_owner_call_has_external_expected_value() {
                         missing.iter().any(|item| item == "resizable_array_buffer")
                     })
             );
+            assert_eq!(
+                missing_resizable["suggested_test_file"],
+                super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            );
             let missing_external_oracle = rows
                 .iter()
                 .find(|row| row["case_id"] == "bun_blob_missing_external_oracle_limitation")
@@ -78741,7 +78779,7 @@ fn exact_owner_call_has_external_expected_value() {
             "authority_boundary must be preview_advisory_only",
             "repair_packet_ready must remain false",
             "public_projection_eligible must remain false",
-            "suggested_test_file must be not_applicable",
+            "suggested_test_file must be not_applicable or the configured Bun Blob TypeScript test file for missing-discriminator rows",
             "allowed_edit_surface must remain empty",
             "verify_command must be omitted",
             "receipt_command must be omitted",
@@ -78818,6 +78856,10 @@ fn exact_owner_call_has_external_expected_value() {
         assert_contains_error(
             &errors,
             "rust_ungripped_ts_missing_discriminator must name the missing boundary discriminator leg",
+        );
+        assert_contains_error(
+            &errors,
+            "rust_ungripped_ts_missing_discriminator must suggest the configured Bun Blob TypeScript test file",
         );
 
         let mut missing_external_oracle = valid_cross_language_oracle_graph_case();
@@ -79093,10 +79135,6 @@ fn exact_owner_call_has_external_expected_value() {
             &errors,
             "ts_missing_resizable must include missing discriminator resizable_array_buffer",
         );
-        assert_contains_error(
-            &errors,
-            "ts_missing_resizable must keep suggested_test_file=not_applicable",
-        );
 
         let mut missing_shared = valid_typescript_bun_ub_calibration_case();
         missing_shared.expected_verdict = "ts_missing_shared".to_string();
@@ -79111,10 +79149,6 @@ fn exact_owner_call_has_external_expected_value() {
         assert_contains_error(
             &errors,
             "ts_missing_shared must include missing discriminator shared_array_buffer",
-        );
-        assert_contains_error(
-            &errors,
-            "ts_missing_shared must keep suggested_test_file=not_applicable",
         );
 
         let mut missing_both = valid_typescript_bun_ub_calibration_case();
@@ -79134,6 +79168,10 @@ fn exact_owner_call_has_external_expected_value() {
         assert_contains_error(
             &errors,
             "ts_missing_shared_and_resizable must include missing discriminator resizable_array_buffer",
+        );
+        assert_contains_error(
+            &errors,
+            "ts_missing_shared_and_resizable must keep suggested_test_file=test/js/web/fetch/blob.test.ts",
         );
 
         let mut missing_external_oracle = valid_typescript_bun_ub_calibration_case();
@@ -79198,7 +79236,7 @@ fn exact_owner_call_has_external_expected_value() {
             expected_verdict: "ts_discriminated".to_string(),
             expected_missing_discriminators: Vec::new(),
             bridge_confidence: "configured_hint".to_string(),
-            expected_action: "no_new_test_needed".to_string(),
+            expected_action: "no_missing_bridge_discriminator".to_string(),
             suggested_test_file: "not_applicable".to_string(),
             suggested_shape: None,
             repair_packet_ready: false,
