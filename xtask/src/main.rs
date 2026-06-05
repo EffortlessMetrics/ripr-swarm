@@ -80515,7 +80515,10 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(markdown.contains("| none | 0 | none | none |"));
         assert!(markdown.contains("| none |  |  |  |  |  |  |"));
         assert!(markdown.contains("- none"));
-        assert!(markdown.contains("repair_packet_ready_cases must remain 0"));
+        assert_eq!(
+            report["errors"][0],
+            "repair_packet_ready_cases must remain 0, got 1"
+        );
     }
 
     #[test]
