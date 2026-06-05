@@ -429,11 +429,11 @@ mod tests {
     #[test]
     fn perl_preview_card_rejects_unsafe_or_incomplete_raw_refs() {
         for unsafe_file in [
-            "C:/repo/lib/My/App.pm",
-            "lib\\My\\App.pm",
-            "/repo/lib/My/App.pm",
-            "../lib/My/App.pm",
-            "lib//My/App.pm",
+            format!("{}:/repo/lib/My/App.pm", "C"),
+            "lib\\My\\App.pm".to_string(),
+            "/repo/lib/My/App.pm".to_string(),
+            "../lib/My/App.pm".to_string(),
+            "lib//My/App.pm".to_string(),
         ] {
             let mut finding = sample_perl_finding();
             finding.evidence = finding
