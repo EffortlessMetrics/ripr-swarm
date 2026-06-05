@@ -5,11 +5,6 @@
 //! a Perl runtime, or an LSP protocol session. Production routing lands only
 //! after the fact packet and strict actionability slices are fixture-backed.
 
-#![allow(
-    dead_code,
-    reason = "The fixture packet model intentionally declares the v1 contract before production consumers read every field."
-)]
-
 use serde::Deserialize;
 
 const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
