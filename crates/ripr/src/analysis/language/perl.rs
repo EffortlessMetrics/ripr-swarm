@@ -398,10 +398,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn perl_fact_packet_adapter_consumes_exact_return_fixture() {
-        let packet = PerlAdapter
-            .consume_fact_packet(EXACT_RETURN_PACKET)
-            .expect("valid ripr-perl-facts-v1 fixture should parse");
+    fn perl_fact_packet_adapter_consumes_exact_return_fixture() -> Result<(), String> {
+        let packet = PerlAdapter.consume_fact_packet(EXACT_RETURN_PACKET)?;
 
         assert_eq!(packet.schema_version, PERL_FACT_PACKET_SCHEMA);
         assert_eq!(packet.packet_status, PacketStatus::Complete);
@@ -409,41 +407,44 @@ mod tests {
 
         let owner = packet
             .owner("perl:lib/My/App.pm::My::App::discount")
-            .expect("owner fact");
+            .ok_or_else(|| "missing owner fact".to_string())?;
         assert_eq!(owner.kind, OwnerKind::Sub);
         assert_eq!(owner.package.as_deref(), Some("My::App"));
         assert_eq!(owner.confidence, Confidence::High);
 
         let relation = packet
             .relation("relation:change:discount-return:test:threshold")
-            .expect("relation fact");
+            .ok_or_else(|| "missing relation fact".to_string())?;
         assert_eq!(relation.relation_kind, RelationKind::DirectOwnerCall);
         assert_eq!(relation.reachability_hint, ReachabilityHint::Reachable);
 
         let command = packet
             .verify_command_for_test("test:t/app.t:test_discount_threshold")
-            .expect("verify command fact");
+            .ok_or_else(|| "missing verify command fact".to_string())?;
         assert_eq!(command.runner, Runner::Prove);
         assert_eq!(command.argv, ["prove", "t/app.t"]);
+
+        Ok(())
     }
 
     #[test]
-    fn perl_fact_packet_adapter_rejects_unknown_schema_version() {
-        let err = PerlAdapter
-            .consume_fact_packet(
-                &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\""),
-            )
-            .expect_err("unknown schema version must fail closed");
+    fn perl_fact_packet_adapter_rejects_unknown_schema_version() -> Result<(), String> {
+        let err = match PerlAdapter.consume_fact_packet(
+            &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\""),
+        ) {
+            Ok(_) => return Err("unknown schema version should fail closed".to_string()),
+            Err(err) => err,
+        };
 
         assert!(err.contains("unsupported Perl fact packet schema"));
         assert!(err.contains(PERL_FACT_PACKET_SCHEMA));
+
+        Ok(())
     }
 
     #[test]
-    fn perl_fact_packet_adapter_parses_partial_dynamic_boundary_limitation() {
-        let packet = PerlAdapter
-            .consume_fact_packet(PARTIAL_DYNAMIC_BOUNDARY_PACKET)
-            .expect("partial packets are valid facts");
+    fn perl_fact_packet_adapter_parses_partial_dynamic_boundary_limitation() -> Result<(), String> {
+        let packet = PerlAdapter.consume_fact_packet(PARTIAL_DYNAMIC_BOUNDARY_PACKET)?;
 
         assert_eq!(packet.packet_status, PacketStatus::Partial);
         assert_eq!(packet.dynamic_boundaries.len(), 1);
@@ -459,16 +460,16 @@ mod tests {
                 .is_none(),
             "partial dynamic-boundary fixture must not invent a verify command"
         );
+
+        Ok(())
     }
 
     #[test]
-    fn perl_fact_packet_adapter_keeps_verify_command_as_fact_not_result() {
-        let packet = PerlAdapter
-            .consume_fact_packet(EXACT_RETURN_PACKET)
-            .expect("valid fixture");
+    fn perl_fact_packet_adapter_keeps_verify_command_as_fact_not_result() -> Result<(), String> {
+        let packet = PerlAdapter.consume_fact_packet(EXACT_RETURN_PACKET)?;
         let command = packet
             .verify_command_for_test("test:t/app.t:test_discount_threshold")
-            .expect("verify command fact");
+            .ok_or_else(|| "missing verify command fact".to_string())?;
 
         assert_eq!(command.preconditions, ["prove_on_path"]);
         assert!(
@@ -478,6 +479,8 @@ mod tests {
                 .any(|fact| fact.provenance_id == "prov:runner:1"),
             "runner detection is provenance, not an executed result"
         );
+
+        Ok(())
     }
 
     const EXACT_RETURN_PACKET: &str = r#"{
