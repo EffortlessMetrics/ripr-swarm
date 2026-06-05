@@ -1,6 +1,6 @@
 # Cross-Language Evidence Router UX Plan
 
-Status: active; first work item complete
+Status: active; compact summary slice complete
 Owner: language-adapter-swarm
 Plan artifact: RIPR-PLAN-0063
 Linked proposal: n/a
@@ -19,7 +19,9 @@ dogfood receipts, a runbook, and a closeout boundary.
 
 The patch proof packet for that closed 0.8.1 path is recorded in
 `docs/handoffs/2026-06-05-0.8.1-typescript-bun-preview-patch-proof.md`. The
-next implementation slice is `output/bun-ub-preview-summary`.
+compact Bun UB preview summary is available through
+`cargo xtask bun-ub-preview-summary`; the next implementation slice is
+`agent/bun-cross-language-advisory-packet`.
 
 This plan turns that bounded path into a repeatable mixed TypeScript plus Rust
 operating loop. It does not reopen generic TypeScript support and it does not
@@ -98,7 +100,7 @@ or install-doc updates require separate explicit release authorization.
 
 ## Work Item: output/bun-ub-preview-summary
 
-Status: ready
+Status: done
 Linked proposal: n/a
 Linked spec: RIPR-SPEC-0063
 Linked ADR: n/a
@@ -114,6 +116,9 @@ routes and current cross-language states.
 
 Add a compact JSON and Markdown summary built from existing route-quality,
 calibration, and dogfood data.
+
+Implemented as `cargo xtask bun-ub-preview-summary`, which writes
+`target/ripr/reports/bun-ub-preview-summary.{json,md}`.
 
 ### Non-Goals
 
@@ -135,6 +140,7 @@ test, source edit, gate, badge, or support-tier promotion.
 
 ```bash
 cargo test -p xtask bun_ub_preview_summary -- --test-threads=1
+cargo xtask bun-ub-preview-summary
 cargo xtask bun-ub-calibration
 cargo xtask check-output-contracts
 cargo xtask check-static-language

@@ -4632,7 +4632,11 @@ metrics = [
 id = "RIPR-SPEC-0063"
 name = "Cross-language evidence router UX"
 spec = "docs/specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md"
-tests = []
+tests = [
+  "xtask/src/main.rs::tests::bun_ub_preview_summary_reports_route_quality",
+  "xtask/src/main.rs::tests::bun_ub_preview_summary_rejects_public_repair_packets",
+  "xtask/src/main.rs::tests::bun_ub_preview_summary_command_writes_markdown_and_json",
+]
 fixtures = [
   "fixtures/cross-language-oracle-graph-corpus",
   "fixtures/bun-ub-cross-language-dogfood",
@@ -4640,8 +4644,11 @@ fixtures = [
 code = [
   "crates/ripr/src/output/typescript_preview_card.rs",
   "crates/ripr/src/output/evidence_record.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
   "xtask/src/main.rs",
   "xtask/src/reports/bun.rs",
+  "xtask/src/reports/mod.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md",
@@ -4649,6 +4656,7 @@ outputs = [
   "docs/BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md",
   "docs/handoffs/2026-06-05-0.8.1-typescript-bun-preview-patch-proof.md",
   "docs/DOCUMENTATION.md",
+  "docs/IMPLEMENTATION_CAMPAIGNS.md",
   "docs/IMPLEMENTATION_PLAN.md",
   "plans/README.md",
   "plans/cross-language-evidence-router-ux/implementation-plan.md",
@@ -4660,4 +4668,25 @@ metrics = [
   "cross_language_evidence_router_proof_mode_projection",
   "cross_language_evidence_router_bridge_inventory_rows",
   "cross_language_evidence_router_public_packet_exclusions",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0064"
+name = "Perl fact packet contract"
+spec = "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md"
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md",
+  "docs/specs/README.md",
+  "docs/adr/0018-perl-lsp-fact-substrate.md",
+  "docs/proposals/RIPR-PROP-0018-perl-repair-routing-lane.md",
+  "policy/doc-artifacts.toml",
+  ".ripr/traceability.toml",
+]
+metrics = [
+  "perl_fact_packet_parse_success_rate",
+  "perl_fact_packet_invalid_reason_distribution",
+  "perl_fact_packet_preview_public_packet_exclusions",
 ]
