@@ -778,6 +778,112 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn perl_identity_mapping_tables_cover_supported_values() {
+        let owner_cases = [
+            (OwnerKind::Package, "package"),
+            (OwnerKind::Sub, "sub"),
+            (OwnerKind::Method, "method"),
+            (OwnerKind::Script, "script"),
+            (OwnerKind::ModuleInitializer, "module_initializer"),
+            (OwnerKind::TestSub, "test_sub"),
+            (OwnerKind::Unknown, "unknown"),
+        ];
+        for (kind, expected) in owner_cases {
+            assert_eq!(kind.as_str(), expected);
+        }
+
+        let behavior_cases = [
+            (
+                BehaviorHint::PredicateBoundary,
+                "predicate_boundary",
+                "predicate_boundary",
+                "predicate_boundary_assertion",
+            ),
+            (
+                BehaviorHint::ReturnValue,
+                "return_value",
+                "return_value",
+                "exact_return_assertion",
+            ),
+            (
+                BehaviorHint::ExceptionPath,
+                "exception_path",
+                "exception_observer",
+                "exception_observer",
+            ),
+            (
+                BehaviorHint::HashOrObjectField,
+                "hash_or_object_field",
+                "hash_or_object_field",
+                "hash_or_object_field_assertion",
+            ),
+            (
+                BehaviorHint::OutputObserver,
+                "output_observer",
+                "output_observer",
+                "output_observer",
+            ),
+            (
+                BehaviorHint::WarnObserver,
+                "warn_observer",
+                "warn_observer",
+                "warn_observer",
+            ),
+            (
+                BehaviorHint::LogObserver,
+                "log_observer",
+                "log_observer",
+                "log_observer",
+            ),
+            (
+                BehaviorHint::CallEffect,
+                "call_effect",
+                "call_effect",
+                "side_effect_observer",
+            ),
+            (
+                BehaviorHint::Unknown,
+                "unknown",
+                "unknown_discriminator",
+                "unknown_assertion",
+            ),
+        ];
+        for (hint, expected_kind, expected_discriminator, expected_shape) in behavior_cases {
+            assert_eq!(hint.as_str(), expected_kind);
+            assert_eq!(hint.default_missing_discriminator(), expected_discriminator);
+            assert_eq!(hint.default_assertion_shape(), expected_shape);
+        }
+
+        let oracle_cases = [
+            (OracleKind::ExactReturnAssertion, "exact_return_assertion"),
+            (
+                OracleKind::PredicateBoundaryAssertion,
+                "predicate_boundary_assertion",
+            ),
+            (OracleKind::ExceptionObserver, "exception_observer"),
+            (
+                OracleKind::HashOrObjectFieldAssertion,
+                "hash_or_object_field_assertion",
+            ),
+            (OracleKind::OutputObserver, "output_observer"),
+            (OracleKind::WarnObserver, "warn_observer"),
+            (OracleKind::LogObserver, "log_observer"),
+            (OracleKind::SmokeOk, "smoke_ok"),
+            (OracleKind::MentionOnly, "mention_only"),
+            (OracleKind::DiesOnly, "dies_only"),
+            (OracleKind::UnknownHelper, "unknown_helper"),
+            (
+                OracleKind::DynamicFrameworkIndirection,
+                "dynamic_framework_indirection",
+            ),
+            (OracleKind::Unknown, "unknown_assertion"),
+        ];
+        for (kind, expected) in oracle_cases {
+            assert_eq!(kind.assertion_shape(), expected);
+        }
+    }
+
     const EXACT_RETURN_PACKET: &str = r#"{
   "schema_version": "ripr-perl-facts-v1",
   "packet_id": "perl-facts:repo:exact-return",
