@@ -189,3 +189,24 @@ commands = [
   "cargo xtask check-static-language",
   "cargo xtask check-pr",
 ]
+
+[[work_item]]
+id = "dogfood/live-bun-stable-byte-receipts"
+status = "done"
+branch = "dogfood-live-bun-stable-byte-receipts"
+stackable = false
+acceptance = "Add live or live-shaped Bun stable-byte dogfood receipts for configured copy_to_unshared and MarkdownObject witnesses, stripped resizable missing discriminator placement, mention-only rejection, bridge_unknown inspection, node:fs scalar write manifest-only limitation, Bun.write helper-gated limitation, and the FFI panic-boundary limitation; every receipt records manual verdict, review work saved or avoided, proof mode, preview_advisory_only authority, repair_packet_ready=false, and no runtime Bun execution, generated tests, source edits, public repair packet, gate, badge, or support-tier promotion."
+specs = [
+  "docs/specs/RIPR-SPEC-0062-cross-language-oracle-graph.md",
+  "docs/specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md",
+]
+plan = "plans/cross-language-evidence-router-ux/implementation-plan.md"
+commands = [
+  "cargo test -p xtask live_bun_stable_byte_dogfood -- --test-threads=1",
+  "cargo test -p xtask dogfood_bun_ub_cross_language -- --test-threads=1",
+  "cargo xtask dogfood",
+  "cargo xtask check-fixture-contracts",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-static-language",
+  "cargo xtask check-pr",
+]

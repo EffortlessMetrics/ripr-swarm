@@ -8714,6 +8714,9 @@ const TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS: &str =
 const CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS: &str =
     "fixtures/cross-language-oracle-graph-corpus/corpus.json";
 const BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE: &str = "test/js/web/fetch/blob.test.ts";
+const BUN_MARKDOWN_TS_TEST_FILE: &str = "test/js/bun/md/md-edge-cases.test.ts";
+const BUN_NODE_FS_TS_TEST_FILE: &str = "test/js/node/fs/fs.test.ts";
+const BUN_WRITE_TS_TEST_FILE: &str = "test/js/bun/write.test.ts";
 const BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE: &str = "unresolved:typescript-test-surface";
 const BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS: &str =
     "fixtures/bun-ub-cross-language-dogfood/corpus.json";
@@ -9002,10 +9005,27 @@ const BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
         "rust_ungripped_ts_discriminated",
     ),
     (
+        "bun_array_buffer_copy_to_unshared_live_receipt",
+        "rust_ungripped_ts_discriminated",
+    ),
+    (
+        "bun_markdown_resizable_array_buffer_live_receipt",
+        "rust_ungripped_ts_discriminated",
+    ),
+    (
         "bun_blob_stripped_resizable",
         "rust_ungripped_ts_missing_discriminator",
     ),
     ("bun_blob_mention_only", "ts_mention_not_observer"),
+    ("bun_blob_bridge_unknown_live_receipt", "bridge_unknown"),
+    (
+        "bun_node_fs_scalar_write_manifest_only_receipt",
+        "named_static_limitation",
+    ),
+    (
+        "bun_write_helper_gated_manifest_only_receipt",
+        "named_static_limitation",
+    ),
     (
         "bun_ffi_negative_offset_panic_boundary",
         "public_reachable_panic_boundary_unrevealed",
@@ -51037,6 +51057,123 @@ fn dogfood_bun_ub_cross_language_run(
                     .to_string(),
             );
         }
+    } else if scenario.name.starts_with("bun_array_buffer_") {
+        if scenario.source_case != "bun_array_buffer_copy_to_unshared_configured_bridge_advisory" {
+            errors.push(
+                "source_case must link to the copy_to_unshared route-quality case".to_string(),
+            );
+        }
+        if scenario.route_quality_case
+            != "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+        {
+            errors.push(
+                "route_quality_case must link to the copy_to_unshared route-quality case"
+                    .to_string(),
+            );
+        }
+        if scenario.rust_file != "src/jsc/array_buffer.rs" {
+            errors.push("rust_file must stay on the copy_to_unshared Rust seam".to_string());
+        }
+        if scenario.rust_owner != "copy_to_unshared" {
+            errors.push("rust_owner must stay on copy_to_unshared".to_string());
+        }
+        if scenario.rust_boundary != "SharedArrayBuffer and resizable ArrayBuffer copy semantics" {
+            errors.push(
+                "rust_boundary must stay on the copy_to_unshared stable-byte boundary".to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE {
+            errors.push(
+                "copy_to_unshared receipt must stay on the Blob TypeScript witness file"
+                    .to_string(),
+            );
+        }
+    } else if scenario.name.starts_with("bun_markdown_") {
+        if scenario.source_case != "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+        {
+            errors
+                .push("source_case must link to the MarkdownObject route-quality case".to_string());
+        }
+        if scenario.route_quality_case
+            != "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+        {
+            errors.push(
+                "route_quality_case must link to the MarkdownObject route-quality case".to_string(),
+            );
+        }
+        if scenario.rust_file != "src/runtime/api/MarkdownObject.rs" {
+            errors.push("rust_file must stay on the MarkdownObject Rust seam".to_string());
+        }
+        if scenario.rust_owner != "MarkdownObject::to_string" {
+            errors.push("rust_owner must stay on MarkdownObject::to_string".to_string());
+        }
+        if scenario.rust_boundary != "self.0.resizable && !self.0.shared" {
+            errors.push(
+                "rust_boundary must stay on the MarkdownObject resizable boundary".to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_MARKDOWN_TS_TEST_FILE {
+            errors.push(
+                "MarkdownObject receipt must stay on the configured Bun markdown TypeScript test file"
+                    .to_string(),
+            );
+        }
+    } else if scenario.name.starts_with("bun_node_fs_") {
+        if scenario.source_case != "bun_node_fs_scalar_write_manifest_only_profile" {
+            errors.push("source_case must link to the node:fs manifest-only profile".to_string());
+        }
+        if scenario.route_quality_case != "bun_node_fs_scalar_write_manifest_only_profile" {
+            errors.push(
+                "route_quality_case must link to the node:fs manifest-only profile".to_string(),
+            );
+        }
+        if scenario.rust_file != "unresolved:node-fs-scalar-write-rust-seam" {
+            errors.push(
+                "node:fs manifest-only receipt must keep the Rust seam unresolved".to_string(),
+            );
+        }
+        if scenario.rust_owner != "node:fs scalar write sink" {
+            errors.push("node:fs manifest-only receipt must keep the owner unresolved".to_string());
+        }
+        if scenario.rust_boundary
+            != "JS-owned bytes must be copied before native write scalar sinks"
+        {
+            errors.push(
+                "node:fs manifest-only receipt must keep the stable-byte boundary text".to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_NODE_FS_TS_TEST_FILE {
+            errors.push("node:fs manifest-only receipt must name fs.test.ts".to_string());
+        }
+    } else if scenario.name.starts_with("bun_write_") {
+        if scenario.source_case != "bun_write_helper_gated_manifest_only_profile" {
+            errors.push("source_case must link to the Bun.write helper-gated profile".to_string());
+        }
+        if scenario.route_quality_case != "bun_write_helper_gated_manifest_only_profile" {
+            errors.push(
+                "route_quality_case must link to the Bun.write helper-gated profile".to_string(),
+            );
+        }
+        if scenario.rust_file != "unresolved:bun-write-stable-byte-rust-seam" {
+            errors.push(
+                "Bun.write helper-gated receipt must keep the Rust seam unresolved".to_string(),
+            );
+        }
+        if scenario.rust_owner != "Bun.write stable-byte sink" {
+            errors
+                .push("Bun.write helper-gated receipt must keep the owner unresolved".to_string());
+        }
+        if scenario.rust_boundary
+            != "JS-owned bytes must not cross Bun.write native sinks without a helper"
+        {
+            errors.push(
+                "Bun.write helper-gated receipt must keep the stable-byte boundary text"
+                    .to_string(),
+            );
+        }
+        if scenario.ts_test_file != BUN_WRITE_TS_TEST_FILE {
+            errors.push("Bun.write helper-gated receipt must name write.test.ts".to_string());
+        }
     } else if scenario.name.starts_with("bun_ffi_") {
         if !scenario.source_case.starts_with("bun_ffi_") {
             errors.push("source_case must link to a Bun FFI calibration case".to_string());
@@ -51064,7 +51201,9 @@ fn dogfood_bun_ub_cross_language_run(
             );
         }
     } else {
-        errors.push("case id must start with bun_blob_ or bun_ffi_".to_string());
+        errors.push(
+            "case id must start with a supported Bun cross-language dogfood profile".to_string(),
+        );
     }
     if scenario.expected_state != scenario.observed_state {
         errors
@@ -51190,6 +51329,123 @@ fn dogfood_bun_ub_cross_language_run(
                 );
             }
         }
+        "bridge_unknown" => {
+            if !scenario.missing_discriminators.is_empty() {
+                errors.push("bridge_unknown must not report missing discriminators".to_string());
+            }
+            if !scenario
+                .missing_graph_legs
+                .iter()
+                .any(|missing| missing == "binding_or_ffi_edge")
+            {
+                errors.push("bridge_unknown must name missing binding_or_ffi_edge".to_string());
+            }
+            if scenario.suggested_test_file != "not_applicable" {
+                errors.push("bridge_unknown must not suggest TypeScript placement".to_string());
+            }
+            if scenario.operator_action != "inspect_or_add_bridge_evidence" {
+                errors.push("bridge_unknown must route to bridge inspection".to_string());
+            }
+            if scenario.placement_verdict != "not_applicable" {
+                errors.push("bridge_unknown placement must remain not_applicable".to_string());
+            }
+            if !scenario.bridge_verdict.contains("binding_or_ffi_edge") {
+                errors.push("bridge_unknown must document the missing bridge leg".to_string());
+            }
+            if scenario.proof_mode != "bridge_unknown" {
+                errors.push("bridge_unknown proof mode must stay bridge_unknown".to_string());
+            }
+        }
+        "named_static_limitation" => {
+            if !scenario.missing_discriminators.is_empty() {
+                errors.push(
+                    "named_static_limitation must not invent missing discriminators".to_string(),
+                );
+            }
+            if scenario.missing_graph_legs.is_empty() {
+                errors.push("named_static_limitation must name missing graph legs".to_string());
+            }
+            if !scenario.bridge_verdict.contains("manifest_only")
+                || !scenario.bridge_verdict.contains("not_credited")
+            {
+                errors.push(
+                    "named_static_limitation must keep manifest-only bridge evidence uncredited"
+                        .to_string(),
+                );
+            }
+            if scenario.name.starts_with("bun_node_fs_") {
+                if !scenario
+                    .missing_graph_legs
+                    .iter()
+                    .any(|missing| missing == "binding_or_ffi_edge:node_fs_scalar_write")
+                {
+                    errors.push(
+                        "node:fs named limitation must keep node_fs_scalar_write bridge leg missing"
+                            .to_string(),
+                    );
+                }
+                if !scenario
+                    .missing_graph_legs
+                    .iter()
+                    .any(|missing| missing == "external_oracle:stable_byte_scalar_write")
+                {
+                    errors.push(
+                        "node:fs named limitation must keep scalar-write oracle leg missing"
+                            .to_string(),
+                    );
+                }
+                if scenario.suggested_test_file != BUN_NODE_FS_TS_TEST_FILE {
+                    errors.push(
+                        "node:fs named limitation must preserve the typed witness path".to_string(),
+                    );
+                }
+                if !scenario.placement_verdict.contains("not_actionable") {
+                    errors.push(
+                        "node:fs named limitation placement must remain non-actionable".to_string(),
+                    );
+                }
+                if scenario.proof_mode != "observable_red_green" {
+                    errors.push(
+                        "node:fs named limitation proof mode must be observable_red_green"
+                            .to_string(),
+                    );
+                }
+            } else if scenario.name.starts_with("bun_write_") {
+                for required in [
+                    "binding_or_ffi_edge:bun_write_sink",
+                    "helper:bun_write_fixture_helper",
+                    "external_oracle:stable_byte_write",
+                ] {
+                    if !scenario
+                        .missing_graph_legs
+                        .iter()
+                        .any(|missing| missing == required)
+                    {
+                        errors.push(format!(
+                            "Bun.write named limitation must keep {required} missing"
+                        ));
+                    }
+                }
+                if scenario.suggested_test_file != "not_applicable" {
+                    errors.push(
+                        "Bun.write helper-gated limitation must not suggest placement".to_string(),
+                    );
+                }
+                if scenario.placement_verdict != "not_applicable" {
+                    errors.push(
+                        "Bun.write helper-gated placement must remain not_applicable".to_string(),
+                    );
+                }
+                if scenario.proof_mode != "helper_gated" {
+                    errors.push("Bun.write proof mode must stay helper_gated".to_string());
+                }
+            } else {
+                errors.push(
+                    "named_static_limitation dogfood must use a supported manifest-only profile"
+                        .to_string(),
+                );
+            }
+        }
         "public_reachable_panic_boundary_unrevealed" => {
             if !scenario
                 .missing_discriminators
@@ -51280,6 +51536,8 @@ fn bun_ub_cross_language_dogfood_allowed_states() -> &'static [&'static str] {
         "rust_ungripped_ts_discriminated",
         "rust_ungripped_ts_missing_discriminator",
         "ts_mention_not_observer",
+        "bridge_unknown",
+        "named_static_limitation",
         "public_reachable_panic_boundary_unrevealed",
     ]
 }
@@ -54285,6 +54543,14 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         .iter()
         .filter(|run| run.observed_state == "ts_mention_not_observer")
         .count();
+    let bun_ub_dogfood_bridge_unknown = bun_ub_cross_language_runs
+        .iter()
+        .filter(|run| run.observed_state == "bridge_unknown")
+        .count();
+    let bun_ub_dogfood_named_limitation = bun_ub_cross_language_runs
+        .iter()
+        .filter(|run| run.observed_state == "named_static_limitation")
+        .count();
     let bun_ub_dogfood_packet_ready = bun_ub_cross_language_runs
         .iter()
         .filter(|run| run.repair_packet_ready)
@@ -54297,11 +54563,13 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
     body.push_str("- Repair packets: none\n");
     body.push_str("- Receipt input: `fixtures/bun-ub-cross-language-dogfood/corpus.json`\n");
     body.push_str(&format!(
-        "- Cases: {}; TS-discriminated: {}; missing discriminator: {}; mention-only: {}; packet-ready: {}\n\n",
+        "- Cases: {}; TS-discriminated: {}; missing discriminator: {}; mention-only: {}; bridge-unknown: {}; named limitation: {}; packet-ready: {}\n\n",
         bun_ub_dogfood_total,
         bun_ub_dogfood_discriminated,
         bun_ub_dogfood_missing_discriminator,
         bun_ub_dogfood_mention_only,
+        bun_ub_dogfood_bridge_unknown,
+        bun_ub_dogfood_named_limitation,
         bun_ub_dogfood_packet_ready
     ));
     body.push_str(
@@ -56433,6 +56701,20 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         bun_ub_cross_language_runs
             .iter()
             .filter(|run| run.observed_state == "ts_mention_not_observer")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"bridge_unknown\": {},\n",
+        bun_ub_cross_language_runs
+            .iter()
+            .filter(|run| run.observed_state == "bridge_unknown")
+            .count()
+    ));
+    body.push_str(&format!(
+        "      \"named_static_limitation\": {},\n",
+        bun_ub_cross_language_runs
+            .iter()
+            .filter(|run| run.observed_state == "named_static_limitation")
             .count()
     ));
     body.push_str(&format!(
@@ -83909,6 +84191,132 @@ fn exact_owner_call_has_external_expected_value() {
                     run.errors
                 );
             }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn live_bun_stable_byte_dogfood_receipts_are_checked() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let scenarios = dogfood_bun_ub_cross_language_scenarios();
+            let runs = scenarios
+                .iter()
+                .map(super::dogfood_bun_ub_cross_language_run)
+                .collect::<Vec<_>>();
+
+            for run in &runs {
+                assert!(
+                    run.errors.is_empty(),
+                    "{} live Bun stable-byte receipt should validate: {:?}",
+                    run.name,
+                    run.errors
+                );
+                assert_eq!(
+                    run.manual_verdict, "agrees",
+                    "{} should record a manual verdict",
+                    run.name
+                );
+                assert_eq!(
+                    run.authority_boundary, "preview_advisory_only",
+                    "{} should stay preview/advisory",
+                    run.name
+                );
+                assert!(
+                    !run.repair_packet_ready,
+                    "{} should not become repair-packet-ready",
+                    run.name
+                );
+                assert_ne!(
+                    run.review_before, run.review_after,
+                    "{} should record what changed in the review loop",
+                    run.name
+                );
+                assert!(
+                    !run.suggested_test_file.ends_with(".rs"),
+                    "{} should not suggest Rust test placement",
+                    run.name
+                );
+            }
+
+            assert!(
+                runs.iter().any(|run| {
+                    run.name == "bun_array_buffer_copy_to_unshared_live_receipt"
+                        && run.observed_state == "rust_ungripped_ts_discriminated"
+                        && run.bridge_verdict.contains("credited")
+                        && run.suggested_test_file == "not_applicable"
+                }),
+                "live dogfood should credit the configured copy_to_unshared witness"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.name == "bun_markdown_resizable_array_buffer_live_receipt"
+                        && run.observed_state == "rust_ungripped_ts_discriminated"
+                        && run.ts_test_file == super::BUN_MARKDOWN_TS_TEST_FILE
+                        && run.bridge_verdict.contains("credited")
+                }),
+                "live dogfood should credit the configured MarkdownObject witness"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.observed_state == "rust_ungripped_ts_missing_discriminator"
+                        && run
+                            .missing_discriminators
+                            .contains(&"resizable_array_buffer".to_string())
+                        && run.suggested_test_file == super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+                }),
+                "live dogfood should retain the missing resizable placement receipt"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.observed_state == "ts_mention_not_observer"
+                        && run.operator_action == "reject_token_mention"
+                        && run.suggested_test_file == "not_applicable"
+                }),
+                "live dogfood should reject mention-only token evidence"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.name == "bun_blob_bridge_unknown_live_receipt"
+                        && run.observed_state == "bridge_unknown"
+                        && run
+                            .missing_graph_legs
+                            .contains(&"binding_or_ffi_edge".to_string())
+                        && run.operator_action == "inspect_or_add_bridge_evidence"
+                        && run.suggested_test_file == "not_applicable"
+                }),
+                "live dogfood should stop at bridge inspection when the bridge is unknown"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.name == "bun_node_fs_scalar_write_manifest_only_receipt"
+                        && run.observed_state == "named_static_limitation"
+                        && run.proof_mode == "observable_red_green"
+                        && run.suggested_test_file == super::BUN_NODE_FS_TS_TEST_FILE
+                        && run.placement_verdict.contains("not_actionable")
+                }),
+                "live dogfood should keep node:fs scalar write manifest-only and non-actionable"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.name == "bun_write_helper_gated_manifest_only_receipt"
+                        && run.observed_state == "named_static_limitation"
+                        && run.proof_mode == "helper_gated"
+                        && run
+                            .missing_graph_legs
+                            .contains(&"helper:bun_write_fixture_helper".to_string())
+                        && run.suggested_test_file == "not_applicable"
+                }),
+                "live dogfood should keep Bun.write helper-gated"
+            );
+            assert!(
+                runs.iter().any(|run| {
+                    run.observed_state == "public_reachable_panic_boundary_unrevealed"
+                        && run.operator_action == "keep_panic_boundary_limitation"
+                        && run.suggested_test_file == "not_applicable"
+                }),
+                "live dogfood should retain the FFI panic-boundary named limitation"
+            );
 
             Ok(())
         })
