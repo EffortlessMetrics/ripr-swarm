@@ -1,6 +1,6 @@
 # Bun UB Cross-Language Dogfood Receipts
 
-Spec: RIPR-SPEC-0062
+Spec: RIPR-SPEC-0062, RIPR-SPEC-0063
 
 ## Given
 
