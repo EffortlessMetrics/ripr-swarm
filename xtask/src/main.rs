@@ -72227,93 +72227,87 @@ mod tests {
         super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&empty_cases, &mut violations)?;
 
         let bad_packet = root.join("bad-packet.json");
-        write(
-            &bad_packet,
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "schema_version": "wrong",
-                "producer": {"name": "not-perl-lsp"},
-                "canonical_gap_id": "gap:bad",
-                "gap_state": "actionable",
-                "files": [
-                    {},
-                    {"path": "lib\\Bad.pm"},
-                    {"path": "/absolute.pm"},
-                    {"path": "host:bad.pm"}
-                ]
-            }))
-            .unwrap(),
-        );
+        let bad_packet_json = serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": "wrong",
+            "producer": {"name": "not-perl-lsp"},
+            "canonical_gap_id": "gap:bad",
+            "gap_state": "actionable",
+            "files": [
+                {},
+                {"path": "lib\\Bad.pm"},
+                {"path": "/absolute.pm"},
+                {"path": "host:bad.pm"}
+            ]
+        }))
+        .map_err(|err| err.to_string())?;
+        write(&bad_packet, &bad_packet_json);
         let missing_files_packet = root.join("missing-files-packet.json");
-        write(
-            &missing_files_packet,
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "schema_version": "ripr-perl-facts-v1",
-                "producer": {"name": "perl-lsp"}
-            }))
-            .unwrap(),
-        );
+        let missing_files_packet_json = serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": "ripr-perl-facts-v1",
+            "producer": {"name": "perl-lsp"}
+        }))
+        .map_err(|err| err.to_string())?;
+        write(&missing_files_packet, &missing_files_packet_json);
 
         let corpus = root.join("corpus.json");
-        write(
-            &corpus,
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "wrong",
-                "schema_version": "0.2",
-                "spec": "RIPR-SPEC-9999",
-                "cases": [
-                    {
-                        "id": "missing-expected",
-                        "exporter": "wrong",
-                        "packet_schema": "wrong",
-                        "authority_boundary": "wrong",
-                        "must_not_claim": []
-                    },
-                    {
-                        "id": "missing-packet",
-                        "exporter": "perl-lsp",
-                        "packet_schema": "ripr-perl-facts-v1",
-                        "authority_boundary": "preview_advisory_only",
-                        "must_not_claim": [
-                            "ripr_check_executes_perl_lsp",
-                            "canonical_gap_id_emitted_by_perl_lsp",
-                            "gap_state_emitted_by_perl_lsp",
-                            "repair_packet_ready",
-                            "default_gate_authority",
-                            "public_badge_contribution",
-                            "support_tier_promotion"
-                        ],
-                        "expected_packet": root.join("does-not-exist.json")
-                    },
-                    {
-                        "id": "bad-packet",
-                        "exporter": "perl-lsp",
-                        "packet_schema": "ripr-perl-facts-v1",
-                        "authority_boundary": "preview_advisory_only",
-                        "must_not_claim": [
-                            "default_gate_authority"
-                        ],
-                        "expected_packet": bad_packet
-                    },
-                    {
-                        "id": "bad-packet",
-                        "exporter": "perl-lsp",
-                        "packet_schema": "ripr-perl-facts-v1",
-                        "authority_boundary": "preview_advisory_only",
-                        "must_not_claim": [
-                            "ripr_check_executes_perl_lsp",
-                            "canonical_gap_id_emitted_by_perl_lsp",
-                            "gap_state_emitted_by_perl_lsp",
-                            "repair_packet_ready",
-                            "default_gate_authority",
-                            "public_badge_contribution",
-                            "support_tier_promotion"
-                        ],
-                        "expected_packet": missing_files_packet
-                    }
-                ]
-            }))
-            .unwrap(),
-        );
+        let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
+            "kind": "wrong",
+            "schema_version": "0.2",
+            "spec": "RIPR-SPEC-9999",
+            "cases": [
+                {
+                    "id": "missing-expected",
+                    "exporter": "wrong",
+                    "packet_schema": "wrong",
+                    "authority_boundary": "wrong",
+                    "must_not_claim": []
+                },
+                {
+                    "id": "missing-packet",
+                    "exporter": "perl-lsp",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "authority_boundary": "preview_advisory_only",
+                    "must_not_claim": [
+                        "ripr_check_executes_perl_lsp",
+                        "canonical_gap_id_emitted_by_perl_lsp",
+                        "gap_state_emitted_by_perl_lsp",
+                        "repair_packet_ready",
+                        "default_gate_authority",
+                        "public_badge_contribution",
+                        "support_tier_promotion"
+                    ],
+                    "expected_packet": root.join("does-not-exist.json")
+                },
+                {
+                    "id": "bad-packet",
+                    "exporter": "perl-lsp",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "authority_boundary": "preview_advisory_only",
+                    "must_not_claim": [
+                        "default_gate_authority"
+                    ],
+                    "expected_packet": bad_packet
+                },
+                {
+                    "id": "bad-packet",
+                    "exporter": "perl-lsp",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "authority_boundary": "preview_advisory_only",
+                    "must_not_claim": [
+                        "ripr_check_executes_perl_lsp",
+                        "canonical_gap_id_emitted_by_perl_lsp",
+                        "gap_state_emitted_by_perl_lsp",
+                        "repair_packet_ready",
+                        "default_gate_authority",
+                        "public_badge_contribution",
+                        "support_tier_promotion"
+                    ],
+                    "expected_packet": missing_files_packet
+                }
+            ]
+        }))
+        .map_err(|err| err.to_string())?;
+        write(&corpus, &corpus_json);
         super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&corpus, &mut violations)?;
 
         let report = violations.join("\n");
