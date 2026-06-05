@@ -1144,8 +1144,8 @@ mod tests {
 
     #[test]
     fn perl_lsp_export_request_rejects_host_specific_paths() -> Result<(), String> {
-        let absolute_root = PerlLspFactExportRequest::new(
-            "C:/repo",
+        let host_qualified_root = PerlLspFactExportRequest::new(
+            "host:repo",
             "target/ripr/reports/perl-facts.json",
             [PerlFactClass::Owners],
         );
@@ -1161,8 +1161,8 @@ mod tests {
         );
 
         assert!(
-            matches!(absolute_root, Err(ref message) if message.contains("repo-relative")),
-            "absolute roots must not enter deterministic exporter requests"
+            matches!(host_qualified_root, Err(ref message) if message.contains("repo-relative")),
+            "host-qualified roots must not enter deterministic exporter requests"
         );
         assert!(
             matches!(backslash_out, Err(ref message) if message.contains("repo-relative")),
