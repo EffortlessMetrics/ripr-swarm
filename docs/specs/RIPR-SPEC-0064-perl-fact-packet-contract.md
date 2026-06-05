@@ -31,7 +31,8 @@ Support-tier impact:
 - This spec does not promote Perl. It defines a preview/advisory producer and
   consumer contract for deterministic facts. Perl facts remain ineligible for
   default gates, public badge contribution, baselines, RIPR Zero, or stable
-  support claims.
+  support claims. Any later support-tier change must update
+  [SUPPORT_TIERS](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
