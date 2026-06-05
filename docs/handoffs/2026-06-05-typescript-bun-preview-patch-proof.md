@@ -1,7 +1,7 @@
 # Handoff: TypeScript/Bun Preview Patch Proof
 
 Date: 2026-06-05
-Branch / PR: `release-typescript-bun-preview-patch-proof` / pending
+Branch / PR: `release-typescript-bun-preview-patch-proof` / #988
 Current work item: `release/typescript-bun-preview-patch-proof`
 
 ## Decision

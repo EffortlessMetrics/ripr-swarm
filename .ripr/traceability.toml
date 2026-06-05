@@ -4645,6 +4645,7 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md",
+  "docs/handoffs/2026-06-05-typescript-bun-preview-patch-proof.md",
   "docs/specs/README.md",
   "docs/BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md",
   "docs/DOCUMENTATION.md",
