@@ -1239,7 +1239,7 @@ struct DogfoodTypescriptPreviewRepairLoopRun {
     errors: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DogfoodBunUbCrossLanguageScenario {
     name: String,
     source_case: String,
@@ -84451,6 +84451,124 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(panic_boundary_report.contains("placement must remain not_applicable"));
         assert!(panic_boundary_report.contains("must document the FFI bridge"));
         assert!(panic_boundary_report.contains("proof mode must stay a limitation receipt"));
+    }
+
+    #[test]
+    fn dogfood_bun_ub_cross_language_rejects_live_profile_drift() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let scenarios = dogfood_bun_ub_cross_language_scenarios();
+            let scenario = |name: &str| -> Result<DogfoodBunUbCrossLanguageScenario, String> {
+                let Some(found) = scenarios.iter().find(|scenario| scenario.name == name) else {
+                    return Err(format!("{name} should exist in Bun UB dogfood corpus"));
+                };
+                Ok(found.clone())
+            };
+
+            let mut copy_to_unshared = scenario("bun_array_buffer_copy_to_unshared_live_receipt")?;
+            copy_to_unshared.source_case = "wrong".to_string();
+            copy_to_unshared.route_quality_case = "wrong".to_string();
+            copy_to_unshared.rust_file = "src/jsc/Blob.rs".to_string();
+            copy_to_unshared.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+            copy_to_unshared.rust_boundary = "wrong".to_string();
+            copy_to_unshared.ts_test_file = "test/js/bun/write.test.ts".to_string();
+            let copy_report = dogfood_bun_ub_cross_language_run(&copy_to_unshared)
+                .errors
+                .join("\n");
+            assert!(copy_report.contains("copy_to_unshared route-quality case"));
+            assert!(copy_report.contains("copy_to_unshared Rust seam"));
+            assert!(copy_report.contains("rust_owner must stay on copy_to_unshared"));
+            assert!(copy_report.contains("copy_to_unshared stable-byte boundary"));
+            assert!(copy_report.contains("Blob TypeScript witness file"));
+
+            let mut markdown = scenario("bun_markdown_resizable_array_buffer_live_receipt")?;
+            markdown.source_case = "wrong".to_string();
+            markdown.route_quality_case = "wrong".to_string();
+            markdown.rust_file = "src/jsc/Blob.rs".to_string();
+            markdown.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+            markdown.rust_boundary = "wrong".to_string();
+            markdown.ts_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+            let markdown_report = dogfood_bun_ub_cross_language_run(&markdown)
+                .errors
+                .join("\n");
+            assert!(markdown_report.contains("MarkdownObject route-quality case"));
+            assert!(markdown_report.contains("MarkdownObject Rust seam"));
+            assert!(markdown_report.contains("MarkdownObject::to_string"));
+            assert!(markdown_report.contains("MarkdownObject resizable boundary"));
+            assert!(markdown_report.contains("Bun markdown TypeScript test file"));
+
+            let mut bridge_unknown = scenario("bun_blob_bridge_unknown_live_receipt")?;
+            bridge_unknown.missing_discriminators = vec!["resizable_array_buffer".to_string()];
+            bridge_unknown.missing_graph_legs.clear();
+            bridge_unknown.suggested_test_file =
+                super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+            bridge_unknown.operator_action = "suggest_blob_test".to_string();
+            bridge_unknown.placement_verdict =
+                "suggested_test_file:test/js/web/fetch/blob.test.ts".to_string();
+            bridge_unknown.bridge_verdict = "configured_binding_edge_credited".to_string();
+            bridge_unknown.proof_mode = "observable_red_green".to_string();
+            let bridge_report = dogfood_bun_ub_cross_language_run(&bridge_unknown)
+                .errors
+                .join("\n");
+            assert!(
+                bridge_report.contains("bridge_unknown must not report missing discriminators")
+            );
+            assert!(bridge_report.contains("missing binding_or_ffi_edge"));
+            assert!(bridge_report.contains("must not suggest TypeScript placement"));
+            assert!(bridge_report.contains("must route to bridge inspection"));
+            assert!(bridge_report.contains("placement must remain not_applicable"));
+            assert!(bridge_report.contains("must document the missing bridge leg"));
+            assert!(bridge_report.contains("proof mode must stay bridge_unknown"));
+
+            let mut node_fs = scenario("bun_node_fs_scalar_write_manifest_only_receipt")?;
+            node_fs.missing_discriminators = vec!["scalar_write".to_string()];
+            node_fs.missing_graph_legs.clear();
+            node_fs.bridge_verdict = "configured_binding_edge_credited".to_string();
+            node_fs.suggested_test_file = "not_applicable".to_string();
+            node_fs.placement_verdict = "actionable".to_string();
+            node_fs.proof_mode = "helper_gated".to_string();
+            let node_fs_report = dogfood_bun_ub_cross_language_run(&node_fs)
+                .errors
+                .join("\n");
+            assert!(node_fs_report.contains("must not invent missing discriminators"));
+            assert!(node_fs_report.contains("must name missing graph legs"));
+            assert!(node_fs_report.contains("manifest-only bridge evidence uncredited"));
+            assert!(node_fs_report.contains("node_fs_scalar_write bridge leg missing"));
+            assert!(node_fs_report.contains("scalar-write oracle leg missing"));
+            assert!(node_fs_report.contains("typed witness path"));
+            assert!(node_fs_report.contains("placement must remain non-actionable"));
+            assert!(node_fs_report.contains("proof mode must be observable_red_green"));
+
+            let mut bun_write = scenario("bun_write_helper_gated_manifest_only_receipt")?;
+            bun_write.missing_graph_legs.clear();
+            bun_write.bridge_verdict = "configured_binding_edge_credited".to_string();
+            bun_write.suggested_test_file = super::BUN_WRITE_TS_TEST_FILE.to_string();
+            bun_write.placement_verdict =
+                "suggested_test_file:test/js/bun/write.test.ts".to_string();
+            bun_write.proof_mode = "observable_red_green".to_string();
+            let bun_write_report = dogfood_bun_ub_cross_language_run(&bun_write)
+                .errors
+                .join("\n");
+            assert!(bun_write_report.contains("must name missing graph legs"));
+            assert!(bun_write_report.contains("manifest-only bridge evidence uncredited"));
+            assert!(bun_write_report.contains("binding_or_ffi_edge:bun_write_sink"));
+            assert!(bun_write_report.contains("helper:bun_write_fixture_helper"));
+            assert!(bun_write_report.contains("external_oracle:stable_byte_write"));
+            assert!(bun_write_report.contains("must not suggest placement"));
+            assert!(bun_write_report.contains("placement must remain not_applicable"));
+            assert!(bun_write_report.contains("proof mode must stay helper_gated"));
+
+            let mut unsupported = valid_bun_ub_cross_language_dogfood_scenario();
+            unsupported.observed_state = "named_static_limitation".to_string();
+            unsupported.expected_state = "named_static_limitation".to_string();
+            unsupported.bridge_verdict = "manifest_only_bridge_not_credited".to_string();
+            unsupported.missing_graph_legs = vec!["binding_or_ffi_edge:unknown".to_string()];
+            let unsupported_report = dogfood_bun_ub_cross_language_run(&unsupported)
+                .errors
+                .join("\n");
+            assert!(unsupported_report.contains("supported manifest-only profile"));
+
+            Ok(())
+        })
     }
 
     #[test]
