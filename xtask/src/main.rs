@@ -1368,6 +1368,13 @@ struct BunUbPreviewSummaryArgs {
     out_md: PathBuf,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ConfiguredBridgeInventoryArgs {
+    graph_corpus: PathBuf,
+    out: PathBuf,
+    out_md: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 struct CrossLanguageOracleGraphCase {
     name: String,
@@ -48905,6 +48912,502 @@ fn bun_ub_preview_summary_state_names(summary: &Value) -> Vec<String> {
     states.into_iter().collect()
 }
 
+pub(crate) fn configured_bridge_inventory_impl(args: &[String]) -> Result<(), String> {
+    let args = parse_configured_bridge_inventory_args(args)?;
+    let report = configured_bridge_inventory_report_value(&args);
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("failed to render configured bridge inventory JSON: {err}"))?;
+    write_parented_text_file(&args.out, "configured-bridge-inventory JSON", &json)?;
+    write_parented_text_file(
+        &args.out_md,
+        "configured-bridge-inventory Markdown",
+        &configured_bridge_inventory_markdown(&report),
+    )
+}
+
+fn parse_configured_bridge_inventory_args(
+    args: &[String],
+) -> Result<ConfiguredBridgeInventoryArgs, String> {
+    let mut graph_corpus = cross_language_oracle_graph_corpus_path();
+    let mut out = PathBuf::from("target/ripr/reports/configured-bridge-inventory.json");
+    let mut out_md = PathBuf::from("target/ripr/reports/configured-bridge-inventory.md");
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--graph-corpus" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--graph-corpus`\n{}",
+                        configured_bridge_inventory_usage()
+                    ));
+                };
+                graph_corpus = PathBuf::from(value);
+            }
+            "--out" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--out`\n{}",
+                        configured_bridge_inventory_usage()
+                    ));
+                };
+                out = PathBuf::from(value);
+            }
+            "--out-md" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--out-md`\n{}",
+                        configured_bridge_inventory_usage()
+                    ));
+                };
+                out_md = PathBuf::from(value);
+            }
+            "-h" | "--help" => return Err(configured_bridge_inventory_usage()),
+            other => {
+                return Err(format!(
+                    "unknown configured-bridge-inventory argument `{other}`\n{}",
+                    configured_bridge_inventory_usage()
+                ));
+            }
+        }
+        index += 1;
+    }
+
+    Ok(ConfiguredBridgeInventoryArgs {
+        graph_corpus,
+        out,
+        out_md,
+    })
+}
+
+fn configured_bridge_inventory_usage() -> String {
+    "usage: cargo xtask configured-bridge-inventory [--graph-corpus <path>] [--out <path>] [--out-md <path>]".to_string()
+}
+
+#[derive(Clone, Debug)]
+struct ConfiguredBridgeInventoryEntry {
+    profile: String,
+    label: String,
+    profile_status: String,
+    surface_state: String,
+    rust_file: String,
+    rust_owner: String,
+    rust_boundary: String,
+    bridge_kind: String,
+    bridge_confidence: String,
+    external_surface: String,
+    proof_modes: BTreeSet<String>,
+    source_cases: BTreeSet<String>,
+    missing_graph_legs: BTreeSet<String>,
+    unlock_conditions: BTreeSet<String>,
+    repair_routes: BTreeSet<String>,
+}
+
+impl ConfiguredBridgeInventoryEntry {
+    fn from_case(case: &CrossLanguageOracleGraphCase, surface_state: &str) -> Self {
+        Self {
+            profile: case.profile.clone(),
+            label: configured_bridge_inventory_profile_label(&case.profile).to_string(),
+            profile_status: case.profile_status.clone(),
+            surface_state: surface_state.to_string(),
+            rust_file: case.rust_file.clone(),
+            rust_owner: case.rust_owner.clone(),
+            rust_boundary: case.rust_boundary.clone(),
+            bridge_kind: case.binding_edge_kind.clone(),
+            bridge_confidence: case.binding_edge_confidence.clone(),
+            external_surface: case.external_callsite_file.clone(),
+            proof_modes: BTreeSet::new(),
+            source_cases: BTreeSet::new(),
+            missing_graph_legs: BTreeSet::new(),
+            unlock_conditions: BTreeSet::new(),
+            repair_routes: BTreeSet::new(),
+        }
+    }
+
+    fn add_case(&mut self, case: &CrossLanguageOracleGraphCase) {
+        self.source_cases.insert(case.name.clone());
+        self.proof_modes.insert(case.proof_mode.clone());
+        self.missing_graph_legs.extend(
+            case.missing_graph_legs
+                .iter()
+                .filter(|leg| {
+                    self.surface_state != "configured"
+                        || leg.starts_with("binding_or_ffi_edge")
+                        || leg.starts_with("helper:")
+                })
+                .cloned(),
+        );
+        if !matches!(
+            case.unlock_condition.as_str(),
+            "" | "unknown" | "not_applicable"
+        ) {
+            self.unlock_conditions.insert(case.unlock_condition.clone());
+        }
+        if !matches!(
+            case.repair_route.as_str(),
+            "" | "unknown" | "not_applicable"
+        ) {
+            self.repair_routes.insert(case.repair_route.clone());
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        serde_json::json!({
+            "profile": self.profile,
+            "label": self.label,
+            "profile_status": self.profile_status,
+            "surface_state": self.surface_state,
+            "rust_file": self.rust_file,
+            "rust_owner": self.rust_owner,
+            "rust_boundary": self.rust_boundary,
+            "bridge_kind": self.bridge_kind,
+            "bridge_confidence": self.bridge_confidence,
+            "external_surface": self.external_surface,
+            "source_cases": self.source_cases.iter().cloned().collect::<Vec<_>>(),
+            "missing_graph_legs": self.missing_graph_legs.iter().cloned().collect::<Vec<_>>(),
+            "unlock_conditions": self.unlock_conditions.iter().cloned().collect::<Vec<_>>(),
+            "repair_routes": self.repair_routes.iter().cloned().collect::<Vec<_>>(),
+            "proof_modes": self.proof_modes.iter().cloned().collect::<Vec<_>>(),
+            "inventory_action": "inventory_only",
+            "repair_packet_ready": false,
+            "public_projection_eligible": false,
+            "authority_boundary": "preview_advisory_only",
+        })
+    }
+}
+
+fn configured_bridge_inventory_report_value(args: &ConfiguredBridgeInventoryArgs) -> Value {
+    let cases = cross_language_oracle_graph_cases_at(&args.graph_corpus);
+    let mut configured = BTreeMap::<String, ConfiguredBridgeInventoryEntry>::new();
+    let mut bridge_unknown = BTreeMap::<String, ConfiguredBridgeInventoryEntry>::new();
+    let mut future_surfaces = BTreeMap::<String, ConfiguredBridgeInventoryEntry>::new();
+    let mut static_limitations = BTreeMap::<String, ConfiguredBridgeInventoryEntry>::new();
+    let mut repair_packet_ready_cases = 0usize;
+
+    for case in &cases {
+        if case.repair_packet_ready {
+            repair_packet_ready_cases += 1;
+        }
+
+        let (bucket, surface_state) = if case.profile_status == "manifest_only" {
+            (&mut future_surfaces, "manifest_only")
+        } else if case.expected_state == "bridge_unknown" {
+            (&mut bridge_unknown, "bridge_unknown")
+        } else if case.binding_edge_kind == "configured_bridge"
+            && case.binding_edge_confidence == "configured_hint"
+            && cross_language_oracle_graph_has_raw_ref(case, "binding_edge")
+        {
+            (&mut configured, "configured")
+        } else {
+            (&mut static_limitations, "named_static_limitation")
+        };
+
+        let entry = bucket
+            .entry(case.profile.clone())
+            .or_insert_with(|| ConfiguredBridgeInventoryEntry::from_case(case, surface_state));
+        entry.add_case(case);
+    }
+
+    let configured_bridges = configured
+        .values()
+        .map(ConfiguredBridgeInventoryEntry::to_json)
+        .collect::<Vec<_>>();
+    let bridge_unknown_routes = bridge_unknown
+        .values()
+        .map(ConfiguredBridgeInventoryEntry::to_json)
+        .collect::<Vec<_>>();
+    let future_surface_rows = future_surfaces
+        .values()
+        .map(ConfiguredBridgeInventoryEntry::to_json)
+        .collect::<Vec<_>>();
+    let static_limitation_rows = static_limitations
+        .values()
+        .map(ConfiguredBridgeInventoryEntry::to_json)
+        .collect::<Vec<_>>();
+
+    let mut errors = Vec::<String>::new();
+    for required in [
+        "bun_blob_array_buffer",
+        "bun_array_buffer_copy_to_unshared",
+        "bun_markdown_resizable_array_buffer",
+    ] {
+        if !configured.contains_key(required) {
+            errors.push(format!(
+                "configured bridge inventory is missing configured profile {required}"
+            ));
+        }
+    }
+    for required in ["bun_node_fs_scalar_write", "bun_write_helper_gated"] {
+        if !future_surfaces.contains_key(required) {
+            errors.push(format!(
+                "configured bridge inventory is missing manifest-only future surface {required}"
+            ));
+        }
+    }
+    if repair_packet_ready_cases > 0 {
+        errors.push(format!(
+            "configured bridge inventory must not expose repair packets, got {repair_packet_ready_cases}"
+        ));
+    }
+
+    let status = if cases.is_empty() {
+        "empty"
+    } else if errors.is_empty() {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    serde_json::json!({
+        "schema_version": "0.1",
+        "report": "configured-bridge-inventory",
+        "status": status,
+        "authority": "preview_advisory_only",
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "source_path": bun_ub_preview_summary_source_path(&args.graph_corpus),
+        "summary": {
+            "configured_bridge_profiles": configured_bridges.len(),
+            "bridge_unknown_profiles": bridge_unknown_routes.len(),
+            "future_or_missing_surfaces": future_surface_rows.len(),
+            "named_static_limitation_profiles": static_limitation_rows.len(),
+            "repair_packet_ready_cases": repair_packet_ready_cases,
+            "s3_surfaces_backed_by_corpus": configured_bridge_inventory_profile_present(&cases, "s3"),
+        },
+        "configured_bridges": configured_bridges,
+        "bridge_unknown": bridge_unknown_routes,
+        "future_or_missing_surfaces": future_surface_rows,
+        "named_static_limitations": static_limitation_rows,
+        "non_claims": configured_bridge_inventory_non_claims(),
+        "errors": errors,
+    })
+}
+
+fn configured_bridge_inventory_profile_present(
+    cases: &[CrossLanguageOracleGraphCase],
+    needle: &str,
+) -> bool {
+    cases.iter().any(|case| case.profile.contains(needle))
+}
+
+fn configured_bridge_inventory_profile_label(profile: &str) -> &str {
+    match profile {
+        "bun_blob_array_buffer" => "Blob ArrayBuffer",
+        "bun_array_buffer_copy_to_unshared" => "copy_to_unshared",
+        "bun_markdown_resizable_array_buffer" => "MarkdownObject",
+        "bun_ffi_negative_offset_panic_boundary" => "FFI panic boundary",
+        "bun_node_fs_scalar_write" => "node:fs scalar write sink",
+        "bun_write_helper_gated" => "Bun.write sink",
+        other => other,
+    }
+}
+
+fn configured_bridge_inventory_non_claims() -> Vec<&'static str> {
+    vec![
+        "preview/advisory only",
+        "report-only bridge inventory",
+        "no inferred reachability",
+        "no full Bun binding graph",
+        "no public repair packet",
+        "no placement from missing inventory rows",
+        "no runtime Bun execution",
+        "no TypeScript execution",
+        "no mutation execution",
+        "no provider calls",
+        "no generated tests",
+        "no source edits",
+        "no gates or badges",
+        "no support-tier promotion",
+    ]
+}
+
+fn configured_bridge_inventory_markdown(value: &Value) -> String {
+    let mut out = String::new();
+    out.push_str("# Configured Bridge Inventory\n\n");
+    out.push_str(&format!(
+        "Status: `{}`\n\n",
+        audit_markdown_cell(
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "authority = {}\n\n",
+        audit_markdown_cell(
+            value
+                .get("authority")
+                .and_then(Value::as_str)
+                .unwrap_or("preview_advisory_only")
+        )
+    ));
+    out.push_str(&format!(
+        "repair_packet_ready: {}\n\n",
+        value
+            .get("repair_packet_ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    ));
+    out.push_str("This report lists configured bridge profiles and manifest-only future surfaces from the existing cross-language oracle graph corpus. It does not infer reachability, create repair packets, suggest placement from missing inventory rows, run Bun or TypeScript, edit sources, or promote support status.\n\n");
+    out.push_str(&format!(
+        "- source_path: `{}`\n\n",
+        audit_markdown_cell(
+            value
+                .get("source_path")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+
+    let summary = value.get("summary").unwrap_or(&Value::Null);
+    out.push_str("## Summary\n\n");
+    out.push_str("| Metric | Count |\n");
+    out.push_str("| --- | ---: |\n");
+    for (label, key) in [
+        ("Configured bridge profiles", "configured_bridge_profiles"),
+        ("Bridge-unknown profiles", "bridge_unknown_profiles"),
+        ("Future or missing surfaces", "future_or_missing_surfaces"),
+        (
+            "Named static limitation profiles",
+            "named_static_limitation_profiles",
+        ),
+        ("Repair-packet-ready cases", "repair_packet_ready_cases"),
+    ] {
+        audit_push_count(
+            &mut out,
+            label,
+            audit_usize(summary, &[key]).unwrap_or_default(),
+        );
+    }
+    out.push_str(&format!(
+        "| S3 surfaces backed by corpus | `{}` |\n\n",
+        summary
+            .get("s3_surfaces_backed_by_corpus")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    ));
+
+    configured_bridge_inventory_push_table(
+        &mut out,
+        "Configured Bridges",
+        value
+            .get("configured_bridges")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    );
+    configured_bridge_inventory_push_table(
+        &mut out,
+        "Bridge Unknown",
+        value
+            .get("bridge_unknown")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    );
+    configured_bridge_inventory_push_table(
+        &mut out,
+        "Future Or Missing Surfaces",
+        value
+            .get("future_or_missing_surfaces")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    );
+    configured_bridge_inventory_push_table(
+        &mut out,
+        "Named Static Limitations",
+        value
+            .get("named_static_limitations")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice),
+    );
+
+    out.push_str("## Non-Claims\n\n");
+    let non_claims = value
+        .get("non_claims")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if non_claims.is_empty() {
+        out.push_str("- none\n");
+    }
+    for non_claim in non_claims {
+        if let Some(non_claim) = non_claim.as_str() {
+            out.push_str(&format!("- {}\n", audit_markdown_cell(non_claim)));
+        }
+    }
+    let errors = value
+        .get("errors")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if !errors.is_empty() {
+        out.push_str("\n## Errors\n\n");
+        for error in errors {
+            if let Some(error) = error.as_str() {
+                out.push_str(&format!("- {}\n", audit_markdown_cell(error)));
+            }
+        }
+    }
+    out
+}
+
+fn configured_bridge_inventory_push_table(out: &mut String, heading: &str, rows: &[Value]) {
+    out.push_str(&format!("## {heading}\n\n"));
+    out.push_str("| Profile | Label | State | Rust owner | Bridge confidence | External surface | Missing graph legs | Action |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    if rows.is_empty() {
+        out.push_str("| none |  |  |  |  |  |  |  |\n\n");
+        return;
+    }
+    for row in rows {
+        let missing_graph_legs = audit_markdown_string_array_cell(
+            row.get("missing_graph_legs")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | {} | `{}` |\n",
+            audit_markdown_cell(
+                row.get("profile")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("surface_state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("rust_owner")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("bridge_confidence")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                row.get("external_surface")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(&missing_graph_legs),
+            audit_markdown_cell(
+                row.get("inventory_action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("inventory_only")
+            ),
+        ));
+    }
+    out.push('\n');
+}
+
 fn write_parented_text_file(path: &Path, label: &str, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -81181,6 +81684,179 @@ fn exact_owner_call_has_external_expected_value() {
     }
 
     #[test]
+    fn configured_bridge_inventory_reports_missing_future_surfaces() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let report = super::configured_bridge_inventory_report_value(
+                &super::ConfiguredBridgeInventoryArgs {
+                    graph_corpus: super::cross_language_oracle_graph_corpus_path(),
+                    out: PathBuf::from("target/ripr/reports/configured-bridge-inventory.json"),
+                    out_md: PathBuf::from("target/ripr/reports/configured-bridge-inventory.md"),
+                },
+            );
+            assert_eq!(report["schema_version"], "0.1");
+            assert_eq!(report["report"], "configured-bridge-inventory");
+            assert_eq!(report["status"], "pass");
+            assert_eq!(report["authority"], "preview_advisory_only");
+            assert_eq!(report["authority_boundary"], "preview_advisory_only");
+            assert_eq!(report["repair_packet_ready"], false);
+            assert_eq!(
+                report["summary"]["configured_bridge_profiles"],
+                serde_json::Value::from(3)
+            );
+            assert_eq!(
+                report["summary"]["future_or_missing_surfaces"],
+                serde_json::Value::from(2)
+            );
+            assert_eq!(
+                report["summary"]["bridge_unknown_profiles"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+            assert_eq!(
+                report["summary"]["s3_surfaces_backed_by_corpus"],
+                serde_json::Value::Bool(false)
+            );
+
+            let configured = report["configured_bridges"]
+                .as_array()
+                .ok_or_else(|| "configured_bridges must be an array".to_string())?;
+            let configured_profiles = configured
+                .iter()
+                .filter_map(|row| row["profile"].as_str())
+                .collect::<BTreeSet<_>>();
+            for required in [
+                "bun_blob_array_buffer",
+                "bun_array_buffer_copy_to_unshared",
+                "bun_markdown_resizable_array_buffer",
+            ] {
+                assert!(
+                    configured_profiles.contains(required),
+                    "configured bridge inventory should list {required}"
+                );
+            }
+            assert!(configured.iter().all(|row| {
+                row["inventory_action"] == "inventory_only"
+                    && row["repair_packet_ready"] == false
+                    && row["public_projection_eligible"] == false
+            }));
+
+            let future = report["future_or_missing_surfaces"]
+                .as_array()
+                .ok_or_else(|| "future_or_missing_surfaces must be an array".to_string())?;
+            let future_profiles = future
+                .iter()
+                .filter_map(|row| row["profile"].as_str())
+                .collect::<BTreeSet<_>>();
+            for required in ["bun_node_fs_scalar_write", "bun_write_helper_gated"] {
+                assert!(
+                    future_profiles.contains(required),
+                    "configured bridge inventory should list future surface {required}"
+                );
+            }
+            assert!(
+                !future_profiles.iter().any(|profile| profile.contains("s3")),
+                "S3 should not be listed without corpus metadata"
+            );
+            let bun_write = future
+                .iter()
+                .find(|row| row["profile"] == "bun_write_helper_gated")
+                .ok_or_else(|| "missing Bun.write helper-gated future surface".to_string())?;
+            assert_eq!(bun_write["surface_state"], "manifest_only");
+            assert!(
+                bun_write["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "helper:bun_write_fixture_helper"))
+            );
+            assert_eq!(bun_write["inventory_action"], "inventory_only");
+
+            let unknown = report["bridge_unknown"]
+                .as_array()
+                .ok_or_else(|| "bridge_unknown must be an array".to_string())?;
+            assert!(unknown.iter().any(|row| {
+                row["profile"] == "bun_blob_array_buffer"
+                    && row["surface_state"] == "bridge_unknown"
+                    && row["missing_graph_legs"]
+                        .as_array()
+                        .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
+            }));
+
+            let markdown = super::configured_bridge_inventory_markdown(&report);
+            assert!(markdown.contains("# Configured Bridge Inventory"));
+            assert!(markdown.contains("Blob ArrayBuffer"));
+            assert!(markdown.contains("copy_to_unshared"));
+            assert!(markdown.contains("MarkdownObject"));
+            assert!(markdown.contains("node:fs scalar write sink"));
+            assert!(markdown.contains("Bun.write sink"));
+            assert!(markdown.contains("S3 surfaces backed by corpus"));
+            assert!(markdown.contains("no inferred reachability"));
+            assert!(markdown.contains("no public repair packet"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn configured_bridge_inventory_command_writes_markdown_and_json() -> Result<(), String> {
+        with_temp_cwd("configured-bridge-inventory-report", |_root| {
+            let out = PathBuf::from("target/ripr/reports/configured-bridge-inventory.json");
+            let out_md = PathBuf::from("target/ripr/reports/configured-bridge-inventory.md");
+            super::configured_bridge_inventory_impl(&[])?;
+
+            let json = fs::read_to_string(&out)
+                .map_err(|err| format!("failed to read configured bridge inventory JSON: {err}"))?;
+            let value: Value =
+                serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
+            assert_eq!(value["report"], "configured-bridge-inventory");
+            assert_eq!(value["status"], "pass");
+            assert_eq!(
+                value["summary"]["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+
+            let markdown = fs::read_to_string(&out_md).map_err(|err| {
+                format!("failed to read configured bridge inventory Markdown: {err}")
+            })?;
+            assert!(markdown.contains("# Configured Bridge Inventory"));
+            assert!(markdown.contains("Future Or Missing Surfaces"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn configured_bridge_inventory_accepts_custom_paths_and_rejects_bad_args() -> Result<(), String>
+    {
+        let args = super::parse_configured_bridge_inventory_args(&[
+            "--graph-corpus".to_string(),
+            "graph.json".to_string(),
+            "--out".to_string(),
+            "inventory.json".to_string(),
+            "--out-md".to_string(),
+            "inventory.md".to_string(),
+        ])?;
+        assert_eq!(args.graph_corpus, PathBuf::from("graph.json"));
+        assert_eq!(args.out, PathBuf::from("inventory.json"));
+        assert_eq!(args.out_md, PathBuf::from("inventory.md"));
+
+        let missing_value =
+            super::parse_configured_bridge_inventory_args(&["--out".to_string()]).unwrap_err();
+        assert!(missing_value.contains("missing value for `--out`"));
+        assert!(missing_value.contains("usage: cargo xtask configured-bridge-inventory"));
+
+        let unknown =
+            super::parse_configured_bridge_inventory_args(&["--unknown".to_string()]).unwrap_err();
+        assert!(unknown.contains("unknown configured-bridge-inventory argument `--unknown`"));
+
+        let help =
+            super::parse_configured_bridge_inventory_args(&["--help".to_string()]).unwrap_err();
+        assert!(help.contains("usage: cargo xtask configured-bridge-inventory"));
+        Ok(())
+    }
+
+    #[test]
     fn cross_language_oracle_graph_corpus_cases_are_checked() -> Result<(), String> {
         with_repo_cwd(|| {
             let cases = super::cross_language_oracle_graph_cases();
@@ -93730,6 +94406,17 @@ jobs:
             ])
         );
         assert_eq!(
+            XtaskCommand::parse([
+                "configured-bridge-inventory".to_string(),
+                "--out".to_string(),
+                "target/ripr/reports/configured-bridge-inventory.json".to_string(),
+            ]),
+            XtaskCommand::ConfiguredBridgeInventory(vec![
+                "--out".to_string(),
+                "target/ripr/reports/configured-bridge-inventory.json".to_string(),
+            ])
+        );
+        assert_eq!(
             XtaskCommand::parse(["vscode-package".to_string()]),
             XtaskCommand::VscodePackage
         );
@@ -93787,6 +94474,7 @@ jobs:
                 XtaskCommand::MutationCalibration(Vec::new()),
                 XtaskCommand::BunUbCalibration(Vec::new()),
                 XtaskCommand::BunUbPreviewSummary(Vec::new()),
+                XtaskCommand::ConfiguredBridgeInventory(Vec::new()),
                 XtaskCommand::SarifPolicy(Vec::new()),
                 XtaskCommand::Dogfood,
                 XtaskCommand::Critic,
@@ -94356,6 +95044,9 @@ covered_by = ["cargo xtask check-file-policy"]
                 .contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
         );
         assert!(commands.contains(&"bun-ub-preview-summary [--calibration-corpus <path>] [--graph-corpus <path>] [--dogfood-corpus <path>] [--out <path>] [--out-md <path>]"));
+        assert!(commands.contains(
+            &"configured-bridge-inventory [--graph-corpus <path>] [--out <path>] [--out-md <path>]"
+        ));
         assert!(commands.contains(&"sarif-policy --current <path> [--baseline <path>]"));
         assert!(commands.contains(&"badges [--check] [--gap-ledger <path>]"));
         assert!(commands.contains(&"pr-triage-report"));
