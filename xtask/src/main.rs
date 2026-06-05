@@ -80453,6 +80453,72 @@ fn exact_owner_call_has_external_expected_value() {
     }
 
     #[test]
+    fn bun_ub_preview_summary_accepts_custom_paths_and_rejects_bad_args() -> Result<(), String> {
+        let args = super::parse_bun_ub_preview_summary_args(&[
+            "--calibration-corpus".to_string(),
+            "calibration.json".to_string(),
+            "--graph-corpus".to_string(),
+            "graph.json".to_string(),
+            "--dogfood-corpus".to_string(),
+            "dogfood.json".to_string(),
+            "--out".to_string(),
+            "summary.json".to_string(),
+            "--out-md".to_string(),
+            "summary.md".to_string(),
+        ])?;
+        assert_eq!(args.calibration_corpus, PathBuf::from("calibration.json"));
+        assert_eq!(args.graph_corpus, PathBuf::from("graph.json"));
+        assert_eq!(args.dogfood_corpus, PathBuf::from("dogfood.json"));
+        assert_eq!(args.out, PathBuf::from("summary.json"));
+        assert_eq!(args.out_md, PathBuf::from("summary.md"));
+
+        let missing_value =
+            super::parse_bun_ub_preview_summary_args(&["--out".to_string()]).unwrap_err();
+        assert!(missing_value.contains("missing value for `--out`"));
+        assert!(missing_value.contains("usage: cargo xtask bun-ub-preview-summary"));
+
+        let unknown =
+            super::parse_bun_ub_preview_summary_args(&["--unknown".to_string()]).unwrap_err();
+        assert!(unknown.contains("unknown bun-ub-preview-summary argument `--unknown`"));
+
+        let help = super::parse_bun_ub_preview_summary_args(&["--help".to_string()]).unwrap_err();
+        assert!(help.contains("usage: cargo xtask bun-ub-preview-summary"));
+        Ok(())
+    }
+
+    #[test]
+    fn bun_ub_preview_summary_fails_closed_on_public_repair_claims() {
+        let report = serde_json::json!({
+            "status": "fail",
+            "authority": "preview_advisory_only",
+            "authority_boundary": "preview_advisory_only",
+            "repair_packet_ready": false,
+            "source_paths": {},
+            "summary": {
+                "calibration_cases_total": 0,
+                "route_quality_cases_total": 0,
+                "dogfood_receipts_total": 0,
+                "route_state_counts": {"future_state": 2},
+                "dogfood_state_counts": {"future_state": 1},
+                "named_static_limitations": [],
+                "public_packet_exclusions": 0,
+                "repair_packet_ready_cases": 1
+            },
+            "calibrated_routes": [],
+            "dogfood_receipts": [],
+            "non_claims": [],
+            "errors": ["repair_packet_ready_cases must remain 0, got 1"]
+        });
+        let markdown = super::bun_ub_preview_summary_markdown(&report);
+        assert!(markdown.contains("Status: `fail`"));
+        assert!(markdown.contains("| `future_state` | 2 | 1 |"));
+        assert!(markdown.contains("| none | 0 | none | none |"));
+        assert!(markdown.contains("| none |  |  |  |  |  |  |"));
+        assert!(markdown.contains("- none"));
+        assert!(markdown.contains("repair_packet_ready_cases must remain 0"));
+    }
+
+    #[test]
     fn cross_language_oracle_graph_corpus_cases_are_checked() -> Result<(), String> {
         with_repo_cwd(|| {
             let cases = super::cross_language_oracle_graph_cases();
