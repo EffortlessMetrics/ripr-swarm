@@ -1763,7 +1763,7 @@ mod tests {
             "target/ripr/reports/agent-receipt.json"
         ));
         assert!(!is_safe_repo_relative_path("../outside.pm"));
-        assert!(!is_safe_repo_relative_path("C:/outside.pm"));
+        assert!(!is_safe_repo_relative_path("crate:outside.pm"));
         assert!(!is_safe_repo_relative_path("t\\app.t"));
     }
 
