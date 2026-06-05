@@ -1373,6 +1373,7 @@ struct CrossLanguageOracleGraphCase {
     name: String,
     source: String,
     profile: String,
+    profile_status: String,
     language: String,
     language_status: String,
     rust_file: String,
@@ -1407,6 +1408,7 @@ struct CrossLanguageOracleGraphCase {
     missing_discriminators: Vec<String>,
     missing_graph_legs: Vec<String>,
     unlock_condition: String,
+    proof_mode: String,
     raw_evidence_refs: Vec<CrossLanguageOracleGraphRawRef>,
     non_claims: Vec<String>,
     reason: String,
@@ -8977,6 +8979,10 @@ const CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES: &[(&str, &str)] = &[
         "bun_ffi_negative_offset_panic_boundary_limitation",
         "public_reachable_panic_boundary_unrevealed",
     ),
+    (
+        "bun_node_fs_scalar_write_manifest_only_profile",
+        "named_static_limitation",
+    ),
 ];
 
 const BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -10362,6 +10368,7 @@ fn validate_cross_language_oracle_graph_fixture_corpus_at(
         "bridge_unknown",
         "cross_language_target_unresolved",
         "public_reachable_panic_boundary_unrevealed",
+        "named_static_limitation",
     ] {
         if !states.contains(required) {
             violations.push(format!(
@@ -48435,6 +48442,7 @@ fn bun_ub_preview_summary_report_value(args: &BunUbPreviewSummaryArgs) -> Value 
             serde_json::json!({
                 "route_label": json_string_value(row, "case_id"),
                 "profile": json_string_value(row, "profile"),
+                "profile_status": json_string_value(row, "profile_status"),
                 "case_id": json_string_value(row, "case_id"),
                 "state": state,
                 "gap_state": json_string_value(row, "gap_state"),
@@ -48453,6 +48461,7 @@ fn bun_ub_preview_summary_report_value(args: &BunUbPreviewSummaryArgs) -> Value 
                     .unwrap_or(false),
                 "authority_boundary": json_string_value(row, "authority_boundary"),
                 "unlock_condition": json_string_value(row, "unlock_condition"),
+                "proof_mode": json_string_value(row, "proof_mode"),
             })
         })
         .collect::<Vec<_>>();
@@ -48908,6 +48917,7 @@ fn cross_language_oracle_graph_cases_at(corpus_path: &Path) -> Vec<CrossLanguage
             name: "corpus".to_string(),
             source: "unknown".to_string(),
             profile: "unknown".to_string(),
+            profile_status: "unknown".to_string(),
             language: "unknown".to_string(),
             language_status: "unknown".to_string(),
             rust_file: "unknown".to_string(),
@@ -48942,6 +48952,7 @@ fn cross_language_oracle_graph_cases_at(corpus_path: &Path) -> Vec<CrossLanguage
             missing_discriminators: Vec::new(),
             missing_graph_legs: Vec::new(),
             unlock_condition: "unknown".to_string(),
+            proof_mode: "unknown".to_string(),
             raw_evidence_refs: Vec::new(),
             non_claims: Vec::new(),
             reason,
@@ -48986,6 +48997,8 @@ fn cross_language_oracle_graph_cases_at(corpus_path: &Path) -> Vec<CrossLanguage
                 source: json_string_field(case, "source").unwrap_or_else(|| "unknown".to_string()),
                 profile: json_string_field(case, "profile")
                     .unwrap_or_else(|| "bun_blob_array_buffer".to_string()),
+                profile_status: json_string_field(case, "profile_status")
+                    .unwrap_or_else(|| "active".to_string()),
                 language: json_string_field(case, "language")
                     .unwrap_or_else(|| "unknown".to_string()),
                 language_status: json_string_field(case, "language_status")
@@ -49048,6 +49061,8 @@ fn cross_language_oracle_graph_cases_at(corpus_path: &Path) -> Vec<CrossLanguage
                 missing_graph_legs: json_string_array_field(expected, "missing_graph_legs"),
                 unlock_condition: json_string_field(expected, "unlock_condition")
                     .unwrap_or_else(|| "unknown".to_string()),
+                proof_mode: json_string_field(expected, "proof_mode")
+                    .unwrap_or_else(|| "not_applicable".to_string()),
                 raw_evidence_refs: cross_language_oracle_graph_raw_refs(case),
                 non_claims: json_string_array_field(case, "non_claims"),
                 reason: json_string_field(case, "reason").unwrap_or_else(|| {
@@ -49087,6 +49102,7 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
         ("case id", &case.name),
         ("source", &case.source),
         ("profile", &case.profile),
+        ("profile_status", &case.profile_status),
         ("language", &case.language),
         ("language_status", &case.language_status),
         ("rust_file", &case.rust_file),
@@ -49105,6 +49121,7 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
         ("authority_boundary", &case.authority_boundary),
         ("suggested_test_file", &case.suggested_test_file),
         ("unlock_condition", &case.unlock_condition),
+        ("proof_mode", &case.proof_mode),
         ("reason", &case.reason),
     ] {
         let unknown_is_valid_bridge_confidence =
@@ -49114,7 +49131,8 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
         }
     }
 
-    if case.rust_line.is_none() {
+    let manifest_only = case.profile_status == "manifest_only";
+    if case.rust_line.is_none() && !manifest_only {
         errors.push("rust line must be present".to_string());
     }
     let external_location_unresolved =
@@ -49146,9 +49164,16 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
     let configured_missing_discriminator_placement = case.expected_state
         == "rust_ungripped_ts_missing_discriminator"
         && case.suggested_test_file == BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE;
-    if case.suggested_test_file != "not_applicable" && !configured_missing_discriminator_placement {
+    let configured_node_fs_manifest_placement = case.profile == "bun_node_fs_scalar_write"
+        && case.profile_status == "manifest_only"
+        && case.suggested_test_file == "test/js/node/fs/fs.test.ts"
+        && cross_language_oracle_graph_has_raw_ref(case, "placement");
+    if case.suggested_test_file != "not_applicable"
+        && !configured_missing_discriminator_placement
+        && !configured_node_fs_manifest_placement
+    {
         errors.push(
-            "suggested_test_file must be not_applicable or the configured Bun Blob TypeScript test file for missing-discriminator rows"
+            "suggested_test_file must be not_applicable, the configured Bun Blob TypeScript test file for missing-discriminator rows, or the typed node:fs manifest placement"
                 .to_string(),
         );
     }
@@ -49169,19 +49194,19 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
     }
     if !matches!(
         case.binding_edge_confidence.as_str(),
-        "configured_hint" | "heuristic" | "unknown"
+        "configured_hint" | "heuristic" | "manifest_only" | "unknown"
     ) {
         errors.push(format!(
-            "binding_edge_confidence must be configured_hint, heuristic, or unknown, got {}",
+            "binding_edge_confidence must be configured_hint, heuristic, manifest_only, or unknown, got {}",
             case.binding_edge_confidence
         ));
     }
     if !matches!(
         case.binding_edge_kind.as_str(),
-        "configured_bridge" | "ffi_binding" | "unresolved"
+        "configured_bridge" | "ffi_binding" | "manifest_only" | "unresolved"
     ) {
         errors.push(format!(
-            "binding_edge_kind must be configured_bridge, ffi_binding, or unresolved, got {}",
+            "binding_edge_kind must be configured_bridge, ffi_binding, manifest_only, or unresolved, got {}",
             case.binding_edge_kind
         ));
     }
@@ -49485,6 +49510,32 @@ fn cross_language_oracle_graph_case_errors(case: &CrossLanguageOracleGraphCase) 
                 );
             }
         }
+        "named_static_limitation" => {
+            require_cross_language_oracle_graph_limitation(
+                case,
+                "cross_language_profile_manifest_only",
+                "analysis/cross-language-profile-intake",
+                &mut errors,
+            );
+            if case.profile_status != "manifest_only" {
+                errors.push(
+                    "named_static_limitation profile intake rows must be manifest_only".to_string(),
+                );
+            }
+            if case.repair_packet_ready || case.public_projection_eligible {
+                errors.push(
+                    "named_static_limitation must remain non-actionable and non-public".to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(case, "binding_or_ffi_edge")
+                && !cross_language_oracle_graph_has_missing_leg(case, "external_oracle")
+            {
+                errors.push(
+                    "named_static_limitation must name the missing bridge or oracle graph leg"
+                        .to_string(),
+                );
+            }
+        }
         _ => {}
     }
 
@@ -49519,11 +49570,21 @@ fn cross_language_oracle_graph_raw_ref_errors(
             errors.push(format!("raw_evidence_refs must include {required}"));
         }
     }
-    if case.expected_state != "bridge_unknown" && !raw_legs.contains("binding_edge") {
+    let binding_edge_missing =
+        cross_language_oracle_graph_has_missing_leg(case, "binding_or_ffi_edge");
+    if case.expected_state != "bridge_unknown"
+        && !binding_edge_missing
+        && !raw_legs.contains("binding_edge")
+    {
         errors.push("raw_evidence_refs must include binding_edge".to_string());
     }
-    if case.expected_state == "bridge_unknown" && raw_legs.contains("binding_edge") {
-        errors.push("bridge_unknown must not claim a binding_edge raw ref".to_string());
+    if (case.expected_state == "bridge_unknown" || binding_edge_missing)
+        && raw_legs.contains("binding_edge")
+    {
+        errors.push(
+            "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref"
+                .to_string(),
+        );
     }
     for raw_ref in &case.raw_evidence_refs {
         for (label, value) in [
@@ -49587,6 +49648,12 @@ fn cross_language_oracle_graph_has_missing_leg(
         .any(|missing| missing == leg || missing.contains(leg))
 }
 
+fn cross_language_oracle_graph_has_raw_ref(case: &CrossLanguageOracleGraphCase, leg: &str) -> bool {
+    case.raw_evidence_refs
+        .iter()
+        .any(|raw_ref| raw_ref.leg == leg)
+}
+
 fn cross_language_oracle_graph_external_location_unresolved(
     case: &CrossLanguageOracleGraphCase,
 ) -> bool {
@@ -49603,6 +49670,7 @@ fn cross_language_oracle_graph_allowed_states() -> &'static [&'static str] {
         "bridge_unknown",
         "cross_language_target_unresolved",
         "public_reachable_panic_boundary_unrevealed",
+        "named_static_limitation",
     ]
 }
 
@@ -49758,8 +49826,79 @@ fn cross_language_oracle_graph_profile_errors(
                 );
             }
         }
+        "bun_node_fs_scalar_write" => {
+            if !case.rust_file.starts_with("unresolved:node-fs-scalar-write") {
+                errors.push(
+                    "rust_file must keep the Bun node:fs scalar write Rust seam unresolved"
+                        .to_string(),
+                );
+            }
+            if case.rust_owner != "node:fs scalar write sink" {
+                errors.push(
+                    "rust_owner must pin the manifest-only node:fs scalar write sink"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("JS-owned bytes")
+                || !case.rust_boundary.contains("native write")
+            {
+                errors.push(
+                    "rust_boundary must describe JS-owned bytes crossing the native write boundary"
+                        .to_string(),
+                );
+            }
+            if case.expected_state != "named_static_limitation" {
+                errors.push(
+                    "bun_node_fs_scalar_write profile is manifest_only and must stay a named_static_limitation"
+                        .to_string(),
+                );
+            }
+            if case.profile_status != "manifest_only" {
+                errors.push("bun_node_fs_scalar_write must be manifest_only".to_string());
+            }
+            if case.proof_mode != "observable_red_green" {
+                errors.push(
+                    "bun_node_fs_scalar_write must record proof_mode observable_red_green"
+                        .to_string(),
+                );
+            }
+            if case.binding_edge_kind != "manifest_only"
+                || case.binding_edge_confidence != "manifest_only"
+            {
+                errors.push(
+                    "bun_node_fs_scalar_write must keep bridge evidence manifest_only"
+                        .to_string(),
+                );
+            }
+            if !case
+                .external_entrypoints
+                .iter()
+                .any(|entrypoint| entrypoint.contains("node:fs"))
+            {
+                errors.push(
+                    "bun_node_fs_scalar_write must name node:fs as an external entrypoint"
+                        .to_string(),
+                );
+            }
+            if case.external_callsite_file != "test/js/node/fs/fs.test.ts"
+                || case.external_oracle_file != "test/js/node/fs/fs.test.ts"
+            {
+                errors.push(
+                    "bun_node_fs_scalar_write must record test/js/node/fs/fs.test.ts as the witness path"
+                        .to_string(),
+                );
+            }
+            if case.external_oracle_kind != "stable_byte_scalar_write_oracle_manifest_only"
+                || case.oracle_strength != "manifest_only"
+            {
+                errors.push(
+                    "bun_node_fs_scalar_write must keep scalar-write oracle evidence manifest_only"
+                        .to_string(),
+                );
+            }
+        }
         other => errors.push(format!(
-            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, or bun_ffi_negative_offset_panic_boundary, got {other}"
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, or bun_node_fs_scalar_write, got {other}"
         )),
     }
 }
@@ -49811,6 +49950,7 @@ fn cross_language_oracle_route_quality_from_cases(
     let mut mention_only_limitations = 0usize;
     let mut target_unresolved_limitations = 0usize;
     let mut panic_boundary_limitations = 0usize;
+    let mut manifest_only_profiles = 0usize;
     let mut public_packet_exclusions = 0usize;
     let mut public_projection_eligible_cases = 0usize;
     let mut repair_packet_ready_cases = 0usize;
@@ -49830,6 +49970,9 @@ fn cross_language_oracle_route_quality_from_cases(
                 "cross_language_target_unresolved" => target_unresolved_limitations += 1,
                 "public_reachable_panic_boundary_unrevealed" => {
                     panic_boundary_limitations += 1;
+                }
+                "named_static_limitation" if case.profile_status == "manifest_only" => {
+                    manifest_only_profiles += 1;
                 }
                 _ => {}
             }
@@ -49852,6 +49995,7 @@ fn cross_language_oracle_route_quality_from_cases(
             serde_json::json!({
                 "case_id": case.name,
                 "profile": case.profile,
+                "profile_status": case.profile_status,
                 "expected_state": case.expected_state,
                 "observed_state": case.expected_state,
                 "status": status,
@@ -49866,6 +50010,7 @@ fn cross_language_oracle_route_quality_from_cases(
                 "repair_packet_ready": case.repair_packet_ready,
                 "suggested_test_file": case.suggested_test_file,
                 "unlock_condition": case.unlock_condition,
+                "proof_mode": case.proof_mode,
                 "reason": case.reason,
                 "errors": errors,
             })
@@ -49898,6 +50043,7 @@ fn cross_language_oracle_route_quality_from_cases(
             target_unresolved_limitations,
         "cross_language_oracle_graph_panic_boundary_limitations":
             panic_boundary_limitations,
+        "cross_language_oracle_graph_manifest_only_profiles": manifest_only_profiles,
         "cross_language_oracle_graph_public_packet_exclusions": public_packet_exclusions,
         "public_projection_eligible_cases": public_projection_eligible_cases,
         "repair_packet_ready_cases": repair_packet_ready_cases,
@@ -49982,6 +50128,15 @@ fn cross_language_oracle_route_quality_push_markdown(out: &mut String, value: &V
         audit_usize(
             value,
             &["cross_language_oracle_graph_panic_boundary_limitations"],
+        )
+        .unwrap_or_default(),
+    );
+    audit_push_count(
+        out,
+        "Manifest-only profiles",
+        audit_usize(
+            value,
+            &["cross_language_oracle_graph_manifest_only_profiles"],
         )
         .unwrap_or_default(),
     );
@@ -80771,6 +80926,10 @@ fn exact_owner_call_has_external_expected_value() {
                 serde_json::Value::from(1)
             );
             assert_eq!(
+                report["summary"]["route_state_counts"]["named_static_limitation"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
                 report["summary"]["repair_packet_ready_cases"],
                 serde_json::Value::from(0)
             );
@@ -80786,6 +80945,7 @@ fn exact_owner_call_has_external_expected_value() {
                 "cross_language_oracle_visibility_unresolved",
                 "cross_language_target_unresolved",
                 "cross_language_panic_boundary_visibility_unresolved",
+                "cross_language_profile_manifest_only",
             ] {
                 assert!(
                     categories.contains(required),
@@ -80799,6 +80959,7 @@ fn exact_owner_call_has_external_expected_value() {
             for required in [
                 "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
                 "bun_ffi_negative_offset_panic_boundary_limitation",
+                "bun_node_fs_scalar_write_manifest_only_profile",
             ] {
                 assert!(
                     routes.iter().any(|row| row["route_label"] == required),
@@ -80823,7 +80984,9 @@ fn exact_owner_call_has_external_expected_value() {
             assert!(markdown.contains("rust_ungripped_ts_missing_discriminator"));
             assert!(markdown.contains("bridge_unknown"));
             assert!(markdown.contains("ts_mention_not_observer"));
+            assert!(markdown.contains("named_static_limitation"));
             assert!(markdown.contains("cross_language_oracle_visibility_unresolved"));
+            assert!(markdown.contains("cross_language_profile_manifest_only"));
             Ok(())
         })
     }
@@ -80950,6 +81113,8 @@ fn exact_owner_call_has_external_expected_value() {
                 "ts_mention_not_observer",
                 "bridge_unknown",
                 "cross_language_target_unresolved",
+                "public_reachable_panic_boundary_unrevealed",
+                "named_static_limitation",
             ] {
                 assert!(
                     states.contains(required),
@@ -80998,7 +81163,7 @@ fn exact_owner_call_has_external_expected_value() {
         with_repo_cwd(|| {
             let value = super::cross_language_oracle_route_quality_report_value();
             assert_eq!(value["status"], "pass");
-            assert_eq!(value["cases_total"], serde_json::Value::from(9));
+            assert_eq!(value["cases_total"], serde_json::Value::from(10));
             assert_eq!(
                 value["cross_language_oracle_graph_complete_advisory_witnesses"],
                 serde_json::Value::from(3)
@@ -81024,8 +81189,12 @@ fn exact_owner_call_has_external_expected_value() {
                 serde_json::Value::from(1)
             );
             assert_eq!(
+                value["cross_language_oracle_graph_manifest_only_profiles"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
                 value["cross_language_oracle_graph_public_packet_exclusions"],
-                serde_json::Value::from(9)
+                serde_json::Value::from(10)
             );
             assert_eq!(
                 value["repair_packet_ready_cases"],
@@ -81174,6 +81343,31 @@ fn exact_owner_call_has_external_expected_value() {
                         .iter()
                         .any(|item| item == "external_oracle:negative_offset_panic_boundary"))
             );
+            let node_fs = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_node_fs_scalar_write_manifest_only_profile")
+                .ok_or_else(|| "missing node:fs scalar write manifest-only row".to_string())?;
+            assert_eq!(node_fs["profile"], "bun_node_fs_scalar_write");
+            assert_eq!(node_fs["profile_status"], "manifest_only");
+            assert_eq!(node_fs["observed_state"], "named_static_limitation");
+            assert_eq!(node_fs["proof_mode"], "observable_red_green");
+            assert_eq!(node_fs["suggested_test_file"], "test/js/node/fs/fs.test.ts");
+            assert_eq!(node_fs["repair_packet_ready"], false);
+            assert_eq!(node_fs["public_projection_eligible"], false);
+            assert!(
+                node_fs["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "binding_or_ffi_edge:node_fs_scalar_write"))
+            );
+            assert!(
+                node_fs["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "external_oracle:stable_byte_scalar_write"))
+            );
 
             let mut markdown = String::new();
             super::cross_language_oracle_route_quality_push_markdown(&mut markdown, &value);
@@ -81185,6 +81379,8 @@ fn exact_owner_call_has_external_expected_value() {
             );
             assert!(markdown.contains("Panic boundary limitations"));
             assert!(markdown.contains("bun_ffi_negative_offset_panic_boundary_limitation"));
+            assert!(markdown.contains("Manifest-only profiles"));
+            assert!(markdown.contains("bun_node_fs_scalar_write_manifest_only_profile"));
             assert!(markdown.contains("Missing external oracle limitations"));
             assert!(markdown.contains("binding_or_ffi_edge"));
             assert!(markdown.contains("preview/advisory route-quality evidence only"));
@@ -81346,7 +81542,7 @@ fn exact_owner_call_has_external_expected_value() {
             "authority_boundary must be preview_advisory_only",
             "repair_packet_ready must remain false",
             "public_projection_eligible must remain false",
-            "suggested_test_file must be not_applicable or the configured Bun Blob TypeScript test file for missing-discriminator rows",
+            "suggested_test_file must be not_applicable, the configured Bun Blob TypeScript test file for missing-discriminator rows, or the typed node:fs manifest placement",
             "allowed_edit_surface must remain empty",
             "verify_command must be omitted",
             "receipt_command must be omitted",
@@ -81492,7 +81688,7 @@ fn exact_owner_call_has_external_expected_value() {
         let errors = super::cross_language_oracle_graph_case_errors(&bridge);
         assert_contains_error(
             &errors,
-            "bridge_unknown must not claim a binding_edge raw ref",
+            "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref",
         );
         assert_contains_error(
             &errors,
@@ -81641,7 +81837,7 @@ fn exact_owner_call_has_external_expected_value() {
         let errors = super::cross_language_oracle_graph_case_errors(&unknown_profile);
         assert_contains_error(
             &errors,
-            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, or bun_ffi_negative_offset_panic_boundary",
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, or bun_node_fs_scalar_write",
         );
     }
 
@@ -81769,6 +81965,145 @@ fn exact_owner_call_has_external_expected_value() {
         assert_contains_error(
             &errors,
             "bun_ffi_negative_offset_panic_boundary profile currently only supports public_reachable_panic_boundary_unrevealed",
+        );
+    }
+
+    #[test]
+    fn cross_language_profile_intake_requires_manifest_rows() {
+        let mut case = valid_cross_language_oracle_graph_case();
+        case.name = "bun_node_fs_scalar_write_manifest_only_profile".to_string();
+        case.source = "profile-intake-node-fs-scalar-write".to_string();
+        case.profile = "bun_node_fs_scalar_write".to_string();
+        case.profile_status = "manifest_only".to_string();
+        case.rust_file = "unresolved:node-fs-scalar-write-rust-seam".to_string();
+        case.rust_line = None;
+        case.rust_owner = "node:fs scalar write sink".to_string();
+        case.rust_boundary =
+            "JS-owned bytes must be copied before native write scalar sinks".to_string();
+        case.binding_edge_kind = "manifest_only".to_string();
+        case.binding_edge_confidence = "manifest_only".to_string();
+        case.external_callsite_file = "test/js/node/fs/fs.test.ts".to_string();
+        case.external_callsite_line = Some(1);
+        case.external_entrypoints = vec![
+            "node:fs scalar write".to_string(),
+            "fs.writeFileSync".to_string(),
+            "fs.writeSync".to_string(),
+        ];
+        case.shared_array_buffer = false;
+        case.resizable_array_buffer = false;
+        case.view_backed_blob_input = false;
+        case.stable_byte_copy_oracle = false;
+        case.max_byte_length_mention_only = false;
+        case.external_oracle_file = "test/js/node/fs/fs.test.ts".to_string();
+        case.external_oracle_line = Some(1);
+        case.external_oracle_kind = "stable_byte_scalar_write_oracle_manifest_only".to_string();
+        case.oracle_strength = "manifest_only".to_string();
+        case.expected_state = "named_static_limitation".to_string();
+        case.gap_state = "static_limitation".to_string();
+        case.limitation_category = "cross_language_profile_manifest_only".to_string();
+        case.repair_route = "analysis/cross-language-profile-intake".to_string();
+        case.suggested_test_file = "test/js/node/fs/fs.test.ts".to_string();
+        case.missing_graph_legs = vec![
+            "binding_or_ffi_edge:node_fs_scalar_write".to_string(),
+            "external_oracle:stable_byte_scalar_write".to_string(),
+        ];
+        case.unlock_condition =
+            "Audit the node:fs scalar write Rust sink and bridge/oracle evidence before analyzer projection."
+                .to_string();
+        case.proof_mode = "observable_red_green".to_string();
+        case.raw_evidence_refs = vec![
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "rust_seam".to_string(),
+                file: "issue:node-fs-scalar-write-profile".to_string(),
+                line: Some(1),
+                kind: "rust_seam_unresolved".to_string(),
+                source_id: "profile-intake-node-fs-scalar-write".to_string(),
+                sample:
+                    "node:fs scalar write Rust sink remains unresolved in the manifest-only profile"
+                        .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "boundary_discriminator".to_string(),
+                file: "issue:node-fs-scalar-write-profile".to_string(),
+                line: Some(1),
+                kind: "stable_byte_scalar_write_discriminator".to_string(),
+                source_id: "profile-intake-node-fs-scalar-write".to_string(),
+                sample: "scalar write is the stable-byte boundary shape under intake".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_callsite".to_string(),
+                file: "test/js/node/fs/fs.test.ts".to_string(),
+                line: Some(1),
+                kind: "typescript_node_fs_callsite".to_string(),
+                source_id: "profile-intake-node-fs-scalar-write".to_string(),
+                sample: "node:fs scalar writes are expected to be witnessed in fs.test.ts"
+                    .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_oracle".to_string(),
+                file: "test/js/node/fs/fs.test.ts".to_string(),
+                line: Some(1),
+                kind: "typescript_assertion_manifest_only".to_string(),
+                source_id: "profile-intake-node-fs-scalar-write".to_string(),
+                sample: "stable-byte scalar write assertion shape is manifest-only".to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "placement".to_string(),
+                file: "test/js/node/fs/fs.test.ts".to_string(),
+                line: Some(1),
+                kind: "typed_test_placement".to_string(),
+                source_id: "profile-intake-node-fs-scalar-write".to_string(),
+                sample: "typed node:fs placement is pinned without actionability".to_string(),
+            },
+        ];
+        let errors = super::cross_language_oracle_graph_case_errors(&case);
+        assert!(
+            errors.is_empty(),
+            "node:fs manifest-only profile should validate: {errors:?}"
+        );
+
+        let mut active = case.clone();
+        active.profile_status = "active".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&active);
+        assert_contains_error(
+            &errors,
+            "named_static_limitation profile intake rows must be manifest_only",
+        );
+        assert_contains_error(&errors, "bun_node_fs_scalar_write must be manifest_only");
+
+        let mut no_placement_ref = case.clone();
+        no_placement_ref
+            .raw_evidence_refs
+            .retain(|raw_ref| raw_ref.leg != "placement");
+        let errors = super::cross_language_oracle_graph_case_errors(&no_placement_ref);
+        assert_contains_error(
+            &errors,
+            "suggested_test_file must be not_applicable, the configured Bun Blob TypeScript test file for missing-discriminator rows, or the typed node:fs manifest placement",
+        );
+
+        let mut binding_credit = case.clone();
+        binding_credit
+            .raw_evidence_refs
+            .push(super::CrossLanguageOracleGraphRawRef {
+                leg: "binding_edge".to_string(),
+                file: "src/node/fs.rs".to_string(),
+                line: Some(1),
+                kind: "configured_bridge".to_string(),
+                source_id: "profile-intake-node-fs-scalar-write".to_string(),
+                sample: "manifest-only node:fs intake must not claim a binding edge".to_string(),
+            });
+        let errors = super::cross_language_oracle_graph_case_errors(&binding_credit);
+        assert_contains_error(
+            &errors,
+            "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref",
+        );
+
+        let mut wrong_proof = case;
+        wrong_proof.proof_mode = "mutation_plus_miri".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_proof);
+        assert_contains_error(
+            &errors,
+            "bun_node_fs_scalar_write must record proof_mode observable_red_green",
         );
     }
 
@@ -82094,6 +82429,7 @@ fn exact_owner_call_has_external_expected_value() {
             name: "valid".to_string(),
             source: "#910-valid".to_string(),
             profile: "bun_blob_array_buffer".to_string(),
+            profile_status: "active".to_string(),
             language: "typescript".to_string(),
             language_status: "preview".to_string(),
             rust_file: "src/jsc/Blob.rs".to_string(),
@@ -82128,6 +82464,7 @@ fn exact_owner_call_has_external_expected_value() {
             missing_discriminators: Vec::new(),
             missing_graph_legs: Vec::new(),
             unlock_condition: "not_applicable".to_string(),
+            proof_mode: "observable_red_green".to_string(),
             raw_evidence_refs: valid_cross_language_oracle_graph_raw_refs(true),
             non_claims: vec![
                 "no provider calls".to_string(),
@@ -82332,6 +82669,7 @@ fn exact_owner_call_has_external_expected_value() {
   "id": "{id}",
   "source": "{source}",
   "profile": "{profile}",
+  "profile_status": "{profile_status}",
   "language": "{language}",
   "language_status": "{language_status}",
   "rust_seam": {{
@@ -82374,7 +82712,8 @@ fn exact_owner_call_has_external_expected_value() {
     "allowed_edit_surface": [{allowed_edit_surface_json}]{verify_command_json}{receipt_command_json},
     "missing_discriminators": [{missing_discriminators_json}],
     "missing_graph_legs": [{missing_graph_legs_json}],
-    "unlock_condition": "{unlock_condition}"
+    "unlock_condition": "{unlock_condition}",
+    "proof_mode": "{proof_mode}"
   }},
   "raw_evidence_refs": [{raw_refs_json}],
   "non_claims": [{non_claims_json}],
@@ -82383,6 +82722,7 @@ fn exact_owner_call_has_external_expected_value() {
             id = case.name,
             source = case.source,
             profile = case.profile,
+            profile_status = case.profile_status,
             language = case.language,
             language_status = case.language_status,
             rust_file = case.rust_file,
@@ -82411,6 +82751,7 @@ fn exact_owner_call_has_external_expected_value() {
             repair_packet_ready = case.repair_packet_ready,
             suggested_test_file = case.suggested_test_file,
             unlock_condition = case.unlock_condition,
+            proof_mode = case.proof_mode,
             reason = case.reason
         )
     }
@@ -99076,8 +99417,12 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(1)
         );
         assert_eq!(
+            value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_manifest_only_profiles"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(9)
+            serde_json::Value::from(10)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["repair_packet_ready_cases"],
@@ -109417,8 +109762,12 @@ covered_by = ["cargo xtask check-file-policy"]
             serde_json::Value::from(1)
         );
         assert_eq!(
+            route_quality["cross_language_oracle_graph_manifest_only_profiles"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
             route_quality["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(9)
+            serde_json::Value::from(10)
         );
         assert_eq!(
             route_quality["repair_packet_ready_cases"],
@@ -109476,12 +109825,27 @@ covered_by = ["cargo xtask check-file-policy"]
                         && row["public_projection_eligible"] == false
                 }))
         );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"] == "bun_node_fs_scalar_write_manifest_only_profile"
+                        && row["profile"] == "bun_node_fs_scalar_write"
+                        && row["profile_status"] == "manifest_only"
+                        && row["observed_state"] == "named_static_limitation"
+                        && row["proof_mode"] == "observable_red_green"
+                        && row["suggested_test_file"] == "test/js/node/fs/fs.test.ts"
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
 
         let markdown = evidence_quality_scorecard_markdown(&report);
         assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
         assert!(markdown.contains("Missing discriminator limitations"));
         assert!(markdown.contains("Bridge unknown limitations"));
         assert!(markdown.contains("Panic boundary limitations"));
+        assert!(markdown.contains("Manifest-only profiles"));
         assert!(markdown.contains("Repair-packet-ready cases"));
         assert!(markdown.contains("not full cross-language proof"));
         Ok(())
