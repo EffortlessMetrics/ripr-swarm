@@ -643,7 +643,11 @@ fn limits() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{typescript_preview_card, typescript_preview_card_json_value};
+    use super::{
+        TypeScriptBunCrossLanguageGrip, TypeScriptBunTestPlacement,
+        bun_cross_language_advisory_packet, typescript_preview_card,
+        typescript_preview_card_json_value,
+    };
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
         LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
@@ -1047,6 +1051,142 @@ mod tests {
     }
 
     #[test]
+    fn bun_cross_language_agent_packet_covers_non_edit_states() {
+        let discriminated = bun_cross_language_advisory_packet(&packet_grip(
+            "rust_ungripped_ts_discriminated",
+            Vec::new(),
+            Vec::new(),
+            None,
+        ));
+        assert_eq!(
+            discriminated.ts_test_file.as_deref(),
+            Some("test/js/web/fetch/blob.test.ts")
+        );
+        assert_eq!(
+            discriminated.next_action,
+            "continue_manual_review_no_missing_bridge_discriminator"
+        );
+        assert!(
+            discriminated
+                .suggested_shape
+                .contains("No missing bridge discriminator")
+        );
+        assert!(discriminated.stop_condition.contains("reviewed Bun change"));
+
+        let mention = bun_cross_language_advisory_packet(&packet_grip(
+            "ts_mention_not_observer",
+            Vec::new(),
+            Vec::new(),
+            None,
+        ));
+        assert_eq!(mention.ts_test_file, None);
+        assert_eq!(
+            mention.next_action,
+            "replace_mention_with_observer_before_credit"
+        );
+        assert!(mention.suggested_shape.contains("token mention"));
+        assert!(mention.stop_condition.contains("token-only evidence"));
+
+        let missing_external = bun_cross_language_advisory_packet(&packet_grip(
+            "rust_ungripped_ts_missing_external_oracle",
+            Vec::new(),
+            vec!["external_oracle:stable_byte_copy".to_string()],
+            None,
+        ));
+        assert_eq!(
+            missing_external.next_action,
+            "connect_external_oracle_before_test_placement"
+        );
+        assert!(
+            missing_external
+                .suggested_shape
+                .contains("external callsite")
+        );
+        assert!(
+            missing_external
+                .stop_condition
+                .contains("external stable-byte oracle")
+        );
+    }
+
+    #[test]
+    fn bun_cross_language_agent_packet_covers_missing_discriminator_shapes() {
+        let shared = bun_cross_language_advisory_packet(&packet_grip(
+            "rust_ungripped_ts_missing_discriminator",
+            vec!["shared_array_buffer".to_string()],
+            vec!["boundary_discriminator:shared_array_buffer".to_string()],
+            Some(packet_placement()),
+        ));
+        assert!(
+            shared
+                .suggested_shape
+                .contains("new SharedArrayBuffer(...)")
+        );
+        assert_eq!(
+            shared.next_action,
+            "add_typescript_discriminator_in_suggested_file"
+        );
+
+        let both = bun_cross_language_advisory_packet(&packet_grip(
+            "rust_ungripped_ts_missing_discriminator",
+            vec![
+                "shared_array_buffer".to_string(),
+                "resizable_array_buffer".to_string(),
+            ],
+            vec![
+                "boundary_discriminator:shared_array_buffer".to_string(),
+                "boundary_discriminator:resizable_array_buffer".to_string(),
+            ],
+            Some(packet_placement()),
+        ));
+        assert!(both.suggested_shape.contains("SharedArrayBuffer"));
+        assert!(both.suggested_shape.contains("resizable ArrayBuffer"));
+
+        let generic_without_placement = bun_cross_language_advisory_packet(&packet_grip(
+            "rust_ungripped_ts_missing_discriminator",
+            vec!["custom_discriminator".to_string()],
+            vec!["boundary_discriminator:custom_discriminator".to_string()],
+            None,
+        ));
+        assert_eq!(generic_without_placement.ts_test_file, None);
+        assert_eq!(
+            generic_without_placement.next_action,
+            "inspect_typescript_placement_evidence"
+        );
+        assert!(
+            generic_without_placement
+                .suggested_shape
+                .contains("custom_discriminator")
+        );
+        assert!(
+            generic_without_placement
+                .stop_condition
+                .contains("placement evidence is credited")
+        );
+
+        let named_limitation = bun_cross_language_advisory_packet(&packet_grip(
+            "named_static_limitation",
+            Vec::new(),
+            Vec::new(),
+            None,
+        ));
+        assert_eq!(
+            named_limitation.next_action,
+            "inspect_named_static_limitation"
+        );
+        assert!(
+            named_limitation
+                .suggested_shape
+                .contains("named static limitation")
+        );
+        assert!(
+            named_limitation
+                .stop_condition
+                .contains("public repair packets")
+        );
+    }
+
+    #[test]
     fn typescript_preview_card_keeps_mock_payload_advisory() -> Result<(), String> {
         let mut finding = sample_finding(OracleKind::MockExpectation, OracleStrength::Medium);
         finding.related_tests[0].oracle =
@@ -1130,6 +1270,45 @@ mod tests {
             "typescript_bun_ub_cross_language_grip: state=bridge_unknown rust_grip=ungripped ts_verdict=bridge_unknown action=report_bridge_unknown_not_no_static_path authority=preview_advisory_only suggested_test_file=not_applicable repair_packet_ready=false".to_string(),
         ];
         finding
+    }
+
+    fn packet_grip(
+        state: &str,
+        missing_discriminators: Vec<String>,
+        missing_graph_legs: Vec<String>,
+        placement: Option<TypeScriptBunTestPlacement>,
+    ) -> TypeScriptBunCrossLanguageGrip {
+        TypeScriptBunCrossLanguageGrip {
+            state: state.to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            ts_test_file: "test/js/web/fetch/blob.test.ts".to_string(),
+            ts_verdict: state.to_string(),
+            bridge_confidence: "configured_hint".to_string(),
+            missing_discriminators,
+            limitation_category: "cross_language_oracle_visibility_unresolved".to_string(),
+            repair_route: "analysis/cross-language-oracle-visibility".to_string(),
+            missing_graph_legs,
+            unlock_condition: None,
+            raw_evidence_refs: Vec::new(),
+            action: "route_cross_language_oracle_visibility_limitation".to_string(),
+            suggested_test_file: "not_applicable".to_string(),
+            placement,
+            authority_boundary: "preview_advisory_only".to_string(),
+            repair_packet_ready: false,
+        }
+    }
+
+    fn packet_placement() -> TypeScriptBunTestPlacement {
+        TypeScriptBunTestPlacement {
+            rank: 1,
+            suggested_test_file: "test/js/web/fetch/blob.test.ts".to_string(),
+            reason: "existing Blob + ArrayBuffer integration tests live there".to_string(),
+            basis: vec!["configured_bridge_suggested_test_file".to_string()],
+            authority_boundary: "preview_advisory_only".to_string(),
+            repair_packet_ready: false,
+        }
     }
 
     fn sample_finding(oracle_kind: OracleKind, oracle_strength: OracleStrength) -> Finding {
