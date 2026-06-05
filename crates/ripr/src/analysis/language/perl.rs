@@ -1653,6 +1653,120 @@ mod tests {
         }
     }
 
+    fn command_args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_string()).collect()
+    }
+
+    #[test]
+    fn perl_strict_command_guards_accept_only_bounded_verify_and_receipt_shapes() {
+        assert!(is_verify_command(&command_args(&["prove", "t/app.t"])));
+        assert!(is_verify_command(&command_args(&[
+            "yath",
+            "test",
+            "t/app_test2.t"
+        ])));
+        assert!(is_verify_command(&command_args(&[
+            "carton",
+            "exec",
+            "prove",
+            "t/app_exception.t"
+        ])));
+        assert!(is_verify_command(&command_args(&[
+            "dzil",
+            "test",
+            "--test",
+            "t/app_fatal.t"
+        ])));
+        assert!(!is_verify_command(&command_args(&["cargo", "test"])));
+        assert!(!is_verify_command(&command_args(&[
+            "prove",
+            "../outside.t"
+        ])));
+        assert!(!is_verify_command(&command_args(&[
+            "prove", "t/app.t", "&&"
+        ])));
+
+        assert!(is_receipt_command(&command_args(&[
+            "ripr",
+            "agent",
+            "receipt",
+            "--root",
+            ".",
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--seam-id",
+            "perl-gap",
+            "--json",
+        ])));
+        assert!(is_receipt_command(&command_args(&[
+            "cargo",
+            "run",
+            "-p",
+            "ripr",
+            "--",
+            "agent",
+            "receipt",
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--seam-id",
+            "perl-gap",
+            "--test",
+            "t/app.t",
+            "--command",
+            "prove",
+            "--out",
+            "target/ripr/reports/agent-receipt.json",
+            "--json",
+        ])));
+        assert!(!is_receipt_command(&command_args(&[
+            "ripr",
+            "agent",
+            "receipt",
+            "--root",
+            "../outside",
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--seam-id",
+            "perl-gap",
+            "--json",
+        ])));
+        assert!(!is_receipt_command(&command_args(&[
+            "ripr",
+            "agent",
+            "receipt",
+            "--verify-json",
+            "../agent-verify.json",
+            "--seam-id",
+            "perl-gap",
+            "--json",
+        ])));
+        assert!(!is_receipt_command(&command_args(&[
+            "ripr",
+            "agent",
+            "receipt",
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--json",
+        ])));
+        assert!(!is_receipt_command(&command_args(&[
+            "ripr",
+            "agent",
+            "receipt",
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--seam-id",
+            "--json",
+            "--json",
+        ])));
+
+        assert!(is_safe_repo_relative_path(
+            "target/ripr/reports/agent-receipt.json"
+        ));
+        assert!(!is_safe_repo_relative_path("../outside.pm"));
+        assert!(!is_safe_repo_relative_path("C:/outside.pm"));
+        assert!(!is_safe_repo_relative_path("t\\app.t"));
+    }
+
     #[test]
     fn perl_fact_packet_adapter_consumes_exact_return_fixture() -> Result<(), String> {
         let packet = PerlAdapter.consume_fact_packet(EXACT_RETURN_PACKET)?;
