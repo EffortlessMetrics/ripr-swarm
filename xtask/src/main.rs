@@ -82311,12 +82311,81 @@ fn exact_owner_call_has_external_expected_value() {
             "Bun.write helper-gated profile should validate: {errors:?}"
         );
 
+        let mut wrong_seam = case.clone();
+        wrong_seam.rust_file = "src/bun.js/bindings/BunWrite.rs".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_seam);
+        assert_contains_error(
+            &errors,
+            "rust_file must keep the Bun.write stable-byte Rust seam unresolved",
+        );
+
+        let mut wrong_owner = case.clone();
+        wrong_owner.rust_owner = "Bun.write resolved sink".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_owner);
+        assert_contains_error(
+            &errors,
+            "rust_owner must pin the manifest-only Bun.write stable-byte sink",
+        );
+
+        let mut wrong_boundary = case.clone();
+        wrong_boundary.rust_boundary = "native write helper".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_boundary);
+        assert_contains_error(
+            &errors,
+            "rust_boundary must describe JS-owned bytes crossing the Bun.write boundary",
+        );
+
+        let mut active = case.clone();
+        active.expected_state = "rust_ungripped_ts_discriminated".to_string();
+        active.profile_status = "active".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&active);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated profile is manifest_only and must stay a named_static_limitation",
+        );
+        assert_contains_error(&errors, "bun_write_helper_gated must be manifest_only");
+
         let mut wrong_proof = case.clone();
         wrong_proof.proof_mode = "observable_red_green".to_string();
         let errors = super::cross_language_oracle_graph_case_errors(&wrong_proof);
         assert_contains_error(
             &errors,
             "bun_write_helper_gated must record proof_mode helper_gated",
+        );
+
+        let mut bridge_credit = case.clone();
+        bridge_credit.binding_edge_kind = "configured_bridge".to_string();
+        bridge_credit.binding_edge_confidence = "configured_hint".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&bridge_credit);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must keep bridge evidence manifest_only",
+        );
+
+        let mut missing_entrypoint = case.clone();
+        missing_entrypoint.external_entrypoints = vec!["writeFile".to_string()];
+        let errors = super::cross_language_oracle_graph_case_errors(&missing_entrypoint);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must name Bun.write as an external entrypoint",
+        );
+
+        let mut wrong_witness_path = case.clone();
+        wrong_witness_path.external_callsite_file = "test/js/node/fs/fs.test.ts".to_string();
+        wrong_witness_path.external_oracle_file = "test/js/node/fs/fs.test.ts".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_witness_path);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must record test/js/bun/write.test.ts as the manifest witness path",
+        );
+
+        let mut wrong_oracle = case.clone();
+        wrong_oracle.external_oracle_kind = "stable_byte_write_oracle".to_string();
+        wrong_oracle.oracle_strength = "manifest_only".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_oracle);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must keep write-oracle evidence helper_gated",
         );
 
         let mut missing_helper = case.clone();
