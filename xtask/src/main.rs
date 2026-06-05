@@ -8983,6 +8983,10 @@ const CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES: &[(&str, &str)] = &[
         "bun_node_fs_scalar_write_manifest_only_profile",
         "named_static_limitation",
     ),
+    (
+        "bun_write_helper_gated_manifest_only_profile",
+        "named_static_limitation",
+    ),
 ];
 
 const BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -49897,8 +49901,93 @@ fn cross_language_oracle_graph_profile_errors(
                 );
             }
         }
+        "bun_write_helper_gated" => {
+            if !case.rust_file.starts_with("unresolved:bun-write-stable-byte") {
+                errors.push(
+                    "rust_file must keep the Bun.write stable-byte Rust seam unresolved"
+                        .to_string(),
+                );
+            }
+            if case.rust_owner != "Bun.write stable-byte sink" {
+                errors.push(
+                    "rust_owner must pin the manifest-only Bun.write stable-byte sink"
+                        .to_string(),
+                );
+            }
+            if !case.rust_boundary.contains("JS-owned bytes")
+                || !case.rust_boundary.contains("Bun.write")
+            {
+                errors.push(
+                    "rust_boundary must describe JS-owned bytes crossing the Bun.write boundary"
+                        .to_string(),
+                );
+            }
+            if case.expected_state != "named_static_limitation" {
+                errors.push(
+                    "bun_write_helper_gated profile is manifest_only and must stay a named_static_limitation"
+                        .to_string(),
+                );
+            }
+            if case.profile_status != "manifest_only" {
+                errors.push("bun_write_helper_gated must be manifest_only".to_string());
+            }
+            if case.proof_mode != "helper_gated" {
+                errors.push(
+                    "bun_write_helper_gated must record proof_mode helper_gated".to_string(),
+                );
+            }
+            if case.binding_edge_kind != "manifest_only"
+                || case.binding_edge_confidence != "manifest_only"
+            {
+                errors.push(
+                    "bun_write_helper_gated must keep bridge evidence manifest_only"
+                        .to_string(),
+                );
+            }
+            if !case
+                .external_entrypoints
+                .iter()
+                .any(|entrypoint| entrypoint.contains("Bun.write"))
+            {
+                errors.push(
+                    "bun_write_helper_gated must name Bun.write as an external entrypoint"
+                        .to_string(),
+                );
+            }
+            if case.external_callsite_file != "test/js/bun/write.test.ts"
+                || case.external_oracle_file != "test/js/bun/write.test.ts"
+            {
+                errors.push(
+                    "bun_write_helper_gated must record test/js/bun/write.test.ts as the manifest witness path"
+                        .to_string(),
+                );
+            }
+            if case.external_oracle_kind != "stable_byte_write_oracle_helper_gated"
+                || case.oracle_strength != "helper_gated"
+            {
+                errors.push(
+                    "bun_write_helper_gated must keep write-oracle evidence helper_gated"
+                        .to_string(),
+                );
+            }
+            if !cross_language_oracle_graph_has_missing_leg(
+                case,
+                "helper:bun_write_fixture_helper",
+            ) {
+                errors.push(
+                    "bun_write_helper_gated must name helper:bun_write_fixture_helper as missing"
+                        .to_string(),
+                );
+            }
+            if case.suggested_test_file != "not_applicable" {
+                errors.push(
+                    "bun_write_helper_gated must not suggest placement while helper-gated"
+                        .to_string(),
+                );
+            }
+        }
         other => errors.push(format!(
-            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, or bun_node_fs_scalar_write, got {other}"
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, bun_node_fs_scalar_write, or bun_write_helper_gated, got {other}"
         )),
     }
 }
@@ -80927,7 +81016,7 @@ fn exact_owner_call_has_external_expected_value() {
             );
             assert_eq!(
                 report["summary"]["route_state_counts"]["named_static_limitation"],
-                serde_json::Value::from(1)
+                serde_json::Value::from(2)
             );
             assert_eq!(
                 report["summary"]["repair_packet_ready_cases"],
@@ -80960,6 +81049,7 @@ fn exact_owner_call_has_external_expected_value() {
                 "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
                 "bun_ffi_negative_offset_panic_boundary_limitation",
                 "bun_node_fs_scalar_write_manifest_only_profile",
+                "bun_write_helper_gated_manifest_only_profile",
             ] {
                 assert!(
                     routes.iter().any(|row| row["route_label"] == required),
@@ -81163,7 +81253,7 @@ fn exact_owner_call_has_external_expected_value() {
         with_repo_cwd(|| {
             let value = super::cross_language_oracle_route_quality_report_value();
             assert_eq!(value["status"], "pass");
-            assert_eq!(value["cases_total"], serde_json::Value::from(10));
+            assert_eq!(value["cases_total"], serde_json::Value::from(11));
             assert_eq!(
                 value["cross_language_oracle_graph_complete_advisory_witnesses"],
                 serde_json::Value::from(3)
@@ -81190,11 +81280,11 @@ fn exact_owner_call_has_external_expected_value() {
             );
             assert_eq!(
                 value["cross_language_oracle_graph_manifest_only_profiles"],
-                serde_json::Value::from(1)
+                serde_json::Value::from(2)
             );
             assert_eq!(
                 value["cross_language_oracle_graph_public_packet_exclusions"],
-                serde_json::Value::from(10)
+                serde_json::Value::from(11)
             );
             assert_eq!(
                 value["repair_packet_ready_cases"],
@@ -81368,6 +81458,31 @@ fn exact_owner_call_has_external_expected_value() {
                         .iter()
                         .any(|item| item == "external_oracle:stable_byte_scalar_write"))
             );
+            let bun_write = rows
+                .iter()
+                .find(|row| row["case_id"] == "bun_write_helper_gated_manifest_only_profile")
+                .ok_or_else(|| "missing Bun.write helper-gated manifest-only row".to_string())?;
+            assert_eq!(bun_write["profile"], "bun_write_helper_gated");
+            assert_eq!(bun_write["profile_status"], "manifest_only");
+            assert_eq!(bun_write["observed_state"], "named_static_limitation");
+            assert_eq!(bun_write["proof_mode"], "helper_gated");
+            assert_eq!(bun_write["suggested_test_file"], "not_applicable");
+            assert_eq!(bun_write["repair_packet_ready"], false);
+            assert_eq!(bun_write["public_projection_eligible"], false);
+            assert!(
+                bun_write["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "helper:bun_write_fixture_helper"))
+            );
+            assert!(
+                bun_write["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs
+                        .iter()
+                        .any(|item| item == "binding_or_ffi_edge:bun_write_sink"))
+            );
 
             let mut markdown = String::new();
             super::cross_language_oracle_route_quality_push_markdown(&mut markdown, &value);
@@ -81381,6 +81496,7 @@ fn exact_owner_call_has_external_expected_value() {
             assert!(markdown.contains("bun_ffi_negative_offset_panic_boundary_limitation"));
             assert!(markdown.contains("Manifest-only profiles"));
             assert!(markdown.contains("bun_node_fs_scalar_write_manifest_only_profile"));
+            assert!(markdown.contains("bun_write_helper_gated_manifest_only_profile"));
             assert!(markdown.contains("Missing external oracle limitations"));
             assert!(markdown.contains("binding_or_ffi_edge"));
             assert!(markdown.contains("preview/advisory route-quality evidence only"));
@@ -81837,7 +81953,7 @@ fn exact_owner_call_has_external_expected_value() {
         let errors = super::cross_language_oracle_graph_case_errors(&unknown_profile);
         assert_contains_error(
             &errors,
-            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, or bun_node_fs_scalar_write",
+            "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, bun_node_fs_scalar_write, or bun_write_helper_gated",
         );
     }
 
@@ -82104,6 +82220,207 @@ fn exact_owner_call_has_external_expected_value() {
         assert_contains_error(
             &errors,
             "bun_node_fs_scalar_write must record proof_mode observable_red_green",
+        );
+    }
+
+    #[test]
+    fn cross_language_profile_intake_requires_helper_gated_rows() {
+        let mut case = valid_cross_language_oracle_graph_case();
+        case.name = "bun_write_helper_gated_manifest_only_profile".to_string();
+        case.source = "profile-intake-bun-write-helper-gated".to_string();
+        case.profile = "bun_write_helper_gated".to_string();
+        case.profile_status = "manifest_only".to_string();
+        case.rust_file = "unresolved:bun-write-stable-byte-rust-seam".to_string();
+        case.rust_line = None;
+        case.rust_owner = "Bun.write stable-byte sink".to_string();
+        case.rust_boundary =
+            "JS-owned bytes must not cross Bun.write native sinks without a helper".to_string();
+        case.binding_edge_kind = "manifest_only".to_string();
+        case.binding_edge_confidence = "manifest_only".to_string();
+        case.external_callsite_file = "test/js/bun/write.test.ts".to_string();
+        case.external_callsite_line = Some(1);
+        case.external_entrypoints = vec![
+            "Bun.write".to_string(),
+            "Bun.write stable-byte sink".to_string(),
+        ];
+        case.shared_array_buffer = false;
+        case.resizable_array_buffer = false;
+        case.view_backed_blob_input = false;
+        case.stable_byte_copy_oracle = false;
+        case.max_byte_length_mention_only = false;
+        case.external_oracle_file = "test/js/bun/write.test.ts".to_string();
+        case.external_oracle_line = Some(1);
+        case.external_oracle_kind = "stable_byte_write_oracle_helper_gated".to_string();
+        case.oracle_strength = "helper_gated".to_string();
+        case.expected_state = "named_static_limitation".to_string();
+        case.gap_state = "static_limitation".to_string();
+        case.limitation_category = "cross_language_profile_manifest_only".to_string();
+        case.repair_route = "analysis/cross-language-profile-intake".to_string();
+        case.suggested_test_file = "not_applicable".to_string();
+        case.missing_graph_legs = vec![
+            "binding_or_ffi_edge:bun_write_sink".to_string(),
+            "helper:bun_write_fixture_helper".to_string(),
+            "external_oracle:stable_byte_write".to_string(),
+        ];
+        case.unlock_condition =
+            "Land or identify bun_write_fixture_helper and audit the Bun.write bridge/oracle before analyzer projection."
+                .to_string();
+        case.proof_mode = "helper_gated".to_string();
+        case.raw_evidence_refs = vec![
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "rust_seam".to_string(),
+                file: "issue:bun-write-helper-gated-profile".to_string(),
+                line: Some(1),
+                kind: "rust_seam_unresolved".to_string(),
+                source_id: "profile-intake-bun-write-helper-gated".to_string(),
+                sample: "Bun.write stable-byte Rust sink remains unresolved in the manifest-only profile"
+                    .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "boundary_discriminator".to_string(),
+                file: "issue:bun-write-helper-gated-profile".to_string(),
+                line: Some(1),
+                kind: "stable_byte_write_discriminator".to_string(),
+                source_id: "profile-intake-bun-write-helper-gated".to_string(),
+                sample: "Bun.write is the helper-gated stable-byte boundary shape under intake"
+                    .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_callsite".to_string(),
+                file: "test/js/bun/write.test.ts".to_string(),
+                line: Some(1),
+                kind: "typescript_bun_write_callsite".to_string(),
+                source_id: "profile-intake-bun-write-helper-gated".to_string(),
+                sample: "Bun.write callsites are expected to be witnessed in write.test.ts"
+                    .to_string(),
+            },
+            super::CrossLanguageOracleGraphRawRef {
+                leg: "external_oracle".to_string(),
+                file: "test/js/bun/write.test.ts".to_string(),
+                line: Some(1),
+                kind: "typescript_assertion_helper_gated".to_string(),
+                source_id: "profile-intake-bun-write-helper-gated".to_string(),
+                sample: "stable-byte write assertion shape is blocked on bun_write_fixture_helper"
+                    .to_string(),
+            },
+        ];
+
+        let errors = super::cross_language_oracle_graph_case_errors(&case);
+        assert!(
+            errors.is_empty(),
+            "Bun.write helper-gated profile should validate: {errors:?}"
+        );
+
+        let mut wrong_seam = case.clone();
+        wrong_seam.rust_file = "src/bun.js/bindings/BunWrite.rs".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_seam);
+        assert_contains_error(
+            &errors,
+            "rust_file must keep the Bun.write stable-byte Rust seam unresolved",
+        );
+
+        let mut wrong_owner = case.clone();
+        wrong_owner.rust_owner = "Bun.write resolved sink".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_owner);
+        assert_contains_error(
+            &errors,
+            "rust_owner must pin the manifest-only Bun.write stable-byte sink",
+        );
+
+        let mut wrong_boundary = case.clone();
+        wrong_boundary.rust_boundary = "native write helper".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_boundary);
+        assert_contains_error(
+            &errors,
+            "rust_boundary must describe JS-owned bytes crossing the Bun.write boundary",
+        );
+
+        let mut active = case.clone();
+        active.expected_state = "rust_ungripped_ts_discriminated".to_string();
+        active.profile_status = "active".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&active);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated profile is manifest_only and must stay a named_static_limitation",
+        );
+        assert_contains_error(&errors, "bun_write_helper_gated must be manifest_only");
+
+        let mut wrong_proof = case.clone();
+        wrong_proof.proof_mode = "observable_red_green".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_proof);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must record proof_mode helper_gated",
+        );
+
+        let mut bridge_credit = case.clone();
+        bridge_credit.binding_edge_kind = "configured_bridge".to_string();
+        bridge_credit.binding_edge_confidence = "configured_hint".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&bridge_credit);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must keep bridge evidence manifest_only",
+        );
+
+        let mut missing_entrypoint = case.clone();
+        missing_entrypoint.external_entrypoints = vec!["writeFile".to_string()];
+        let errors = super::cross_language_oracle_graph_case_errors(&missing_entrypoint);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must name Bun.write as an external entrypoint",
+        );
+
+        let mut wrong_witness_path = case.clone();
+        wrong_witness_path.external_callsite_file = "test/js/node/fs/fs.test.ts".to_string();
+        wrong_witness_path.external_oracle_file = "test/js/node/fs/fs.test.ts".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_witness_path);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must record test/js/bun/write.test.ts as the manifest witness path",
+        );
+
+        let mut wrong_oracle = case.clone();
+        wrong_oracle.external_oracle_kind = "stable_byte_write_oracle".to_string();
+        wrong_oracle.oracle_strength = "manifest_only".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&wrong_oracle);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must keep write-oracle evidence helper_gated",
+        );
+
+        let mut missing_helper = case.clone();
+        missing_helper
+            .missing_graph_legs
+            .retain(|leg| leg != "helper:bun_write_fixture_helper");
+        let errors = super::cross_language_oracle_graph_case_errors(&missing_helper);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must name helper:bun_write_fixture_helper as missing",
+        );
+
+        let mut suggested = case.clone();
+        suggested.suggested_test_file = "test/js/bun/write.test.ts".to_string();
+        let errors = super::cross_language_oracle_graph_case_errors(&suggested);
+        assert_contains_error(
+            &errors,
+            "bun_write_helper_gated must not suggest placement while helper-gated",
+        );
+
+        let mut binding_credit = case;
+        binding_credit
+            .raw_evidence_refs
+            .push(super::CrossLanguageOracleGraphRawRef {
+                leg: "binding_edge".to_string(),
+                file: "src/bun.js/bindings/BunWrite.rs".to_string(),
+                line: Some(1),
+                kind: "configured_bridge".to_string(),
+                source_id: "profile-intake-bun-write-helper-gated".to_string(),
+                sample: "helper-gated Bun.write intake must not claim a binding edge".to_string(),
+            });
+        let errors = super::cross_language_oracle_graph_case_errors(&binding_credit);
+        assert_contains_error(
+            &errors,
+            "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref",
         );
     }
 
@@ -99418,11 +99735,11 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_manifest_only_profiles"],
-            serde_json::Value::from(1)
+            serde_json::Value::from(2)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(10)
+            serde_json::Value::from(11)
         );
         assert_eq!(
             value["cross_language_oracle_route_quality"]["repair_packet_ready_cases"],
@@ -109763,11 +110080,11 @@ covered_by = ["cargo xtask check-file-policy"]
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_manifest_only_profiles"],
-            serde_json::Value::from(1)
+            serde_json::Value::from(2)
         );
         assert_eq!(
             route_quality["cross_language_oracle_graph_public_packet_exclusions"],
-            serde_json::Value::from(10)
+            serde_json::Value::from(11)
         );
         assert_eq!(
             route_quality["repair_packet_ready_cases"],
@@ -109793,6 +110110,20 @@ covered_by = ["cargo xtask check-file-policy"]
                         && row["missing_graph_legs"]
                             .as_array()
                             .is_some_and(Vec::is_empty)
+                        && row["repair_packet_ready"] == false
+                        && row["public_projection_eligible"] == false
+                }))
+        );
+        assert!(
+            route_quality["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| {
+                    row["case_id"] == "bun_write_helper_gated_manifest_only_profile"
+                        && row["profile"] == "bun_write_helper_gated"
+                        && row["profile_status"] == "manifest_only"
+                        && row["observed_state"] == "named_static_limitation"
+                        && row["proof_mode"] == "helper_gated"
+                        && row["suggested_test_file"] == "not_applicable"
                         && row["repair_packet_ready"] == false
                         && row["public_projection_eligible"] == false
                 }))
