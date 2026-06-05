@@ -72146,12 +72146,196 @@ mod tests {
         assert!(super::is_manifest_only_fixture_dir(Path::new(
             "fixtures/typescript-preview-repair-loop"
         )));
+        assert!(super::is_manifest_only_fixture_dir(Path::new(
+            "fixtures/perl_lsp_facts_exporter"
+        )));
         assert!(!super::is_manifest_only_fixture_dir(Path::new(
             "fixtures/boundary_gap"
         )));
         let violations =
             super::fixture_contract_violations(Path::new("fixtures/evidence-quality-benchmark"))?;
         assert_eq!(violations, Vec::<String>::new());
+        Ok(())
+    }
+
+    fn perl_lsp_facts_exporter_corpus_path() -> Result<PathBuf, String> {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+        Ok(repo_root.join("fixtures/perl_lsp_facts_exporter/corpus.json"))
+    }
+
+    #[test]
+    fn perl_lsp_facts_exporter_fixture_corpus_is_valid() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let corpus = perl_lsp_facts_exporter_corpus_path()?;
+            let mut violations = Vec::new();
+            super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&corpus, &mut violations)?;
+            assert_eq!(violations, Vec::<String>::new());
+
+            let mut root_violations = Vec::new();
+            super::validate_perl_lsp_facts_exporter_fixture_corpus(&mut root_violations)?;
+            assert_eq!(root_violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn perl_lsp_facts_exporter_fixture_guard_reports_missing_root_files() -> Result<(), String> {
+        with_temp_cwd("perl-lsp-facts-exporter-missing-root", |_| {
+            let mut violations = Vec::new();
+            super::validate_perl_lsp_facts_exporter_fixture_corpus(&mut violations)?;
+            let report = violations.join("\n");
+
+            assert!(report.contains("missing fixtures/perl_lsp_facts_exporter/SPEC.md"));
+            assert!(report.contains("missing fixtures/perl_lsp_facts_exporter/corpus.json"));
+            assert!(report.contains("perl-lsp facts exporter corpus is missing"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn perl_lsp_facts_exporter_fixture_guard_reports_contract_drift() -> Result<(), String> {
+        let root = temp_dir("perl-lsp-facts-exporter-invalid");
+        let missing = root.join("missing.json");
+        let mut violations = Vec::new();
+        super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&missing, &mut violations)?;
+
+        let no_cases = root.join("no-cases.json");
+        write(
+            &no_cases,
+            r#"{
+  "kind": "perl_lsp_facts_exporter_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064"
+}
+"#,
+        );
+        super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&no_cases, &mut violations)?;
+
+        let empty_cases = root.join("empty-cases.json");
+        write(
+            &empty_cases,
+            r#"{
+  "kind": "perl_lsp_facts_exporter_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "cases": []
+}
+"#,
+        );
+        super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&empty_cases, &mut violations)?;
+
+        let bad_packet = root.join("bad-packet.json");
+        write(
+            &bad_packet,
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": "wrong",
+                "producer": {"name": "not-perl-lsp"},
+                "canonical_gap_id": "gap:bad",
+                "gap_state": "actionable",
+                "files": [
+                    {},
+                    {"path": "lib\\Bad.pm"},
+                    {"path": "/absolute.pm"},
+                    {"path": "host:bad.pm"}
+                ]
+            }))
+            .unwrap(),
+        );
+        let missing_files_packet = root.join("missing-files-packet.json");
+        write(
+            &missing_files_packet,
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": "ripr-perl-facts-v1",
+                "producer": {"name": "perl-lsp"}
+            }))
+            .unwrap(),
+        );
+
+        let corpus = root.join("corpus.json");
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "wrong",
+                "schema_version": "0.2",
+                "spec": "RIPR-SPEC-9999",
+                "cases": [
+                    {
+                        "id": "missing-expected",
+                        "exporter": "wrong",
+                        "packet_schema": "wrong",
+                        "authority_boundary": "wrong",
+                        "must_not_claim": []
+                    },
+                    {
+                        "id": "missing-packet",
+                        "exporter": "perl-lsp",
+                        "packet_schema": "ripr-perl-facts-v1",
+                        "authority_boundary": "preview_advisory_only",
+                        "must_not_claim": [
+                            "ripr_check_executes_perl_lsp",
+                            "canonical_gap_id_emitted_by_perl_lsp",
+                            "gap_state_emitted_by_perl_lsp",
+                            "repair_packet_ready",
+                            "default_gate_authority",
+                            "public_badge_contribution",
+                            "support_tier_promotion"
+                        ],
+                        "expected_packet": root.join("does-not-exist.json")
+                    },
+                    {
+                        "id": "bad-packet",
+                        "exporter": "perl-lsp",
+                        "packet_schema": "ripr-perl-facts-v1",
+                        "authority_boundary": "preview_advisory_only",
+                        "must_not_claim": [
+                            "default_gate_authority"
+                        ],
+                        "expected_packet": bad_packet
+                    },
+                    {
+                        "id": "bad-packet",
+                        "exporter": "perl-lsp",
+                        "packet_schema": "ripr-perl-facts-v1",
+                        "authority_boundary": "preview_advisory_only",
+                        "must_not_claim": [
+                            "ripr_check_executes_perl_lsp",
+                            "canonical_gap_id_emitted_by_perl_lsp",
+                            "gap_state_emitted_by_perl_lsp",
+                            "repair_packet_ready",
+                            "default_gate_authority",
+                            "public_badge_contribution",
+                            "support_tier_promotion"
+                        ],
+                        "expected_packet": missing_files_packet
+                    }
+                ]
+            }))
+            .unwrap(),
+        );
+        super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&corpus, &mut violations)?;
+
+        let report = violations.join("\n");
+        assert!(report.contains("perl-lsp facts exporter corpus is missing"));
+        assert!(report.contains("is missing cases array"));
+        assert!(report.contains("cases array must not be empty"));
+        assert!(report.contains("kind must be perl_lsp_facts_exporter_corpus"));
+        assert!(report.contains("schema_version must be 0.1"));
+        assert!(report.contains("spec must be RIPR-SPEC-0064"));
+        assert!(report.contains("exporter must be perl-lsp"));
+        assert!(report.contains("packet_schema must be ripr-perl-facts-v1"));
+        assert!(report.contains("authority_boundary must be preview_advisory_only"));
+        assert!(report.contains("must_not_claim is missing ripr_check_executes_perl_lsp"));
+        assert!(report.contains("is missing expected_packet"));
+        assert!(report.contains("missing packet"));
+        assert!(report.contains("perl-lsp facts exporter case bad-packet is duplicated"));
+        assert!(report.contains("packet schema_version must be ripr-perl-facts-v1"));
+        assert!(report.contains("packet producer.name must be perl-lsp"));
+        assert!(report.contains("packet must not emit RIPR-derived gap state"));
+        assert!(report.contains("file fact is missing path"));
+        assert!(report.contains("must be repo-relative"));
+        assert!(report.contains("packet is missing files array"));
         Ok(())
     }
 
