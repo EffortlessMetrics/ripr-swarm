@@ -49073,6 +49073,10 @@ impl ConfiguredBridgeInventoryEntry {
             "inventory_action": "inventory_only",
             "repair_packet_ready": false,
             "public_projection_eligible": false,
+            "repair_target": "not_applicable",
+            "verify_command": "not_applicable",
+            "receipt_command": "not_applicable",
+            "allowed_edit_surface": Vec::<String>::new(),
             "authority_boundary": "preview_advisory_only",
         })
     }
@@ -81685,6 +81689,23 @@ fn exact_owner_call_has_external_expected_value() {
 
     #[test]
     fn configured_bridge_inventory_reports_missing_future_surfaces() -> Result<(), String> {
+        fn assert_inventory_rows_are_non_repair(rows: &[Value]) {
+            for row in rows {
+                assert_eq!(row["inventory_action"], "inventory_only");
+                assert_eq!(row["repair_packet_ready"], false);
+                assert_eq!(row["public_projection_eligible"], false);
+                assert_eq!(row["repair_target"], "not_applicable");
+                assert_eq!(row["verify_command"], "not_applicable");
+                assert_eq!(row["receipt_command"], "not_applicable");
+                assert!(
+                    row["allowed_edit_surface"]
+                        .as_array()
+                        .is_some_and(Vec::is_empty),
+                    "inventory row should not expose an edit surface: {row:?}"
+                );
+            }
+        }
+
         with_repo_cwd(|| {
             let report = super::configured_bridge_inventory_report_value(
                 &super::ConfiguredBridgeInventoryArgs {
@@ -81737,11 +81758,7 @@ fn exact_owner_call_has_external_expected_value() {
                     "configured bridge inventory should list {required}"
                 );
             }
-            assert!(configured.iter().all(|row| {
-                row["inventory_action"] == "inventory_only"
-                    && row["repair_packet_ready"] == false
-                    && row["public_projection_eligible"] == false
-            }));
+            assert_inventory_rows_are_non_repair(configured);
 
             let future = report["future_or_missing_surfaces"]
                 .as_array()
@@ -81773,6 +81790,7 @@ fn exact_owner_call_has_external_expected_value() {
                         .any(|item| item == "helper:bun_write_fixture_helper"))
             );
             assert_eq!(bun_write["inventory_action"], "inventory_only");
+            assert_inventory_rows_are_non_repair(future);
 
             let unknown = report["bridge_unknown"]
                 .as_array()
@@ -81784,6 +81802,12 @@ fn exact_owner_call_has_external_expected_value() {
                         .as_array()
                         .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
             }));
+            assert_inventory_rows_are_non_repair(unknown);
+
+            let limitations = report["named_static_limitations"]
+                .as_array()
+                .ok_or_else(|| "named_static_limitations must be an array".to_string())?;
+            assert_inventory_rows_are_non_repair(limitations);
 
             let markdown = super::configured_bridge_inventory_markdown(&report);
             assert!(markdown.contains("# Configured Bridge Inventory"));
@@ -81795,6 +81819,8 @@ fn exact_owner_call_has_external_expected_value() {
             assert!(markdown.contains("S3 surfaces backed by corpus"));
             assert!(markdown.contains("no inferred reachability"));
             assert!(markdown.contains("no public repair packet"));
+            assert!(markdown.contains("repair_packet_ready: false"));
+            assert!(!markdown.contains("bun_s3_stable_byte_sink"));
             Ok(())
         })
     }
@@ -81812,6 +81838,7 @@ fn exact_owner_call_has_external_expected_value() {
                 serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
             assert_eq!(value["report"], "configured-bridge-inventory");
             assert_eq!(value["status"], "pass");
+            assert_eq!(value["authority"], "preview_advisory_only");
             assert_eq!(
                 value["summary"]["repair_packet_ready_cases"],
                 serde_json::Value::from(0)
@@ -81822,6 +81849,8 @@ fn exact_owner_call_has_external_expected_value() {
             })?;
             assert!(markdown.contains("# Configured Bridge Inventory"));
             assert!(markdown.contains("Future Or Missing Surfaces"));
+            assert!(markdown.contains("bun_node_fs_scalar_write"));
+            assert!(markdown.contains("repair_packet_ready: false"));
             Ok(())
         })
     }
