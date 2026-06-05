@@ -87,7 +87,7 @@ commands = [
 
 [[work_item]]
 id = "output/bun-ub-preview-summary"
-status = "ready"
+status = "done"
 branch = "output-bun-ub-preview-summary"
 stackable = false
 acceptance = "Add a compact Bun UB preview summary built from existing graph, calibration, and dogfood data that lists calibrated routes and counts for `rust_ungripped_ts_discriminated`, `rust_ungripped_ts_missing_discriminator`, `bridge_unknown`, `ts_mention_not_observer`, and named static limitations, includes `authority = preview_advisory_only`, confirms `repair_packet_ready = false`, and does not change analyzer behavior, public repair-packet authority, generated tests, gates, badges, or support tiers."
@@ -95,7 +95,28 @@ spec = "docs/specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md"
 plan = "plans/cross-language-evidence-router-ux/implementation-plan.md"
 commands = [
   "cargo test -p xtask bun_ub_preview_summary -- --test-threads=1",
+  "cargo xtask bun-ub-preview-summary",
   "cargo xtask bun-ub-calibration",
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-static-language",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "agent/bun-cross-language-advisory-packet"
+status = "ready"
+branch = "agent-bun-cross-language-advisory-packet"
+stackable = false
+acceptance = "Emit configured Bun cross-language advisory packets with state, Rust seam, eligible TypeScript file, missing discriminators, suggested shape, bridge confidence, missing graph legs, authority boundary, must-not-change constraints, stop condition, and raw evidence refs; bridge_unknown must emit inspect-bridge guidance rather than a test-edit packet, and repair_packet_ready must remain false."
+specs = [
+  "docs/specs/RIPR-SPEC-0058-ripr-swarm-external-agent-handoff.md",
+  "docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md",
+  "docs/specs/RIPR-SPEC-0063-cross-language-evidence-router-ux.md",
+]
+plan = "plans/cross-language-evidence-router-ux/implementation-plan.md"
+commands = [
+  "cargo test -p ripr bun_cross_language_agent_packet -- --test-threads=1",
+  "cargo test -p xtask cross_language_oracle_graph -- --test-threads=1",
   "cargo xtask check-output-contracts",
   "cargo xtask check-static-language",
   "cargo xtask check-pr",
