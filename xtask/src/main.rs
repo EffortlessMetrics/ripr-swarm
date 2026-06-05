@@ -1359,6 +1359,15 @@ struct BunUbCalibrationArgs {
     out_md: PathBuf,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BunUbPreviewSummaryArgs {
+    calibration_corpus: PathBuf,
+    graph_corpus: PathBuf,
+    dogfood_corpus: PathBuf,
+    out: PathBuf,
+    out_md: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 struct CrossLanguageOracleGraphCase {
     name: String,
@@ -48256,6 +48265,630 @@ fn bun_ub_calibration_report_markdown(value: &Value) -> String {
     out
 }
 
+pub(crate) fn bun_ub_preview_summary_impl(args: &[String]) -> Result<(), String> {
+    let args = parse_bun_ub_preview_summary_args(args)?;
+    let report = bun_ub_preview_summary_report_value(&args);
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("failed to render Bun UB preview summary JSON: {err}"))?;
+    write_parented_text_file(&args.out, "bun-ub-preview-summary JSON", &json)?;
+    write_parented_text_file(
+        &args.out_md,
+        "bun-ub-preview-summary Markdown",
+        &bun_ub_preview_summary_markdown(&report),
+    )
+}
+
+fn parse_bun_ub_preview_summary_args(args: &[String]) -> Result<BunUbPreviewSummaryArgs, String> {
+    let mut calibration_corpus = repo_rooted_fixture_path(TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS);
+    let mut graph_corpus = cross_language_oracle_graph_corpus_path();
+    let mut dogfood_corpus = repo_rooted_fixture_path(BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS);
+    let mut out = PathBuf::from("target/ripr/reports/bun-ub-preview-summary.json");
+    let mut out_md = PathBuf::from("target/ripr/reports/bun-ub-preview-summary.md");
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--calibration-corpus" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--calibration-corpus`\n{}",
+                        bun_ub_preview_summary_usage()
+                    ));
+                };
+                calibration_corpus = PathBuf::from(value);
+            }
+            "--graph-corpus" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--graph-corpus`\n{}",
+                        bun_ub_preview_summary_usage()
+                    ));
+                };
+                graph_corpus = PathBuf::from(value);
+            }
+            "--dogfood-corpus" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--dogfood-corpus`\n{}",
+                        bun_ub_preview_summary_usage()
+                    ));
+                };
+                dogfood_corpus = PathBuf::from(value);
+            }
+            "--out" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--out`\n{}",
+                        bun_ub_preview_summary_usage()
+                    ));
+                };
+                out = PathBuf::from(value);
+            }
+            "--out-md" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(format!(
+                        "missing value for `--out-md`\n{}",
+                        bun_ub_preview_summary_usage()
+                    ));
+                };
+                out_md = PathBuf::from(value);
+            }
+            "-h" | "--help" => return Err(bun_ub_preview_summary_usage()),
+            other => {
+                return Err(format!(
+                    "unknown bun-ub-preview-summary argument `{other}`\n{}",
+                    bun_ub_preview_summary_usage()
+                ));
+            }
+        }
+        index += 1;
+    }
+
+    Ok(BunUbPreviewSummaryArgs {
+        calibration_corpus,
+        graph_corpus,
+        dogfood_corpus,
+        out,
+        out_md,
+    })
+}
+
+fn bun_ub_preview_summary_usage() -> String {
+    "usage: cargo xtask bun-ub-preview-summary [--calibration-corpus <path>] [--graph-corpus <path>] [--dogfood-corpus <path>] [--out <path>] [--out-md <path>]".to_string()
+}
+
+fn repo_rooted_fixture_path(relative: &str) -> PathBuf {
+    let path = Path::new(relative);
+    repo_root()
+        .map(|root| root.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn bun_ub_preview_summary_report_value(args: &BunUbPreviewSummaryArgs) -> Value {
+    let calibration = bun_ub_calibration_report_value(&args.calibration_corpus);
+    let route_quality = cross_language_oracle_route_quality_from_cases(
+        normalize_path(&args.graph_corpus),
+        &cross_language_oracle_graph_cases_at(&args.graph_corpus),
+    );
+    let dogfood_runs = dogfood_bun_ub_cross_language_scenarios_at(&args.dogfood_corpus)
+        .iter()
+        .map(dogfood_bun_ub_cross_language_run)
+        .collect::<Vec<_>>();
+
+    let route_rows = route_quality
+        .get("rows")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let calibration_rows = calibration
+        .get("rows")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    let mut route_state_counts = BTreeMap::<String, usize>::new();
+    let mut dogfood_state_counts = BTreeMap::<String, usize>::new();
+    let mut public_packet_exclusions =
+        audit_usize(&calibration, &["summary", "public_packet_exclusions"]).unwrap_or_default()
+            + audit_usize(
+                &route_quality,
+                &["cross_language_oracle_graph_public_packet_exclusions"],
+            )
+            .unwrap_or_default();
+    let mut repair_packet_ready_cases =
+        audit_usize(&calibration, &["summary", "repair_packet_ready_cases"]).unwrap_or_default()
+            + audit_usize(&route_quality, &["repair_packet_ready_cases"]).unwrap_or_default();
+    let mut errors = Vec::<String>::new();
+
+    for report in [
+        ("calibration", &calibration),
+        ("cross_language_oracle_graph", &route_quality),
+    ] {
+        if report.1.get("status").and_then(Value::as_str) != Some("pass") {
+            errors.push(format!(
+                "{} source report status was {}",
+                report.0,
+                report
+                    .1
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ));
+        }
+        if report.1.get("authority_boundary").and_then(Value::as_str)
+            != Some("preview_advisory_only")
+        {
+            errors.push(format!(
+                "{} authority_boundary must be preview_advisory_only",
+                report.0
+            ));
+        }
+    }
+
+    let calibrated_routes = route_rows
+        .iter()
+        .map(|row| {
+            let state = json_string_value(row, "observed_state");
+            *route_state_counts.entry(state.clone()).or_default() += 1;
+            serde_json::json!({
+                "route_label": json_string_value(row, "case_id"),
+                "profile": json_string_value(row, "profile"),
+                "case_id": json_string_value(row, "case_id"),
+                "state": state,
+                "gap_state": json_string_value(row, "gap_state"),
+                "limitation_category": json_string_value(row, "limitation_category"),
+                "repair_route": json_string_value(row, "repair_route"),
+                "suggested_test_file": json_string_value(row, "suggested_test_file"),
+                "missing_discriminators": json_string_array_value(row.get("missing_discriminators")),
+                "missing_graph_legs": json_string_array_value(row.get("missing_graph_legs")),
+                "public_projection_eligible": row
+                    .get("public_projection_eligible")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                "repair_packet_ready": row
+                    .get("repair_packet_ready")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                "authority_boundary": json_string_value(row, "authority_boundary"),
+                "unlock_condition": json_string_value(row, "unlock_condition"),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut dogfood_receipts = Vec::new();
+    for run in &dogfood_runs {
+        *dogfood_state_counts
+            .entry(run.observed_state.clone())
+            .or_default() += 1;
+        if run.repair_packet_ready {
+            repair_packet_ready_cases += 1;
+        } else {
+            public_packet_exclusions += 1;
+        }
+        if run.authority_boundary != "preview_advisory_only" {
+            errors.push(format!(
+                "{} dogfood authority_boundary must be preview_advisory_only",
+                run.name
+            ));
+        }
+        for error in &run.errors {
+            errors.push(format!("{}: {error}", run.name));
+        }
+        dogfood_receipts.push(serde_json::json!({
+            "case_id": &run.name,
+            "source_case": &run.source_case,
+            "route_quality_case": &run.route_quality_case,
+            "state": &run.observed_state,
+            "receipt_state": &run.receipt_state,
+            "operator_action": &run.operator_action,
+            "proof_mode": &run.proof_mode,
+            "suggested_test_file": &run.suggested_test_file,
+            "repair_packet_ready": run.repair_packet_ready,
+            "authority_boundary": &run.authority_boundary,
+            "errors": &run.errors,
+        }));
+    }
+
+    if repair_packet_ready_cases > 0 {
+        errors.push(format!(
+            "repair_packet_ready_cases must remain 0, got {repair_packet_ready_cases}"
+        ));
+    }
+
+    let source_rows_total = calibration_rows.len() + route_rows.len() + dogfood_runs.len();
+    let status = if source_rows_total == 0 {
+        "empty"
+    } else if errors.is_empty() && repair_packet_ready_cases == 0 {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    serde_json::json!({
+        "schema_version": "0.1",
+        "report": "bun-ub-preview-summary",
+        "status": status,
+        "authority": "preview_advisory_only",
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "source_paths": {
+            "calibration": bun_ub_preview_summary_source_path(&args.calibration_corpus),
+            "cross_language_oracle_graph": bun_ub_preview_summary_source_path(&args.graph_corpus),
+            "dogfood": bun_ub_preview_summary_source_path(&args.dogfood_corpus),
+        },
+        "summary": {
+            "calibration_cases_total": audit_usize(&calibration, &["summary", "cases_total"]).unwrap_or_default(),
+            "route_quality_cases_total": audit_usize(&route_quality, &["cases_total"]).unwrap_or_default(),
+            "dogfood_receipts_total": dogfood_runs.len(),
+            "route_state_counts": route_state_counts,
+            "dogfood_state_counts": dogfood_state_counts,
+            "named_static_limitations": bun_ub_preview_summary_named_limitations(route_rows),
+            "public_packet_exclusions": public_packet_exclusions,
+            "repair_packet_ready_cases": repair_packet_ready_cases,
+        },
+        "calibrated_routes": calibrated_routes,
+        "dogfood_receipts": dogfood_receipts,
+        "non_claims": bun_ub_preview_summary_non_claims(),
+        "errors": errors,
+    })
+}
+
+fn bun_ub_preview_summary_source_path(path: &Path) -> String {
+    repo_root()
+        .map(|root| normalize_repo_relative(&root, path))
+        .unwrap_or_else(|_| normalize_path(path))
+}
+
+fn json_string_value(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn json_string_array_value(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn bun_ub_preview_summary_named_limitations(rows: &[Value]) -> Vec<Value> {
+    let mut by_category = BTreeMap::<String, (usize, BTreeSet<String>, BTreeSet<String>)>::new();
+    for row in rows {
+        let category = json_string_value(row, "limitation_category");
+        if matches!(category.as_str(), "" | "unknown" | "not_applicable") {
+            continue;
+        }
+        let route = json_string_value(row, "repair_route");
+        let case_id = json_string_value(row, "case_id");
+        let entry = by_category
+            .entry(category)
+            .or_insert_with(|| (0, BTreeSet::new(), BTreeSet::new()));
+        entry.0 += 1;
+        if !matches!(route.as_str(), "" | "unknown" | "not_applicable") {
+            entry.1.insert(route);
+        }
+        if !matches!(case_id.as_str(), "" | "unknown") {
+            entry.2.insert(case_id);
+        }
+    }
+
+    by_category
+        .into_iter()
+        .map(|(category, (count, routes, samples))| {
+            serde_json::json!({
+                "category": category,
+                "count": count,
+                "repair_routes": routes.into_iter().collect::<Vec<_>>(),
+                "sample_case_ids": samples.into_iter().take(3).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
+fn bun_ub_preview_summary_non_claims() -> Vec<&'static str> {
+    vec![
+        "preview/advisory only",
+        "no public repair packet",
+        "no runtime Bun execution",
+        "no TypeScript execution",
+        "no mutation execution",
+        "no provider calls",
+        "no generated tests",
+        "no source edits",
+        "no gates or badges",
+        "no support-tier promotion",
+        "no full cross-language proof",
+    ]
+}
+
+fn bun_ub_preview_summary_markdown(value: &Value) -> String {
+    let mut out = String::new();
+    out.push_str("# Bun UB Preview Summary\n\n");
+    out.push_str(&format!(
+        "Status: `{}`\n\n",
+        audit_markdown_cell(
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )
+    ));
+    out.push_str(&format!(
+        "authority = {}\n\n",
+        audit_markdown_cell(
+            value
+                .get("authority")
+                .and_then(Value::as_str)
+                .unwrap_or("preview_advisory_only")
+        )
+    ));
+    out.push_str(&format!(
+        "repair_packet_ready: {}\n\n",
+        value
+            .get("repair_packet_ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    ));
+    out.push_str("This compact preview is built from existing Bun UB calibration, cross-language oracle graph, and dogfood receipt data. It does not create public repair packets, gates, badges, generated tests, source edits, runtime execution, provider calls, or support-tier promotion.\n\n");
+
+    out.push_str("## Source Paths\n\n");
+    out.push_str("| Source | Path |\n");
+    out.push_str("| --- | --- |\n");
+    let source_paths = value.get("source_paths").unwrap_or(&Value::Null);
+    for (label, key) in [
+        ("Calibration", "calibration"),
+        ("Cross-language oracle graph", "cross_language_oracle_graph"),
+        ("Dogfood", "dogfood"),
+    ] {
+        out.push_str(&format!(
+            "| {} | `{}` |\n",
+            label,
+            audit_markdown_cell(
+                source_paths
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )
+        ));
+    }
+    out.push('\n');
+
+    let summary = value.get("summary").unwrap_or(&Value::Null);
+    out.push_str("## Summary\n\n");
+    out.push_str("| Metric | Count |\n");
+    out.push_str("| --- | ---: |\n");
+    for (label, key) in [
+        ("Calibration cases", "calibration_cases_total"),
+        ("Route-quality cases", "route_quality_cases_total"),
+        ("Dogfood receipts", "dogfood_receipts_total"),
+        ("Public packet exclusions", "public_packet_exclusions"),
+        ("Repair-packet-ready cases", "repair_packet_ready_cases"),
+    ] {
+        audit_push_count(
+            &mut out,
+            label,
+            audit_usize(summary, &[key]).unwrap_or_default(),
+        );
+    }
+    out.push('\n');
+
+    out.push_str("## State Counts\n\n");
+    out.push_str("| State | Route count | Dogfood count |\n");
+    out.push_str("| --- | ---: | ---: |\n");
+    for state in bun_ub_preview_summary_state_names(summary) {
+        let route_count =
+            audit_usize(summary, &["route_state_counts", state.as_str()]).unwrap_or_default();
+        let dogfood_count =
+            audit_usize(summary, &["dogfood_state_counts", state.as_str()]).unwrap_or_default();
+        out.push_str(&format!(
+            "| `{}` | {} | {} |\n",
+            audit_markdown_cell(&state),
+            route_count,
+            dogfood_count
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Named Static Limitations\n\n");
+    out.push_str("| Category | Count | Repair routes | Sample cases |\n");
+    out.push_str("| --- | ---: | --- | --- |\n");
+    let limitations = summary
+        .get("named_static_limitations")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if limitations.is_empty() {
+        out.push_str("| none | 0 | none | none |\n");
+    }
+    for limitation in limitations {
+        let repair_routes = audit_markdown_string_array_cell(
+            limitation
+                .get("repair_routes")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        let sample_cases = audit_markdown_string_array_cell(
+            limitation
+                .get("sample_case_ids")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+        );
+        out.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            audit_markdown_cell(
+                limitation
+                    .get("category")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_usize(limitation, &["count"]).unwrap_or_default(),
+            audit_markdown_cell(&repair_routes),
+            audit_markdown_cell(&sample_cases)
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Calibrated Routes\n\n");
+    out.push_str("| Route | State | Gap state | Limitation | Repair route | Suggested file | Repair packet ready |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    let routes = value
+        .get("calibrated_routes")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if routes.is_empty() {
+        out.push_str("| none |  |  |  |  |  |  |\n");
+    }
+    for route in routes {
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            audit_markdown_cell(
+                route
+                    .get("route_label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                route
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                route
+                    .get("gap_state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                route
+                    .get("limitation_category")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                route
+                    .get("repair_route")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                route
+                    .get("suggested_test_file")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            route
+                .get("repair_packet_ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Dogfood Receipts\n\n");
+    out.push_str("| Case | State | Receipt | Operator action | Proof mode | Suggested file | Repair packet ready |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+    let receipts = value
+        .get("dogfood_receipts")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if receipts.is_empty() {
+        out.push_str("| none |  |  |  |  |  |  |\n");
+    }
+    for receipt in receipts {
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            audit_markdown_cell(
+                receipt
+                    .get("case_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                receipt
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                receipt
+                    .get("receipt_state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                receipt
+                    .get("operator_action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                receipt
+                    .get("proof_mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            audit_markdown_cell(
+                receipt
+                    .get("suggested_test_file")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+            receipt
+                .get("repair_packet_ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Non-Claims\n\n");
+    let non_claims = value
+        .get("non_claims")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if non_claims.is_empty() {
+        out.push_str("- none\n");
+    }
+    for non_claim in non_claims {
+        if let Some(non_claim) = non_claim.as_str() {
+            out.push_str(&format!("- {}\n", audit_markdown_cell(non_claim)));
+        }
+    }
+    out
+}
+
+fn bun_ub_preview_summary_state_names(summary: &Value) -> Vec<String> {
+    let mut states = [
+        "rust_ungripped_ts_discriminated",
+        "rust_ungripped_ts_missing_discriminator",
+        "bridge_unknown",
+        "ts_mention_not_observer",
+        "rust_ungripped_ts_missing_external_oracle",
+        "cross_language_target_unresolved",
+        "public_reachable_panic_boundary_unrevealed",
+    ]
+    .iter()
+    .map(|state| (*state).to_string())
+    .collect::<BTreeSet<_>>();
+    for map_name in ["route_state_counts", "dogfood_state_counts"] {
+        if let Some(object) = summary.get(map_name).and_then(Value::as_object) {
+            states.extend(object.keys().cloned());
+        }
+    }
+    states.into_iter().collect()
+}
+
 fn write_parented_text_file(path: &Path, label: &str, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -79927,6 +80560,193 @@ fn exact_owner_call_has_external_expected_value() {
     }
 
     #[test]
+    fn bun_ub_preview_summary_summarizes_existing_cross_language_state() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let report =
+                super::bun_ub_preview_summary_report_value(&super::BunUbPreviewSummaryArgs {
+                    calibration_corpus: PathBuf::from(super::TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS),
+                    graph_corpus: super::cross_language_oracle_graph_corpus_path(),
+                    dogfood_corpus: PathBuf::from(super::BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS),
+                    out: PathBuf::from("target/ripr/reports/bun-ub-preview-summary.json"),
+                    out_md: PathBuf::from("target/ripr/reports/bun-ub-preview-summary.md"),
+                });
+            assert_eq!(report["schema_version"], "0.1");
+            assert_eq!(report["report"], "bun-ub-preview-summary");
+            assert_eq!(report["status"], "pass");
+            assert_eq!(report["authority"], "preview_advisory_only");
+            assert_eq!(report["authority_boundary"], "preview_advisory_only");
+            assert_eq!(report["repair_packet_ready"], false);
+            assert_eq!(
+                report["summary"]["route_state_counts"]["rust_ungripped_ts_discriminated"],
+                serde_json::Value::from(3)
+            );
+            assert_eq!(
+                report["summary"]["route_state_counts"]["rust_ungripped_ts_missing_discriminator"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["route_state_counts"]["bridge_unknown"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["route_state_counts"]["ts_mention_not_observer"],
+                serde_json::Value::from(1)
+            );
+            assert_eq!(
+                report["summary"]["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+
+            let limitations = report["summary"]["named_static_limitations"]
+                .as_array()
+                .ok_or_else(|| "named_static_limitations must be an array".to_string())?;
+            let categories = limitations
+                .iter()
+                .filter_map(|row| row["category"].as_str())
+                .collect::<BTreeSet<_>>();
+            for required in [
+                "cross_language_oracle_visibility_unresolved",
+                "cross_language_target_unresolved",
+                "cross_language_panic_boundary_visibility_unresolved",
+            ] {
+                assert!(
+                    categories.contains(required),
+                    "Bun UB preview summary should include limitation category {required}"
+                );
+            }
+
+            let routes = report["calibrated_routes"]
+                .as_array()
+                .ok_or_else(|| "calibrated_routes must be an array".to_string())?;
+            for required in [
+                "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
+                "bun_ffi_negative_offset_panic_boundary_limitation",
+            ] {
+                assert!(
+                    routes.iter().any(|row| row["route_label"] == required),
+                    "Bun UB preview summary should include route {required}"
+                );
+            }
+            let missing_resizable = routes
+                .iter()
+                .find(|row| row["route_label"] == "bun_blob_missing_resizable_oracle_limitation")
+                .ok_or_else(|| "missing resizable route should be summarized".to_string())?;
+            assert_eq!(
+                missing_resizable["suggested_test_file"],
+                super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            );
+            assert_eq!(missing_resizable["repair_packet_ready"], false);
+
+            let markdown = super::bun_ub_preview_summary_markdown(&report);
+            assert!(markdown.contains("# Bun UB Preview Summary"));
+            assert!(markdown.contains("authority = preview_advisory_only"));
+            assert!(markdown.contains("repair_packet_ready: false"));
+            assert!(markdown.contains("rust_ungripped_ts_discriminated"));
+            assert!(markdown.contains("rust_ungripped_ts_missing_discriminator"));
+            assert!(markdown.contains("bridge_unknown"));
+            assert!(markdown.contains("ts_mention_not_observer"));
+            assert!(markdown.contains("cross_language_oracle_visibility_unresolved"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn bun_ub_preview_summary_command_writes_markdown_and_json() -> Result<(), String> {
+        with_temp_cwd("bun-ub-preview-summary-report", |_root| {
+            let out = PathBuf::from("target/ripr/reports/bun-ub-preview-summary.json");
+            let out_md = PathBuf::from("target/ripr/reports/bun-ub-preview-summary.md");
+            super::bun_ub_preview_summary_impl(&[])?;
+
+            let json = fs::read_to_string(&out)
+                .map_err(|err| format!("failed to read Bun UB preview summary JSON: {err}"))?;
+            let value: Value =
+                serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
+            assert_eq!(value["report"], "bun-ub-preview-summary");
+            assert_eq!(value["authority"], "preview_advisory_only");
+            assert_eq!(
+                value["summary"]["repair_packet_ready_cases"],
+                serde_json::Value::from(0)
+            );
+
+            let markdown = fs::read_to_string(&out_md)
+                .map_err(|err| format!("failed to read Bun UB preview summary Markdown: {err}"))?;
+            assert!(markdown.contains("# Bun UB Preview Summary"));
+            assert!(markdown.contains("authority = preview_advisory_only"));
+            assert!(markdown.contains("repair_packet_ready: false"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn bun_ub_preview_summary_accepts_custom_paths_and_rejects_bad_args() -> Result<(), String> {
+        let args = super::parse_bun_ub_preview_summary_args(&[
+            "--calibration-corpus".to_string(),
+            "calibration.json".to_string(),
+            "--graph-corpus".to_string(),
+            "graph.json".to_string(),
+            "--dogfood-corpus".to_string(),
+            "dogfood.json".to_string(),
+            "--out".to_string(),
+            "summary.json".to_string(),
+            "--out-md".to_string(),
+            "summary.md".to_string(),
+        ])?;
+        assert_eq!(args.calibration_corpus, PathBuf::from("calibration.json"));
+        assert_eq!(args.graph_corpus, PathBuf::from("graph.json"));
+        assert_eq!(args.dogfood_corpus, PathBuf::from("dogfood.json"));
+        assert_eq!(args.out, PathBuf::from("summary.json"));
+        assert_eq!(args.out_md, PathBuf::from("summary.md"));
+
+        let missing_value =
+            super::parse_bun_ub_preview_summary_args(&["--out".to_string()]).unwrap_err();
+        assert!(missing_value.contains("missing value for `--out`"));
+        assert!(missing_value.contains("usage: cargo xtask bun-ub-preview-summary"));
+
+        let unknown =
+            super::parse_bun_ub_preview_summary_args(&["--unknown".to_string()]).unwrap_err();
+        assert!(unknown.contains("unknown bun-ub-preview-summary argument `--unknown`"));
+
+        let help = super::parse_bun_ub_preview_summary_args(&["--help".to_string()]).unwrap_err();
+        assert!(help.contains("usage: cargo xtask bun-ub-preview-summary"));
+        Ok(())
+    }
+
+    #[test]
+    fn bun_ub_preview_summary_fails_closed_on_public_repair_claims() {
+        let report = serde_json::json!({
+            "status": "fail",
+            "authority": "preview_advisory_only",
+            "authority_boundary": "preview_advisory_only",
+            "repair_packet_ready": false,
+            "source_paths": {},
+            "summary": {
+                "calibration_cases_total": 0,
+                "route_quality_cases_total": 0,
+                "dogfood_receipts_total": 0,
+                "route_state_counts": {"future_state": 2},
+                "dogfood_state_counts": {"future_state": 1},
+                "named_static_limitations": [],
+                "public_packet_exclusions": 0,
+                "repair_packet_ready_cases": 1
+            },
+            "calibrated_routes": [],
+            "dogfood_receipts": [],
+            "non_claims": [],
+            "errors": ["repair_packet_ready_cases must remain 0, got 1"]
+        });
+        let markdown = super::bun_ub_preview_summary_markdown(&report);
+        assert!(markdown.contains("Status: `fail`"));
+        assert!(markdown.contains("| `future_state` | 2 | 1 |"));
+        assert!(markdown.contains("| none | 0 | none | none |"));
+        assert!(markdown.contains("| none |  |  |  |  |  |  |"));
+        assert!(markdown.contains("- none"));
+        assert_eq!(
+            report["errors"][0],
+            "repair_packet_ready_cases must remain 0, got 1"
+        );
+    }
+
+    #[test]
     fn cross_language_oracle_graph_corpus_cases_are_checked() -> Result<(), String> {
         with_repo_cwd(|| {
             let cases = super::cross_language_oracle_graph_cases();
@@ -92060,6 +92880,17 @@ jobs:
             ])
         );
         assert_eq!(
+            XtaskCommand::parse([
+                "bun-ub-preview-summary".to_string(),
+                "--out-md".to_string(),
+                "target/ripr/reports/bun-ub-preview-summary.md".to_string(),
+            ]),
+            XtaskCommand::BunUbPreviewSummary(vec![
+                "--out-md".to_string(),
+                "target/ripr/reports/bun-ub-preview-summary.md".to_string(),
+            ])
+        );
+        assert_eq!(
             XtaskCommand::parse(["vscode-package".to_string()]),
             XtaskCommand::VscodePackage
         );
@@ -92116,6 +92947,7 @@ jobs:
                 XtaskCommand::TargetedTestOutcome(Vec::new()),
                 XtaskCommand::MutationCalibration(Vec::new()),
                 XtaskCommand::BunUbCalibration(Vec::new()),
+                XtaskCommand::BunUbPreviewSummary(Vec::new()),
                 XtaskCommand::SarifPolicy(Vec::new()),
                 XtaskCommand::Dogfood,
                 XtaskCommand::Critic,
@@ -92684,6 +93516,7 @@ covered_by = ["cargo xtask check-file-policy"]
             commands
                 .contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
         );
+        assert!(commands.contains(&"bun-ub-preview-summary [--calibration-corpus <path>] [--graph-corpus <path>] [--dogfood-corpus <path>] [--out <path>] [--out-md <path>]"));
         assert!(commands.contains(&"sarif-policy --current <path> [--baseline <path>]"));
         assert!(commands.contains(&"badges [--check] [--gap-ledger <path>]"));
         assert!(commands.contains(&"pr-triage-report"));
