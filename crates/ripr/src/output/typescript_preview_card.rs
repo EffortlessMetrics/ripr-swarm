@@ -1136,7 +1136,7 @@ mod tests {
         assert!(
             packet["proof_mode"]["reason"]
                 .as_str()
-                .expect("proof mode reason is a string")
+                .ok_or_else(|| "expected proof mode reason".to_string())?
                 .contains("binding or FFI edge")
         );
         assert_eq!(packet["proof_mode"]["runtime_execution"], false);
