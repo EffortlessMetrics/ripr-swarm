@@ -1,13 +1,13 @@
 # Cross-Language Evidence Router UX Plan
 
-Status: proposed; not active until explicitly selected
+Status: selected; first work item complete
 Owner: language-adapter-swarm
 Plan artifact: RIPR-PLAN-0063
 Linked proposal: n/a
 Linked specs: RIPR-SPEC-0027, RIPR-SPEC-0062, RIPR-SPEC-0063
 Linked ADRs: n/a
-Active goal: n/a; `.ripr/goals/active.toml` currently records
-`no_current_goal = true`
+Active goal: external lane goal for TypeScript/Rust cross-language support;
+`.ripr/goals/active.toml` still records the previous closed repo-local goal
 
 ## Current State
 
@@ -17,6 +17,12 @@ stable-byte oracle classification, bridge hints, cross-language grip projection,
 TypeScript placement ranking, oracle graph corpus rows, witness routing,
 bridge-unknown limitation handling, route-quality and calibration reports,
 dogfood receipts, a runbook, and a closeout boundary.
+
+The patch proof packet for that closed 0.8.1 path is recorded in
+`docs/handoffs/2026-06-05-0.8.1-typescript-bun-preview-patch-proof.md`. The
+next implementation slice is `output/bun-ub-preview-summary`. The repo-local
+goal manifest can be refreshed in a separate control-plane slice if this plan
+needs `.ripr/goals` execution authority.
 
 This plan turns that bounded path into a repeatable mixed TypeScript plus Rust
 operating loop. It does not reopen generic TypeScript support and it does not
@@ -37,7 +43,7 @@ Hard boundaries:
 
 ## Work Item: release/typescript-bun-preview-patch-proof
 
-Status: ready
+Status: done
 Linked proposal: n/a
 Linked spec: RIPR-SPEC-0062, RIPR-SPEC-0063
 Linked ADR: n/a
