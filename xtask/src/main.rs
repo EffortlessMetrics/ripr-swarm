@@ -46080,10 +46080,13 @@ fn dogfood_real_repair_attempt_run(
         ));
     }
     if let Some(language) = scenario.language.as_deref()
-        && !matches!(language, "rust" | "python" | "typescript" | "javascript")
+        && !matches!(
+            language,
+            "rust" | "python" | "typescript" | "javascript" | "perl"
+        )
     {
         errors.push(format!(
-            "language must be rust, python, typescript, or javascript when present, got {language}"
+            "language must be rust, python, typescript, javascript, or perl when present, got {language}"
         ));
     }
     if scenario.outcome == "attempted_no_receipt" {
