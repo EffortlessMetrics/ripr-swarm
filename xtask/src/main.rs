@@ -5858,6 +5858,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "perl_lsp_facts_exporter"
                     | "python"
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
@@ -8272,6 +8273,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_editor_first_pr_bridge_fixture_corpus(&mut violations)?;
     validate_editor_adoption_assurance_fixture_corpus(&mut violations)?;
     validate_editor_actionable_gap_queue_fixture_corpus(&mut violations)?;
+    validate_perl_lsp_facts_exporter_fixture_corpus(&mut violations)?;
     validate_python_project_detection_fixture_corpus(&mut violations)?;
     validate_first_successful_pr_fixture_corpus(&mut violations)?;
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
@@ -8391,6 +8393,227 @@ fn validate_python_project_detection_fixture_corpus(
             }
         }
     }
+    Ok(())
+}
+
+fn validate_perl_lsp_facts_exporter_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/perl_lsp_facts_exporter");
+    for required in [
+        "SPEC.md",
+        "corpus.json",
+        "input/lib/My/App.pm",
+        "input/t/app.t",
+        "expected/ripr-perl-facts-v1.json",
+    ] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "perl-lsp facts exporter fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+
+    let spec = root.join("SPEC.md");
+    if spec.exists() {
+        let spec_text = read_text_lossy(&spec)?;
+        if !spec_text
+            .lines()
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0064"))
+        {
+            violations.push(format!(
+                "{} is missing `Spec: RIPR-SPEC-0064`",
+                normalize_path(&spec)
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !has_markdown_heading(&spec_text, heading) {
+                violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
+            }
+        }
+    }
+
+    validate_perl_lsp_facts_exporter_fixture_corpus_at(
+        Path::new(PERL_LSP_FACTS_EXPORTER_CORPUS),
+        violations,
+    )
+}
+
+fn validate_perl_lsp_facts_exporter_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "perl-lsp facts exporter corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let corpus = match read_json_value(path) {
+        Ok(value) => value,
+        Err(err) => {
+            violations.push(err);
+            return Ok(());
+        }
+    };
+    if json_string_field(&corpus, "kind").as_deref() != Some("perl_lsp_facts_exporter_corpus") {
+        violations.push(format!(
+            "{} kind must be perl_lsp_facts_exporter_corpus",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        violations.push(format!(
+            "{} schema_version must be 0.1",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0064") {
+        violations.push(format!(
+            "{} spec must be RIPR-SPEC-0064",
+            normalize_path(path)
+        ));
+    }
+
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        violations.push(format!("{} is missing cases array", normalize_path(path)));
+        return Ok(());
+    };
+    if cases.is_empty() {
+        violations.push(format!(
+            "{} cases array must not be empty",
+            normalize_path(path)
+        ));
+    }
+
+    let mut seen = BTreeSet::new();
+    for case in cases {
+        let case_id = json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string());
+        if !seen.insert(case_id.clone()) {
+            violations.push(format!(
+                "perl-lsp facts exporter case {case_id} is duplicated"
+            ));
+        }
+        validate_perl_lsp_facts_exporter_fixture_case(case, &case_id, violations)?;
+    }
+
+    Ok(())
+}
+
+fn validate_perl_lsp_facts_exporter_fixture_case(
+    case: &Value,
+    case_id: &str,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if json_string_field(case, "exporter").as_deref() != Some("perl-lsp") {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} exporter must be perl-lsp"
+        ));
+    }
+    if json_string_field(case, "packet_schema").as_deref() != Some("ripr-perl-facts-v1") {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} packet_schema must be ripr-perl-facts-v1"
+        ));
+    }
+    if json_string_field(case, "authority_boundary").as_deref() != Some("preview_advisory_only") {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} authority_boundary must be preview_advisory_only"
+        ));
+    }
+
+    let must_not_claims = case
+        .get("must_not_claim")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    for required in [
+        "ripr_check_executes_perl_lsp",
+        "canonical_gap_id_emitted_by_perl_lsp",
+        "gap_state_emitted_by_perl_lsp",
+        "repair_packet_ready",
+        "default_gate_authority",
+        "public_badge_contribution",
+        "support_tier_promotion",
+    ] {
+        if !must_not_claims.contains(required) {
+            violations.push(format!(
+                "perl-lsp facts exporter case {case_id} must_not_claim is missing {required}"
+            ));
+        }
+    }
+
+    let Some(packet_path) = json_string_field(case, "expected_packet") else {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} is missing expected_packet"
+        ));
+        return Ok(());
+    };
+    let packet_path = Path::new(&packet_path);
+    if !packet_path.exists() {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} missing packet {}",
+            normalize_path(packet_path)
+        ));
+        return Ok(());
+    }
+
+    let packet = match read_json_value(packet_path) {
+        Ok(value) => value,
+        Err(err) => {
+            violations.push(err);
+            return Ok(());
+        }
+    };
+    if json_string_field(&packet, "schema_version").as_deref() != Some("ripr-perl-facts-v1") {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} packet schema_version must be ripr-perl-facts-v1"
+        ));
+    }
+    if packet
+        .get("producer")
+        .and_then(|producer| json_string_field(producer, "name"))
+        .as_deref()
+        != Some("perl-lsp")
+    {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} packet producer.name must be perl-lsp"
+        ));
+    }
+    if packet.get("canonical_gap_id").is_some() || packet.get("gap_state").is_some() {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} packet must not emit RIPR-derived gap state"
+        ));
+    }
+
+    let Some(files) = packet.get("files").and_then(Value::as_array) else {
+        violations.push(format!(
+            "perl-lsp facts exporter case {case_id} packet is missing files array"
+        ));
+        return Ok(());
+    };
+    for file in files {
+        let Some(file_path) = json_string_field(file, "path") else {
+            violations.push(format!(
+                "perl-lsp facts exporter case {case_id} file fact is missing path"
+            ));
+            continue;
+        };
+        if file_path.contains('\\') || file_path.contains(':') || file_path.starts_with('/') {
+            violations.push(format!(
+                "perl-lsp facts exporter case {case_id} file path {file_path} must be repo-relative"
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -8798,6 +9021,8 @@ const USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES: &[&str] = &[
     "limited_sampled_input",
     "limited_stale_input",
 ];
+
+const PERL_LSP_FACTS_EXPORTER_CORPUS: &str = "fixtures/perl_lsp_facts_exporter/corpus.json";
 
 const SWARM_PLAN_PACKET_CORPUS: &str = "fixtures/swarm-plan-packet-corpus/corpus.json";
 
