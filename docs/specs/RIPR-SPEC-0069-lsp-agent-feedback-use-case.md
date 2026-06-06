@@ -77,9 +77,13 @@ established.
 `tower-lsp-server`. Diagnostics come in three closed kinds:
 
 - finding-based diagnostics (always on);
-- seam grip-class diagnostics (opt-in via
-  `enable_seam_diagnostics`; a seam-walk failure downgrades to "no
-  seam diagnostics this refresh", never a hard failure);
+- seam grip-class diagnostics (configurable via
+  `enable_seam_diagnostics`, default on
+  (`DEFAULT_LSP_SEAM_DIAGNOSTICS = true` in
+  `crates/ripr/src/config.rs`); opt out via the
+  `seamDiagnostics: false` initialization option or repo config; a
+  seam-walk failure downgrades to "no seam diagnostics this
+  refresh", never a hard failure);
 - `GapRecord` projections from validated gap artifacts.
 
 The exposed command vocabulary is closed (`crates/ripr/src/lsp.rs`):
@@ -101,10 +105,13 @@ No command outside this vocabulary may ship without amending this
 spec. Every command is read-only or copy-to-clipboard; none edits
 source.
 
-First-useful-action integration is projection-only: the LSP reads
-`target/ripr/reports/first-useful-action.json` read-only and
-projects it to the status bar and hover. It generates no new report
-and performs no source edits.
+First-useful-action integration is projection-only:
+`target/ripr/reports/first-useful-action.json` is consumed
+read-only. The LSP server validates the artifact
+(`lsp/gap_artifacts.rs`) and projects it into hover and
+diagnostics; the status-bar rendering is the VS Code extension
+client's surface (`editors/vscode/src/client.ts`), not the LSP's.
+Neither generates a new report nor performs source edits.
 
 ```text
 The user should be able to answer:
@@ -136,6 +143,16 @@ For the agent-cockpit contract, the surface must expose:
 - a copyable packet (`ripr.copyAgentPacketCommand` and
   `ripr.copyAgentBriefCommand`) so the agent leaves the editor with
   the full bounded brief, not a paraphrase.
+
+"Repair packet" here is the canonical RIPR-SPEC-0061 contract, not
+a separate LSP shape. A complete packet carries the full
+RIPR-SPEC-0061 field list — `packet_id`, `canonical_gap_id`,
+`repair_kind`, `target_test_shape`, `related_test_or_observer`,
+`verify_command`, `receipt_command`, `confidence`,
+`must_not_change[]`, `allowed_edit_surface[]`, and structured
+`raw_evidence_refs[]`. The bullets above name the fields this
+surface enforces on every offer; the packet contract itself is
+owned by RIPR-SPEC-0061 and is not restated or narrowed here.
 
 `lsp/gap_artifacts.rs` already validates that an actionable packet
 must carry `allowed_edit_surface` and `must_not_change`; this spec
@@ -199,9 +216,9 @@ is a scope statement, never an all-clear.
   snapshots; it adds no new analysis truth.
 - No new report generation from the first-useful-action
   integration; it remains a read-only projection.
-- No default-on seam diagnostics policy change in this lane;
-  `enable_seam_diagnostics` posture is owned by its existing
-  config contract.
+- No change to the existing default-on seam diagnostics posture in
+  this lane; `enable_seam_diagnostics` stays default on with
+  opt-out, owned by its existing config contract.
 
 ## Required Evidence
 
@@ -247,9 +264,9 @@ these states as an actionable offer:
 - A diagnostic raised before the snapshot was refreshed offers only
   `ripr.refresh`; after refresh the full action set returns.
 - A human in VS Code sees the first-useful-action title in the
-  status bar, sourced read-only from
-  `target/ripr/reports/first-useful-action.json`; opening it routes
-  to the same bounded packet the agent would copy.
+  status bar (rendered by the extension client, sourced read-only
+  from `target/ripr/reports/first-useful-action.json`); opening it
+  routes to the same bounded packet the agent would copy.
 - An actionable-gaps artifact with an empty `allowed_edit_surface`
   is rejected at validation with the named error
   ("actionable packet must carry allowed_edit_surface") and never
@@ -286,8 +303,9 @@ these states as an actionable offer:
   limitation and route rather than rendering nothing.
 - Stale-snapshot safety: zero repair actions offered against stale
   snapshots in tests.
-- Agent outcome quality (with RIPR-SPEC-0073): receipt closure or
-  improvement rate for packets copied from the LSP surface.
+- Agent outcome quality (with RIPR-SPEC-0073, a sibling proposed
+  spec in this use-case stack): receipt closure or improvement rate
+  for packets copied from the LSP surface.
 - Promotion rule: move this spec to `accepted` when the closed
   command vocabulary, the packet-completeness rule, and the
   reject-list checks are enforced by LSP tests, and the linked plan

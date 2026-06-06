@@ -91,15 +91,17 @@ permission context), never a gate decision.
 The user should be able to answer:
 - Where is the issue?       -> placement path + line on a changed
                                production line, or an explicit
-                               summary/limitation route.
+                               summary entry carrying the repair
+                               route attached to a named limitation.
 - What does it mean?        -> changed owner, changed behavior, and
                                the missing discriminator in plain
                                conservative static language.
 - What should I do next?    -> one bounded repair (suggested
                                assertion shape near a named related
-                               test) or one named limitation route,
-                               plus the verify and receipt commands
-                               when the card is actionable.
+                               test) or one named limitation with
+                               its repair route, plus the verify and
+                               receipt commands when the card is
+                               actionable.
 ```
 
 ### Required card fields
@@ -113,14 +115,28 @@ Every rendered review card must include:
 - `canonical_gap_id` when the card projects a gap-ledger record;
   `seam_id` whenever a seam identity exists.
 - `gap_state` using the canonical actionability vocabulary
-  (RIPR-SPEC-0061); cards never invent an alternate state.
-- a repair packet (changed owner, changed behavior or missing
-  discriminator, `suggested_assertion_shape`, `related_test`
-  `{name, file, line}`, `oracle_kind`, `oracle_strength`) — or a
-  named limitation with a `repair_route` when the repair contract
-  cannot be satisfied.
-- `verify` command when the card is actionable.
-- `receipt` command when the card is actionable.
+  (RIPR-SPEC-0061); cards never invent an alternate state. Today
+  `gap_state` ships on gap-ledger cards and cross-language
+  limitation cards while working-set actionable cards carry
+  `grip_class` only; carrying `gap_state` on every card is
+  contract-to-implement in the linked plan slice.
+- a card repair summary — a projection of the canonical repair
+  packet (RIPR-SPEC-0061), never a packet contract of its own:
+  changed owner, changed behavior or missing discriminator,
+  `suggested_test.assertion_shape`, and the recommended test
+  (`suggested_test.recommended_file`,
+  `suggested_test.recommended_name`, `suggested_test.near_test`) —
+  or a named limitation with a `repair_route` when the repair
+  contract cannot be satisfied. Two extensions are
+  contract-to-implement in the linked plan slice: a structured
+  related-test object `{name, file, line}` (today
+  `GapRepairRoute.related_test` is a single string) and card-level
+  `oracle_kind` / `oracle_strength` (today carried by agent briefs
+  and seam packets, not review cards).
+- `verify_command` when the card is actionable.
+- a receipt command when the card is actionable —
+  contract-to-implement in the linked plan slice; no review card
+  carries a receipt command today.
 - explicit non-claims (`language_status`, `authority_boundary`) when
   the card is advisory or preview.
 
@@ -141,31 +157,46 @@ cap (`DEFAULT_REVIEW_MAX_SUMMARY_ITEMS = 10`) are product features,
 not implementation limits. Three high-confidence navigational cards
 beat thirty descriptive ones. Selection beyond the caps lands in
 summary-only or suppressed collections with a closed-vocabulary
-reason:
+reason. This vocabulary is scoped to the working-set selection path
+in `review_comments.rs`; each token is marked existing or planned.
+The implementation slice delivers the planned tokens by replacing
+today's free-text `summary_reason` strings with machine tokens, so
+the rename is traceable string-for-string:
 
-- `inline_comment_cap_reached` — placement existed; the inline cap
-  was already filled.
-- `no_safe_changed_line_placement` — no changed production line was
-  a safe anchor; card moves to summary with `source_location`.
-- `navigation_only_cross_language_target` — cross-language test
-  target unresolved; navigation context only, no repair comment.
-- `nearby_test_changed` — the recommended test file changed in this
-  PR; the author is already working there.
-- `summary_cap` — the summary item cap was reached.
-- `missing_verification_command` — actionable guidance requires a
-  verify command; without one the card is suppressed, not weakened.
+| Reason token | Status | Meaning |
+| --- | --- | --- |
+| `inline_comment_cap_reached` | planned — tokenizes today's free-text `summary_reason` "inline comment cap reached"; the existing publish-plan skip reason `cap_reached` (`pr_inline_comment_publish_plan.rs`) and the RIPR-SPEC-0025 metric name `pr_inline_comment_cap_reached` name the same condition, and the slice must collapse the three names into this one token | placement existed; the inline cap was already filled. |
+| `no_safe_changed_line_placement` | planned — tokenizes today's free-text `summary_reason` "no safe changed-line placement was available for this seam" | no changed production line was a safe anchor; card moves to summary with `source_location`. |
+| `navigation_only_cross_language_target` | planned — tokenizes today's free-text `summary_reason` "navigation-only cross-language target limitation; no PR repair comment emitted" | cross-language test target unresolved; navigation context only, no repair comment. |
+| `nearby_test_changed` | existing | the recommended test file changed in this PR; the author is already working there. |
+| `summary_cap` | existing | the summary item cap was reached. |
+| `missing_verification_command` | existing (emitted on the gap-ledger path today; the working-set path adopts it in the same slice) | actionable guidance requires a verify command; without one the card is suppressed, not weakened. |
 
 No selection or suppression reason outside this vocabulary may ship
-without amending this spec.
+on the working-set selection path without amending this spec. The
+gap-ledger projection path (`gap_record_comment_json` in
+`review_comments.rs`) carries its own closed suppression-reason set
+— `not_pr_comment_eligible`, `not_pr_local_repairable`,
+`policy_state_not_commentable`, `missing_anchor`,
+`missing_dedupe_fingerprint`, `duplicate_dedupe_fingerprint`,
+`missing_repair_route`, and `missing_verification_command` — and
+the same closure rule applies to that set.
 
 ### Scope honesty
 
-Every guidance artifact carries an `analysis_scope` with `run_status`
-(`limited_diff_scope` or `scoped`), `basis` (for diff-scoped runs:
+The working-set (diff-scoped) guidance artifact carries an
+`analysis_scope` with `run_status` (`limited_diff_scope` in
+production today; `scoped` exists only in a test helper and a
+production `scoped` run_status is contract-to-implement), `basis`
+(for diff-scoped runs:
 `changed_production_files_plus_immediate_callers`),
 `downstream_consumable`, a named `limitation`, and a `repair_route`.
-Diff-scoped guidance must never present itself as a full-repo
-verdict.
+The gap-ledger guidance artifact
+(`render_gap_record_review_comments_json`) carries no
+`analysis_scope` today; extending `analysis_scope` to every
+guidance artifact is contract-to-implement in the linked plan
+slice. Diff-scoped guidance must never present itself as a
+full-repo verdict.
 
 ### Required and forbidden wording
 
@@ -231,7 +262,8 @@ these states as success:
 - summary-only guidance published as an inline comment;
 - an empty card set rendered as "all clear" instead of a scope
   statement;
-- a selection or suppression reason outside the closed vocabulary.
+- a selection or suppression reason outside the closed vocabularies
+  (the working-set selection set or the gap-ledger suppression set).
 
 ## Acceptance Examples
 
@@ -240,11 +272,13 @@ these states as success:
   shape, a related test with file and line, and a copyable verify
   command. Clicking the placement lands on the changed line.
 - A fourth qualifying seam appears in the summary with reason
-  `inline_comment_cap_reached`, keeping the inline surface sparse.
+  `inline_comment_cap_reached` (the planned token for today's
+  free-text "inline comment cap reached"), keeping the inline
+  surface sparse.
 - A cross-language card whose test target does not resolve renders
   as navigation-only with `gap_state = "static_limitation"`,
-  `repairability = "no_action"`, and a limitation route — never as a
-  repair instruction.
+  `repairability = "no_action"`, and the `repair_route` attached to
+  the named limitation — never as a repair instruction.
 - A run on a fork PR produces a publish plan with
   `safe_to_publish = false` and a blocked reason; nothing posts.
 - A diff-scoped run on a large repo states its basis
@@ -264,8 +298,13 @@ these states as success:
 - plans/use-case-specs/implementation-plan.md (planned) — the
   "review file:line" slice: enforce the hard navigational rule
   (placement or explicit `source_location_unresolved` on every
-  card), close the selection-reason vocabulary, and add the
-  reject-list checks to output-contract tests.
+  card), close the selection-reason vocabulary by replacing today's
+  free-text `summary_reason` strings with the planned tokens,
+  deliver the contract-to-implement card fields (receipt command,
+  `gap_state` on every card, the structured related-test object,
+  card-level `oracle_kind` / `oracle_strength`, `analysis_scope` on
+  the gap-ledger guidance artifact), and add the reject-list checks
+  to output-contract tests.
 - Existing mechanism: `crates/ripr/src/output/review_comments.rs`
   and `crates/ripr/src/output/pr_inline_comment_publish_plan.rs`.
 
