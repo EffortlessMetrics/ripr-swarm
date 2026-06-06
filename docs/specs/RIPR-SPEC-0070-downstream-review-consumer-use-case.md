@@ -33,7 +33,9 @@ Support-tier impact:
   that ripr already emits. It promotes no language, surface, or evidence
   class. TypeScript/JavaScript and Bun cross-language evidence remain
   opt-in preview with `authority_boundary = "preview_advisory_only"`,
-  and limited runs remain `downstream_consumable = false`. The canonical
+  and Lane 1 limited completeness runs remain
+  `downstream_consumable = false` (diff-scoped output is consumable
+  only for its named scope, never as repo totals). The canonical
   support-tier boundary is unchanged.
 
 Policy impact:
@@ -105,22 +107,44 @@ facets, each from an existing ripr field:
 | surface | `GapRecord.scope` and per-surface `projection_eligibility` |
 | hazard / evidence class | `evidence_class` on the canonical item |
 | actionability | `gap_state` plus the class-scoped `actionability` label |
-| proof mode | `bun_cross_language_grip.proof_mode` for cross-language items; `confidence.basis` (`fixture_backed` \| `runtime`) elsewhere |
+| proof mode | `bun_cross_language_grip.proof_mode` for cross-language items; `confidence.basis` (`fixture_backed` \| `static_only` \| `calibrated` \| `unknown`) elsewhere |
 | repair or limitation route | `repair_route {repair_kind, target_test_type, suggested_assertion}` or `static_limitations[] {category, repair_route, user_actionability}` |
 | source location | `primary_anchor {file, line, kind, source_id, reason}` plus `raw_spans[]` |
-| runtime status | `run_status` plus `runtime_status.downstream_consumable` |
+| runtime status | Lane 1 `run_status` plus `runtime_status.downstream_consumable`; diff-scoped guidance carries `analysis_scope.run_status` plus `analysis_scope.downstream_consumable` |
 | non-claims | `authority_boundary`, `proof_mode` booleans, the card `limits[]` list |
 
-`gap_state` is a closed vocabulary: `actionable`, `already_observed`,
-`internal_only`, `static_limitation`, `unknown`. `canonical_item_kind`
-is a closed vocabulary: `limitation`, `gap`. `confidence.basis` is a
-closed vocabulary: `fixture_backed`, `runtime`. `run_status` is a
-closed vocabulary: `full`, `limited_timeout`,
-`limited_runner_failure`, `limited_large_cache_skip`,
-`limited_incomplete_input`, `limited_sampled_input`,
-`limited_stale_input`, plus the diff-scoped `limited_diff_scope`.
-Downstream consumers must treat any value outside these vocabularies
-as `unknown` and fail closed.
+`gap_state` is a closed vocabulary with the six required values from
+RIPR-SPEC-0061: `actionable`, `static_limitation`, `advisory`,
+`internal_only`, `already_observed`, `unknown`. `advisory` items are
+consumable as advisory context only: per RIPR-SPEC-0061 they carry an
+advisory reason, why the item is not safe as a bounded repair route,
+and what evidence would promote it; downstream tools must never
+render them as actionable.
+
+`canonical_item_kind` is a closed vocabulary: `gap`, `observed`,
+`no_action`, `limitation`, `evidence`. `confidence.basis` is a closed
+vocabulary: `fixture_backed`, `static_only`, `calibrated`, `unknown`;
+no surface emits a `runtime` basis today, and runtime-calibrated
+bases stay future work per `docs/OUTPUT_SCHEMA.md`.
+
+`run_status` is closed per surface; the per-surface lists compose and
+are not one flat set:
+
+- Lane 1 report-level `run_status`: `full`, `limited_timeout`,
+  `limited_runner_failure`, `limited_large_cache_skip`,
+  `limited_incomplete_input`, `limited_sampled_input`,
+  `limited_stale_input`, paired with
+  `runtime_status.downstream_consumable`.
+- review-comments `analysis_scope.run_status`: `scoped` or
+  `limited_diff_scope`; `limited_diff_scope` carries
+  `analysis_scope.downstream_consumable = true` for its named scope
+  (with the `review_comments_diff_scope_only` limitation route),
+  never for repo totals.
+- diff report `run_status`: `diff_complete_full_repo_limited`
+  (RIPR-SPEC-0072 owns that surface's vocabulary).
+
+Downstream consumers must treat any value outside the relevant closed
+vocabulary as `unknown` and fail closed.
 
 ### Rail alignment (unsafe-review requirements rail)
 
@@ -131,27 +155,33 @@ to a ripr field or a named gap so the two documents cannot drift:
 | Rail requirement | ripr field / state |
 | --- | --- |
 | `schema_version` on machine output | `schema_version` on check JSON (`"0.1"`), on evidence records (`"0.1"`), and on every report shape in `docs/OUTPUT_SCHEMA.md` |
-| `status: partial` semantics | `run_status = "limited_*"` plus `runtime_status.downstream_consumable = false`; ripr never renders a limited run as full |
-| repo root + diff as first-class input | `ripr check --diff <file>` against a root; diff-scoped reports set `analysis_scope.run_status = "limited_diff_scope"` |
+| `status: partial` semantics | Lane 1 completeness states: `run_status = "limited_*"` plus `runtime_status.downstream_consumable = false`; diff-scoped output instead carries `analysis_scope.run_status = "limited_diff_scope"` with `analysis_scope.downstream_consumable = true` for its named scope; ripr never renders a limited run as full |
+| repo root + diff as first-class input | `ripr check --diff <file>` against a root accepts the input; the scope label is emitted by `ripr review-comments` (`analysis_scope.run_status = "limited_diff_scope"`) and by the `ripr diff` report (`run_status = "diff_complete_full_repo_limited"`); a check-JSON `analysis_scope` block is a named planned delta in the downstream-export-contract slice |
 | changed seams ranked before whole-repo inventory | diff-scoped runs analyze changed files first and label scope explicitly instead of waiting on full-repo caches |
+| rail report-level `mode: diff_first` / `changed_seams_first` | not yet a ripr field; named gap — the closest current encodings are `analysis_scope.run_status = "limited_diff_scope"` and the diff report's `run_status = "diff_complete_full_repo_limited"` (see Failure Modes) |
 | usable, non-empty partial output | limited runs still emit findings, canonical items, and `run_limitations[]` rows; an empty success body with a limited state is a defect |
-| skip metadata: reason, limit, observed count | `runtime_status.limitation_category` (for example `lane1_repo_exposure_large_cache_preflight_skip`), `limit_ms`, `duration_ms`, plus latency-trace progress rows; a first-class observed-entry-count field is a named gap (see Failure Modes) |
+| skip metadata: reason, limit, observed count | `run_limitations[]` rows carry first-class `observed_seams`, `cache_limit`, `run_status`, and `downstream_consumable` fields plus `runtime_status.limitation_category`; the rail's motivating example (`skipped_large_entry_seams_411564_limit_20000`) maps to `lane1_repo_exposure_cache_store_skipped_large_entry`, which populates both structured fields; the residual gap is the `lane1_repo_exposure_large_cache_preflight_skip` category, which reports cache footprint (bytes, files) in prose only with null `observed_seams` / `cache_limit` (see Failure Modes) |
 | skip remediation as a supported command | `runtime_status.repair_route`, item `verify_command`, and `GapRecord.regeneration_commands[]`; remediation text names real commands, not invented flags |
 | cache persistence by hash, version, mode | not yet a public output-contract field; named gap — ripr must not claim cache reuse it cannot show (see Failure Modes) |
-| mixed-language route context preserved | `bun_cross_language_grip`: `rust_file`, `rust_owner`, `rust_boundary`, `ts_test_file`, `ts_verdict`, `bridge_confidence`, `missing_discriminators[]`, `raw_evidence_refs[]` legs (`rust_seam`, `binding_edge`, `external_callsite`, `external_oracle`) |
+| rail per-seam `source_route` | not yet a ripr field; named gap — consumers must not synthesize a route label from grip fields (see Failure Modes) |
+| rail per-seam `stable_byte_family` | not yet a first-class ripr field; named gap — the nearest anchors are the configured-route metadata on `bun_cross_language_grip` and the configured bridge inventory; consumers must not synthesize the label (see Failure Modes) |
+| mixed-language route context preserved | `bun_cross_language_grip`: `state`, `rust_seam.{file, owner, boundary}`, `typescript_evidence.{test_file, verdict, bridge_confidence, missing_discriminators[]}`, `raw_evidence_refs[]` legs (`rust_seam`, `binding_edge`, `external_callsite`, `external_oracle`); the flat names (`rust_file`, `ts_test_file`, and siblings) appear in public JSON only inside the nested `advisory_packet` object |
 | rail `proof_mode` field | `proof_mode.mode`: `observable_red_green`, `mutation_plus_miri`, `helper_gated`, `bridge_unknown`, `static_limitation` |
-| rail `oracle_language` / `oracle_path` / `oracle_kind` | card `language`, `grip.ts_test_file`, card `oracle_kind` and `oracle_strength` |
-| rail `coverage_confidence` | `grip.bridge_confidence` plus canonical-item `confidence.basis` |
-| rail `limitation` line | `grip.limitation_category`, `why_not_actionable`, and `static_limitations[]` |
+| rail `oracle_language` / `oracle_path` / `oracle_kind` | card `language`, `bun_cross_language_grip.typescript_evidence.test_file`, card `oracle_kind` and `oracle_strength` |
+| rail `coverage_confidence` | `bun_cross_language_grip.typescript_evidence.bridge_confidence` plus canonical-item `confidence.basis` |
+| rail `limitation` line | `bun_cross_language_grip.limitation_category`, `why_not_actionable`, and `static_limitations[]` |
 | receipts are external evidence only | `proof_mode` booleans `runtime_execution`, `mutation_execution`, `miri_execution`, and `proof_claim` are all `false` for preview evidence; receipts record what was scanned and skipped, never witness or Miri status |
 | manual-candidate provenance preserved | downstream-owned fields (`source = manual`, `manual_candidate`, `analyzer_discovered`) stay downstream; ripr contributes `bridge_confidence = "configured_hint"` and `raw_evidence_refs[]` so configured routes are never presented as analyzer discovery |
 | acceptance checklist | mirrored in Required Evidence below |
 | trust boundary | `authority_boundary = "preview_advisory_only"`, card `limits[]`, and the Non-Goals here |
 
-ripr's `downstream_consumable = false` plus the `run_status =
-"limited_*"` states are the ripr-side encoding of the rail's
-`status: partial` semantics: the artifact exists, names its
-limitation, names a repair route, and refuses downstream credit.
+ripr's `downstream_consumable = false` plus the Lane 1 `run_status =
+"limited_*"` completeness states are the ripr-side encoding of the
+rail's `status: partial` semantics: the artifact exists, names its
+limitation, names a repair route, and refuses downstream credit. The
+deliberate exception is diff-scoped output: `limited_diff_scope` (and
+the diff report's diff phase) is consumable for its named scope,
+never for repo totals.
 
 ### Bun stable-byte rule
 
@@ -202,8 +232,10 @@ Downstream surfaces that render ripr evidence must pair these:
 - No support-tier promotion for TypeScript/JavaScript, Bun routes, or
   any preview surface.
 - No guarantee that every rail requirement is already satisfied; the
-  two named gaps (observed-entry count, cache-persistence contract)
-  stay visible until closed by their own slices.
+  named gaps in the rail table (preflight-skip structured counts,
+  cache-persistence contract, per-seam `source_route`, per-seam
+  `stable_byte_family`, report-level diff-first `mode`) stay visible
+  until closed by their own slices.
 
 ## Required Evidence
 
@@ -221,10 +253,15 @@ Downstream surfaces that render ripr evidence must pair these:
   limitation route.
 - Mirror of the rail acceptance checklist: a two-file diff produces
   changed-seam output before whole-repo cache completion; skip output
-  carries limit, scope, and remediation; partial artifacts are
-  non-empty with status metadata; cross-language oracle fields are
-  present for JS/TS tests mapped to Rust seams; receipts preserve
-  inventory limits and claim no witness status.
+  carries reason, limit, observed count, scope, and remediation (the
+  observed count is `run_limitations[].observed_seams`, structured on
+  the cache-store skip category and a named gap on the preflight-skip
+  category); partial artifacts are non-empty with status metadata;
+  cross-language oracle fields are present for JS/TS tests mapped to
+  Rust seams; cache persistence stays explicit and reproducible (a
+  named gap until the cache-persistence contract lands; the rail
+  allows that exact schema to change); receipts preserve inventory
+  limits and claim no witness status.
 
 Fail-closed reject list — a downstream export must refuse to present
 any of these states as consumable success:
@@ -232,6 +269,8 @@ any of these states as consumable success:
 - `run_status` is any `limited_*` value and the consumer needs full
   counts (`downstream_consumable = false` is binding).
 - `gap_state = "unknown"` or any value outside the closed vocabulary.
+- `gap_state = "advisory"` rendered as actionable instead of advisory
+  context.
 - `canonical_gap_id` missing on an item offered as a canonical unit.
 - `verify_command` missing on an item offered as actionable.
 - cross-language oracle unresolved
@@ -249,10 +288,16 @@ any of these states as consumable success:
 
 ### Limited diff-first run consumed safely
 
-unsafe-review feeds a two-file Bun fork diff to `ripr check --diff`.
-ripr returns changed-seam canonical items plus `run_status =
-"limited_diff_scope"`. The downstream packet records the scope label,
-uses the canonical items, and does not claim whole-repo inventory.
+unsafe-review runs `ripr review-comments --base <sha> --head <sha>`
+over a two-file Bun fork change. ripr returns changed-seam guidance
+plus `analysis_scope.run_status = "limited_diff_scope"`,
+`analysis_scope.downstream_consumable = true`, and the
+`review_comments_diff_scope_only` limitation route. The downstream
+packet records the scope label, uses the scoped items for the named
+scope only, and does not claim whole-repo inventory. (`ripr check
+--diff` accepts the same diff input, but its JSON carries no scope
+status today; a check-JSON `analysis_scope` block is a named planned
+delta in the downstream-export-contract slice.)
 
 ### Missing-discriminator Bun route
 
@@ -268,9 +313,9 @@ emits no claim of runtime exposure.
 
 TypeScript discriminators exist but no binding edge is configured.
 ripr reports `bridge_unknown` with the unlock condition naming the
-missing edge. The downstream tool routes this as a limitation; it does
-not report `no_static_path` and does not credit the TypeScript tests
-to the Rust seam.
+missing edge. The downstream tool consumes it as a named limitation
+and follows its `repair_route`; it does not report `no_static_path`
+and does not credit the TypeScript tests to the Rust seam.
 
 ### Large-cache skip with remediation
 
@@ -295,8 +340,9 @@ prefix.
   this document.
 - plans/use-case-specs/implementation-plan.md (planned) — the
   "downstream export contract" slice: fixture-backed export examples,
-  reject-list fixtures, the observed-entry-count gap, and the
-  cache-persistence contract gap, sequenced after the spec set lands.
+  reject-list fixtures, the preflight-skip structured-count gap, and
+  the cache-persistence contract gap, sequenced after the spec set
+  lands.
 
 ## Metrics
 
@@ -305,16 +351,19 @@ prefix.
 - Reject-list coverage: count of reject-list states pinned by a
   fixture (target: all nine).
 - Rail alignment: count of rail requirements mapped to a ripr field
-  versus named gaps (currently two named gaps).
+  versus named gaps (currently five named gaps: preflight-skip
+  structured counts, cache-persistence contract, per-seam
+  `source_route`, per-seam `stable_byte_family`, report-level
+  diff-first `mode`).
 - Limited-run honesty: count of artifacts with `run_status =
   "limited_*"` that carry a limitation category and repair route
   (target: all of them).
 - Promotion rule: move this spec to accepted only when the downstream
   export contract slice has landed with fixture-backed examples for
   every reject-list state, issue #1041 is closed with unsafe-review
-  confirming the field mapping against its rail, and the two named
-  gaps are either closed or re-confirmed as explicit limitations by
-  the consumer. Until then this use case stays proposed and no
+  confirming the field mapping against its rail, and the named gaps
+  are either closed or re-confirmed as explicit limitations by the
+  consumer. Until then this use case stays proposed and no
   downstream integration may be described as contract-complete.
 
 ## Failure Modes
@@ -322,13 +371,25 @@ prefix.
 - Rail drift: unsafe-review revises its rail and this mapping table
   goes stale — issue #1041 owns re-alignment; a rail change without a
   spec update here is a named defect.
-- Observed-entry-count gap: the rail wants the observed count next to
-  the numeric limit in skip output; ripr currently exposes limit and
-  duration plus latency-trace progress rows. Until a first-class field
-  exists, consumers must not infer the observed count.
+- Preflight-skip structured-count gap: `run_limitations[]` rows carry
+  first-class `observed_seams` and `cache_limit` fields, and the
+  cache-store skip category
+  (`lane1_repo_exposure_cache_store_skipped_large_entry`) populates
+  both next to `downstream_consumable` and
+  `runtime_status.limitation_category`. The residual gap is narrow:
+  the `lane1_repo_exposure_large_cache_preflight_skip` category
+  measures cache disk footprint (bytes, files) rather than entry
+  counts, reports that footprint in its prose summary only, and
+  leaves `observed_seams` / `cache_limit` null. Until that category
+  carries structured footprint fields, consumers must read its skip
+  size from the summary and must not infer a seam count from it.
 - Cache-persistence gap: the rail wants reuse keyed by file hash, tool
   version, and scan mode as visible contract; ripr makes no such
   public claim yet, and downstream docs must not assert it.
+- Unmapped rail fields: per-seam `source_route` and
+  `stable_byte_family` and the report-level diff-first `mode` labels
+  have no ripr field today; consumers must not synthesize them from
+  grip fields or scope labels until their slices land.
 - Consumer parses `findings[]` directly: out of contract; the fix is a
   contract change request, not a parser.
 - A limited run's counts quoted as repo totals: rejected by the
