@@ -53,6 +53,7 @@ Linked work items:
 - `dogfood/python-real-repo-evals`
 - `metrics/python-repair-routing-quality`
 - `campaign/python-usable-alpha-promotion`
+- `dogfood/python-stability-evals-v1`
 
 Support-tier impact:
 
@@ -357,8 +358,9 @@ Evidence must scale with the support claim:
   agent packet surfaces when those surfaces change;
 - dogfood on controlled and real Python repos before promotion;
 - metrics for top-1/top-3 actionable precision, verify-command validity,
-  concrete-discriminator rate, related-test-location rate, false-actionable
-  rate, crash rate, static-limit distribution, and receipt closure rate;
+  agent-packet boundary validity, concrete-discriminator rate,
+  related-test-location rate, false-actionable rate, crash rate,
+  static-limit distribution, and receipt closure rate;
 - before/after receipts proving at least one real Python gap closes before
   claiming `usable alpha`.
 
