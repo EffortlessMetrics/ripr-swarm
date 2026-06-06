@@ -20,13 +20,21 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
-use crate::analysis::test_grip_evidence::TestGripEvidence;
-use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
+use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
+use crate::output::evidence_record::{
+    CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, cross_language_oracle_visibility_unresolved,
+    cross_language_test_target_unresolved, evidence_record_for, evidence_record_json_value,
+};
 use crate::output::first_pr::STATIC_EVIDENCE_BOUNDARY;
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute, projection_eligible};
 use crate::output::json::escape as json_escape;
 use crate::output::path::{display_path, display_path_text};
+use crate::output::receipt_lifecycle::{
+    RECEIPT_GAP_MISMATCH, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_STALE,
+    normalize_receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
+};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.3";
 
@@ -57,7 +65,7 @@ pub(crate) fn render_agent_seam_packets_json(classified: &[ClassifiedSeam]) -> S
 
     let actionable: Vec<&ClassifiedSeam> = classified
         .iter()
-        .filter(|entry| is_actionable(entry.class))
+        .filter(|entry| is_actionable_entry(entry))
         .collect();
 
     out.push_str(&format!("  \"packets_total\": {},\n", actionable.len()));
@@ -115,6 +123,13 @@ pub(crate) fn render_agent_gap_record_packet_json(
         .as_deref()
         .or(route.related_test.as_deref())
         .map(display_path_text);
+    let allowed_edit_surface = allowed_edit_surface_for_gap_route(route);
+    let allowed_files = allowed_edit_surface.clone();
+    let forbidden_files = forbidden_files_for_gap_record(record, &allowed_edit_surface);
+    let conflict_group = conflict_group_for_gap_record(record, &allowed_edit_surface);
+    let receipt_status = receipt_status_for_gap_record(record);
+    let must_not_change = gap_record_packet_do_not_do(record);
+    let missing_discriminator = missing_discriminator_for_gap_route(route);
     let authority_boundary = if record.authority_boundary.trim().is_empty() {
         "Agent packets are advisory; configured gate-decision artifacts remain pass/fail authority."
             .to_string()
@@ -126,9 +141,42 @@ pub(crate) fn render_agent_gap_record_packet_json(
         record,
         route,
         &verify_command,
+        &allowed_edit_surface,
         &stop_conditions,
         authority_boundary.as_str(),
     );
+    let anchor_json = json!({
+        "file": anchor.and_then(|anchor| anchor.file.as_deref()).map(display_path_text),
+        "line": line,
+        "owner": owner,
+        "dedupe_fingerprint": anchor.and_then(|anchor| anchor.dedupe_fingerprint.as_deref()),
+    });
+    let recommended_test_json = json!({
+        "file": recommended_file,
+        "name": route.related_test.as_deref(),
+        "reason": recommended_test_reason(route),
+    });
+    let repair_card_json = json!({
+        "gap_kind": record.kind.as_str(),
+        "changed_behavior": route.changed_behavior.as_deref(),
+        "missing_discriminator": missing_discriminator,
+        "repair": repair_text_for_gap_route(route),
+        "repair_route": route,
+        "current_evidence_strength": current_evidence_strength.as_str(),
+        "verification_commands": &record.verification_commands,
+        "verify_command": &verify_command,
+        "receipt_command": record.receipt_command.as_deref(),
+        "receipt_status": receipt_status,
+        "source_artifact": gap_ledger_path,
+        "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
+        "authority_boundary": &authority_boundary,
+    });
+    let llm_guidance_json = json!({
+        "prompt": gap_record_prompt(route, &verify_command),
+        "verify_command": &verify_command,
+        "stop_conditions": &stop_conditions,
+        "copyable_packet": pasteable_packet,
+    });
     let packet = json!({
         "task": task_for_gap_route(route),
         "source": "gap_decision_ledger",
@@ -145,44 +193,27 @@ pub(crate) fn render_agent_gap_record_packet_json(
         "file": file,
         "line": line,
         "owner": owner,
-        "anchor": {
-            "file": anchor.and_then(|anchor| anchor.file.as_deref()).map(display_path_text),
-            "line": line,
-            "owner": owner,
-            "dedupe_fingerprint": anchor.and_then(|anchor| anchor.dedupe_fingerprint.as_deref()),
-        },
+        "allowed_edit_surface": allowed_edit_surface,
+        "allowed_files": allowed_files,
+        "forbidden_files": forbidden_files,
+        "conflict_group": conflict_group,
+        "anchor": anchor_json,
         "repair_route": route,
         "repair_kind": route.route_kind.as_str(),
         "changed_behavior": route.changed_behavior.as_deref(),
-        "recommended_test": {
-            "file": recommended_file,
-            "name": route.related_test.as_deref(),
-            "reason": recommended_test_reason(route),
-        },
+        "missing_discriminator": missing_discriminator,
+        "recommended_test": recommended_test_json,
         "assertion_shape": route.assertion_shape.as_deref(),
         "evidence_ids": &record.evidence_ids,
         "verification_commands": &record.verification_commands,
-        "verify_command": verify_command,
-        "stop_conditions": stop_conditions,
-        "repair_card": {
-            "gap_kind": record.kind.as_str(),
-            "changed_behavior": route.changed_behavior.as_deref(),
-            "repair": repair_text_for_gap_route(route),
-            "repair_route": route,
-            "current_evidence_strength": current_evidence_strength.as_str(),
-            "verification_commands": &record.verification_commands,
-            "verify_command": verify_command,
-            "source_artifact": gap_ledger_path,
-            "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
-            "authority_boundary": authority_boundary,
-        },
+        "verify_command": &verify_command,
+        "receipt_command": record.receipt_command.as_deref(),
+        "receipt_status": receipt_status,
+        "must_not_change": must_not_change,
+        "stop_conditions": &stop_conditions,
+        "repair_card": repair_card_json,
         "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
-        "llm_guidance": {
-            "prompt": gap_record_prompt(route, &verify_command),
-            "verify_command": verify_command,
-            "stop_conditions": stop_conditions,
-            "copyable_packet": pasteable_packet,
-        },
+        "llm_guidance": llm_guidance_json,
         "runtime_confirmation": RUNTIME_CONFIRMATION_NOTE,
         "static_evidence_boundary": STATIC_EVIDENCE_BOUNDARY,
     });
@@ -200,6 +231,461 @@ pub(crate) fn render_agent_gap_record_packet_json(
         .map_err(|err| format!("render agent gap packet JSON failed: {err}"))?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+/// Render a deterministic queue over explicit GapRecords that are already
+/// eligible for bounded agent-packet projection.
+pub(crate) fn render_agent_gap_record_queue_json(
+    root: &str,
+    gap_ledger_path: &str,
+    records: &[GapRecord],
+    language: &str,
+    top: usize,
+) -> Result<String, String> {
+    let mut candidates = Vec::new();
+    let mut excluded_by_reason = BTreeMap::<String, usize>::new();
+    let mut language_records_total = 0usize;
+
+    for (source_index, record) in records.iter().enumerate() {
+        if record.language != language {
+            continue;
+        }
+        language_records_total += 1;
+        if let Err(reason) = validate_agent_gap_record_packet(record) {
+            *excluded_by_reason.entry(reason).or_default() += 1;
+            continue;
+        }
+        let Some(route) = record.repair_route.as_ref() else {
+            *excluded_by_reason
+                .entry("requires a repair_route".to_string())
+                .or_default() += 1;
+            continue;
+        };
+        let Some(verify_command) = record.verification_commands.first() else {
+            *excluded_by_reason
+                .entry("requires verification_commands".to_string())
+                .or_default() += 1;
+            continue;
+        };
+        let allowed_edit_surface = allowed_edit_surface_for_gap_route(route);
+        let conflict_group = conflict_group_for_gap_record(record, &allowed_edit_surface);
+        let freshness = gap_record_queue_freshness(record);
+        candidates.push(GapRecordQueueCandidate {
+            source_index,
+            gap_id: gap_record_id(record),
+            canonical_gap_id: non_empty(&record.canonical_gap_id),
+            gap_kind: record.kind.clone(),
+            language: record.language.clone(),
+            language_status: record.language_status.clone(),
+            policy_state: record.policy_state.clone(),
+            evidence_class: record.evidence_class.clone(),
+            repair_kind: route.route_kind.clone(),
+            suggested_test_file: allowed_edit_surface.first().cloned(),
+            suggested_test_name: route.related_test.clone(),
+            verify_command: verify_command.clone(),
+            receipt_command: record.receipt_command.clone(),
+            conflict_group,
+            queue_state: freshness.queue_state,
+            staleness_status: freshness.staleness_status,
+            staleness_reason: freshness.staleness_reason,
+            allowed_edit_surface: allowed_edit_surface.clone(),
+            forbidden_files: forbidden_files_for_gap_record(record, &allowed_edit_surface),
+            changed_owner: record
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.owner.as_ref())
+                .cloned(),
+            changed_file: record
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.file.as_deref())
+                .map(display_path_text),
+            changed_line: record.anchor.as_ref().and_then(|anchor| anchor.line),
+            changed_behavior: route.changed_behavior.clone(),
+            missing_discriminator: missing_discriminator_for_gap_route(route)
+                .map(ToString::to_string),
+        });
+    }
+
+    let conflict_counts = gap_record_queue_conflict_counts(&candidates);
+    let selected: Vec<_> = candidates.iter().take(top).collect();
+    let conflict_groups = gap_record_queue_conflict_groups(&candidates);
+    let stale_total = candidates
+        .iter()
+        .filter(|candidate| candidate.staleness_status == "stale")
+        .count();
+    let excluded_records_total: usize = excluded_by_reason.values().sum();
+    let exclusion_reasons: Vec<_> = excluded_by_reason
+        .iter()
+        .map(|(reason, count)| {
+            json!({
+                "reason": reason,
+                "count": count,
+            })
+        })
+        .collect();
+    let packets: Vec<_> = selected
+        .iter()
+        .enumerate()
+        .map(|(selected_index, candidate)| {
+            let conflict_group_size = conflict_counts
+                .get(&candidate.conflict_group)
+                .copied()
+                .unwrap_or(1);
+            json!({
+                "priority": selected_index + 1,
+                "source_index": candidate.source_index,
+                "queue_state": candidate.queue_state.as_str(),
+                "staleness_status": candidate.staleness_status.as_str(),
+                "staleness_reason": candidate.staleness_reason.as_str(),
+                "gap_id": candidate.gap_id.as_str(),
+                "canonical_gap_id": candidate.canonical_gap_id.as_ref(),
+                "gap_kind": candidate.gap_kind.as_str(),
+                "language": candidate.language.as_str(),
+                "language_status": candidate.language_status.as_str(),
+                "policy_state": candidate.policy_state.as_str(),
+                "evidence_class": candidate.evidence_class.as_str(),
+                "repair_kind": candidate.repair_kind.as_str(),
+                "changed_owner": candidate.changed_owner.as_ref(),
+                "changed_file": candidate.changed_file.as_ref(),
+                "changed_line": candidate.changed_line,
+                "changed_behavior": candidate.changed_behavior.as_ref(),
+                "missing_discriminator": candidate.missing_discriminator.as_ref(),
+                "suggested_test_file": candidate.suggested_test_file.as_ref(),
+                "suggested_test_name": candidate.suggested_test_name.as_ref(),
+                "verify_command": candidate.verify_command.as_str(),
+                "receipt_command": candidate.receipt_command.as_ref(),
+                "conflict_group": candidate.conflict_group.as_str(),
+                "conflict_group_size": conflict_group_size,
+                "allowed_edit_surface": &candidate.allowed_edit_surface,
+                "allowed_files": &candidate.allowed_edit_surface,
+                "forbidden_files": &candidate.forbidden_files,
+                "packet_command_args": [
+                    "ripr",
+                    "agent",
+                    "packet",
+                    "--root",
+                    root,
+                    "--gap-ledger",
+                    gap_ledger_path,
+                    "--gap-id",
+                    candidate.gap_id.as_str(),
+                    "--json"
+                ],
+            })
+        })
+        .collect();
+    let envelope = json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-queue",
+        "scope": "repo",
+        "source": "gap_decision_ledger",
+        "status": "advisory",
+        "inputs": {
+            "root": root,
+            "gap_ledger": gap_ledger_path,
+            "language": language,
+            "top": top,
+        },
+        "summary": {
+            "records_total": records.len(),
+            "language_records_total": language_records_total,
+            "queue_total": candidates.len(),
+            "returned": packets.len(),
+            "stale_total": stale_total,
+            "excluded_records_total": excluded_records_total,
+            "conflict_groups_total": conflict_groups.len(),
+        },
+        "conflict_groups": conflict_groups,
+        "exclusion_reasons": exclusion_reasons,
+        "packets": packets,
+        "must_not_infer": [
+            "do not consume raw findings as swarm work",
+            "do not queue static limitations, no-action records, or records without bounded edit surfaces",
+            "do not edit files outside allowed_edit_surface",
+            "do not assign packets with queue_state=blocked_stale or staleness_status=stale",
+            "do not treat staleness_status=not_evaluated as freshness proof",
+            "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
+        ],
+    });
+    let mut rendered = serde_json::to_string_pretty(&envelope)
+        .map_err(|err| format!("render agent gap queue JSON failed: {err}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
+pub(crate) fn render_agent_gap_record_queue_wrong_root_json(
+    root: &str,
+    gap_ledger_path: &str,
+    ledger_root: &str,
+    ledger_generated_at: Option<&str>,
+    records: &[GapRecord],
+    language: &str,
+    top: usize,
+) -> Result<String, String> {
+    let language_records_total = records
+        .iter()
+        .filter(|record| record.language == language)
+        .count();
+    let reason = format!(
+        "gap ledger root {ledger_root} does not match requested --root {root}; regenerate the gap decision ledger for the selected root before assigning swarm work"
+    );
+    let envelope = json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-queue",
+        "scope": "repo",
+        "source": "gap_decision_ledger",
+        "status": "blocked",
+        "inputs": {
+            "root": root,
+            "gap_ledger": gap_ledger_path,
+            "gap_ledger_root": ledger_root,
+            "gap_ledger_generated_at": ledger_generated_at,
+            "language": language,
+            "top": top,
+        },
+        "blocker": {
+            "kind": "wrong_root",
+            "reason": reason,
+            "requested_root": root,
+            "gap_ledger_root": ledger_root,
+            "next_action": "regenerate the gap decision ledger for the selected --root, then rerun ripr swarm queue",
+        },
+        "summary": {
+            "records_total": records.len(),
+            "language_records_total": language_records_total,
+            "queue_total": 0,
+            "returned": 0,
+            "excluded_records_total": language_records_total,
+            "blocked_records_total": language_records_total,
+            "conflict_groups_total": 0,
+        },
+        "conflict_groups": [],
+        "exclusion_reasons": [
+            {
+                "reason": "gap_ledger_wrong_root",
+                "count": language_records_total,
+            }
+        ],
+        "packets": [],
+        "must_not_infer": [
+            "do not assign packets from a gap ledger generated for a different root",
+            "do not consume raw findings as swarm work",
+            "do not queue static limitations, no-action records, or records without bounded edit surfaces",
+            "do not edit files outside allowed_edit_surface",
+            "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
+        ],
+    });
+    let mut rendered = serde_json::to_string_pretty(&envelope)
+        .map_err(|err| format!("render blocked agent gap queue JSON failed: {err}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
+pub(crate) fn render_agent_gap_record_queue_missing_root_json(
+    root: &str,
+    gap_ledger_path: &str,
+    ledger_generated_at: Option<&str>,
+    records: &[GapRecord],
+    language: &str,
+    top: usize,
+) -> Result<String, String> {
+    let language_records_total = records
+        .iter()
+        .filter(|record| record.language == language)
+        .count();
+    let reason = format!(
+        "gap ledger {} is missing root metadata; regenerate the gap decision ledger for requested --root {root} before assigning swarm work",
+        gap_ledger_path
+    );
+    let envelope = json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-queue",
+        "scope": "repo",
+        "source": "gap_decision_ledger",
+        "status": "blocked",
+        "inputs": {
+            "root": root,
+            "gap_ledger": gap_ledger_path,
+            "gap_ledger_root": null,
+            "gap_ledger_generated_at": ledger_generated_at,
+            "language": language,
+            "top": top,
+        },
+        "blocker": {
+            "kind": "missing_root",
+            "reason": reason,
+            "requested_root": root,
+            "gap_ledger_root": null,
+            "next_action": "regenerate the gap decision ledger for the selected --root, then rerun ripr swarm queue",
+        },
+        "summary": {
+            "records_total": records.len(),
+            "language_records_total": language_records_total,
+            "queue_total": 0,
+            "returned": 0,
+            "excluded_records_total": language_records_total,
+            "blocked_records_total": language_records_total,
+            "conflict_groups_total": 0,
+        },
+        "conflict_groups": [],
+        "exclusion_reasons": [
+            {
+                "reason": "gap_ledger_missing_root",
+                "count": language_records_total,
+            }
+        ],
+        "packets": [],
+        "must_not_infer": [
+            "do not assign packets from a gap ledger without root provenance",
+            "do not consume raw findings as swarm work",
+            "do not queue static limitations, no-action records, or records without bounded edit surfaces",
+            "do not edit files outside allowed_edit_surface",
+            "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
+        ],
+    });
+    let mut rendered = serde_json::to_string_pretty(&envelope)
+        .map_err(|err| format!("render blocked agent gap queue JSON failed: {err}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
+#[derive(Clone, Debug)]
+struct GapRecordQueueCandidate {
+    source_index: usize,
+    gap_id: String,
+    canonical_gap_id: Option<String>,
+    gap_kind: String,
+    language: String,
+    language_status: String,
+    policy_state: String,
+    evidence_class: String,
+    repair_kind: String,
+    suggested_test_file: Option<String>,
+    suggested_test_name: Option<String>,
+    verify_command: String,
+    receipt_command: Option<String>,
+    conflict_group: String,
+    queue_state: String,
+    staleness_status: String,
+    staleness_reason: String,
+    allowed_edit_surface: Vec<String>,
+    forbidden_files: Vec<String>,
+    changed_owner: Option<String>,
+    changed_file: Option<String>,
+    changed_line: Option<u64>,
+    changed_behavior: Option<String>,
+    missing_discriminator: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct GapRecordQueueFreshness {
+    queue_state: String,
+    staleness_status: String,
+    staleness_reason: String,
+}
+
+fn gap_record_queue_conflict_counts(
+    candidates: &[GapRecordQueueCandidate],
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for candidate in candidates {
+        *counts.entry(candidate.conflict_group.clone()).or_default() += 1;
+    }
+    counts
+}
+
+fn gap_record_queue_conflict_groups(
+    candidates: &[GapRecordQueueCandidate],
+) -> Vec<serde_json::Value> {
+    let mut grouped = BTreeMap::<String, Vec<String>>::new();
+    for candidate in candidates {
+        grouped
+            .entry(candidate.conflict_group.clone())
+            .or_default()
+            .push(candidate.gap_id.clone());
+    }
+    grouped
+        .into_iter()
+        .map(|(conflict_group, gap_ids)| {
+            json!({
+                "conflict_group": conflict_group,
+                "size": gap_ids.len(),
+                "gap_ids": gap_ids,
+            })
+        })
+        .collect()
+}
+
+fn gap_record_queue_freshness(record: &GapRecord) -> GapRecordQueueFreshness {
+    let default = || GapRecordQueueFreshness {
+        queue_state: "queued".to_string(),
+        staleness_status: "not_evaluated".to_string(),
+        staleness_reason:
+            "GapRecord queue rendering does not compare the ledger with current git state yet."
+                .to_string(),
+    };
+
+    let Some(receipt) = record.receipt.as_ref() else {
+        return default();
+    };
+    if let Some(state) = receipt.state.as_deref().and_then(non_empty) {
+        let lifecycle = normalize_receipt_lifecycle_state(&state);
+        if lifecycle == RECEIPT_STALE {
+            return stale_queue_freshness(
+                "GapRecord receipt state is stale; refresh the ledger before assigning this packet.",
+            );
+        }
+        if lifecycle == RECEIPT_GAP_MISMATCH {
+            return stale_queue_freshness(
+                "GapRecord receipt points at a different gap; refresh the ledger before assigning this packet.",
+            );
+        }
+    }
+
+    if let Some(movement) = receipt.movement.as_deref().and_then(non_empty) {
+        let normalized = normalize_queue_receipt_movement(&movement);
+        if matches!(normalized.as_str(), "closed" | "resolved") {
+            return stale_queue_freshness(
+                "GapRecord receipt movement says this gap already closed; refresh the queue before assigning this packet.",
+            );
+        }
+        if normalized == RECEIPT_STALE || normalized == RECEIPT_GAP_MISMATCH {
+            return stale_queue_freshness(
+                "GapRecord receipt movement marks this packet stale; refresh the queue before assigning this packet.",
+            );
+        }
+    }
+
+    default()
+}
+
+fn stale_queue_freshness(reason: &str) -> GapRecordQueueFreshness {
+    GapRecordQueueFreshness {
+        queue_state: "blocked_stale".to_string(),
+        staleness_status: "stale".to_string(),
+        staleness_reason: reason.to_string(),
+    }
+}
+
+fn normalize_queue_receipt_movement(movement: &str) -> String {
+    let raw = movement.trim().to_ascii_lowercase();
+    match raw.as_str() {
+        "closed" => "closed".to_string(),
+        "resolved" | "receipt_movement_resolved" => "resolved".to_string(),
+        "improved" | "movement_improved" | "receipt_improved" | RECEIPT_MOVEMENT_IMPROVED => {
+            RECEIPT_MOVEMENT_IMPROVED.to_string()
+        }
+        "unchanged"
+        | "movement_unchanged"
+        | "receipt_unchanged"
+        | "unchanged_after_attempt"
+        | RECEIPT_MOVEMENT_UNCHANGED => RECEIPT_MOVEMENT_UNCHANGED.to_string(),
+        _ => receipt_lifecycle_state_from_movement(Some(movement)),
+    }
 }
 
 /// Return the first concrete assertion example carried by the agent
@@ -230,6 +716,7 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
     let patterns_to_imitate = patterns_to_imitate_for(evidence);
     let patterns_to_avoid = patterns_to_avoid_for(entry);
     let outline = targeted_test_brief_outline_for_classified_seam(entry);
+    let navigation_target = navigation_only_external_target_for(entry);
 
     let mut out = String::new();
     out.push_str("Target seam:\n");
@@ -264,16 +751,42 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
         ));
     }
 
-    out.push_str("\nAdd a targeted test:\n");
+    if outline.suggested_file == "not_applicable" {
+        out.push_str("\nTarget placement blocked:\n");
+    } else {
+        out.push_str("\nAdd a targeted test:\n");
+    }
     out.push_str(&format!(
         "- Suggested file: {}\n",
         display_path_text(&outline.suggested_file)
     ));
     out.push_str(&format!("- Suggested name: {}\n", outline.suggested_name));
+    if outline.suggested_file == "not_applicable" {
+        out.push_str(&format!(
+            "- Target-placement route: {}\n",
+            outline.suggested_reason
+        ));
+    }
     if let Some(value) = outline.candidate_value.as_ref() {
         out.push_str(&format!("- Candidate value: {value}\n"));
     }
     out.push_str(&format!("- Assertion shape: {}\n", outline.assertion_shape));
+
+    if let Some(target) = navigation_target.as_ref() {
+        out.push_str("\nExternal observer target (navigation only):\n");
+        out.push_str(&format!("- Target: {}:{}\n", target.file, target.line));
+        out.push_str(&format!("- Test: {}\n", target.test_name));
+        out.push_str(&format!("- Language: {}\n", target.language));
+        out.push_str(&format!("- Evidence: {}\n", target.evidence_summary));
+        out.push_str(&format!(
+            "- Limitation route: {}\n",
+            target.limitation_route
+        ));
+        out.push_str(&format!(
+            "- Authority: {}; repair_packet_ready={}\n",
+            target.authority_boundary, target.repair_packet_ready
+        ));
+    }
 
     if !patterns_to_imitate.is_empty() {
         out.push_str("\nImitate:\n");
@@ -298,6 +811,7 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
 pub(crate) struct TargetedTestBriefOutline {
     pub(crate) suggested_file: String,
     pub(crate) suggested_name: String,
+    pub(crate) suggested_reason: String,
     pub(crate) candidate_value: Option<String>,
     pub(crate) assertion_shape: String,
 }
@@ -316,6 +830,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
     TargetedTestBriefOutline {
         suggested_file: recommended.file,
         suggested_name: recommended.name,
+        suggested_reason: recommended.reason,
         candidate_value,
         assertion_shape: assertion_shape.example,
     }
@@ -342,6 +857,17 @@ fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(), String> {
     if record.repairability != "repairable" && route.route_kind != "InspectStaticLimit" {
         return Err("requires a repairable gap or bounded inspection route".to_string());
     }
+    if allowed_edit_surface_for_gap_route(route).is_empty() {
+        return Err("requires allowed_edit_surface".to_string());
+    }
+    if record
+        .receipt_command
+        .as_deref()
+        .and_then(non_empty)
+        .is_none()
+    {
+        return Err("requires receipt_command".to_string());
+    }
     Ok(())
 }
 
@@ -363,6 +889,7 @@ fn task_for_gap_route(route: &GapRepairRoute) -> &'static str {
     match route.route_kind.as_str() {
         "InspectStaticLimit" => "inspect_static_limitation",
         "AddOutputGolden" => "add_output_golden",
+        "StrengthenExistingTest" => "strengthen_targeted_test",
         _ => "write_targeted_test",
     }
 }
@@ -371,8 +898,74 @@ fn recommended_test_reason(route: &GapRepairRoute) -> &'static str {
     match route.route_kind.as_str() {
         "AddOutputGolden" => "add or update the output-contract proof named by the gap route",
         "InspectStaticLimit" => "inspect the static limitation before changing tests",
+        "StrengthenExistingTest" => "strengthen the existing weak related test",
         _ => "place the focused repair where the gap route points",
     }
+}
+
+fn allowed_edit_surface_for_gap_route(route: &GapRepairRoute) -> Vec<String> {
+    route
+        .target_file
+        .as_deref()
+        .and_then(gap_route_file_token)
+        .or_else(|| route.related_test.as_deref().and_then(gap_route_file_token))
+        .into_iter()
+        .collect()
+}
+
+fn gap_route_file_token(value: &str) -> Option<String> {
+    let normalized = display_path_text(value.trim());
+    let normalized = normalized
+        .split_once("::")
+        .map(|(file, _)| file.to_string())
+        .unwrap_or(normalized);
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.starts_with("./")
+        || normalized.contains("..")
+        || !(normalized.contains('/') || normalized.contains('.'))
+    {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn forbidden_files_for_gap_record(
+    record: &GapRecord,
+    allowed_edit_surface: &[String],
+) -> Vec<String> {
+    let allowed = allowed_edit_surface.first().map(String::as_str);
+    record
+        .anchor
+        .as_ref()
+        .and_then(|anchor| anchor.file.as_deref())
+        .map(display_path_text)
+        .filter(|file| allowed != Some(file.as_str()))
+        .into_iter()
+        .collect()
+}
+
+fn conflict_group_for_gap_record(record: &GapRecord, allowed_edit_surface: &[String]) -> String {
+    if let Some(target_file) = allowed_edit_surface.first() {
+        return format!("file:{target_file}");
+    }
+    format!("gap:{}", gap_record_id(record))
+}
+
+fn receipt_status_for_gap_record(record: &GapRecord) -> &'static str {
+    if record.receipt_command.is_some() {
+        "available"
+    } else {
+        "missing_from_gap_record"
+    }
+}
+
+fn missing_discriminator_for_gap_route(route: &GapRepairRoute) -> Option<&str> {
+    route
+        .missing_discriminator
+        .as_deref()
+        .or(route.assertion_shape.as_deref())
+        .or(route.changed_behavior.as_deref())
 }
 
 fn repair_text_for_gap_route(route: &GapRepairRoute) -> String {
@@ -410,6 +1003,7 @@ fn pasteable_gap_repair_packet(
     record: &GapRecord,
     route: &GapRepairRoute,
     verify_command: &str,
+    allowed_edit_surface: &[String],
     stop_conditions: &[String],
     authority_boundary: &str,
 ) -> serde_json::Value {
@@ -418,7 +1012,7 @@ fn pasteable_gap_repair_packet(
         "Repair the `{}` gap `{}` using the bounded `{}` route.",
         record.kind, gap_id, route.route_kind
     );
-    let context = gap_record_packet_context(gap_ledger_path, record, route);
+    let context = gap_record_packet_context(gap_ledger_path, record, route, allowed_edit_surface);
     let repair = gap_record_packet_repair(route);
     let verification = gap_record_packet_verification(record, verify_command);
     let receipt = gap_record_packet_receipt(record);
@@ -450,6 +1044,7 @@ fn gap_record_packet_context(
     gap_ledger_path: &str,
     record: &GapRecord,
     route: &GapRepairRoute,
+    allowed_edit_surface: &[String],
 ) -> Vec<String> {
     let mut context = Vec::new();
     context.push(format!(
@@ -482,11 +1077,7 @@ fn gap_record_packet_context(
     if let Some(changed_behavior) = route.changed_behavior.as_deref() {
         context.push(format!("Changed behavior: `{changed_behavior}`."));
     }
-    if let Some(discriminator) = route
-        .assertion_shape
-        .as_deref()
-        .or(route.changed_behavior.as_deref())
-    {
+    if let Some(discriminator) = missing_discriminator_for_gap_route(route) {
         context.push(format!("Missing discriminator: `{discriminator}`."));
     }
     if let Some(receipt_command) = record.receipt_command.as_deref() {
@@ -506,6 +1097,12 @@ fn gap_record_packet_context(
         context.push(format!(
             "Repair target: {}.",
             display_path_text(target_file)
+        ));
+    }
+    if !allowed_edit_surface.is_empty() {
+        context.push(format!(
+            "Allowed edit surface: {}.",
+            allowed_edit_surface.join(", ")
         ));
     }
     if let Some(related_test) = route.related_test.as_deref() {
@@ -597,6 +1194,13 @@ fn gap_record_packet_focused_proof_intent(route: &GapRepairRoute) -> String {
             .as_deref()
             .map(|assertion| format!("Add a focused boundary assertion{target}: `{assertion}`."))
             .unwrap_or_else(|| format!("Add a focused boundary assertion{target}.")),
+        "StrengthenExistingTest" => route
+            .assertion_shape
+            .as_deref()
+            .map(|assertion| {
+                format!("Strengthen the existing related test{target}: `{assertion}`.")
+            })
+            .unwrap_or_else(|| format!("Strengthen the existing related test{target}.")),
         "AddValueAssertion" => route
             .assertion_shape
             .as_deref()
@@ -715,6 +1319,12 @@ fn is_actionable(class: SeamGripClass) -> bool {
     // `Intentional` and `Suppressed` are governance classes; the
     // agent should not be told to "fix" them.
     class.is_headline_eligible() || matches!(class, SeamGripClass::Opaque)
+}
+
+fn is_actionable_entry(entry: &ClassifiedSeam) -> bool {
+    is_actionable(entry.class)
+        && !cross_language_oracle_visibility_unresolved(entry)
+        && !cross_language_test_target_unresolved(entry)
 }
 
 fn task_for(class: SeamGripClass) -> &'static str {
@@ -1008,6 +1618,23 @@ pub(crate) struct RecommendedTest {
     pub(crate) reason: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NavigationOnlyExternalTarget {
+    pub(crate) file: String,
+    pub(crate) line: usize,
+    pub(crate) test_name: String,
+    pub(crate) language: String,
+    pub(crate) oracle_kind: String,
+    pub(crate) oracle_strength: String,
+    pub(crate) evidence_summary: String,
+    pub(crate) relation_reason: String,
+    pub(crate) relation_confidence: String,
+    pub(crate) authority_boundary: &'static str,
+    pub(crate) repair_packet_ready: bool,
+    pub(crate) reason: String,
+    pub(crate) limitation_route: &'static str,
+}
+
 pub(crate) struct AssertionShape {
     pub(crate) kind: &'static str,
     pub(crate) example: String,
@@ -1030,6 +1657,16 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         snake_case_token(owner_short),
         test_name_suffix_for(entry.seam.kind())
     );
+    if cross_language_test_target_unresolved(entry) {
+        return RecommendedTest {
+            name: "not_applicable".to_string(),
+            file: "not_applicable".to_string(),
+            reason: format!(
+                "cross-language target is unresolved; route to `{}` before suggesting a test target",
+                CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE
+            ),
+        };
+    }
     if let Some(test) = nearest_strong_test_to_imitate(&entry.evidence) {
         return RecommendedTest {
             name,
@@ -1054,6 +1691,96 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
     }
 }
 
+pub(crate) fn navigation_only_external_target_for(
+    entry: &ClassifiedSeam,
+) -> Option<NavigationOnlyExternalTarget> {
+    if !cross_language_test_target_unresolved(entry) {
+        return None;
+    }
+    let test = entry
+        .evidence
+        .related_tests
+        .iter()
+        .find(|test| explicit_external_observer_target(test))?;
+    let language = external_language_for_related_test(test)?;
+    Some(NavigationOnlyExternalTarget {
+        file: display_path(&test.file),
+        line: test.line,
+        test_name: test.test_name.clone(),
+        language: language.to_string(),
+        oracle_kind: test.oracle_kind.as_str().to_string(),
+        oracle_strength: test.oracle_strength.as_str().to_string(),
+        evidence_summary: test.evidence_summary.clone(),
+        relation_reason: test.relation_reason.as_str().to_string(),
+        relation_confidence: test.relation_confidence.as_str().to_string(),
+        authority_boundary: "navigation_only_external_observer_context",
+        repair_packet_ready: false,
+        reason: format!(
+            "external {language} observer target is visible, but binding/FFI repair placement is unresolved"
+        ),
+        limitation_route: CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
+    })
+}
+
+pub(crate) fn navigation_only_external_target_json(
+    target: &NavigationOnlyExternalTarget,
+) -> serde_json::Value {
+    json!({
+        "file": target.file.as_str(),
+        "line": target.line,
+        "test_name": target.test_name.as_str(),
+        "language": target.language.as_str(),
+        "oracle_kind": target.oracle_kind.as_str(),
+        "oracle_strength": target.oracle_strength.as_str(),
+        "evidence_summary": target.evidence_summary.as_str(),
+        "relation_reason": target.relation_reason.as_str(),
+        "relation_confidence": target.relation_confidence.as_str(),
+        "authority_boundary": target.authority_boundary,
+        "repair_packet_ready": target.repair_packet_ready,
+        "reason": target.reason.as_str(),
+        "limitation_route": target.limitation_route,
+    })
+}
+
+fn explicit_external_observer_target(test: &RelatedTestGrip) -> bool {
+    let Some(_language) = external_language_for_related_test(test) else {
+        return false;
+    };
+    let summary = test.evidence_summary.to_ascii_lowercase();
+    let explicit_bridge_hint = summary.contains("configured")
+        || summary.contains("bridge")
+        || summary.contains("binding")
+        || summary.contains("ffi");
+    explicit_bridge_hint
+        && matches!(
+            test.relation_reason,
+            crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall
+                | crate::analysis::test_grip_evidence::RelationReason::HelperOwnerCall
+        )
+        && matches!(
+            test.relation_confidence,
+            crate::analysis::test_grip_evidence::RelationConfidence::High
+        )
+        && matches!(test.oracle_strength, crate::domain::OracleStrength::Strong)
+}
+
+fn external_language_for_related_test(test: &RelatedTestGrip) -> Option<&'static str> {
+    match test
+        .file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("ts" | "tsx") => Some("typescript"),
+        Some("js" | "jsx" | "mjs" | "cjs") => Some("javascript"),
+        Some("py") => Some("python"),
+        Some("rb") => Some("ruby"),
+        Some("java") => Some("java"),
+        _ => None,
+    }
+}
+
 fn owner_short(owner: &str) -> &str {
     owner.rsplit("::").next().unwrap_or(owner)
 }
@@ -1071,12 +1798,52 @@ fn test_name_suffix_for(kind: SeamKind) -> &'static str {
 }
 
 fn inferred_test_file(file: &std::path::Path, owner_short: &str) -> String {
+    if let Some(module_tests) = existing_source_module_test_file(file) {
+        return module_tests;
+    }
     let stem = file
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .unwrap_or(owner_short);
     format!("tests/{}_tests.rs", snake_case_token(stem))
+}
+
+fn existing_source_module_test_file(file: &std::path::Path) -> Option<String> {
+    if file.extension().and_then(|value| value.to_str()) != Some("rs") {
+        return None;
+    }
+    let stem = file.file_stem()?.to_str()?;
+    if matches!(stem, "lib" | "main" | "mod") {
+        return None;
+    }
+    let parent = file.parent()?;
+    for candidate in [parent.join(stem).join("tests.rs"), parent.join("tests.rs")] {
+        if path_resolves_to_existing_file(&candidate) {
+            return Some(display_path(&candidate));
+        }
+    }
+    let mut ancestor = parent.parent();
+    while let Some(module_dir) = ancestor {
+        if module_dir.file_name().and_then(|value| value.to_str()) == Some("src") {
+            break;
+        }
+        let candidate = module_dir.join("tests.rs");
+        if path_resolves_to_existing_file(&candidate) {
+            return Some(display_path(&candidate));
+        }
+        ancestor = module_dir.parent();
+    }
+    None
+}
+
+fn path_resolves_to_existing_file(path: &std::path::Path) -> bool {
+    path.is_file()
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(|workspace_root| workspace_root.join(path).is_file())
+            .unwrap_or(false)
 }
 
 fn snake_case_token(raw: &str) -> String {
@@ -1294,6 +2061,13 @@ fn patterns_to_avoid_for(entry: &ClassifiedSeam) -> Vec<AvoidPattern> {
             reason: "candidate values should include the missing discriminator".to_string(),
         });
     }
+    if matches!(entry.seam.kind(), SeamKind::ErrorVariant) {
+        out.push(AvoidPattern {
+            pattern: "treating any Err(_) / is_err() / expect_err() as sufficient".to_string(),
+            reason: "this route only improves evidence when the test matches the exact error variant or payload named by the seam"
+                .to_string(),
+        });
+    }
     if out.is_empty() && matches!(entry.class, SeamGripClass::Ungripped) {
         out.push(AvoidPattern {
             pattern: "copying a smoke-only test shape".to_string(),
@@ -1390,9 +2164,13 @@ fn suggested_assertions_for(
                 "assert_eq!({owner_short}(/* {hint} */), /* expected */)"
             )]
         }
-        SeamKind::ErrorVariant => vec![format!(
-            "assert!(matches!({owner_short}(/* trigger */), Err(/* exact variant */)))"
-        )],
+        SeamKind::ErrorVariant => {
+            let (trigger_hint, expected_label, pattern_hint) =
+                error_variant_assertion_hint(required);
+            vec![format!(
+                "let err = {owner_short}(/* trigger {trigger_hint} */).expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));"
+            )]
+        }
         SeamKind::ReturnValue => vec![format!(
             "assert_eq!({owner_short}(/* input */), /* expected */)"
         )],
@@ -1409,6 +2187,22 @@ fn suggested_assertions_for(
             "// assert that {owner_short} called the expected target"
         )],
     }
+}
+
+fn error_variant_assertion_hint(
+    required: Option<&RequiredDiscriminator>,
+) -> (String, String, String) {
+    if let Some(RequiredDiscriminator::ErrorVariant { variant }) = required
+        && !variant.trim().is_empty()
+    {
+        let variant = variant.trim().to_string();
+        return (variant.clone(), variant.clone(), variant);
+    }
+    (
+        "the exact error variant".to_string(),
+        "the exact error variant".to_string(),
+        "/* exact error variant */".to_string(),
+    )
 }
 
 fn predicate_boundary_assertion_hint(
@@ -1432,7 +2226,7 @@ fn predicate_boundary_assertion_hint(
 mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
-    use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
+    use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationReason, TestGripEvidence};
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueContext, ValueFact,
@@ -1888,6 +2682,7 @@ mod tests {
                 "route_kind":"AddBoundaryAssertion",
                 "target_file":"tests/pricing.rs",
                 "related_test":"discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
                 "assertion_shape":"assert_eq!(discount(100, 100), 90)",
                 "changed_behavior":"amount == threshold",
                 "stop_conditions":["Stop if this is baseline debt."]
@@ -1928,6 +2723,36 @@ mod tests {
         );
         assert_eq!(
             packet
+                .get("allowed_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/pricing.rs")
+        );
+        assert_eq!(
+            packet
+                .get("allowed_edit_surface")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/pricing.rs")
+        );
+        assert_eq!(
+            packet
+                .get("forbidden_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("src/pricing.rs")
+        );
+        assert_eq!(
+            packet
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/pricing.rs")
+        );
+        assert_eq!(
+            packet
                 .get("repair_route")
                 .and_then(|route| route.get("route_kind"))
                 .and_then(serde_json::Value::as_str),
@@ -1938,6 +2763,27 @@ mod tests {
                 .get("verify_command")
                 .and_then(serde_json::Value::as_str),
             Some("cargo xtask fixtures boundary_gap")
+        );
+        assert_eq!(
+            packet
+                .get("missing_discriminator")
+                .and_then(serde_json::Value::as_str),
+            Some("amount == threshold")
+        );
+        assert_eq!(
+            packet
+                .get("receipt_status")
+                .and_then(serde_json::Value::as_str),
+            Some("available")
+        );
+        let must_not_change = packet
+            .get("must_not_change")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("missing must_not_change boundaries in: {json}"))?;
+        assert!(
+            must_not_change.iter().any(|boundary| boundary.as_str()
+                == Some("Do not broaden the change beyond this GapRecord and its repair route.")),
+            "gap packets should expose bounded must_not_change guidance: {json}"
         );
         assert_eq!(
             packet
@@ -1961,9 +2807,23 @@ mod tests {
         assert_eq!(
             packet
                 .get("repair_card")
+                .and_then(|card| card.get("missing_discriminator"))
+                .and_then(serde_json::Value::as_str),
+            Some("amount == threshold")
+        );
+        assert_eq!(
+            packet
+                .get("repair_card")
                 .and_then(|card| card.get("current_evidence_strength"))
                 .and_then(serde_json::Value::as_str),
             Some("predicate_boundary / actionable")
+        );
+        assert_eq!(
+            packet
+                .get("repair_card")
+                .and_then(|card| card.get("receipt_status"))
+                .and_then(serde_json::Value::as_str),
+            Some("available")
         );
         assert_eq!(
             packet
@@ -2046,8 +2906,7 @@ mod tests {
             "copyable packet should name the focused proof intent: {copyable_markdown}"
         );
         assert!(
-            copyable_markdown
-                .contains("- Missing discriminator: `assert_eq!(discount(100, 100), 90)`."),
+            copyable_markdown.contains("- Missing discriminator: `amount == threshold`."),
             "copyable packet should name the missing discriminator: {copyable_markdown}"
         );
         assert!(
@@ -2074,10 +2933,781 @@ mod tests {
             "copyable packet should include stop conditions: {copyable_markdown}"
         );
         assert!(
+            copyable_markdown.contains("- Allowed edit surface: tests/pricing.rs."),
+            "copyable packet should include the edit cage: {copyable_markdown}"
+        );
+        assert!(
             copyable_markdown.contains(
                 "- Do not edit production code unless the focused proof exposes a real product defect."
             ),
             "copyable packet should include do-not-do guidance: {copyable_markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_packet_bounds_python_preview_to_suggested_test_file() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":7,"owner":"calculate_discount","dedupe_fingerprint":"gap:python:pricing"},
+              "evidence_ids":["evidence:python-pricing-boundary"],
+              "repair_route":{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"if amount >= threshold:",
+                "stop_conditions":[
+                  "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+                  "Stop if adding the test appears to require a production-code edit."
+                ]
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}},
+              "authority_boundary":"Python repair cards are preview advisory evidence."
+            }]}"#,
+        )?;
+        let record = records
+            .first()
+            .ok_or_else(|| "expected parsed Python gap record".to_string())?;
+        let json = render_agent_gap_record_packet_json(
+            "target/ripr/reports/python-gap-decision-ledger.json",
+            record,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("gap packet JSON should parse: {err}"))?;
+        let packet = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing gap packet in: {json}"))?;
+
+        assert_eq!(
+            packet.get("language").and_then(serde_json::Value::as_str),
+            Some("python")
+        );
+        assert_eq!(
+            packet
+                .get("language_status")
+                .and_then(serde_json::Value::as_str),
+            Some("preview")
+        );
+        assert_eq!(
+            packet
+                .get("allowed_edit_surface")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_pricing.py")
+        );
+        assert_eq!(
+            packet
+                .get("allowed_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_pricing.py")
+        );
+        assert_eq!(
+            packet
+                .get("forbidden_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("src/pricing.py")
+        );
+        assert_eq!(
+            packet
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/test_pricing.py")
+        );
+        assert_eq!(
+            packet
+                .get("verify_command")
+                .and_then(serde_json::Value::as_str),
+            Some("pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary")
+        );
+        assert_eq!(
+            packet
+                .get("repair_card")
+                .and_then(|card| card.get("authority_boundary"))
+                .and_then(serde_json::Value::as_str),
+            Some("Python repair cards are preview advisory evidence.")
+        );
+        let copyable_markdown = packet
+            .get("llm_guidance")
+            .and_then(|guidance| guidance.get("copyable_packet"))
+            .and_then(|copyable| copyable.get("markdown"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("missing copyable markdown in: {json}"))?;
+        assert!(
+            copyable_markdown.contains("- Allowed edit surface: tests/test_pricing.py."),
+            "copyable packet should cage Python edits to the suggested test file: {copyable_markdown}"
+        );
+        assert!(
+            copyable_markdown.contains(
+                "- Do not edit production code unless the focused proof exposes a real product defect."
+            ),
+            "copyable packet should preserve the production-code boundary: {copyable_markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_groups_python_packets_by_allowed_edit_surface() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[
+            {
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":7,"owner":"calculate_discount"},
+              "repair_route":{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"if amount >= threshold:"
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            },
+            {
+              "gap_id":"gap:python:pricing-return",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:return_value:expected_discount",
+              "kind":"MissingValueAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"return_value",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":8,"owner":"calculate_discount"},
+              "repair_route":{
+                "route_kind":"AddValueAssertion",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_exact_value",
+                "missing_discriminator":"expected_discount",
+                "assertion_shape":"assert result == expected_discount",
+                "changed_behavior":"return expected_discount"
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_exact_value"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-return.targeted-test-outcome.json",
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            },
+            {
+              "gap_id":"gap:python:already-observed",
+              "kind":"NoActionAlreadyObserved",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "gap_state":"resolved",
+              "policy_state":"resolved",
+              "repairability":"no_action",
+              "repair_route":{"route_kind":"NoAction"},
+              "verification_commands":["pytest tests/test_pricing.py"],
+              "projection_eligibility":{"agent_packet":{"eligible":false,"reason":"already_observed"}}
+            },
+            {
+              "gap_id":"gap:rust:pricing",
+              "kind":"MissingBoundaryAssertion",
+              "language":"rust",
+              "language_status":"stable",
+              "scope":"pr_local",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"tests/pricing.rs"},
+              "verification_commands":["cargo test pricing"],
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            }
+          ]}"#,
+        )?;
+
+        let json = render_agent_gap_record_queue_json(
+            ".",
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+            "python",
+            10,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        let packets = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("missing packets in: {json}"))?;
+        assert_eq!(packets.len(), 2);
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("language_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("queue_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("excluded_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("stale_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        let first = packets
+            .first()
+            .ok_or_else(|| format!("missing first packet in: {json}"))?;
+        assert_eq!(
+            first
+                .get("suggested_test_file")
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_pricing.py")
+        );
+        assert_eq!(
+            first
+                .get("forbidden_files")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("src/pricing.py")
+        );
+        assert_eq!(
+            first
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/test_pricing.py")
+        );
+        assert_eq!(
+            first
+                .get("conflict_group_size")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            first
+                .get("staleness_status")
+                .and_then(serde_json::Value::as_str),
+            Some("not_evaluated")
+        );
+        assert_eq!(
+            first
+                .get("packet_command_args")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|args| args.get(1))
+                .and_then(serde_json::Value::as_str),
+            Some("agent")
+        );
+        let conflict_group = value
+            .get("conflict_groups")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|groups| groups.first())
+            .ok_or_else(|| format!("missing conflict group in: {json}"))?;
+        assert_eq!(
+            conflict_group
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/test_pricing.py")
+        );
+        assert_eq!(
+            conflict_group
+                .get("size")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert!(
+            json.contains("is not agent-packet eligible: already_observed"),
+            "queue should explain excluded no-action records: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_marks_receipt_closed_python_packets_stale() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":7,"owner":"calculate_discount"},
+              "repair_route":{
+                "route_kind":"StrengthenExistingTest",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"if amount >= threshold:"
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
+              "receipt":{"state":"receipt_found","movement":"resolved","path":"target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json"},
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            }]}"#,
+        )?;
+
+        let json = render_agent_gap_record_queue_json(
+            ".",
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+            "python",
+            10,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("stale_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        let packet = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing packet in: {json}"))?;
+        assert_eq!(
+            packet
+                .get("queue_state")
+                .and_then(serde_json::Value::as_str),
+            Some("blocked_stale")
+        );
+        assert_eq!(
+            packet
+                .get("staleness_status")
+                .and_then(serde_json::Value::as_str),
+            Some("stale")
+        );
+        assert!(
+            packet
+                .get("staleness_reason")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|reason| reason.contains("already closed")),
+            "stale packet should explain the closed receipt: {json}"
+        );
+        assert!(
+            json.contains("do not assign packets with queue_state=blocked_stale"),
+            "queue should tell schedulers not to assign stale packets: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_marks_stale_receipt_states_python_packets_stale() -> Result<(), String> {
+        for (state, reason_fragment) in [
+            (RECEIPT_STALE, "receipt state is stale"),
+            (RECEIPT_GAP_MISMATCH, "different gap"),
+        ] {
+            let ledger = r#"{"records":[{
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.py","line":7,"owner":"calculate_discount"},
+              "repair_route":{
+                "route_kind":"StrengthenExistingTest",
+                "target_file":"tests/test_pricing.py",
+                "related_test":"test_calculate_discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"if amount >= threshold:"
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
+              "receipt":{"state":"__RECEIPT_STATE__","movement":"unchanged","path":"target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json"},
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
+            }]}"#
+            .replace("__RECEIPT_STATE__", state);
+            let records = crate::output::gap_decision_ledger::parse_gap_records_json(&ledger)?;
+
+            let json = render_agent_gap_record_queue_json(
+                ".",
+                "target/ripr/reports/gap-decision-ledger.json",
+                &records,
+                "python",
+                10,
+            )?;
+            let value = serde_json::from_str::<serde_json::Value>(&json)
+                .map_err(|err| format!("queue JSON should parse: {err}"))?;
+            assert_eq!(
+                value
+                    .get("summary")
+                    .and_then(|summary| summary.get("stale_total"))
+                    .and_then(serde_json::Value::as_u64),
+                Some(1),
+                "state {state} should count as stale: {json}"
+            );
+            let packet = value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|packets| packets.first())
+                .ok_or_else(|| format!("missing packet in: {json}"))?;
+            assert_eq!(
+                packet
+                    .get("queue_state")
+                    .and_then(serde_json::Value::as_str),
+                Some("blocked_stale"),
+                "state {state} should block assignment: {json}"
+            );
+            assert_eq!(
+                packet
+                    .get("staleness_status")
+                    .and_then(serde_json::Value::as_str),
+                Some("stale"),
+                "state {state} should be stale: {json}"
+            );
+            assert!(
+                packet
+                    .get("staleness_reason")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|reason| reason.contains(reason_fragment)),
+                "state {state} should explain the stale reason with {reason_fragment:?}: {json}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_wrong_root_blocks_packets() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "authority_boundary":"preview_static_advisory",
+              "anchor":{"file":"src/pricing.py","line":42,"owner":"calculate_discount","dedupe_fingerprint":"gap:python:pricing"},
+              "evidence_ids":["evidence:pricing-boundary"],
+              "repair_route":{
+                "route_kind":"StrengthenExistingTest",
+                "related_test":"tests/test_pricing.py::test_calculate_discount_smoke",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"amount >= threshold",
+                "stop_conditions":["Stop if expected value is ambiguous."]
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_smoke"]
+            }]}"#,
+        )?;
+
+        let json = render_agent_gap_record_queue_wrong_root_json(
+            "fixtures/python/current",
+            "target/ripr/reports/gap-decision-ledger.json",
+            "fixtures/python/other",
+            Some("unix_ms:1778240100000"),
+            &records,
+            "python",
+            10,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("wrong_root")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("returned"))
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        let packets = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("missing packets in: {json}"))?;
+        assert!(
+            packets.is_empty(),
+            "wrong-root queue emitted packets: {json}"
+        );
+        assert!(
+            json.contains("do not assign packets from a gap ledger generated for a different root"),
+            "wrong-root queue should carry a scheduler stop rule: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_queue_missing_root_blocks_packets() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:python:pricing-boundary",
+              "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+              "kind":"MissingBoundaryAssertion",
+              "language":"python",
+              "language_status":"preview",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "authority_boundary":"preview_static_advisory",
+              "anchor":{"file":"src/pricing.py","line":42,"owner":"calculate_discount","dedupe_fingerprint":"gap:python:pricing"},
+              "evidence_ids":["evidence:pricing-boundary"],
+              "repair_route":{
+                "route_kind":"StrengthenExistingTest",
+                "related_test":"tests/test_pricing.py::test_calculate_discount_smoke",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "changed_behavior":"amount >= threshold",
+                "stop_conditions":["Stop if expected value is ambiguous."]
+              },
+              "verification_commands":["pytest tests/test_pricing.py::test_calculate_discount_smoke"]
+            }]}"#,
+        )?;
+
+        let json = render_agent_gap_record_queue_missing_root_json(
+            "fixtures/python/current",
+            "target/ripr/reports/gap-decision-ledger.json",
+            Some("unix_ms:1778240100000"),
+            &records,
+            "python",
+            10,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("missing_root")
+        );
+        assert_eq!(
+            value
+                .get("inputs")
+                .and_then(|inputs| inputs.get("gap_ledger_root")),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "missing-root queue emitted packets: {json}"
+        );
+        assert!(
+            json.contains("do not assign packets from a gap ledger without root provenance"),
+            "missing-root queue should carry a scheduler stop rule: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_packet_uses_path_like_related_test_as_allowed_edit_surface() -> Result<(), String>
+    {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:pr:pricing",
+              "canonical_gap_id":"gap:rust:pricing",
+              "kind":"MissingBoundaryAssertion",
+              "language":"rust",
+              "language_status":"stable",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.rs","line":42,"owner":"pricing::discount","dedupe_fingerprint":"gap:pricing"},
+              "evidence_ids":["evidence:pricing-boundary"],
+              "repair_route":{
+                "route_kind":"AddBoundaryAssertion",
+                "related_test":"tests/pricing.rs::discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert_eq!(discount(100, 100), 90)",
+                "changed_behavior":"amount == threshold",
+                "stop_conditions":["Stop if this is baseline debt."]
+              },
+              "verification_commands":["cargo xtask fixtures boundary_gap"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json",
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}},
+              "authority_boundary":"Gate decision remains pass/fail authority."
+            }]}"#,
+        )?;
+        let record = records
+            .first()
+            .ok_or_else(|| "expected parsed gap record".to_string())?;
+        let json = render_agent_gap_record_packet_json(
+            "target/ripr/reports/gap-decision-ledger.json",
+            record,
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("gap packet JSON should parse: {err}"))?;
+        let packet = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing gap packet in: {json}"))?;
+
+        assert_eq!(
+            packet
+                .get("allowed_edit_surface")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/pricing.rs")
+        );
+        assert_eq!(
+            packet
+                .get("conflict_group")
+                .and_then(serde_json::Value::as_str),
+            Some("file:tests/pricing.rs")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_packet_rejects_missing_allowed_edit_surface() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:no-edit-surface",
+              "canonical_gap_id":"gap:rust:no-edit-surface",
+              "kind":"MissingBoundaryAssertion",
+              "language":"rust",
+              "language_status":"stable",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.rs","line":42,"owner":"pricing::discount","dedupe_fingerprint":"gap:pricing"},
+              "evidence_ids":["evidence:pricing-boundary"],
+              "repair_route":{
+                "route_kind":"AddBoundaryAssertion",
+                "related_test":"discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert_eq!(discount(100, 100), 90)",
+                "changed_behavior":"amount == threshold"
+              },
+              "verification_commands":["cargo xtask fixtures boundary_gap"],
+              "receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json",
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}},
+              "authority_boundary":"Gate decision remains pass/fail authority."
+            }]}"#,
+        )?;
+        let record = records
+            .first()
+            .ok_or_else(|| "expected parsed gap record".to_string())?;
+        assert_eq!(
+            render_agent_gap_record_packet_json("gap-ledger.json", record),
+            Err("requires allowed_edit_surface".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_packet_rejects_missing_receipt_command() -> Result<(), String> {
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(
+            r#"{"records":[{
+              "gap_id":"gap:missing-receipt",
+              "canonical_gap_id":"gap:rust:missing-receipt",
+              "kind":"MissingBoundaryAssertion",
+              "language":"rust",
+              "language_status":"stable",
+              "scope":"pr_local",
+              "evidence_class":"predicate_boundary",
+              "gap_state":"actionable",
+              "policy_state":"new",
+              "repairability":"repairable",
+              "anchor":{"file":"src/pricing.rs","line":42,"owner":"pricing::discount","dedupe_fingerprint":"gap:pricing"},
+              "evidence_ids":["evidence:pricing-boundary"],
+              "repair_route":{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"tests/pricing.rs",
+                "related_test":"discount_threshold_boundary",
+                "missing_discriminator":"amount == threshold",
+                "assertion_shape":"assert_eq!(discount(100, 100), 90)",
+                "changed_behavior":"amount == threshold"
+              },
+              "verification_commands":["cargo xtask fixtures boundary_gap"],
+              "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}},
+              "authority_boundary":"Gate decision remains pass/fail authority."
+            }]}"#,
+        )?;
+        let record = records
+            .first()
+            .ok_or_else(|| "expected parsed gap record".to_string())?;
+        assert_eq!(
+            render_agent_gap_record_packet_json("gap-ledger.json", record),
+            Err("requires receipt_command".to_string())
         );
         Ok(())
     }
@@ -2208,6 +3838,279 @@ mod tests {
     }
 
     #[test]
+    fn packet_queue_excludes_cross_language_binding_seam_without_rust_test_context()
+    -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let json = render_agent_seam_packets_json(&[classified_with(
+            seam,
+            SeamGripClass::Ungripped,
+            Vec::new(),
+        )]);
+
+        for needle in ["\"packets_total\": 0", "\"packets\": []"] {
+            if !json.contains(needle) {
+                return Err(format!("missing packet exclusion {needle:?} in: {json}"));
+            }
+        }
+        for forbidden in ["\"task\":", "tests/blob_tests.rs", "recommended_test"] {
+            if json.contains(forbidden) {
+                return Err(format!(
+                    "cross-language binding seam should not emit {forbidden:?}: {json}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_test_brief_fails_closed_for_cross_language_target_unresolved() -> Result<(), String>
+    {
+        let seam = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let brief = targeted_test_brief_for_classified_seam(&classified_with(
+            seam,
+            SeamGripClass::Ungripped,
+            Vec::new(),
+        ));
+
+        for needle in [
+            "- Suggested file: not_applicable",
+            "- Suggested name: not_applicable",
+            "analysis/cross-language-test-target-inference",
+        ] {
+            if !brief.contains(needle) {
+                return Err(format!(
+                    "missing target-unresolved brief text {needle:?} in:\n{brief}"
+                ));
+            }
+        }
+        for forbidden in ["tests/blob_tests.rs", "tests/Blob_tests.rs"] {
+            if brief.contains(forbidden) {
+                return Err(format!(
+                    "cross-language binding seam should not infer {forbidden:?}:\n{brief}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_test_brief_surfaces_external_observer_as_navigation_only() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let external_target = RelatedTestGrip {
+            test_name: "blob copies resizable buffers".to_string(),
+            file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
+            line: 41,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "configured TypeScript bridge exact value observer".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        };
+        assert!(explicit_external_observer_target(&external_target));
+        let mut unconfigured_external_target = external_target.clone();
+        unconfigured_external_target.evidence_summary =
+            "TypeScript exact value observer".to_string();
+        assert!(!explicit_external_observer_target(
+            &unconfigured_external_target
+        ));
+        let entry = classified_with(seam, SeamGripClass::Ungripped, vec![external_target]);
+        let brief = targeted_test_brief_for_classified_seam(&entry);
+
+        for needle in [
+            "Target placement blocked:",
+            "- Suggested file: not_applicable",
+            "External observer target (navigation only):",
+            "- Target: test/js/web/fetch/blob.test.ts:41",
+            "- Test: blob copies resizable buffers",
+            "- Language: typescript",
+            "- Authority: navigation_only_external_observer_context; repair_packet_ready=false",
+        ] {
+            if !brief.contains(needle) {
+                return Err(format!(
+                    "missing navigation-only target text {needle:?} in:\n{brief}"
+                ));
+            }
+        }
+        for forbidden in ["tests/blob_tests.rs", "ripr agent verify"] {
+            if brief.contains(forbidden) {
+                return Err(format!(
+                    "navigation-only target should not become repair guidance {forbidden:?}:\n{brief}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packet_queue_excludes_binding_seam_with_unrelated_rust_test_context() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let mut unrelated_rust_test = related_test_with(
+            "blob_module_smoke",
+            OracleKind::BroadError,
+            OracleStrength::Smoke,
+            crate::analysis::test_grip_evidence::RelationConfidence::Medium,
+        );
+        unrelated_rust_test.file = PathBuf::from("tests/blob_smoke.rs");
+        unrelated_rust_test.relation_reason = RelationReason::SameModule;
+        let entry = classified_with(
+            seam,
+            SeamGripClass::WeaklyGripped,
+            vec![unrelated_rust_test],
+        );
+
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry));
+        for needle in ["\"packets_total\": 0", "\"packets\": []"] {
+            if !json.contains(needle) {
+                return Err(format!("missing packet exclusion {needle:?} in: {json}"));
+            }
+        }
+        let brief = targeted_test_brief_for_classified_seam(&entry);
+        for forbidden in ["tests/blob_smoke.rs", "tests/blob_tests.rs"] {
+            if brief.contains(forbidden) || json.contains(forbidden) {
+                return Err(format!(
+                    "binding seam should not suggest unrelated Rust target {forbidden:?}; brief:\n{brief}\njson:\n{json}"
+                ));
+            }
+        }
+        if !brief.contains("- Suggested file: not_applicable") {
+            return Err(format!("missing fail-closed target in:\n{brief}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inferred_test_file_prefers_existing_source_module_tests() {
+        assert_eq!(
+            inferred_test_file(
+                std::path::Path::new("crates/ripr/src/lsp.rs"),
+                "serve_stdio"
+            ),
+            "crates/ripr/src/lsp/tests.rs"
+        );
+    }
+
+    #[test]
+    fn inferred_test_file_keeps_legacy_path_when_module_tests_are_missing() {
+        assert_eq!(
+            inferred_test_file(
+                std::path::Path::new("crates/ripr/src/not_a_real_module/render_helpers.rs"),
+                "push_markdown_recommendation"
+            ),
+            "tests/render_helpers_tests.rs"
+        );
+    }
+
+    #[test]
+    fn inferred_test_file_prefers_existing_ancestor_module_tests() {
+        assert_eq!(
+            inferred_test_file(
+                std::path::Path::new("crates/ripr/src/output/pilot/render/render_helpers.rs"),
+                "push_markdown_recommendation"
+            ),
+            "crates/ripr/src/output/pilot/tests.rs"
+        );
+    }
+
+    #[test]
+    fn packet_v2_recommends_existing_source_module_test_file_when_visible() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "crates/ripr/src/lsp.rs",
+            "lsp::serve_stdio",
+            SeamKind::CallPresence,
+            42,
+            42,
+            "tokio::io::stdin()",
+            RequiredDiscriminator::CallSite {
+                target: "tokio::io::stdin()".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let json = render_agent_seam_packets_json(&[classified_with(
+            seam,
+            SeamGripClass::Ungripped,
+            Vec::new(),
+        )]);
+
+        assert!(
+            json.contains("\"file\": \"crates/ripr/src/lsp/tests.rs\""),
+            "expected existing source module test target in: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn packet_v2_recommends_existing_ancestor_module_test_file_when_visible() -> Result<(), String>
+    {
+        let seam = RepoSeam::new(
+            "crates/ripr/src/output/pilot/render/render_helpers.rs",
+            "push_markdown_recommendation",
+            SeamKind::CallPresence,
+            64,
+            64,
+            "targeted_test_brief_outline_for_classified_seam(entry)",
+            RequiredDiscriminator::CallSite {
+                target: "targeted_test_brief_outline_for_classified_seam(entry)".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let json = render_agent_seam_packets_json(&[classified_with(
+            seam,
+            SeamGripClass::Ungripped,
+            Vec::new(),
+        )]);
+
+        assert!(
+            json.contains("\"file\": \"crates/ripr/src/output/pilot/tests.rs\""),
+            "expected existing ancestor module test target in: {json}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn packet_v2_carries_exact_error_variant_guidance_for_error_seams() -> Result<(), String> {
         let seam = seam_with(
             "auth::authenticate",
@@ -2234,8 +4137,10 @@ mod tests {
             "\"value\": \"input that triggers AuthError::RevokedToken\"",
             "\"missing_oracle_shape\": \"exact error-variant assertion",
             "\"assertion_shape\": {\"kind\": \"exact_error_variant\"",
-            "assert!(matches!(authenticate(/* trigger */), Err(/* exact variant */)))",
+            "let err = authenticate(/* trigger AuthError::RevokedToken */).expect_err",
+            "assert!(matches!(err, AuthError::RevokedToken",
             "\"pattern\": \"broad_error in empty_token_is_rejected\"",
+            "\"pattern\": \"treating any Err(_) / is_err() / expect_err() as sufficient\"",
         ] {
             if !json.contains(needle) {
                 return Err(format!(
@@ -2244,6 +4149,42 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn error_variant_assertion_shape_fallback_names_exact_variant_without_nested_comments() {
+        let seam = seam_with(
+            "auth::authenticate",
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "AuthError::RevokedToken".to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        );
+        let classified = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for(
+            SeamKind::ErrorVariant,
+            "auth::authenticate",
+            &classified.evidence,
+        );
+
+        assert_eq!(shape.kind, "exact_error_variant");
+        assert!(
+            shape
+                .example
+                .contains("authenticate(/* trigger the exact error variant */)")
+        );
+        assert!(
+            shape
+                .example
+                .contains("expect_err(\"expected the exact error variant\")")
+        );
+        assert!(
+            shape
+                .example
+                .contains("assert!(matches!(err, /* exact error variant */")
+        );
+        assert!(!shape.example.contains("/* trigger /*"));
     }
 
     #[test]

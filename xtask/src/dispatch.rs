@@ -22,8 +22,10 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
         XtaskCommand::RepoBadgeArtifacts(args) => super::reports::repo_badge_artifacts(&args),
         XtaskCommand::BadgeBasis(args) => super::reports::badge_basis(&args),
+        XtaskCommand::RiprPlus(args) => super::reports::ripr_plus(&args),
         XtaskCommand::RepoSeamInventory => super::reports::repo_seam_inventory(),
         XtaskCommand::RepoExposureReport => super::reports::repo_exposure_report(),
+        XtaskCommand::RepoExposureSummaryReport => super::reports::repo_exposure_summary_report(),
         XtaskCommand::RepoExposureLatencyReport => super::reports::repo_exposure_latency_report(),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::PrBody(args) => super::pr_body(&args),
@@ -51,6 +53,11 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ReleaseUploadAssets(args) => super::release_upload_assets(&args),
         XtaskCommand::TargetedTestOutcome(args) => super::reports::targeted_test_outcome(&args),
         XtaskCommand::MutationCalibration(args) => super::reports::mutation_calibration(&args),
+        XtaskCommand::BunUbCalibration(args) => super::reports::bun_ub_calibration(&args),
+        XtaskCommand::BunUbPreviewSummary(args) => super::reports::bun_ub_preview_summary(&args),
+        XtaskCommand::ConfiguredBridgeInventory(args) => {
+            super::reports::configured_bridge_inventory(&args)
+        }
         XtaskCommand::RecommendationCalibration(args) => {
             super::reports::recommendation_calibration(&args)
         }

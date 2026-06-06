@@ -36,8 +36,8 @@ observable behavior.
 | [RIPR-SPEC-0023](RIPR-SPEC-0023-pr-review-front-panel-report.md) | proposed | PR review front panel report |
 | [RIPR-SPEC-0024](RIPR-SPEC-0024-report-packet-index.md) | proposed | Report packet index |
 | [RIPR-SPEC-0025](RIPR-SPEC-0025-pr-inline-comment-publisher.md) | proposed | PR inline comment publisher |
-| [RIPR-SPEC-0026](RIPR-SPEC-0026-language-adapter-contract.md) | proposed | Language adapter contract |
-| [RIPR-SPEC-0027](RIPR-SPEC-0027-typescript-preview-static-facts.md) | proposed | TypeScript preview static facts |
+| [RIPR-SPEC-0026](RIPR-SPEC-0026-language-adapter-contract.md) | accepted | Language adapter contract |
+| [RIPR-SPEC-0027](RIPR-SPEC-0027-typescript-preview-static-facts.md) | accepted | TypeScript preview static facts |
 | [RIPR-SPEC-0028](RIPR-SPEC-0028-python-preview-static-facts.md) | proposed | Python preview static facts |
 | [RIPR-SPEC-0029](RIPR-SPEC-0029-policy-readiness-report.md) | proposed | Policy readiness report |
 | [RIPR-SPEC-0030](RIPR-SPEC-0030-preview-evidence-policy-boundary.md) | proposed | Preview evidence policy boundary |
@@ -71,3 +71,7 @@ observable behavior.
 | [RIPR-SPEC-0058](RIPR-SPEC-0058-ripr-swarm-external-agent-handoff.md) | accepted | RIPR swarm external agent handoff |
 | [RIPR-SPEC-0059](RIPR-SPEC-0059-actionable-surface-translation.md) | accepted | Actionable surface translation |
 | [RIPR-SPEC-0060](RIPR-SPEC-0060-source-of-truth-stack.md) | accepted | Source-of-truth stack |
+| [RIPR-SPEC-0061](RIPR-SPEC-0061-lane1-canonical-actionability-contract.md) | proposed | Lane 1 canonical actionability contract |
+| [RIPR-SPEC-0062](RIPR-SPEC-0062-cross-language-oracle-graph.md) | proposed | Cross-language oracle graph |
+| [RIPR-SPEC-0063](RIPR-SPEC-0063-cross-language-evidence-router-ux.md) | proposed | Cross-language evidence router UX |
+| [RIPR-SPEC-0064](RIPR-SPEC-0064-perl-fact-packet-contract.md) | proposed | Perl fact packet contract |

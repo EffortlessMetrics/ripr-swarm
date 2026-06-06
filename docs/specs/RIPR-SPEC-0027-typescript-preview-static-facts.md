@@ -1,6 +1,6 @@
 # RIPR-SPEC-0027: TypeScript Preview Static Facts
 
-Status: proposed
+Status: accepted
 
 ## Problem
 
@@ -18,6 +18,15 @@ The proposal context is
 
 ## Behavior
 
+This accepted spec records the TypeScript-family preview contract. Campaign 27
+implemented the first useful preview loop, and
+[Lane 1 TypeScript Preview Completion](../lanes/LANE_1_TYPESCRIPT_PREVIEW_COMPLETION.md)
+plus the
+[TypeScript preview completion implementation plan](../../plans/typescript-preview-completion/implementation-plan.md)
+track the remaining completion slices. Acceptance does not promote
+TypeScript/JavaScript beyond opt-in preview and does not make preview evidence a
+default gate, badge, baseline, or RIPR Zero input.
+
 The TypeScript preview adapter is enabled by repo configuration:
 
 ```toml
@@ -25,9 +34,13 @@ The TypeScript preview adapter is enabled by repo configuration:
 enabled = ["rust", "typescript"]
 ```
 
-When enabled, it routes `*.ts`, `*.tsx`, `*.js`, and `*.jsx` files. It
-emits the same RIPR fact families as the Rust adapter and tags each
-finding with `language = "typescript"` and `language_status = "preview"`.
+When enabled, it routes `*.ts`, `*.tsx`, `*.js`, and `*.jsx` files. It emits
+the same RIPR fact families as the Rust adapter. TypeScript files are labeled
+`language = "typescript"` and JavaScript files are labeled
+`language = "javascript"`; both use `language_status = "preview"`.
+JavaScript uses the TypeScript-family adapter implementation, but it remains a
+separately labeled JavaScript preview surface unless a future promotion packet
+changes that support tier.
 
 The adapter is syntax-first. It must not depend on `tsc`, type checking,
 or a build graph. When syntax-first analysis cannot classify, the adapter
@@ -45,6 +58,27 @@ The adapter does not read `tsconfig.json`, `package.json` dependencies,
 node_modules contents, generated declaration files, sourcemaps, or
 runtime test output.
 
+## TypeScript-Family Fact Vocabulary
+
+TypeScript/JavaScript preview findings and repair packets use these bounded
+fields when the adapter has enough syntax-first evidence to populate them:
+
+| Field | Values |
+| --- | --- |
+| `language` | `typescript`, `javascript` |
+| `language_status` | `preview` |
+| `owner_kind` | `function`, `method`, `class_method`, `arrow_function`, `component`, `module_function` |
+| `test_kind` | `jest_test`, `vitest_test`, `describe_block`, `table_test`, `unknown_test` |
+| `assertion_kind` | `exact_value`, `error_path`, `async_resolve`, `async_reject`, `mock_interaction`, `snapshot_weak`, `smoke_weak` |
+| `probe_kind` | `predicate`, `return_value`, `error_path`, `field_construction`, `call_side_effect`, `mock_interaction` |
+| `static_limit_kind` | `dynamic_dispatch`, `metaprogramming`, `missing_import_graph`, `decorator_indirection`, `mocked_module`, `unsupported_syntax` |
+| `repair_kind` | `add_boundary_assertion`, `add_exact_value_assertion`, `add_error_variant_assertion`, `add_mock_argument_assertion`, `strengthen_snapshot_oracle`, `name_static_limitation` |
+
+Only `language`, `language_status`, `owner_kind`, and `static_limit_kind` are
+currently language-adapter output fields in RIPR-SPEC-0026. The remaining
+fields become public only through later output-schema or repair-packet PRs; they
+must not be inferred by consumers before those PRs land.
+
 ## Owner Facts
 
 Owners the adapter must recognise:
@@ -58,7 +92,7 @@ Owners the adapter must recognise:
 - module-scope `const` initializers that participate in changed behavior
   (when a probe attaches to the initializer expression)
 
-Owner kinds emitted in output (per RIPR-SPEC-0026):
+Owner kinds emitted in TypeScript/JavaScript preview facts:
 
 - `function`, `method`, `class_method`, `arrow_function`, `component`,
   `module_function`.
@@ -80,9 +114,12 @@ Assertions / oracles the adapter must recognise:
 
 - `expect(actual).toBe(expected)` and `.toEqual` / `.toStrictEqual` →
   exact-value oracle
-- `expect(...).toThrow(...)` → error-path oracle
-- `expect(...).resolves.toBe(...)` and `.rejects.toThrow(...)` →
-  async-aware exact/error oracle
+- bare `expect(...).toThrow()` / `.rejects.toThrow()` → broad
+  error-path oracle
+- literal `expect(...).toThrow("...")` / `.rejects.toThrow("...")`
+  and safe `.rejects.toMatchObject({ ... })` payloads → exact
+  error-variant oracle
+- `expect(...).resolves.toBe(...)` → async-aware exact-value oracle
 - `expect(mockFn).toHaveBeenCalledWith(...)` and `toHaveBeenCalledTimes`
   → side-effect/call oracle
 - `expect(...).toMatchSnapshot()` and `.toMatchInlineSnapshot()` →
@@ -90,12 +127,49 @@ Assertions / oracles the adapter must recognise:
 - bare `expect(actual).toBeTruthy()` / `toBeFalsy()` /
   `toBeDefined()` → smoke oracle
 
+The 0.8.1 Bun UB advisory lane also permits internal, evidence-only
+TypeScript facts for the Blob / ArrayBuffer calibration route: syntactic
+`SharedArrayBuffer` construction, resizable `ArrayBuffer` construction through
+`maxByteLength`, `ArrayBuffer.resize(...)`, typed-array/DataView views,
+view-backed `Blob(...)` input, `blob.arrayBuffer()` observers, stable byte/text
+assertions, weak byte/text smoke or snapshot oracles, byte/text read-only
+mentions without assertions, and `maxByteLength` mention-only controls. A
+bounded internal Bun Blob bridge profile may combine those facts into
+evidence-only `configured_hint` / `bridge_unknown` advisory lines for
+`Blob::from_js_without_defer_gc` and the
+`array_buffer.shared || array_buffer.resizable` Rust boundary. A bounded
+cross-language preview projection may surface those lines in the advisory
+TypeScript preview card as `rust_ungripped_ts_discriminated`,
+`rust_ungripped_ts_missing_discriminator`, `ts_mention_not_observer`, or
+`bridge_unknown` state for the configured Bun Blob route. Missing-discriminator
+Bun Blob bridge findings must fail closed as
+`cross_language_oracle_visibility_unresolved` until the binding route, external
+callsite, and external oracle are proven; their suggested test file remains
+`not_applicable` instead of selecting a TypeScript or Rust repair target. These
+facts, bridge hints, limitation routes, and card fields do not promote
+TypeScript preview evidence into repair packets, generated tests, source edits,
+gates, badges, baselines, RIPR Zero, or support-tier claims.
+Repositories may opt into a Bun stable-byte review profile with
+`[profiles.bun_ub]` in `ripr.toml`; that profile records TypeScript-family
+`test_roots` and a repo-relative `bridge_hints` file for advisory operator
+workflow only. The profile does not enable TypeScript by itself, does not add a
+separate `javascript` language key, and does not execute `tsc`, `tsserver`,
+Bun/Jest/Vitest, mutation, generated tests, source edits, gates, badges,
+baselines, RIPR Zero, or support-tier promotion.
+
 Related-test heuristics mirror the Rust adapter: changed-owner name match,
 import-reference match, file-path proximity, and call-graph proximity at
 the syntax level. Direct owner-call matches must be token-aware: a top-level
 function owner can match `applyDiscount(...)`, but string/comment mentions and
 arbitrary object-method calls such as `order.applyDiscount(...)` must not make
-the test related.
+the test related. Method owners may use a bounded receiver relation only when
+the test constructs a local receiver with `new ClassName(...)` or a named import
+alias for that class and then calls `receiver.method(...)`. Static class-method
+owners may use a bounded direct class member relation only when the test calls
+`ClassName.method(...)` through the same-file class name or an unshadowed named
+import alias. Factory returns, dependency injection, mocked modules, prototype
+aliases, namespace chains, and dynamic property access remain advisory or
+unsupported.
 
 ## Probe Facts
 
@@ -226,15 +300,27 @@ Expected static evidence:
 
 Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus
-generated CI behavior and LSP smoke coverage.
+generated CI behavior and LSP smoke coverage. The Bun Blob / `ArrayBuffer`
+preview calibration corpus is also summarized by
+`xtask/src/main.rs::tests::bun_ub_calibration_report_summarizes_calibrated_states`
+and
+`xtask/src/main.rs::tests::bun_ub_calibration_command_writes_markdown_and_json`,
+which keep TS-discriminated, missing-discriminator, mention-only, and
+bridge-unknown cases advisory and non-repair-ready.
 
 ## Implementation Mapping
 
-Follow-up implementation belongs to Campaign 27 work item
-`analysis/typescript-preview-adapter`. The boundary, router, repo config,
-and additive output metadata land first under RIPR-SPEC-0026 work items.
-This spec PR records the per-language contract; no analyzer behavior
-changes in the spec PR.
+The first implementation landed under Campaign 27 work item
+`analysis/typescript-preview-adapter`. Follow-up completion work belongs to the
+TypeScript preview completion lane and should use
+`plans/typescript-preview-completion/implementation-plan.md` as the PR queue. No
+follow-up may change Rust behavior, preview advisory status, default gates,
+badges, baselines, RIPR Zero eligibility, provider behavior, generated tests,
+source-edit behavior, or runtime mutation execution unless a later accepted
+contract explicitly changes that boundary. `cargo xtask bun-ub-calibration`
+is an xtask-only operator report over the existing Bun calibration corpus; it
+does not promote TypeScript/JavaScript preview evidence or run TypeScript,
+JavaScript, Bun, mutation, provider, generated-test, or source-edit workflows.
 
 ## Metrics
 
@@ -252,4 +338,17 @@ TypeScript adapter contributes:
 - `language_adapter_typescript_oracle_side_effect`
 - `language_adapter_typescript_oracle_snapshot_weak`
 - `language_adapter_typescript_oracle_smoke`
+- `language_adapter_typescript_related_imported_owner_call`
+- `language_adapter_typescript_related_method_receiver_call`
+- `language_adapter_typescript_probe_predicate`
+- `language_adapter_typescript_probe_return_value`
+- `language_adapter_typescript_probe_error_path`
+- `language_adapter_typescript_probe_field_construction`
+- `language_adapter_typescript_probe_call_side_effect`
+- `language_adapter_typescript_probe_mock_interaction`
+- `language_adapter_typescript_probe_ambiguous_suppressed`
 - `language_adapter_typescript_static_limit_mocked_module`
+- `language_adapter_typescript_bun_ub_array_buffer_facts`
+- `language_adapter_typescript_bun_ub_stable_byte_oracle_facts`
+- `language_adapter_typescript_bun_ub_bridge_hints`
+- `language_adapter_typescript_bun_ub_cross_language_grip_states`

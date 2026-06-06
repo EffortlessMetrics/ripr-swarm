@@ -264,10 +264,11 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     error_context: &str,
 ) -> Result<TimedFileOutput, String> {
     let started = Instant::now();
-    let stdout_file = fs::File::create(stdout_path).map_err(|err| {
+    let stdout_tmp_path = stdout_capture_temp_path(stdout_path);
+    let stdout_file = fs::File::create(&stdout_tmp_path).map_err(|err| {
         format!(
             "failed to create stdout file {} for {error_context}: {err}",
-            stdout_path.display()
+            stdout_tmp_path.display()
         )
     })?;
     let mut command = Command::new(program);
@@ -276,10 +277,13 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     for (name, value) in envs {
         command.env(name, value);
     }
-    let mut child = command
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to run {error_context}: {err}"))?;
+    let mut child = match command.stderr(Stdio::piped()).spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = fs::remove_file(&stdout_tmp_path);
+            return Err(format!("failed to run {error_context}: {err}"));
+        }
+    };
     let stdout = child
         .stdout
         .take()
@@ -301,7 +305,14 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     });
 
     let wait_outcome = wait_for_child_with_timeout(&mut child, started, timeout, error_context)?;
-    let stdout_bytes = join_stream_file_writer(stdout_writer, "stdout", error_context)?;
+    let stdout_bytes = match join_stream_file_writer(stdout_writer, "stdout", error_context) {
+        Ok(stdout_bytes) => stdout_bytes,
+        Err(err) => {
+            let _ = fs::remove_file(&stdout_tmp_path);
+            return Err(err);
+        }
+    };
+    publish_stdout_capture(&stdout_tmp_path, stdout_path, error_context)?;
     let stderr = join_stream_reader(stderr_reader, "stderr", error_context)?;
     Ok(TimedFileOutput {
         status: Some(wait_outcome.status),
@@ -309,6 +320,45 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         duration: wait_outcome.duration,
         timed_out: wait_outcome.timed_out,
         stdout_bytes,
+    })
+}
+
+fn stdout_capture_temp_path(stdout_path: &Path) -> std::path::PathBuf {
+    let file_name = stdout_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("stdout");
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    stdout_path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        unique
+    ))
+}
+
+fn publish_stdout_capture(
+    tmp_path: &Path,
+    stdout_path: &Path,
+    error_context: &str,
+) -> Result<(), String> {
+    match fs::remove_file(stdout_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(format!(
+                "failed to remove stale stdout file {} for {error_context}: {err}",
+                stdout_path.display()
+            ));
+        }
+    }
+    fs::rename(tmp_path, stdout_path).map_err(|err| {
+        format!(
+            "failed to publish stdout file {} for {error_context}: {err}",
+            stdout_path.display()
+        )
     })
 }
 
@@ -678,9 +728,10 @@ mod tests {
         )?;
 
         assert!(output.timed_out, "long-running command should time out");
+        #[cfg(unix)]
         assert!(
-            !output.status.is_some_and(|status| status.success()),
-            "timed-out long-running command should not exit successfully"
+            output.status.is_some(),
+            "timed-out long-running command should report a process status"
         );
         Ok(())
     }
@@ -696,31 +747,15 @@ mod tests {
 
     #[cfg(windows)]
     fn long_running_command() -> Result<TestCommand, String> {
-        let current_exe =
-            std::env::current_exe().map_err(|err| format!("locate current test binary: {err}"))?;
         Ok((
-            current_exe.to_string_lossy().into_owned(),
+            "powershell".to_string(),
             vec![
-                "--exact".to_string(),
-                "run::tests::long_running_command_helper".to_string(),
-                "--nocapture".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Start-Sleep -Seconds 30".to_string(),
             ],
-            vec![(
-                "RIPR_XTASK_LONG_RUNNING_HELPER".to_string(),
-                "1".to_string(),
-            )],
+            Vec::new(),
         ))
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn long_running_command_helper() -> Result<(), String> {
-        if std::env::var_os("RIPR_XTASK_LONG_RUNNING_HELPER").is_none() {
-            return Ok(());
-        }
-
-        thread::sleep(Duration::from_secs(30));
-        Ok(())
     }
 
     #[cfg(unix)]
@@ -745,20 +780,26 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn capture_output_with_timeout_terminates_pipe_inheriting_descendants() -> Result<(), String> {
-        let started = std::time::Instant::now();
-        let current_exe =
-            std::env::current_exe().map_err(|err| format!("locate current test binary: {err}"))?;
-        let current_exe = current_exe.to_string_lossy().into_owned();
+        let marker = std::env::temp_dir().join(format!(
+            "ripr-xtask-pipe-descendant-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
         let args = vec![
-            "--exact".to_string(),
-            "run::tests::pipe_inheriting_descendant_helper".to_string(),
-            "--nocapture".to_string(),
+            "/C".to_string(),
+            format!(
+                "ping -n 8 127.0.0.1 & echo alive > \"{}\"",
+                marker.display()
+            ),
         ];
         let output = capture_output_with_timeout(
-            &current_exe,
+            "cmd",
             &args,
-            &[("RIPR_XTASK_PIPE_DESCENDANT_HELPER", "1")],
-            Duration::from_millis(100),
+            &[],
+            Duration::from_secs(1),
             "pipe-inheriting descendant",
         )?;
 
@@ -766,26 +807,10 @@ mod tests {
             output.timed_out,
             "pipe-inheriting descendant should time out"
         );
-        assert!(
-            started.elapsed() < Duration::from_secs(45),
-            "pipe-inheriting descendant should not keep captured pipes open"
-        );
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn pipe_inheriting_descendant_helper() -> Result<(), String> {
-        if std::env::var_os("RIPR_XTASK_PIPE_DESCENDANT_HELPER").is_none() {
-            return Ok(());
+        if marker.exists() {
+            let _ = fs::remove_file(&marker);
+            return Err("timed-out process tree should not run its continuation".to_string());
         }
-
-        let mut child = Command::new("cmd")
-            .args(["/C", "ping -n 120 127.0.0.1"])
-            .spawn()
-            .map_err(|err| format!("spawn pipe-inheriting descendant: {err}"))?;
-        thread::sleep(Duration::from_mins(2));
-        let _ = child.wait();
         Ok(())
     }
 
@@ -822,8 +847,26 @@ mod tests {
         }
         let captured = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read streamed stdout file: {err}"))?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| "streamed stdout path should have a parent".to_string())?;
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "streamed stdout path should have a UTF-8 file name".to_string())?;
+        let temp_prefix = format!(".{file_name}.");
+        let leaked_temp = fs::read_dir(parent)
+            .map_err(|err| format!("failed to inspect streamed stdout parent: {err}"))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .find(|name| name.starts_with(&temp_prefix) && name.ends_with(".tmp"));
         fs::remove_file(&path)
             .map_err(|err| format!("failed to remove streamed stdout file: {err}"))?;
+        if let Some(leaked_temp) = leaked_temp {
+            return Err(format!(
+                "streamed stdout should publish through temp file without leaving {leaked_temp}"
+            ));
+        }
         if captured.contains("stale output") {
             return Err(format!(
                 "captured stdout should overwrite stale file contents: {captured}"

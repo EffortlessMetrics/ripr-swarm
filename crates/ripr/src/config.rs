@@ -68,12 +68,56 @@ max_related_tests = 5
 path = ".ripr/suppressions.toml"
 
 [languages]
-# Per RIPR-SPEC-0026, only `rust` is enabled by default. Add `typescript` or
-# `python` to opt into preview adapters when the ripr binary was built with
-# the matching Cargo feature (`lang-typescript` or `lang-python`).
-# Valid values: rust, typescript, python.
+# Per RIPR-SPEC-0026, only `rust` is enabled by default. Add `typescript`,
+# `python`, or `perl` to opt into preview adapters when the ripr binary was
+# built with the matching Cargo feature (`lang-typescript`, `lang-python`, or
+# `lang-perl`). When this file is absent, Python project markers can enable
+# Python preview analysis
+# automatically for the detected repository root; this explicit list remains
+# authoritative when present.
+# Valid values: rust, typescript, python, perl.
 enabled = ["rust"]
+
+# Optional Bun stable-byte UB advisory profile. Leave this commented unless the
+# repository wants TypeScript-family preview evidence for Bun Rust/FFI seams.
+# JavaScript test files are covered by the `typescript` adapter.
+#
+# [profiles.bun_ub]
+# test_roots = [
+#   "test/js/**/*.test.ts",
+#   "test/js/**/*.test.js",
+# ]
+# bridge_hints = "ripr.bun.bridge.toml"
 "#;
+
+const PYTHON_PROJECT_MARKERS: &[&str] = &[
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "requirements.txt",
+    "pytest.ini",
+    "tox.ini",
+    "noxfile.py",
+];
+const PYTHON_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
+const PYTHON_PROJECT_EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".ripr",
+    ".direnv",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    ".tox",
+    ".nox",
+    "site-packages",
+    ".pytest_cache",
+    ".mypy_cache",
+    "dist",
+    "build",
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RiprConfig {
@@ -84,6 +128,7 @@ pub(crate) struct RiprConfig {
     reports: ReportsConfig,
     suppressions: SuppressionsConfig,
     languages: LanguagesConfig,
+    profiles: ProfilesConfig,
     source_path: Option<PathBuf>,
     source_text: Option<String>,
 }
@@ -115,6 +160,10 @@ impl RiprConfig {
 
     pub(crate) fn languages(&self) -> &LanguagesConfig {
         &self.languages
+    }
+
+    pub(crate) fn profiles(&self) -> &ProfilesConfig {
+        &self.profiles
     }
 
     pub(crate) fn source_text(&self) -> Option<&str> {
@@ -279,6 +328,33 @@ impl LanguagesConfig {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProfilesConfig {
+    bun_ub: Option<BunUbProfileConfig>,
+}
+
+impl ProfilesConfig {
+    pub(crate) fn bun_ub(&self) -> Option<&BunUbProfileConfig> {
+        self.bun_ub.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BunUbProfileConfig {
+    test_roots: Vec<String>,
+    bridge_hints: PathBuf,
+}
+
+impl BunUbProfileConfig {
+    pub(crate) fn test_roots(&self) -> &[String] {
+        &self.test_roots
+    }
+
+    pub(crate) fn display_bridge_hints(&self) -> String {
+        self.bridge_hints.to_string_lossy().replace('\\', "/")
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConfigSeverity {
     Off,
@@ -421,13 +497,29 @@ pub(crate) struct CheckInputExplicit {
 pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     let path = root.join(CONFIG_FILE_NAME);
     if !path.exists() {
-        return Ok(RiprConfig::default());
+        return default_config_for_root(root);
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|err| format!("read {} failed: {err}", path.display()))?;
     let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
     config.source_path = Some(path);
     config.source_text = Some(text);
+    Ok(config)
+}
+
+fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
+    let mut config = RiprConfig::default();
+    if detect_python_project(root) {
+        if !LanguageId::Python.is_available() {
+            return Err(
+                "Python project markers were detected, but this ripr binary was built without Cargo feature `lang-python`; use a Python-enabled ripr binary or add `ripr.toml` with `[languages] enabled = [\"rust\"]` to keep Python preview disabled"
+                    .to_string(),
+            );
+        }
+        if !config.languages.enabled.contains(&LanguageId::Python) {
+            config.languages.enabled.push(LanguageId::Python);
+        }
+    }
     Ok(config)
 }
 
@@ -466,6 +558,66 @@ pub(crate) fn apply_to_check_input(
 fn parse_config(text: &str) -> Result<RiprConfig, String> {
     let raw: RawConfig = toml::from_str(text).map_err(|err| format!("invalid ripr.toml: {err}"))?;
     RiprConfig::from_raw(raw)
+}
+
+pub(crate) fn detect_python_project(root: &Path) -> bool {
+    PYTHON_PROJECT_MARKERS
+        .iter()
+        .any(|marker| root.join(marker).is_file())
+        || PYTHON_SOURCE_DIR_MARKERS
+            .iter()
+            .any(|marker| dir_contains_python_source(&root.join(marker)))
+}
+
+fn dir_contains_python_source(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if is_python_project_excluded_dir(name) {
+                continue;
+            }
+            if dir_contains_python_source(&path) {
+                return true;
+            }
+        } else if file_type.is_file()
+            && is_python_source_file(&path)
+            && !is_detectable_generated_python_file(&path)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_python_project_excluded_dir(name: &str) -> bool {
+    PYTHON_PROJECT_EXCLUDED_DIRS.contains(&name)
+}
+
+fn is_python_source_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension == "py")
+}
+
+fn is_detectable_generated_python_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.ends_with("_pb2.py")
+        || name.ends_with("_pb2_grpc.py")
+        || name.ends_with(".generated.py")
+        || name.ends_with("_generated.py")
+        || name.starts_with("generated_")
 }
 
 #[cfg(test)]
@@ -516,6 +668,9 @@ impl RiprConfig {
         {
             config.languages.enabled = parse_languages_enabled(&enabled)?;
         }
+        if let Some(profiles) = raw.profiles {
+            config.profiles = parse_profiles(profiles)?;
+        }
         Ok(config)
     }
 }
@@ -527,9 +682,10 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
             "rust" => LanguageId::Rust,
             "typescript" => LanguageId::TypeScript,
             "python" => LanguageId::Python,
+            "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl"
                 ));
             }
         };
@@ -549,6 +705,40 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
     Ok(parsed)
 }
 
+fn parse_profiles(raw: RawProfilesConfig) -> Result<ProfilesConfig, String> {
+    Ok(ProfilesConfig {
+        bun_ub: raw.bun_ub.map(parse_bun_ub_profile).transpose()?,
+    })
+}
+
+fn parse_bun_ub_profile(raw: RawBunUbProfileConfig) -> Result<BunUbProfileConfig, String> {
+    let test_roots = raw
+        .test_roots
+        .ok_or_else(|| "profiles.bun_ub.test_roots is required".to_string())?;
+    if test_roots.is_empty() {
+        return Err("profiles.bun_ub.test_roots must list at least one test root".to_string());
+    }
+    let mut parsed_roots = Vec::with_capacity(test_roots.len());
+    for root in test_roots {
+        let trimmed = root.trim();
+        parse_relative_path("profiles.bun_ub.test_roots", trimmed)?;
+        if parsed_roots.iter().any(|existing| existing == trimmed) {
+            return Err(format!(
+                "profiles.bun_ub.test_roots lists `{trimmed}` more than once; remove the duplicate"
+            ));
+        }
+        parsed_roots.push(trimmed.to_string());
+    }
+    let bridge_hints = raw
+        .bridge_hints
+        .ok_or_else(|| "profiles.bun_ub.bridge_hints is required".to_string())
+        .and_then(|path| parse_relative_path("profiles.bun_ub.bridge_hints", &path))?;
+    Ok(BunUbProfileConfig {
+        test_roots: parsed_roots,
+        bridge_hints,
+    })
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
@@ -559,12 +749,26 @@ struct RawConfig {
     reports: Option<RawReportsConfig>,
     suppressions: Option<RawSuppressionsConfig>,
     languages: Option<RawLanguagesConfig>,
+    profiles: Option<RawProfilesConfig>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawLanguagesConfig {
     enabled: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProfilesConfig {
+    bun_ub: Option<RawBunUbProfileConfig>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBunUbProfileConfig {
+    test_roots: Option<Vec<String>>,
+    bridge_hints: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -872,6 +1076,14 @@ mod tests {
         Ok(root)
     }
 
+    fn write_file(path: &Path, text: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        fs::write(path, text).map_err(|err| format!("write {} failed: {err}", path.display()))
+    }
+
     #[test]
     fn missing_config_uses_behavior_preserving_defaults() -> Result<(), String> {
         let root = temp_root("missing")?;
@@ -885,6 +1097,105 @@ mod tests {
             DEFAULT_CONTEXT_RELATED_TESTS
         );
         assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn missing_config_detects_root_python_project_markers() -> Result<(), String> {
+        for marker in PYTHON_PROJECT_MARKERS {
+            let root = temp_root(&format!("python-marker-{}", marker.replace('.', "-")))?;
+            write_file(&root.join(marker), "")?;
+
+            let config = load_for_root(&root)?;
+
+            assert!(config.source_path().is_none());
+            assert_eq!(
+                config.languages().enabled_owned(),
+                vec![LanguageId::Rust, LanguageId::Python],
+                "{marker} should enable Python preview defaults"
+            );
+            let _ = fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn missing_config_detects_python_source_under_src_or_tests() -> Result<(), String> {
+        for source_dir in PYTHON_SOURCE_DIR_MARKERS {
+            let root = temp_root(&format!("python-source-{source_dir}"))?;
+            write_file(
+                &root.join(source_dir).join("pricing.py"),
+                "def price():\n    return 1\n",
+            )?;
+
+            let config = load_for_root(&root)?;
+
+            assert_eq!(
+                config.languages().enabled_owned(),
+                vec![LanguageId::Rust, LanguageId::Python],
+                "{source_dir}/ with Python files should enable Python preview defaults"
+            );
+            let _ = fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_config_does_not_treat_empty_src_or_tests_as_python() -> Result<(), String> {
+        let root = temp_root("empty-python-marker-dirs")?;
+        fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create tests failed: {err}"))?;
+        write_file(&root.join("src/lib.rs"), "pub fn price() -> u32 { 1 }\n")?;
+
+        let config = load_for_root(&root)?;
+
+        assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_config_ignores_excluded_python_directories_and_generated_files() -> Result<(), String>
+    {
+        let root = temp_root("excluded-python-sources")?;
+        for excluded_dir in PYTHON_PROJECT_EXCLUDED_DIRS {
+            write_file(
+                &root.join("src").join(excluded_dir).join("ignored.py"),
+                "x = 1\n",
+            )?;
+        }
+        write_file(&root.join("src/generated_client.py"), "x = 1\n")?;
+        write_file(&root.join("tests/service_pb2.py"), "x = 1\n")?;
+
+        let config = load_for_root(&root)?;
+
+        assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn explicit_config_keeps_python_preview_disabled_even_with_project_markers()
+    -> Result<(), String> {
+        let root = temp_root("explicit-rust-only-python-root")?;
+        write_file(
+            &root.join("pyproject.toml"),
+            "[project]\nname = \"sample\"\n",
+        )?;
+        write_file(
+            &root.join(CONFIG_FILE_NAME),
+            "[languages]\nenabled = [\"rust\"]\n",
+        )?;
+
+        let config = load_for_root(&root)?;
+
+        assert!(config.source_path().is_some());
+        assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+        let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 
@@ -953,6 +1264,21 @@ enabled = ["rust", "typescript"]
         );
     }
 
+    #[cfg(not(feature = "lang-perl"))]
+    #[test]
+    fn languages_section_rejects_unavailable_perl_adapter() {
+        let result = parse_config(
+            r#"
+[languages]
+enabled = ["rust", "perl"]
+"#,
+        );
+        assert!(
+            matches!(result, Err(ref message) if message.contains("lang-perl")),
+            "expected missing lang-perl error, got {result:?}"
+        );
+    }
+
     #[test]
     fn languages_section_allows_empty_enabled_list() -> Result<(), String> {
         let config = parse_config(
@@ -998,6 +1324,128 @@ extra = true
         );
         assert!(
             matches!(result, Err(ref message) if message.contains("extra") || message.contains("unknown field"))
+        );
+    }
+
+    #[test]
+    fn bun_ub_profile_absent_by_default() -> Result<(), String> {
+        let config = parse_config("[languages]\nenabled = [\"rust\"]\n")?;
+        assert!(config.profiles().bun_ub().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn bun_ub_profile_parses_advisory_roots_and_bridge_hint_path() -> Result<(), String> {
+        let config = parse_config(
+            r#"
+[languages]
+enabled = ["rust"]
+
+[profiles.bun_ub]
+test_roots = [
+  "test/js/**/*.test.ts",
+  "test/js/**/*.test.js",
+]
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        )?;
+
+        assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+        let profile = config
+            .profiles()
+            .bun_ub()
+            .ok_or_else(|| "expected Bun UB profile".to_string())?;
+        assert_eq!(
+            profile.test_roots(),
+            &[
+                "test/js/**/*.test.ts".to_string(),
+                "test/js/**/*.test.js".to_string()
+            ]
+        );
+        assert_eq!(profile.display_bridge_hints(), "ripr.bun.bridge.toml");
+        Ok(())
+    }
+
+    #[test]
+    fn bun_ub_profile_rejects_missing_required_fields() {
+        let missing_roots = parse_config(
+            r#"
+[profiles.bun_ub]
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        );
+        assert!(
+            matches!(missing_roots, Err(ref message) if message.contains("test_roots is required"))
+        );
+
+        let missing_bridge = parse_config(
+            r#"
+[profiles.bun_ub]
+test_roots = ["test/js/**/*.test.ts"]
+"#,
+        );
+        assert!(
+            matches!(missing_bridge, Err(ref message) if message.contains("bridge_hints is required"))
+        );
+    }
+
+    #[test]
+    fn bun_ub_profile_rejects_unsafe_or_ambiguous_paths() {
+        let empty_roots = parse_config(
+            r#"
+[profiles.bun_ub]
+test_roots = []
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        );
+        assert!(
+            matches!(empty_roots, Err(ref message) if message.contains("at least one test root"))
+        );
+
+        let duplicate_roots = parse_config(
+            r#"
+[profiles.bun_ub]
+test_roots = ["test/js/**/*.test.ts", "test/js/**/*.test.ts"]
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        );
+        assert!(matches!(duplicate_roots, Err(ref message) if message.contains("more than once")));
+
+        let unsafe_root = parse_config(
+            r#"
+[profiles.bun_ub]
+test_roots = ["../bun/test/js/**/*.test.ts"]
+bridge_hints = "ripr.bun.bridge.toml"
+"#,
+        );
+        assert!(
+            matches!(unsafe_root, Err(ref message) if message.contains("must stay within the repository"))
+        );
+
+        let unsafe_bridge = parse_config(
+            r#"
+[profiles.bun_ub]
+test_roots = ["test/js/**/*.test.ts"]
+bridge_hints = "scheme:ripr.bun.bridge.toml"
+"#,
+        );
+        assert!(
+            matches!(unsafe_bridge, Err(ref message) if message.contains("repository-relative"))
+        );
+    }
+
+    #[test]
+    fn bun_ub_profile_rejects_unknown_fields() {
+        let result = parse_config(
+            r#"
+[profiles.bun_ub]
+test_roots = ["test/js/**/*.test.ts"]
+bridge_hints = "ripr.bun.bridge.toml"
+runtime = "bun"
+"#,
+        );
+        assert!(
+            matches!(result, Err(ref message) if message.contains("runtime") || message.contains("unknown field"))
         );
     }
 
@@ -1157,6 +1605,7 @@ suppressed = "off"
             config.severity().for_seam(SeamGripClass::Suppressed),
             ConfigSeverity::Off
         );
+        assert!(config.profiles().bun_ub().is_none());
         Ok(())
     }
 
@@ -1213,6 +1662,7 @@ suppressed = "off"
             config.severity().for_seam(SeamGripClass::Suppressed),
             ConfigSeverity::Off
         );
+        assert!(config.profiles().bun_ub().is_none());
         Ok(())
     }
 
@@ -1239,6 +1689,7 @@ suppressed = "off"
         assert_eq!(builtin.lsp(), generated.lsp());
         assert_eq!(builtin.reports(), generated.reports());
         assert_eq!(builtin.suppressions(), generated.suppressions());
+        assert_eq!(builtin.profiles(), generated.profiles());
 
         for class in [
             ExposureClass::Exposed,

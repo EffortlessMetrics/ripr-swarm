@@ -37,11 +37,11 @@ mod tests {
     use super::{context_packet::render_context_packet, render, report::finding_json};
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FlowSinkFact,
-        FlowSinkKind, LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
-        RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind, Summary,
-        ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
+        FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest,
+        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind,
+        Summary, SymbolId, ValueContext, ValueFact,
     };
     use std::path::PathBuf;
 
@@ -634,6 +634,70 @@ mod tests {
     }
 
     #[test]
+    fn finding_json_emits_probe_owner_only_when_present() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        let mut out = String::new();
+
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON should parse: {err}"))?;
+        assert!(
+            value["probe"].get("owner").is_none(),
+            "probe.owner should be omitted when no owner is populated"
+        );
+
+        finding.probe.owner = Some(SymbolId("python:src/pricing.py::discount".to_string()));
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        out.clear();
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON should parse: {err}"))?;
+
+        assert_eq!(value["probe"]["owner"], "python:src/pricing.py::discount");
+        Ok(())
+    }
+
+    #[test]
+    fn finding_json_emits_canonical_gap_identity_when_present() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
+                .to_string(),
+            language: "python".to_string(),
+            file: "src/pricing.py".to_string(),
+            owner: "apply_discount".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "amount>=threshold".to_string(),
+        });
+        let mut out = String::new();
+
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON should parse: {err}"))?;
+
+        assert_eq!(
+            value["canonical_gap_id"],
+            "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
+        );
+        assert_eq!(value["canonical_gap_group_size"], 1);
+        assert_eq!(value["canonical_gap"]["language"], "python");
+        assert_eq!(value["canonical_gap"]["file"], "src/pricing.py");
+        assert_eq!(value["canonical_gap"]["owner"], "apply_discount");
+        assert_eq!(
+            value["canonical_gap"]["behavior_kind"],
+            "predicate_boundary"
+        );
+        assert_eq!(value["canonical_gap"]["probe_kind"], "predicate");
+        assert_eq!(
+            value["canonical_gap"]["normalized_discriminator"],
+            "amount>=threshold"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn finding_json_preserves_language_metadata_order_with_static_limit_kind() {
         let mut finding = unknown_finding();
         finding.language = Some(LanguageId::TypeScript);
@@ -653,9 +717,159 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn finding_json_projects_typescript_preview_actionability() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        let mut out = String::new();
+
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+
+        let actionability = &value["preview_actionability"];
+        assert_eq!(actionability["authority_boundary"], "preview_advisory_only");
+        assert_eq!(actionability["repair_packet_ready"], false);
+        assert_eq!(actionability["gap_state"], "advisory");
+        assert_eq!(
+            actionability["actionability_category"],
+            "incomplete_repair_packet"
+        );
+        assert_eq!(
+            actionability["missing_actionability_fields"][0],
+            "canonical_gap_id"
+        );
+        assert_eq!(actionability["raw_evidence_refs"][0]["file"], "src/lib.ts");
+        assert_eq!(actionability["raw_evidence_refs"][0]["line"], 2);
+        assert!(value.get("repair_placement").is_none());
+        assert!(value.get("python_repair_card").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn finding_json_projects_perl_preview_card_public_preview_scope() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_perl_preview_card_inputs(&mut finding);
+        let mut out = String::new();
+
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+
+        let card = &value["perl_preview_card"];
+        assert_eq!(card["card_version"], "perl_preview_card.v1");
+        assert_eq!(card["language"], "perl");
+        assert_eq!(card["language_status"], "preview");
+        assert_eq!(card["authority_boundary"], "preview_advisory_only");
+        assert_eq!(
+            card["surface_scope"],
+            "check_json_human_sarif_github_gap_ledger_markdown"
+        );
+        assert_eq!(card["public_projection_ready"], true);
+        assert_eq!(card["public_repair_packet"], false);
+        assert_eq!(card["repair_packet_ready"], false);
+        assert_eq!(card["agent_packet_ready"], false);
+        assert_eq!(card["gate_candidate"], false);
+        assert_eq!(card["badge_candidate"], false);
+        assert_eq!(card["ripr_zero_candidate"], false);
+        assert_eq!(card["verify"]["command"], "prove t/app.t");
+        assert_eq!(card["verify"]["status"], "fact_only_not_delegated");
+        assert!(card["receipt"]["command"].is_null());
+        assert_eq!(card["receipt"]["status"], "available_not_delegated");
+        assert_eq!(card["raw_evidence_refs"][0]["file"], "lib/My/App.pm");
+        assert_eq!(card["raw_evidence_refs"][0]["line"], 8);
+        assert!(card.get("allowed_edit_surface").is_none());
+        assert!(card.get("forbidden_files").is_none());
+        assert!(card.get("allowed_edit_boundaries").is_none());
+        assert!(card.get("forbidden_edit_boundaries").is_none());
+        assert!(card["receipt"].get("argv").is_none());
+        assert!(!out.contains("perl_internal_agent_packet"));
+        assert!(!out.contains("perl_repair_card"));
+        Ok(())
+    }
+
+    fn add_typescript_preview_actionability(finding: &mut Finding) {
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.owner_kind = Some(OwnerKind::Function);
+        finding.evidence = vec![
+            "owner: discountedTotal".to_string(),
+            "gap_state: advisory".to_string(),
+            "actionability_category: incomplete_repair_packet".to_string(),
+            "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
+            "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
+            "missing_actionability_fields: canonical_gap_id, verify_command".to_string(),
+            "evidence_needed_to_promote: canonical gap identity and verify command".to_string(),
+            "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
+        ];
+    }
+
+    fn add_perl_preview_card_inputs(finding: &mut Finding) {
+        finding.id = "probe:lib_My_App_pm:8:perl_return".to_string();
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value"
+                .to_string(),
+            language: "perl".to_string(),
+            file: "lib/My/App.pm".to_string(),
+            owner: "perl:lib/My/App.pm::My::App::discount".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "exact_return_assertion".to_string(),
+            normalized_discriminator: "return_value".to_string(),
+        });
+        finding.probe = Probe {
+            id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
+            location: SourceLocation::new("lib/My/App.pm", 8, 5),
+            owner: Some(SymbolId(
+                "perl:lib/My/App.pm::My::App::discount".to_string(),
+            )),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("return $price".to_string()),
+            after: Some("return $discounted".to_string()),
+            expression: "return $discounted".to_string(),
+            expected_sinks: vec!["return_value".to_string()],
+            required_oracles: vec!["exact_return_assertion".to_string()],
+        };
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.evidence = vec![
+            "perl_packet_id: perl-preview:gap-return".to_string(),
+            "perl_repair_kind: add_exact_return_assertion".to_string(),
+            "perl_target_test_shape: Test::More exact_return_assertion".to_string(),
+            "perl_suggested_test_location: t/app.t::discount_smoke".to_string(),
+            "perl_suggested_assertion: assert the exact returned `return_value` value".to_string(),
+            "perl_verify_command: prove t/app.t".to_string(),
+            "perl_receipt_command: ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id perl-gap --json".to_string(),
+            "perl_confidence: medium".to_string(),
+            "perl_allowed_edit_boundary: t/app.t".to_string(),
+            "perl_forbidden_edit_boundary: lib/My/App.pm, badges/ripr-plus.json".to_string(),
+            "perl_stop_if: perl-lsp packet status changes".to_string(),
+            "perl_must_not_change: do not edit Perl production code".to_string(),
+            "raw_evidence_ref: leg=perl_change;file=lib/My/App.pm;line=8;kind=perl_change;source_id=change:lib/My/App.pm:8:return;owner=perl:lib/My/App.pm::My::App::discount;sample=return $discounted".to_string(),
+            "raw_evidence_ref: leg=perl_oracle;file=t/app.t;line=7;kind=perl_oracle;source_id=oracle:t/app.t:7:is;owner=perl:lib/My/App.pm::My::App::discount;sample=is(discount(...), 90)".to_string(),
+        ];
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "return_value".to_string(),
+            reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
+                .to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests = vec![RelatedTest {
+            name: "discount_smoke".to_string(),
+            file: PathBuf::from("t/app.t"),
+            line: 7,
+            oracle: Some("ok(discount(...))".to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Weak,
+        }];
+        finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
+        finding.language = Some(LanguageId::Perl);
+        finding.language_status = Some(LanguageStatus::Preview);
+    }
+
     fn unknown_finding() -> Finding {
         Finding {
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
+            canonical_gap: None,
             probe: Probe {
                 id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),

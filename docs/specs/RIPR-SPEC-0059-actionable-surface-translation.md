@@ -177,6 +177,45 @@ for the surface they touch:
 - every surface repeats the relevant advisory, static, preview, and non-runtime
   proof boundary.
 
+Dogfood receipts must include a badge/LSP/PR/CI projection-alignment corpus.
+The corpus starts from one canonical repair state and proves each surface keeps
+the same `canonical_gap_id`, `packet_id`, `repair_kind`, `verify_command`,
+`receipt_command`, and top next action. Each case must state that it consumes
+canonical state, does not reinterpret raw findings, does not headline raw
+finding totals, remains advisory by default, and can show limited or stale
+state instead of an incorrect count.
+
+For non-full runtime states, surface examples must fail closed: the first
+screen names the limited or stale state, routes the next action to
+`resolve_limited_runtime_status`, and must not headline an actionable count.
+Limited-state projections use `projection_basis = canonical_runtime_status`,
+name a limitation category and runtime repair command, and carry no
+`canonical_gap_id`, `packet_id`, `repair_kind`, `verify_command`, or
+`receipt_command`. Those packet fields belong only to full runs where a safe
+actionable repair packet is ready. The limitation category and runtime repair
+command must match the named runtime state; for example,
+`limited_large_cache_skip` routes to
+`cargo xtask cache report && cargo xtask cache gc --dry-run`, while
+`limited_incomplete_input` and `limited_sampled_input` route to
+`cargo xtask lane1-evidence-audit`.
+For full runtime states with a ready packet, the top next action may be
+`attempt_ready_packet`. Full runtime states with degraded route-quality or
+non-success outcomes may instead route `improve_repair_route_quality`,
+`inspect_unchanged_attempts`, or another canonical repair-loop next action.
+Full runtime states with no ready public packet may project
+`canonical_limitation_backlog` and route `route_static_limitation_backlog` as
+an analyzer-backlog next action. That projection is advisory, preserves
+non-actionable status, and must not be counted as a public repair packet or
+actionable gap. Limited or stale runtime states must fail closed before this
+projection: they use `canonical_runtime_status`, route
+`resolve_limited_runtime_status`, and do not carry static-limitation backlog
+packet identity or analyzer-backlog commands as complete current evidence.
+Full actionable projection examples name a `source_alignment_case` from the
+repair-loop surface projection corpus and must match that source case's
+canonical gap, packet, repair kind, verify command, receipt command, and top
+next action. User-facing surfaces stay thin consumers of the canonical repair
+source instead of maintaining independent packet truth.
+
 ## Acceptance Examples
 
 Given the public badge headline, a new reader can describe the count as
@@ -204,6 +243,35 @@ Validation should use existing guardrails plus focused evidence checks:
 - `cargo xtask actionable-gap-outcomes`
 - `cargo xtask badge-basis`
 - editor and swarm focused fixture/smoke checks for first-screen rendering
+- `xtask::tests::dogfood_user_surface_projection_alignment_reports_contract_drift`
+  pins fail-closed user-surface behavior for limited or stale runtime states so
+  the corpus cannot route stale evidence to an attempt-ready packet or headline
+  an actionable count.
+- `xtask::tests::dogfood_user_surface_projection_alignment_accepts_limited_runtime_status`
+  pins limited runtime-state projection without packet identity.
+- `xtask::tests::dogfood_user_surface_projection_alignment_rejects_wrong_runtime_repair_route`
+  pins limited runtime-state categories and repair commands to their named
+  status.
+- `xtask::tests::dogfood_user_surface_projection_alignment_rejects_limited_static_limitation_backlog_projection`
+  pins that limited or stale runtime rows route to `canonical_runtime_status`
+  and cannot reuse static-limitation backlog packet identity or analyzer
+  backlog next actions as complete current evidence.
+- `xtask::tests::dogfood_surface_projection_alignment_covers_route_quality_non_success`
+  requires a non-success route-quality source case for downstream surfaces.
+- `xtask::tests::dogfood_surface_projection_alignment_covers_missing_receipt_route_quality`
+  requires an attempted-no-receipt route-quality source case before downstream
+  surfaces can project missing receipt state.
+- `xtask::tests::dogfood_user_surface_projection_alignment_matches_route_quality_non_success_source`
+  pins full user-surface rows to degraded route-quality source state without
+  converting it into `attempt_ready_packet`.
+- `xtask::tests::dogfood_user_surface_projection_alignment_matches_missing_receipt_source`
+  pins user-surface missing receipt state to `collect_missing_attempt_receipts`
+  instead of claiming improvement or another packet attempt.
+- `xtask::tests::dogfood_user_surface_projection_alignment_covers_route_quality_non_success_all_surfaces`
+  requires badge, LSP, PR comment, and CI examples to consume the degraded
+  route-quality source state as the same canonical next action.
+- `xtask::tests::dogfood_user_surface_projection_alignment_matches_surface_projection_source`
+  pins full user-surface projection to the canonical repair-loop source case.
 
 Future implementation PRs should add or update fixtures for the surface they
 change. Docs-only PRs satisfy this spec by passing spec-format and doc-index

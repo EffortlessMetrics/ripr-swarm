@@ -55,13 +55,14 @@ pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence af
 Usage: ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
 
 Options:
-  --before PATH    Repo-exposure JSON snapshot before the focused test.
-  --after PATH     Repo-exposure JSON snapshot after the focused test.
+  --before PATH    Static snapshot before the focused test: repo exposure or check JSON.
+  --after PATH     Static snapshot after the focused test: repo exposure or check JSON.
   --format FORMAT  md, markdown, text, or json. Defaults to md.
   --out PATH       Write the rendered receipt to a file instead of stdout.
 
 The outcome receipt is advisory. It compares static repo-exposure snapshots by
-seam_id and reports moved, unchanged, regressed, new, and removed seams. Its
+seam_id and check-output snapshots by canonical_gap_id, then reports moved,
+unchanged, regressed, new, and removed gaps or seams. Its
 review receipt summarizes what changed, what RIPR flagged before, which focused
 proof signals moved, what remains weak or unknown, and what reviewers should
 inspect or avoid inferring. It does not run analysis, edit source, generate
@@ -81,11 +82,13 @@ Options:
                            badge-plus-json, badge-plus-shields, repo-badge-json,
                            repo-badge-shields, repo-badge-plus-json,
                            repo-badge-plus-shields, repo-seams-json,
-                           repo-seams-md, repo-exposure-json, repo-exposure-md,
+                           repo-seams-md, repo-exposure-json,
+                           repo-exposure-summary-json, repo-exposure-md,
                            repo-sarif, agent-seam-packets-json. Defaults to human.
-                           badge-plus-* and repo-badge-plus-* formats require
-                           target/ripr/reports/test-efficiency.json (run
-                           `cargo xtask test-efficiency-report` first).
+                           badge-plus-* and repo-badge-plus-* formats read
+                           target/ripr/reports/test-efficiency.json when present;
+                           missing input renders a neutral "needs test-efficiency"
+                           badge and warns on stderr. See docs/BADGE_ADOPTION.md.
                            repo-* and agent-seam-packets-json formats render
                            against the full repo baseline; the non-repo badge-*
                            formats remain diff-scoped.
@@ -100,6 +103,24 @@ Examples:
   ripr check --base HEAD~1
   ripr check --diff crates/ripr/examples/sample/example.diff --format github
   ripr check --mode ready --json
+"#;
+pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and report full-repo context as an explicit bounded state.
+
+Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format human|json] [--json]
+
+Options:
+  --root PATH              Workspace root. Defaults to current directory.
+  --base REV               Base revision for git diff. Defaults to origin/main.
+  --head REV               Head revision for git diff. Defaults to HEAD.
+  --mode MODE              instant, draft, fast, deep, or ready. Defaults to draft.
+  --format FORMAT          human, text, md, markdown, or json. Defaults to human.
+  --json                   Shortcut for --format json.
+  --no-unchanged-tests     Limit the index to changed Rust files.
+
+The diff report emits changed files, changed seams, static evidence for those
+seams, a diff-complete runtime status, an explicit full-repo-limited context
+status, and a receipt path hint. It does not run mutation testing, edit files,
+or turn the full-repo limitation into a success state.
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 

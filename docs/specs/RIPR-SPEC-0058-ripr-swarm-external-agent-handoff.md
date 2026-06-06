@@ -98,6 +98,7 @@ Required handoff fields are:
 | `verify_command` | Command the agent or operator runs after the patch. |
 | `receipt_command` or `receipt_command_or_path` | Command or path used to produce the attempt receipt. |
 | `must_not_change[]` | Explicit boundaries the agent must preserve. |
+| `allowed_edit_surface[]` | Workspace-relative files the agent may edit for this packet. |
 | `confidence_basis` | Basis for why the packet is safe enough to attempt. |
 | `static_limitations[]` | Must be empty for an unblocked attempt, or the packet stays blocked. |
 | `raw_findings[]` | Supporting evidence only. Never split into separate tasks. |
@@ -116,6 +117,7 @@ show:
 - the repair route is structured and names a repair kind;
 - verify and receipt commands are present;
 - `must_not_change[]` is present;
+- `allowed_edit_surface[]` is present;
 - static limitations are absent or the packet is treated as blocked;
 - raw findings are attached only as supporting evidence.
 
@@ -157,6 +159,7 @@ audit. The preferred request shape is:
     "verify_command": "cargo test -p ripr rejects_missing_input",
     "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id gap:parser:missing-input --json --out target/ripr/reports/agent-receipt.json",
     "must_not_change": ["production parser code"],
+    "allowed_edit_surface": ["tests/parser.rs"],
     "confidence_basis": "fixture_backed",
     "static_limitations": [],
     "raw_findings": [
@@ -183,6 +186,7 @@ The agent may:
 The agent must:
 
 - obey `must_not_change[]`;
+- edit only files named by `allowed_edit_surface[]`;
 - stay within `repair_kind` and `repair_route`;
 - keep raw findings as supporting evidence only;
 - stop if the repair requires production-code edits under the default contract;
@@ -260,7 +264,8 @@ The operator reviews the patch before commit, merge, or follow-up automation.
 The review checks:
 
 - one packet was attempted;
-- changed files fit the packet and `must_not_change[]`;
+- changed files fit the packet, `allowed_edit_surface[]`, and
+  `must_not_change[]`;
 - production code was not edited by default;
 - verify command was run or the absence is named;
 - receipt command was run or the absence is named;
@@ -355,8 +360,11 @@ not silently retry forever.
 
 ## Test Mapping
 
-This is a documentation-only contract. Current adjacent coverage lives in
-`RIPR-SPEC-0057`:
+This contract started as a documentation boundary over the external-agent
+handoff. Current adjacent coverage lives in `RIPR-SPEC-0057`, and the read-only
+`ripr swarm ingest` implementation now pins the result-ingestion side of the
+handoff without adding providers, autonomous edits, receipt creation, or merge
+authority:
 
 - `xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context`
   pins that missing verify, missing receipt, and static-limitation packets do
@@ -367,10 +375,14 @@ This is a documentation-only contract. Current adjacent coverage lives in
   pins blocked packet visibility;
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
   pins receipt-backed outcome states.
+- `crates/ripr/src/output/swarm_ingest.rs::python_preview_closed_agent_result_fixture_matches_expected_json`
+  pins the Python preview agent-result ingest envelope for a test-only repair
+  with passing verify evidence and resolved receipt movement.
 
-Future implementation PRs that emit external-agent handoff artifacts should add
-fixtures for request packet shape, agent response shape, production-code
-boundary violations, missing receipts, and unchanged or regressed attempts.
+Future implementation PRs that expand external-agent handoff artifacts should
+add fixtures for request packet shape, additional agent response shapes,
+production-code boundary violations, missing receipts, and unchanged or
+regressed attempts.
 
 ## Implementation Mapping
 
@@ -378,16 +390,18 @@ Implemented prerequisites:
 
 - `cargo xtask ripr-swarm plan --top <n>`;
 - `cargo xtask ripr-swarm attempt --packet <id> --dry-run`;
+- `ripr swarm ingest --result <agent-result.json>`;
 - `target/ripr/reports/swarm-plan.json`;
 - `target/ripr/reports/swarm-plan.md`;
 - `target/ripr/reports/actionable-gap-outcomes.json`;
 - `target/ripr/reports/actionable-gap-outcomes.md`;
 - `docs/RIPR_SWARM_HUMAN_WORKFLOW.md`.
 
-This spec is documentation-only. It does not add a command, schema file,
-provider adapter, runner, or generated patch surface. Future implementation may
-add a report artifact for external-agent handoff packets, but that requires a
-separate scoped PR with fixtures and output schema documentation.
+The implemented ingest command remains read-only and advisory. It does not add
+a provider adapter, autonomous runner, generated patch surface, or receipt
+writer. Future implementation may add richer report artifacts for
+external-agent handoff packets, but that requires a separate scoped PR with
+fixtures and output schema documentation.
 
 ## Metrics
 

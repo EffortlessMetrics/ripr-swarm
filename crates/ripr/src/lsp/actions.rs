@@ -14,6 +14,7 @@ use crate::domain::OracleStrength;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_for_classified_seam,
 };
+use crate::output::evidence_record::cross_language_test_target_unresolved;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tower_lsp_server::ls_types::{
@@ -166,6 +167,9 @@ fn push_seam_actions(
         INSPECT_SEAM_PACKET_TITLE,
         copy_seam_packet_target(params, context.diagnostic, context.seam),
     ));
+    if cross_language_test_target_unresolved(context.seam) {
+        return;
+    }
     if suggested_assertion.is_some() || related_test.is_some() {
         actions.push(copy_targeted_test_brief_action(
             context.seam,
@@ -270,44 +274,62 @@ fn push_gap_actions(
     params: &CodeActionParams,
     context: GapActionContext<'_>,
 ) {
-    if let Some(target) = first_repair_packet_target(context.snapshot, context.diagnostic) {
-        actions.push(copy_context_action(
-            COPY_FIRST_REPAIR_PACKET_TITLE,
-            COPY_FIRST_REPAIR_PACKET_TITLE,
-            target,
-        ));
-    }
-    if let Some(target) = gap_repair_packet_target(params, context.snapshot, context.diagnostic) {
-        actions.push(copy_context_action(
-            INSPECT_GAP_PACKET_TITLE,
-            INSPECT_GAP_PACKET_COMMAND_TITLE,
-            target,
-        ));
-    }
-    if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
-        actions.push(open_related_test_action(target));
-    }
-    let verify_command = first_safe_command_at(
-        context.snapshot.root.as_path(),
-        context.data,
-        &["verification_commands"],
-    );
-    if let Some(command) = &verify_command {
-        actions.push(copy_agent_loop_command_action(
-            AGENT_VERIFY_COMMAND_TITLE,
-            COPY_AGENT_VERIFY_COMMAND,
-            gap_command_target(context.diagnostic, "gap_verify", command),
-        ));
-    }
-    if verify_command.is_some()
-        && let Some(command) =
-            first_safe_receipt_command(context.snapshot.root.as_path(), context.data)
-    {
-        actions.push(copy_agent_loop_command_action(
-            AGENT_RECEIPT_COMMAND_TITLE,
-            COPY_AGENT_RECEIPT_COMMAND,
-            gap_command_target(context.diagnostic, "gap_receipt", &command),
-        ));
+    if !gap_cross_language_target_unresolved(context.data) {
+        if let Some(target) = first_repair_packet_target(context.snapshot, context.diagnostic) {
+            actions.push(copy_context_action(
+                COPY_FIRST_REPAIR_PACKET_TITLE,
+                COPY_FIRST_REPAIR_PACKET_TITLE,
+                target,
+            ));
+        }
+        if let Some(target) =
+            python_agent_packet_target(params, context.snapshot, context.diagnostic)
+        {
+            actions.push(copy_context_action(
+                COPY_PYTHON_AGENT_PACKET_TITLE,
+                COPY_PYTHON_AGENT_PACKET_TITLE,
+                target,
+            ));
+        }
+        if let Some(target) = gap_repair_packet_target(params, context.snapshot, context.diagnostic)
+        {
+            actions.push(copy_context_action(
+                INSPECT_GAP_PACKET_TITLE,
+                INSPECT_GAP_PACKET_COMMAND_TITLE,
+                target,
+            ));
+        }
+        if let Some(target) = python_repair_card_target(context.snapshot, context.data) {
+            actions.push(copy_python_repair_card_action(target));
+        }
+        if let Some(target) = python_pytest_skeleton_target(context.snapshot, context.data) {
+            actions.push(copy_python_pytest_skeleton_action(target));
+        }
+        if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
+            actions.push(open_related_test_action(target));
+        }
+        let verify_command = first_safe_command_at(
+            context.snapshot.root.as_path(),
+            context.data,
+            &["verification_commands"],
+        );
+        if let Some(command) = &verify_command {
+            actions.push(copy_agent_loop_command_action(
+                AGENT_VERIFY_COMMAND_TITLE,
+                COPY_AGENT_VERIFY_COMMAND,
+                gap_command_target(context.diagnostic, "gap_verify", command),
+            ));
+        }
+        if verify_command.is_some()
+            && let Some(command) =
+                first_safe_receipt_command(context.snapshot.root.as_path(), context.data)
+        {
+            actions.push(copy_agent_loop_command_action(
+                AGENT_RECEIPT_COMMAND_TITLE,
+                COPY_AGENT_RECEIPT_COMMAND,
+                gap_command_target(context.diagnostic, "gap_receipt", &command),
+            ));
+        }
     }
     if let Some(target) = static_limit_note_target(context.diagnostic) {
         actions.push(copy_context_action(
@@ -348,6 +370,9 @@ const AGENT_VERIFY_COMMAND_TITLE: &str = "Verify after test: copy verify command
 const AGENT_RECEIPT_COMMAND_TITLE: &str = "Review result: copy receipt command";
 const COPY_STATIC_LIMIT_NOTE_TITLE: &str = "Inspect gap: copy static-limit note";
 const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy first repair packet";
+const COPY_PYTHON_AGENT_PACKET_TITLE: &str = "Agent handoff: copy Python packet";
+const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair card";
+const COPY_PYTHON_PYTEST_SKELETON_TITLE: &str = "Write Python test: copy pytest skeleton";
 const REFRESH_ANALYSIS_TITLE: &str = "Refresh Analysis - Saved Workspace Check";
 
 fn copy_agent_loop_command_action(
@@ -476,6 +501,47 @@ fn gap_repair_packet_target(
             "Static evidence only; no source edits, generated tests, provider calls, or runtime mutation execution."
                 .to_string(),
         ),
+    );
+    Some(target)
+}
+
+fn python_agent_packet_target(
+    params: &CodeActionParams,
+    snapshot: &AnalysisSnapshot,
+    diagnostic: &Diagnostic,
+) -> Option<LSPAny> {
+    let data = diagnostic.data.as_ref()?;
+    if string_at(data, &["source"]) != Some("gap_decision_ledger")
+        || string_at(data, &["language"]) != Some("python")
+        || string_at(data, &["gap_state"]) != Some("actionable")
+        || string_at(data, &["repairability"]) != Some("repairable")
+    {
+        return None;
+    }
+    string_at(data, &["gap_id"])?;
+    let gap_ledger = string_at(data, &["gap_ledger"])?;
+    if !workspace_path_is_safe(snapshot.root.as_path(), gap_ledger) {
+        return None;
+    }
+    first_safe_command_at(snapshot.root.as_path(), data, &["verification_commands"])?;
+    first_safe_receipt_command(snapshot.root.as_path(), data)?;
+    let mut target = gap_repair_packet_target(params, snapshot, diagnostic)?;
+    let object = target.as_object_mut()?;
+    object.insert(
+        "label".to_string(),
+        Value::String("python_agent_packet".to_string()),
+    );
+    object.insert(
+        "freshness".to_string(),
+        Value::String("validated_current_gap_record".to_string()),
+    );
+    object.insert(
+        "packet_source".to_string(),
+        Value::String("gap_decision_ledger".to_string()),
+    );
+    object.insert(
+        "packet_kind".to_string(),
+        Value::String("agent_gap_record_packet".to_string()),
     );
     Some(target)
 }
@@ -623,8 +689,286 @@ fn first_repair_packet_text(
     Some(lines.join("\n"))
 }
 
+fn python_repair_card_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {
+    if string_at(data, &["language"]) != Some("python") {
+        return None;
+    }
+    let route = data.get("repair_route")?;
+    route.get("route_kind").and_then(non_empty_string)?;
+    let target_file = route.get("target_file").and_then(non_empty_string)?;
+    if !workspace_path_is_safe(snapshot.root.as_path(), target_file)
+        || !path_matches_diagnostic_language(data, target_file)
+    {
+        return None;
+    }
+    if let Some(path) = route.get("related_test").and_then(non_empty_string)
+        && !workspace_path_is_safe(snapshot.root.as_path(), path)
+    {
+        return None;
+    }
+    let verify_command =
+        first_safe_command_at(snapshot.root.as_path(), data, &["verification_commands"])?;
+    let receipt_command = first_safe_receipt_command(snapshot.root.as_path(), data);
+    let card = python_repair_card_text(data, route, &verify_command, receipt_command.as_deref())?;
+    let mut target = serde_json::Map::new();
+    target.insert(
+        "label".to_string(),
+        Value::String("python_repair_card".to_string()),
+    );
+    target.insert("brief".to_string(), Value::String(card));
+    target.insert(
+        "freshness".to_string(),
+        Value::String("validated_current_gap_record".to_string()),
+    );
+    copy_optional_string(&mut target, data, "gap_id");
+    copy_optional_string(&mut target, data, "canonical_gap_id");
+    copy_optional_string(&mut target, data, "language");
+    copy_optional_string(&mut target, data, "language_status");
+    copy_optional_string(&mut target, data, "gap_state");
+    copy_optional_value(&mut target, data, "repair_route");
+    target.insert("verify_command".to_string(), Value::String(verify_command));
+    if let Some(command) = receipt_command {
+        target.insert("receipt_command".to_string(), Value::String(command));
+    }
+    Some(Value::Object(target))
+}
+
+fn python_repair_card_text(
+    data: &Value,
+    route: &Value,
+    verify_command: &str,
+    receipt_command: Option<&str>,
+) -> Option<String> {
+    let gap_identity = first_gap_identity(data)?;
+    let changed_owner = string_at(data, &["anchor", "owner"]).unwrap_or(gap_identity);
+    let missing_discriminator = missing_discriminator_for_packet(data, route)?;
+    let route_kind = route.get("route_kind").and_then(non_empty_string)?;
+    let assertion = route
+        .get("assertion_shape")
+        .and_then(non_empty_string)
+        .unwrap_or(missing_discriminator.as_str());
+    let target_file = route.get("target_file").and_then(non_empty_string);
+    let related_test = route.get("related_test").and_then(non_empty_string);
+    let test_name = related_test
+        .map(related_test_name_or_raw)
+        .filter(|name| !name.is_empty());
+    let mut lines = vec![
+        "Python repair card (preview/advisory)".to_string(),
+        String::new(),
+        "Freshness: current validated GapRecord diagnostic.".to_string(),
+        "If the editor status is stale, refresh analysis before assigning repair work.".to_string(),
+        String::new(),
+        "Changed owner:".to_string(),
+        format!("  {changed_owner}"),
+    ];
+    if let Some(changed_behavior) = route.get("changed_behavior").and_then(non_empty_string) {
+        lines.push("Changed behavior:".to_string());
+        lines.push(format!("  {changed_behavior}"));
+    }
+    lines.push("Current test evidence:".to_string());
+    if let Some(related_test) = related_test {
+        lines.push(format!("  Related test target: {related_test}"));
+        lines.push("  Current evidence is weak preview evidence; strengthen it with the missing discriminator.".to_string());
+    } else {
+        lines.push(
+            "  No related test selector is available in this GapRecord; use the suggested file."
+                .to_string(),
+        );
+    }
+    lines.push("Missing discriminator:".to_string());
+    lines.push(format!("  {missing_discriminator}"));
+    lines.push("Recommended repair:".to_string());
+    lines.push(format!("  {route_kind}"));
+    lines.push("Suggested assertion:".to_string());
+    lines.push(format!("  {assertion}"));
+    lines.push("Suggested location:".to_string());
+    match (target_file, test_name) {
+        (Some(file), Some(name)) => {
+            lines.push(format!("  File: {file}"));
+            lines.push(format!("  Test: {name}"));
+        }
+        (Some(file), None) => lines.push(format!("  File: {file}")),
+        (None, Some(name)) => lines.push(format!("  Test: {name}")),
+        (None, None) => {
+            lines.push("  No safe suggested location is available in this GapRecord.".to_string());
+        }
+    }
+    lines.push("Verify:".to_string());
+    lines.push(format!("  {verify_command}"));
+    lines.push("Receipt:".to_string());
+    lines.push(format!(
+        "  {}",
+        receipt_command.unwrap_or(
+            "unavailable in this GapRecord; regenerate the gap ledger from check output"
+        )
+    ));
+    if let Some(items) = route
+        .get("stop_conditions")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+    {
+        lines.push("Stop conditions:".to_string());
+        for item in items {
+            if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
+                lines.push(format!("  - {text}"));
+            }
+        }
+    }
+    lines.push("Limits:".to_string());
+    lines.push(
+        "  - Static preview evidence only; no correctness or mutation adequacy claim.".to_string(),
+    );
+    lines.push(
+        "  - Edit only the suggested test surface unless a separate packet says otherwise."
+            .to_string(),
+    );
+    lines.push("  - Do not generate tests, call providers, run imports, or edit production code from this card.".to_string());
+    Some(lines.join("\n"))
+}
+
+fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {
+    if string_at(data, &["language"]) != Some("python") {
+        return None;
+    }
+    let route = data.get("repair_route")?;
+    let target_file = route.get("target_file").and_then(non_empty_string)?;
+    if !workspace_path_is_safe(snapshot.root.as_path(), target_file)
+        || !path_matches_diagnostic_language(data, target_file)
+    {
+        return None;
+    }
+    let verify_command =
+        first_safe_command_at(snapshot.root.as_path(), data, &["verification_commands"])?;
+    if !verify_command.starts_with("pytest ") {
+        return None;
+    }
+    let test_name = python_test_name_for_skeleton(data, route, &verify_command);
+    let assertion = route
+        .get("assertion_shape")
+        .and_then(non_empty_string)
+        .unwrap_or("assert <observed> == <expected>");
+    let missing_discriminator =
+        missing_discriminator_for_packet(data, route).unwrap_or_else(|| assertion.to_string());
+    let gap_identity = first_gap_identity(data).unwrap_or("unknown");
+    let mut lines = vec![
+        "# RIPR Python repair skeleton".to_string(),
+        format!("# Gap: {gap_identity}"),
+        format!("# Suggested file: {target_file}"),
+        format!("# Missing discriminator: {missing_discriminator}"),
+    ];
+    if let Some(changed_behavior) = route.get("changed_behavior").and_then(non_empty_string) {
+        lines.push(format!("# Changed behavior: {changed_behavior}"));
+    }
+    lines.push(format!("# Verify: {verify_command}"));
+    lines.push(
+        "# Boundary: preview static evidence; do not edit production code from this skeleton."
+            .to_string(),
+    );
+    let stop_conditions = route
+        .get("stop_conditions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flat_map(|items| items.iter())
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .take(3)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !stop_conditions.is_empty() {
+        lines.push("# Stop if:".to_string());
+        for condition in stop_conditions {
+            lines.push(format!("# - {condition}"));
+        }
+    }
+    lines.push(String::new());
+    lines.push(format!("def {test_name}():"));
+    lines.push(format!(
+        "    # Arrange inputs/fixtures that exercise {missing_discriminator}."
+    ));
+    lines.push("    # Act through the changed owner or route.".to_string());
+    lines.push("    # Suggested assertion:".to_string());
+    lines.push(format!("    # {assertion}"));
+    lines.push(
+        "    raise NotImplementedError(\"fill RIPR skeleton with imports, fixtures, and expected value\")"
+            .to_string(),
+    );
+
+    Some(serde_json::json!({
+        "label": "python_pytest_skeleton",
+        "gap_id": string_at(data, &["gap_id"]),
+        "canonical_gap_id": string_at(data, &["canonical_gap_id"]),
+        "target_file": target_file,
+        "test_name": test_name,
+        "verify_command": verify_command,
+        "brief": lines.join("\n"),
+    }))
+}
+
+fn python_test_name_for_skeleton(data: &Value, route: &Value, verify_command: &str) -> String {
+    route
+        .get("related_test")
+        .and_then(non_empty_string)
+        .map(related_test_name_or_raw)
+        .or_else(|| pytest_node_id_test_name(verify_command))
+        .map(sanitize_python_test_name)
+        .filter(|name| name.starts_with("test_"))
+        .unwrap_or_else(|| {
+            let identity = first_gap_identity(data).unwrap_or("python_gap");
+            format!("test_{}", slug_identifier(identity))
+        })
+}
+
+fn related_test_name_or_raw(raw: &str) -> &str {
+    let name = related_test_name(raw);
+    if name.is_empty() { raw.trim() } else { name }
+}
+
+fn pytest_node_id_test_name(command: &str) -> Option<&str> {
+    command
+        .split_whitespace()
+        .find_map(|token| token.split_once("::").map(|(_, name)| name))
+        .map(|name| name.rsplit("::").next().unwrap_or(name).trim())
+        .filter(|name| !name.is_empty())
+}
+
+fn sanitize_python_test_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut last_underscore = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_underscore = false;
+        } else if !last_underscore {
+            out.push('_');
+            last_underscore = true;
+        }
+    }
+    let sanitized = out.trim_matches('_');
+    if sanitized.is_empty() {
+        "test_ripr_gap".to_string()
+    } else if sanitized.starts_with("test_") {
+        sanitized.to_string()
+    } else {
+        format!("test_{sanitized}")
+    }
+}
+
+fn slug_identifier(value: &str) -> String {
+    sanitize_python_test_name(value)
+        .trim_start_matches("test_")
+        .chars()
+        .take(80)
+        .collect::<String>()
+}
+
 fn missing_discriminator_for_packet(data: &Value, repair_route: &Value) -> Option<String> {
     string_at(data, &["missing_discriminator"])
+        .or_else(|| {
+            repair_route
+                .get("missing_discriminator")
+                .and_then(non_empty_string)
+        })
         .or_else(|| {
             repair_route
                 .get("assertion_shape")
@@ -731,14 +1075,15 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
 
 fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {
     let route = data.get("repair_route")?;
-    let related_test = route
-        .get("related_test")
-        .and_then(non_empty_string)
-        .or_else(|| route.get("target_file").and_then(non_empty_string))?;
-    if !workspace_path_is_safe(snapshot.root.as_path(), related_test) {
+    let related_test = route.get("related_test").and_then(non_empty_string);
+    let target_file = route.get("target_file").and_then(non_empty_string);
+    let repair_target = related_test
+        .filter(|raw| path_matches_diagnostic_language(data, related_test_path_part(raw)))
+        .or(target_file)?;
+    if !workspace_path_is_safe(snapshot.root.as_path(), repair_target) {
         return None;
     }
-    let file = related_test_path_part(related_test);
+    let file = related_test_path_part(repair_target);
     if !path_matches_diagnostic_language(data, file) {
         return None;
     }
@@ -758,7 +1103,7 @@ fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<
     Some(serde_json::json!({
         "uri": uri.as_str(),
         "line": line,
-        "test_name": related_test_name(related_test),
+        "test_name": related_test.map(related_test_name_or_raw).unwrap_or(""),
     }))
 }
 
@@ -783,7 +1128,7 @@ fn path_matches_diagnostic_language(data: &Value, path: &str) -> bool {
 fn static_limit_note_target(diagnostic: &Diagnostic) -> Option<LSPAny> {
     let data = diagnostic.data.as_ref()?;
     let note = static_limit_note(data)?;
-    Some(serde_json::json!({
+    let mut target = serde_json::json!({
         "label": "static_limit_note",
         "gap_id": string_at(data, &["gap_id"]),
         "canonical_gap_id": string_at(data, &["canonical_gap_id"]),
@@ -791,7 +1136,40 @@ fn static_limit_note_target(diagnostic: &Diagnostic) -> Option<LSPAny> {
         "language_status": string_at(data, &["language_status"]),
         "note": note,
         "limits_note": "Static evidence only; no runtime adequacy claim.",
-    }))
+    });
+    if let Some(navigation_target) = value_at(data, &["navigation_only_target"]).cloned()
+        && let Some(object) = target.as_object_mut()
+    {
+        object.insert("navigation_only_target".to_string(), navigation_target);
+    }
+    Some(target)
+}
+
+fn gap_cross_language_target_unresolved(data: &Value) -> bool {
+    const CATEGORY: &str = "cross_language_target_unresolved";
+    string_at(data, &["static_limit_kind"]) == Some(CATEGORY)
+        || string_at(data, &["static_limit_category"]) == Some(CATEGORY)
+        || value_at(data, &["projection_exclusion_reasons"])
+            .and_then(Value::as_array)
+            .is_some_and(|reasons| {
+                reasons
+                    .iter()
+                    .any(|reason| reason.as_str() == Some(CATEGORY))
+            })
+        || limitation_array_contains_category(data, &["static_limits"], CATEGORY)
+        || limitation_array_contains_category(data, &["static_limitations"], CATEGORY)
+}
+
+fn limitation_array_contains_category(data: &Value, path: &[&str], category: &str) -> bool {
+    value_at(data, path)
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                string_at(item, &["static_limit_kind"]) == Some(category)
+                    || string_at(item, &["static_limit_category"]) == Some(category)
+                    || string_at(item, &["category"]) == Some(category)
+            })
+        })
 }
 
 fn static_limit_note(data: &Value) -> Option<String> {
@@ -812,12 +1190,41 @@ fn static_limit_note(data: &Value) -> Option<String> {
             }
         }
     }
+    if let Some(target_lines) = navigation_only_target_lines(data) {
+        lines.extend(target_lines);
+    }
     if lines.is_empty() {
         None
     } else {
         lines.push("Boundary: static evidence only; advisory action.".to_string());
         Some(lines.join("\n"))
     }
+}
+
+fn navigation_only_target_lines(data: &Value) -> Option<Vec<String>> {
+    let target = value_at(data, &["navigation_only_target"])?;
+    let file = string_at(target, &["file"])?;
+    let line = target
+        .get("line")
+        .and_then(Value::as_u64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let mut lines = vec![format!("Navigation-only target: {file}:{line}")];
+    if let Some(test_name) = string_at(target, &["test_name"]) {
+        lines.push(format!("External observer: {test_name}"));
+    }
+    if let Some(language) = string_at(target, &["language"]) {
+        lines.push(format!("External language: {language}"));
+    }
+    if let Some(route) = string_at(target, &["limitation_route"]) {
+        lines.push(format!("Limitation route: {route}"));
+    }
+    let ready = target
+        .get("repair_packet_ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    lines.push(format!("Repair packet ready: {ready}"));
+    Some(lines)
 }
 
 fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
@@ -848,6 +1255,32 @@ fn copy_targeted_test_brief_action(seam: &ClassifiedSeam, brief: String) -> Code
                 "seam_id": seam.seam.id().as_str(),
                 "brief": brief,
             })]),
+        }),
+        ..CodeAction::default()
+    })
+}
+
+fn copy_python_pytest_skeleton_action(target: LSPAny) -> CodeActionOrCommand {
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title: COPY_PYTHON_PYTEST_SKELETON_TITLE.to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        command: Some(Command {
+            title: COPY_PYTHON_PYTEST_SKELETON_TITLE.to_string(),
+            command: COPY_TARGETED_TEST_BRIEF_COMMAND.to_string(),
+            arguments: Some(vec![target]),
+        }),
+        ..CodeAction::default()
+    })
+}
+
+fn copy_python_repair_card_action(target: LSPAny) -> CodeActionOrCommand {
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title: COPY_PYTHON_REPAIR_CARD_TITLE.to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        command: Some(Command {
+            title: COPY_PYTHON_REPAIR_CARD_TITLE.to_string(),
+            command: COPY_TARGETED_TEST_BRIEF_COMMAND.to_string(),
+            arguments: Some(vec![target]),
         }),
         ..CodeAction::default()
     })
@@ -946,7 +1379,16 @@ fn copy_context_target(params: &CodeActionParams, diagnostic: &Diagnostic) -> LS
                 serde_json::Value::String(seam_kind.to_string()),
             );
         }
-        for key in ["gap_id", "canonical_gap_id", "gap_kind", "gap_ledger"] {
+        for key in [
+            "gap_id",
+            "canonical_gap_id",
+            "gap_kind",
+            "gap_ledger",
+            "language",
+            "language_status",
+            "owner_kind",
+            "static_limit_kind",
+        ] {
             if let Some(value) = obj.get(key).and_then(|v| v.as_str()) {
                 target.insert(
                     key.to_string(),
@@ -954,6 +1396,7 @@ fn copy_context_target(params: &CodeActionParams, diagnostic: &Diagnostic) -> LS
                 );
             }
         }
+        copy_optional_value(&mut target, data, "preview_actionability");
     }
     serde_json::Value::Object(target)
 }
@@ -1024,6 +1467,9 @@ fn absolute_related_test_path(snapshot: &AnalysisSnapshot, related: &RelatedTest
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Mode;
+    use crate::lsp::state::RefreshMetadata;
+    use std::collections::BTreeMap;
     use tower_lsp_server::ls_types::{
         CodeActionContext, DiagnosticSeverity, Position, Range, TextDocumentIdentifier, Uri,
     };
@@ -1063,6 +1509,54 @@ mod tests {
             "target/ripr/reports/gap-decision-ledger.json"
         );
         Ok(())
+    }
+
+    #[test]
+    fn python_pytest_skeleton_rejects_non_python_or_unsafe_targets() {
+        let snapshot = python_snapshot();
+        let mut data = serde_json::json!({
+            "language": "rust",
+            "canonical_gap_id": "gap:rust:pricing:threshold-boundary",
+            "repair_route": {
+                "target_file": "tests/test_pricing.py",
+                "assertion_shape": "assert result == expected"
+            },
+            "verification_commands": ["pytest tests/test_pricing.py::test_boundary"]
+        });
+
+        assert!(python_pytest_skeleton_target(&snapshot, &data).is_none());
+
+        data["language"] = serde_json::json!("python");
+        data["repair_route"]["target_file"] = serde_json::json!("../outside/test_pricing.py");
+
+        assert!(python_pytest_skeleton_target(&snapshot, &data).is_none());
+    }
+
+    #[test]
+    fn python_pytest_name_helpers_cover_node_ids_and_fallbacks() {
+        assert_eq!(
+            pytest_node_id_test_name("pytest tests/test_pricing.py::TestPricing::test_boundary"),
+            Some("test_boundary")
+        );
+        assert_eq!(
+            pytest_node_id_test_name("pytest tests/test_pricing.py::"),
+            None
+        );
+        assert_eq!(sanitize_python_test_name(""), "test_ripr_gap");
+        assert_eq!(
+            sanitize_python_test_name("Discount Boundary!"),
+            "test_discount_boundary"
+        );
+
+        let data = serde_json::json!({
+            "canonical_gap_id": "python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold"
+        });
+        let route = serde_json::json!({});
+
+        assert_eq!(
+            python_test_name_for_skeleton(&data, &route, "pytest tests/test_pricing.py"),
+            "test_python_app_pricing_py_calculate_discount_predicate_boundary_amount_threshold"
+        );
     }
 
     fn code_action_params(diagnostics: Vec<Diagnostic>) -> Result<CodeActionParams, String> {
@@ -1116,6 +1610,20 @@ mod tests {
                 "gap_kind": "MissingBoundaryAssertion",
                 "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
             })),
+        }
+    }
+
+    fn python_snapshot() -> AnalysisSnapshot {
+        AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            base: None,
+            mode: Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            classified_seams: Vec::new(),
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            diagnostics_by_uri: BTreeMap::new(),
         }
     }
 

@@ -152,14 +152,19 @@ diagnostic scorecard with
 a matching audit `run_limitations[]` category. That limited scorecard must not
 claim complete repo truth, public badge readiness, or user test debt.
 Completeness-affecting audit limitations such as
-`lane1_repo_exposure_timeout`, `lane1_repo_exposure_incomplete`, and audit
-regeneration failure must surface as unknowns and must not let zero or partial
-counts masquerade as complete repo truth. Completed-audit run limitations such
-as `lane1_repo_exposure_cache_store_skipped_large_entry` remain visible as named
-static limitations without marking the audit input limited. Named audit run
-limitations that appear in `static_limitations.by_category` must contribute to
-the scorecard static-limitation headline even when an older or partial audit
-summary left `summary.static_limitations_total` at zero.
+`lane1_repo_exposure_timeout`, `lane1_repo_exposure_incomplete`,
+`lane1_repo_exposure_large_cache_preflight_skip`, and audit regeneration failure
+must surface as unknowns and must not let zero or partial counts masquerade as
+complete repo truth. Compatibility completed-audit run limitations from older
+cache-store traces, such as
+`lane1_repo_exposure_cache_store_skipped_large_entry`, remain visible as named
+static limitations without marking the audit input limited. Current repo seam
+cache entries larger than `RIPR_REPO_SEAM_CACHE_LIMIT` are written as bounded
+shards instead of producing that skip solely because they exceed the default
+limit. Named audit run limitations that appear in
+`static_limitations.by_category` must contribute to the scorecard
+static-limitation headline even when an older or partial audit summary left
+`summary.static_limitations_total` at zero.
 If the current scorecard carries limited-input unknowns such as
 `lane1_evidence_audit_limited`, `evidence_health_limited`, or
 `evidence_quality_scorecard_audit_regeneration_failed`,
@@ -167,6 +172,14 @@ If the current scorecard carries limited-input unknowns such as
 their directions unknown, leave deltas null, and emit
 `unknowns[].kind = "current_scorecard_limited"` instead of claiming
 improvement or regression.
+
+Scorecard and trend outputs must also preserve the shared Lane 1 runtime status
+contract. A full report emits `run_status = "full"`. A limited audit,
+evidence-health input, audit regeneration failure, limited current scorecard, or
+explicit malformed/missing previous artifact emits the matching limited state
+and a `runtime_status` object with phase, input kind or path, limitation
+category, repair route, timing fields when available, and
+`downstream_consumable`.
 
 If an explicit previous artifact path is missing or malformed, the trend command
 must still write bounded JSON/Markdown with
@@ -312,10 +325,14 @@ Given a Lane 1 audit artifact with completeness-affecting limitations such as
 `lane1_repo_exposure_timeout`, `lane1_repo_exposure_incomplete`, or
 `evidence_quality_scorecard_audit_regeneration_failed`, the scorecard adds
 `lane1_evidence_audit_limited` to `unknowns` so downstream users can see that
-the report is bounded diagnostic evidence rather than complete repo truth.
+the report is bounded diagnostic evidence rather than complete repo truth. It
+also preserves the limited input in `run_status` and `runtime_status`.
 Non-completeness audit limitations, such as skipped full-cache storage after a
 complete repo-exposure run, remain audit-visible but do not make scorecard
-counts partial.
+counts partial; they report `limited_large_cache_skip` with downstream
+consumption allowed. Cache preflight skips happen before repo-exposure evidence
+exists, so they also report `limited_large_cache_skip` but keep
+`downstream_consumable = false`.
 
 Given an evidence-health artifact with `run_limitations[]`, the scorecard adds
 `evidence_health_limited` to `unknowns` because evidence-health warning

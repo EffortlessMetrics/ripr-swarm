@@ -23,7 +23,8 @@ Each case pins one packet shape and its expected planning outcome:
 - blocked static limitation packet;
 - missing verify command packet;
 - missing receipt command packet;
-- missing must-not-change boundary packet.
+- missing must-not-change boundary packet;
+- missing allowed-edit-surface packet.
 
 ## Must Not
 
