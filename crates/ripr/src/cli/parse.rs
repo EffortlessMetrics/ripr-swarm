@@ -82,6 +82,24 @@ mod tests {
             parse_args(args(&["ripr", "agent", "brief", "--json"])),
             Ok(CliCommand::Agent(args(&["brief", "--json"])))
         );
+        assert_eq!(
+            parse_args(args(&["ripr", "swarm", "queue", "--language", "python"])),
+            Ok(CliCommand::Swarm(args(&["queue", "--language", "python"])))
+        );
+        assert_eq!(
+            parse_args(args(&[
+                "ripr",
+                "swarm",
+                "ingest",
+                "--result",
+                "agent-result.json"
+            ])),
+            Ok(CliCommand::Swarm(args(&[
+                "ingest",
+                "--result",
+                "agent-result.json"
+            ])))
+        );
     }
 
     #[test]
@@ -144,6 +162,10 @@ mod tests {
         assert_eq!(
             parse_format("agent-seam-packets-json"),
             Ok(OutputFormat::AgentSeamPacketsJson)
+        );
+        assert_eq!(
+            parse_format("repo-exposure-summary-json"),
+            Ok(OutputFormat::RepoExposureSummaryJson)
         );
         assert_eq!(
             parse_format("xml"),

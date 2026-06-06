@@ -1,5 +1,6 @@
 mod annotations;
 mod badges;
+mod bun;
 mod dogfood;
 mod first_pr;
 mod fixtures;
@@ -23,9 +24,10 @@ mod test_oracles;
 
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use badges::{
-    badge_artifacts, badge_basis, check_badge_endpoints, repo_badge_artifacts,
+    badge_artifacts, badge_basis, check_badge_endpoints, repo_badge_artifacts, ripr_plus,
     update_badge_endpoints,
 };
+pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use dogfood::dogfood;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{fixtures, golden_drift, goldens};
@@ -44,7 +46,8 @@ pub(crate) use release::release_readiness;
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,
-    repo_exposure_latency_report, repo_exposure_report, repo_seam_inventory,
+    repo_exposure_latency_report, repo_exposure_report, repo_exposure_summary_report,
+    repo_seam_inventory,
 };
 pub(crate) use review_comments::ripr_review_comments;
 pub(crate) use sarif::sarif_policy;

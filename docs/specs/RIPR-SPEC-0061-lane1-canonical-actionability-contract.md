@@ -154,13 +154,15 @@ receipt hint. A path-only value stays non-ready with
 `must_not_change[]` is required because packets are intended to bound repair
 attempts. `allowed_edit_surface[]` is required because delegated packet attempts
 need an explicit workspace-relative edit cage. A packet without at least one
-allowed file is not public-projection eligible or swarm-ready. Typical
+allowed file that resolves to an existing workspace file is not
+public-projection eligible or swarm-ready. Typical
 `must_not_change[]` entries include:
 
 When canonical items do not already carry `related_test_or_observer`, the
 structured `recommendation.recommended_test` target may supply that packet
-field and the derived `allowed_edit_surface[]`. Implementations must not parse
-free-form recommendation prose to infer this edit cage.
+field and the derived `allowed_edit_surface[]`, but only when the target file
+exists in the workspace. Implementations must not parse free-form recommendation
+prose or create guessed root-level test paths to infer this edit cage.
 
 - do not edit production code;
 - do not broaden the assertion beyond the named observer shape;
@@ -217,13 +219,15 @@ That case must become:
 ```text
 gap_state = static_limitation
 category = activation_boundary_input_unresolved
-repair_route = add analyzer support for iterator, local, or computed operand resolution
+repair_route = add analyzer support for iterator, member-access, local, or computed operand resolution
 ```
 
 Iterator-derived operands should route to
-`analysis/iterator-boundary-operand-resolution`; local or computed operands should
-route to `analysis/local-computed-boundary-operand-resolution`. Both remain
-static limitations until the analyzer can safely name activation values.
+`analysis/iterator-boundary-operand-resolution`; member-access operands should
+route to `analysis/local-member-boundary-operand-resolution`; local or computed
+operands should route to
+`analysis/local-computed-boundary-operand-resolution`. All remain static
+limitations until the analyzer can safely name activation values.
 
 The same rule applies to any class where RIPR cannot safely name the activation
 value, observer shape, verify command, or receipt command.
@@ -317,12 +321,19 @@ operands:
 - `crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_computed_local_then_activation_stays_static_limitation`
   keeps computed locals as named limitations and suppresses exact candidate
   values;
+- `crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_seam_when_parameter_operands_are_called_with_equal_strings_then_missing_discriminator_is_cleared`
+  keeps parameter-vs-parameter equality boundaries from becoming repair
+  packets when a related test already calls the owner with equal concrete
+  operands;
 - `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_keeps_unresolved_boundary_operands_as_named_limitation`
   maps iterator-derived unresolved boundary operands to
   `analysis/iterator-boundary-operand-resolution`;
 - `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_routes_computed_boundary_operands_to_local_computed_limitation`
   maps local/computed unresolved boundary operands to
   `analysis/local-computed-boundary-operand-resolution`;
+- `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_routes_member_boundary_operands_to_local_member_limitation`
+  maps member-access unresolved boundary operands to
+  `analysis/local-member-boundary-operand-resolution`;
 - `crates/ripr/src/output/evidence_record.rs::tests::evidence_record_carries_identity_path_guidance_and_calibration_placeholder`
   preserves the normal parameter/literal boundary path as actionable with
   `repair_kind = add_boundary_assertion`.

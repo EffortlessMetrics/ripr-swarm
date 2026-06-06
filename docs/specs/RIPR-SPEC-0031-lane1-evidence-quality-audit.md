@@ -37,7 +37,7 @@ The command:
 - records bounded repo-exposure generation diagnostics in the audit input block,
   including timeout, status, duration, output byte counts, and the tail of the
   latency trace;
-- uses a 120-second default repo-exposure generation budget, configurable with
+- uses a 240-second default repo-exposure generation budget, configurable with
   `RIPR_LANE1_EVIDENCE_AUDIT_TIMEOUT_MS`, so cold or pathological live analysis
   reaches a named limited artifact before platform-specific abort behavior can
   leave no report;
@@ -75,15 +75,16 @@ target/ripr/reports/actionable-gap-outcomes.md
 ```
 
 It exits successfully after both artifacts are written. If repo exposure
-generation exits non-zero after writing a complete repo-exposure JSON document
-with a top-level `seams` array, the audit may continue from that captured
-artifact with a warning. By default, successful repo exposure is sampled to
-5,000 seams and the audit records `lane1_repo_exposure_sampled` with an input
-such as `repo-exposure-json:limit_5000_of_39685`; operators may set
+generation exits non-zero or is reported as timed out after writing a complete
+repo-exposure JSON document with a top-level `seams` array, the audit may
+continue from that captured artifact with a warning. By default, successful
+repo exposure is sampled to 5,000 seams and the audit records
+`lane1_repo_exposure_sampled` with an input such as
+`repo-exposure-json:limit_5000_of_39685`; operators may set
 `RIPR_LANE1_EVIDENCE_AUDIT_SAMPLE_SEAMS=0` for an unsampled full-repo attempt,
 or a positive integer to change the sample size. If repo exposure generation
-times out before a
-complete artifact exists, the command writes bounded warning artifacts with a
+times out before a complete artifact exists, the command writes bounded warning
+artifacts with a
 `lane1_repo_exposure_timeout` run limitation, phase/input context, the latency
 trace tail, and a repair route. If repo exposure generation exits before the
 captured artifact is complete, including a nominally successful exit that left
@@ -98,11 +99,15 @@ bounded warning artifacts with
 `lane1_repo_exposure_large_cache_preflight_skip`, `run_status =
 "limited_large_cache_skip"`, `runtime_status.downstream_consumable = false`,
 and a repair route through `cargo xtask cache report` and
-`cargo xtask cache gc --dry-run`. If repo exposure completes but skips the full
-classified seam cache store because the cache entry exceeds the bounded
-full-cache store limit, the audit records
+`cargo xtask cache gc --dry-run`. Current repo seam cache writes entries larger
+than `RIPR_REPO_SEAM_CACHE_LIMIT` as bounded shard files under
+`target/ripr/cache`; older audit artifacts or older cache-store implementations
+may still record
 `lane1_repo_exposure_cache_store_skipped_large_entry` with the cache-store phase,
-classified seam count/limit input, latency trace tail, and a repair route.
+classified seam count/limit input, structured `observed_seams` and
+`cache_limit` fields, latency trace tail, and a repair route through
+`cargo xtask cache report` plus `RIPR_REPO_SEAM_CACHE_LIMIT` when the operator
+chooses to raise the full-cache shard size.
 
 ## JSON Contract
 
@@ -242,14 +247,25 @@ as `next_repair` so the queue points at a concrete analyzer slice instead of a
 generic static-limitation taxonomy bucket.
 Static limitation categories and repair routes may be relation-contextual when
 the evidence record carries enough context; for example,
-`activation_owner_call_absent` with assertion-target affinity should become
+`activation_owner_call_absent` with call-presence target-token affinity should
+become `activation_owner_call_absent_call_presence_target_affinity` routed to
+`analysis/call-presence-target-affinity-owner-call-tracing`, other
+assertion-target affinity should become
 `activation_owner_call_absent_assertion_target_affinity` routed to
-`analysis/assertion-target-affinity-owner-call-tracing`, other affinity-based
+`analysis/assertion-target-affinity-owner-call-tracing`, with return-value
+assertion-target owner-call absence allowed to route more narrowly to
+`analysis/assertion-target-return-value-owner-call-tracing`, other affinity-based
 related tests should become `activation_owner_call_absent_affinity_only` routed
 to `analysis/related-test-affinity-owner-call-tracing`, and same-file-only
-context should become `activation_owner_call_absent_same_file_only` routed to
+or same-file-primary context should become
+`activation_owner_call_absent_same_file_only` routed to
 `analysis/same-file-owner-call-tracing`, instead of generic owner-call absence
 triage.
+Within call-presence target-token affinity, related-test affinity, and
+same-file owner-call absence, backlog packets may split `limitation_subroute`
+by expression shape, including receiver-method, associated-call, and
+function-call missing-owner-call routes. These subroutes are analyzer work
+queues only and must not imply public repair packet eligibility.
 
 Given a static-unknown or limitation-shaped canonical item, a limitation is
 named only when it carries a non-generic category and repair route. Generic
@@ -265,7 +281,7 @@ records `run_limitations[].category = "lane1_repo_exposure_sampled"`, and keeps
 the sampled raw/canonical/actionable counts available as partial work-queue
 evidence. Downstream scorecards must surface that named limitation and must not
 treat sampled counts as full-repo debt totals. The audit also reports
-`run_status = "limited_incomplete_input"` and `runtime_status` details for that
+`run_status = "limited_sampled_input"` and `runtime_status` details for that
 sampled input. If generation times out before a
 complete repo-exposure JSON document exists, the audit still writes a limited
 artifact with `run_limitations[].category = "lane1_repo_exposure_timeout"`,
@@ -292,14 +308,17 @@ repo-exposure generation, emit
 `cargo xtask cache gc --dry-run`.
 
 Best-effort cache writes are not allowed to turn a completed analysis into an
-unbounded wait: large classified-seam cache entries may be skipped when the
-trace records a `cache_store` status such as
+unbounded wait. Current cache writes above `RIPR_REPO_SEAM_CACHE_LIMIT` are
+sharded, but the audit must keep compatibility for older traces that recorded a
+`cache_store` status such as
 `ignored_skipped_large_entry_seams_..._limit_...`. The audit must preserve that
-under `run_limitations[]` with category
+older signal under `run_limitations[]` with category
 `lane1_repo_exposure_cache_store_skipped_large_entry`, report
 `run_status = "limited_large_cache_skip"`, and keep
 `runtime_status.downstream_consumable = true` because the evidence was emitted
-rather than hiding the cache-store limitation in stderr.
+rather than hiding the cache-store limitation in stderr. The row must expose the
+observed seam count and configured cache limit as structured fields, while
+retaining the count/limit input string for older consumers.
 
 Given a repo-exposure subprocess that exits successfully but leaves an empty,
 malformed, or otherwise incomplete captured JSON artifact, the audit treats that
@@ -327,7 +346,9 @@ the standalone `target/ripr/reports/actionable-gaps.{json,md}` artifacts. Each
 packet is one canonical item, preserves raw findings as supporting evidence,
 includes missing discriminator facts, repair and verification guidance, and
 carries conservative `must_not_change` boundaries plus `allowed_edit_surface[]`
-file bounds. It does not fan raw findings back out into separate user work.
+file bounds. Derived edit surfaces must resolve to existing workspace files;
+missing target files are reported as `missing_allowed_edit_surface`. The packet
+does not fan raw findings back out into separate user work.
 
 Given emitted actionable-gap packets, the audit also records packet-level
 public projection readiness. `public_projection_eligible` is true only when the
@@ -365,6 +386,9 @@ movement remains static evidence movement rather than mutation proof.
   or path and records the receipt source without changing badge counts.
 - `xtask::tests::lane1_actionable_gap_public_projection_requires_allowed_edit_surface`
   pins that public projection excludes packets without a bounded edit surface.
+- `xtask::tests::lane1_actionable_gap_packets_exclude_missing_edit_surface_file`
+  pins that a typed recommended test target is still not public-projection
+  eligible or swarm-ready when its edit-surface file does not exist.
 - `xtask::tests::lane1_actionable_gap_packets_keep_observed_gaps_out_of_public_projection`
   pins that observed/no-action dispositions do not become public-projection
   eligible even when a malformed packet carries repair, verify, and receipt

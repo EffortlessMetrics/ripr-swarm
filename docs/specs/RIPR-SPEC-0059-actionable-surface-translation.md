@@ -196,7 +196,8 @@ actionable repair packet is ready. The limitation category and runtime repair
 command must match the named runtime state; for example,
 `limited_large_cache_skip` routes to
 `cargo xtask cache report && cargo xtask cache gc --dry-run`, while
-`limited_incomplete_input` routes to `cargo xtask lane1-evidence-audit`.
+`limited_incomplete_input` and `limited_sampled_input` route to
+`cargo xtask lane1-evidence-audit`.
 For full runtime states with a ready packet, the top next action may be
 `attempt_ready_packet`. Full runtime states with degraded route-quality or
 non-success outcomes may instead route `improve_repair_route_quality`,

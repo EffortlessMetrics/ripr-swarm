@@ -19,7 +19,7 @@ use crate::config::{
 use crate::output;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 
@@ -58,6 +58,36 @@ pub(super) fn agent(args: &[String]) -> Result<(), String> {
         | AgentCommand::StatusHelp
         | AgentCommand::ReviewSummaryHelp) => agent_dispatch::run_agent_help_command(&help_command)
             .unwrap_or_else(|| Err("agent help command was not dispatched".to_string())),
+    }
+}
+
+pub(super) fn swarm(args: &[String]) -> Result<(), String> {
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_swarm_help();
+        return Ok(());
+    };
+    match subcommand.as_str() {
+        "--help" | "-h" => {
+            help::print_swarm_help();
+            Ok(())
+        }
+        "queue" => {
+            if rest.iter().any(|arg| arg == "--help" || arg == "-h") {
+                help::print_swarm_queue_help();
+                return Ok(());
+            }
+            run_swarm_queue(parse_swarm_queue_options(rest)?)
+        }
+        "ingest" => {
+            if rest.iter().any(|arg| arg == "--help" || arg == "-h") {
+                help::print_swarm_ingest_help();
+                return Ok(());
+            }
+            run_swarm_ingest(parse_swarm_ingest_options(rest)?)
+        }
+        other => Err(format!(
+            "unknown swarm subcommand {other:?}; expected `queue` or `ingest`"
+        )),
     }
 }
 
@@ -170,6 +200,267 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SwarmQueueOptions {
+    root: PathBuf,
+    gap_ledger: PathBuf,
+    language: String,
+    top: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SwarmIngestOptions {
+    root: PathBuf,
+    result: PathBuf,
+}
+
+fn parse_swarm_queue_options(args: &[String]) -> Result<SwarmQueueOptions, String> {
+    let mut root = PathBuf::from(".");
+    let mut gap_ledger = PathBuf::from("target/ripr/reports/gap-decision-ledger.json");
+    let mut language = "python".to_string();
+    let mut top = 10usize;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                let value = expect_value(args, i, "--root")?;
+                if value.trim().is_empty() {
+                    return Err("swarm queue --root requires a non-empty path".to_string());
+                }
+                root = PathBuf::from(value);
+            }
+            "--gap-ledger" => {
+                i += 1;
+                let value = expect_value(args, i, "--gap-ledger")?;
+                if value.trim().is_empty() {
+                    return Err("swarm queue --gap-ledger requires a non-empty path".to_string());
+                }
+                gap_ledger = PathBuf::from(value);
+            }
+            "--language" => {
+                i += 1;
+                let value = expect_value(args, i, "--language")?;
+                if value.trim().is_empty() {
+                    return Err("swarm queue --language requires a non-empty language".to_string());
+                }
+                language = value.to_string();
+            }
+            "--top" => {
+                i += 1;
+                top = parse_positive_usize(expect_value(args, i, "--top")?, "swarm queue --top")?;
+            }
+            "--format" => {
+                i += 1;
+                let value = expect_value(args, i, "--format")?;
+                if value != "json" {
+                    return Err(format!(
+                        "unknown swarm queue format {value:?}; expected `json`"
+                    ));
+                }
+            }
+            "--json" => {}
+            other => return Err(format!("unknown swarm queue argument {other:?}")),
+        }
+        i += 1;
+    }
+
+    Ok(SwarmQueueOptions {
+        root,
+        gap_ledger,
+        language,
+        top,
+    })
+}
+
+fn parse_swarm_ingest_options(args: &[String]) -> Result<SwarmIngestOptions, String> {
+    let mut root = PathBuf::from(".");
+    let mut result = None;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                let value = expect_value(args, i, "--root")?;
+                if value.trim().is_empty() {
+                    return Err("swarm ingest --root requires a non-empty path".to_string());
+                }
+                root = PathBuf::from(value);
+            }
+            "--result" => {
+                i += 1;
+                let value = expect_value(args, i, "--result")?;
+                if value.trim().is_empty() {
+                    return Err("swarm ingest --result requires a non-empty path".to_string());
+                }
+                result = Some(PathBuf::from(value));
+            }
+            "--format" => {
+                i += 1;
+                let value = expect_value(args, i, "--format")?;
+                if value != "json" {
+                    return Err(format!(
+                        "unknown swarm ingest format {value:?}; expected `json`"
+                    ));
+                }
+            }
+            "--json" => {}
+            other => return Err(format!("unknown swarm ingest argument {other:?}")),
+        }
+        i += 1;
+    }
+
+    Ok(SwarmIngestOptions {
+        root,
+        result: result.ok_or_else(|| "swarm ingest requires --result <path>".to_string())?,
+    })
+}
+
+fn run_swarm_queue(options: SwarmQueueOptions) -> Result<(), String> {
+    ensure_command_root(&options.root, "swarm queue")?;
+    let contents = std::fs::read_to_string(&options.gap_ledger).map_err(|err| {
+        format!(
+            "swarm queue --gap-ledger {} is invalid: read failed: {err}",
+            options.gap_ledger.display()
+        )
+    })?;
+    let rendered = render_swarm_queue_from_gap_ledger_contents(&options, &contents)?;
+    print!("{rendered}");
+    Ok(())
+}
+
+fn render_swarm_queue_from_gap_ledger_contents(
+    options: &SwarmQueueOptions,
+    contents: &str,
+) -> Result<String, String> {
+    let source =
+        output::gap_decision_ledger::parse_gap_record_source_json(contents).map_err(|err| {
+            format!(
+                "swarm queue --gap-ledger {} is invalid: {err}",
+                options.gap_ledger.display()
+            )
+        })?;
+    let root_display = output::outcome::display_path(&options.root);
+    let gap_ledger_display = output::outcome::display_path(&options.gap_ledger);
+    let rendered = match gap_ledger_root_status(&options.root, source.root.as_deref()) {
+        GapLedgerRootStatus::Missing => {
+            output::agent_seam_packets::render_agent_gap_record_queue_missing_root_json(
+                &root_display,
+                &gap_ledger_display,
+                source.generated_at.as_deref(),
+                &source.records,
+                &options.language,
+                options.top,
+            )?
+        }
+        GapLedgerRootStatus::Mismatch { ledger_root, .. } => {
+            output::agent_seam_packets::render_agent_gap_record_queue_wrong_root_json(
+                &root_display,
+                &gap_ledger_display,
+                &ledger_root,
+                source.generated_at.as_deref(),
+                &source.records,
+                &options.language,
+                options.top,
+            )?
+        }
+        GapLedgerRootStatus::Match => {
+            output::agent_seam_packets::render_agent_gap_record_queue_json(
+                &root_display,
+                &gap_ledger_display,
+                &source.records,
+                &options.language,
+                options.top,
+            )?
+        }
+    };
+    Ok(rendered)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum GapLedgerRootStatus {
+    Match,
+    Missing,
+    Mismatch { ledger_root: String, reason: String },
+}
+
+fn gap_ledger_root_status(requested_root: &Path, ledger_root: Option<&str>) -> GapLedgerRootStatus {
+    let Some(raw_ledger_root) = ledger_root.map(str::trim).filter(|root| !root.is_empty()) else {
+        return GapLedgerRootStatus::Missing;
+    };
+    let requested_root_display = output::outcome::display_path(requested_root);
+    let ledger_root_display = output::path::display_path_text(raw_ledger_root);
+    if requested_root_display == ledger_root_display {
+        return GapLedgerRootStatus::Match;
+    }
+
+    let requested_canonical = requested_root.canonicalize().ok();
+    let ledger_root_path = Path::new(raw_ledger_root);
+    let ledger_canonical = ledger_root_path.canonicalize().ok();
+    if requested_canonical.is_some()
+        && ledger_canonical.is_some()
+        && requested_canonical == ledger_canonical
+    {
+        return GapLedgerRootStatus::Match;
+    }
+
+    GapLedgerRootStatus::Mismatch {
+        ledger_root: ledger_root_display.clone(),
+        reason: format!(
+            "gap ledger root {ledger_root_display} does not match requested --root {requested_root_display}; regenerate the gap decision ledger for the selected root before assigning swarm work"
+        ),
+    }
+}
+
+fn run_swarm_ingest(options: SwarmIngestOptions) -> Result<(), String> {
+    ensure_command_root(&options.root, "swarm ingest")?;
+    let result_path = validate_swarm_ingest_result_path(&options.root, &options.result)?;
+    let contents = std::fs::read_to_string(&result_path).map_err(|err| {
+        format!(
+            "read swarm ingest --result {} failed: {err}",
+            options.result.display()
+        )
+    })?;
+    let rendered = output::swarm_ingest::render_swarm_ingest_json(
+        &contents,
+        &output::outcome::display_path(&options.result),
+    )?;
+    print!("{rendered}");
+    Ok(())
+}
+
+fn validate_swarm_ingest_result_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let root = root.canonicalize().map_err(|err| {
+        format!(
+            "canonicalize swarm ingest root {} failed: {err}",
+            root.display()
+        )
+    })?;
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let candidate = candidate.canonicalize().map_err(|err| {
+        format!(
+            "canonicalize swarm ingest --result {} failed: {err}",
+            path.display()
+        )
+    })?;
+
+    if !candidate.starts_with(&root) {
+        return Err(format!(
+            "swarm ingest --result {} must stay under root {}",
+            path.display(),
+            root.display()
+        ));
+    }
+
+    Ok(candidate)
+}
+
 fn render_agent_packet_from_gap_ledger(gap_ledger: &Path, gap_id: &str) -> Result<String, String> {
     let contents = std::fs::read_to_string(gap_ledger).map_err(|err| {
         format!(
@@ -208,7 +499,7 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
         output::outcome::display_path(&options.after),
     )?;
     let rendered = output::outcome::render_agent_verify_json(&report)?;
-    println!("{rendered}");
+    print!("{rendered}");
     Ok(())
 }
 
@@ -1483,11 +1774,24 @@ jobs:
                 || true
             )"
             if [ -n "$preview_languages" ]; then
+              grouped_preview_languages="$preview_languages"
+              if printf '%s\n' "$preview_languages" | tr ' ' '\n' | grep -qx 'typescript'; then
+                grouped_preview_languages="$grouped_preview_languages javascript"
+              fi
+              grouped_preview_languages="$(
+                printf '%s\n' $grouped_preview_languages \
+                  | sort -u \
+                  | tr '\n' ' ' \
+                  | sed 's/ $//' \
+                  || true
+              )"
               configured_inline="$(markdown_inline "$configured_languages")"
+              grouped_inline="$(markdown_inline "$grouped_preview_languages")"
               echo '### Language preview grouping'
               echo "- Configured languages: \`$configured_inline\`"
+              echo "- Grouped preview evidence languages: \`$grouped_inline\`"
               echo "- Boundary: preview-language groups are advisory presentation only; \`ripr gate evaluate\` remains pass/fail authority when explicitly configured."
-              for language in $preview_languages; do
+              for language in $grouped_preview_languages; do
                 language_inputs=()
                 if [ -f target/ripr/reports/repo-exposure.json ]; then
                   language_inputs+=(target/ripr/reports/repo-exposure.json)
@@ -1509,6 +1813,9 @@ jobs:
                 static_limit_entries=0
                 class_counts="none"
                 static_limit_kinds="none"
+                actionability_states="none"
+                actionability_categories="none"
+                repair_packet_ready_entries=0
                 if [ "${#language_inputs[@]}" -gt 0 ]; then
                   artifact_entries="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language)] | length' "${language_inputs[@]}" 2>/dev/null || echo 0)"
                   preview_entries="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language and .language_status? == "preview")] | length' "${language_inputs[@]}" 2>/dev/null || echo 0)"
@@ -1516,6 +1823,9 @@ jobs:
                   static_limit_entries="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language and .static_limit_kind? != null)] | length' "${language_inputs[@]}" 2>/dev/null || echo 0)"
                   class_counts="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language and .classification? != null) | .classification] | sort | group_by(.) | map("\(.[0])=\(length)") | if length == 0 then "none" else join(", ") end' "${language_inputs[@]}" 2>/dev/null || echo none)"
                   static_limit_kinds="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language) | .static_limit_kind? | select(. != null)] | unique | if length == 0 then "none" else join(", ") end' "${language_inputs[@]}" 2>/dev/null || echo none)"
+                  actionability_states="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language) | (.preview_actionability?.gap_state // .gap_state?) | select(. != null)] | sort | group_by(.) | map("\(.[0])=\(length)") | if length == 0 then "none" else join(", ") end' "${language_inputs[@]}" 2>/dev/null || echo none)"
+                  actionability_categories="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language) | (.preview_actionability?.actionability_category // .actionability_category?) | select(. != null)] | sort | group_by(.) | map("\(.[0])=\(length)") | if length == 0 then "none" else join(", ") end' "${language_inputs[@]}" 2>/dev/null || echo none)"
+                  repair_packet_ready_entries="$(jq -s -r --arg language "$language" '[.[] | .. | objects | select(.language? == $language and .preview_actionability?.repair_packet_ready == true)] | length' "${language_inputs[@]}" 2>/dev/null || echo 0)"
                 fi
                 language_inline="$(markdown_inline "$language")"
                 artifact_entries="$(markdown_inline "$artifact_entries")"
@@ -1524,10 +1834,13 @@ jobs:
                 static_limit_entries="$(markdown_inline "$static_limit_entries")"
                 class_counts="$(markdown_inline "$class_counts")"
                 static_limit_kinds="$(markdown_inline "$static_limit_kinds")"
+                actionability_states="$(markdown_inline "$actionability_states")"
+                actionability_categories="$(markdown_inline "$actionability_categories")"
+                repair_packet_ready_entries="$(markdown_inline "$repair_packet_ready_entries")"
                 if [ "$artifact_entries" = "0" ]; then
-                  echo "- \`$language_inline\`: configured preview/advisory; no language findings were emitted in this run."
+                  echo "- \`$language_inline\`: configured preview/advisory; no language findings were emitted in this run; gate_impact=\`none\`."
                 else
-                  echo "- \`$language_inline\`: artifact_entries=\`$artifact_entries\`, preview_entries=\`$preview_entries\`, missing_preview_status=\`$missing_preview_status\`, static_limit_entries=\`$static_limit_entries\`, classifications=\`$class_counts\`, static_limit_kinds=\`$static_limit_kinds\`"
+                  echo "- \`$language_inline\`: artifact_entries=\`$artifact_entries\`, preview_entries=\`$preview_entries\`, missing_preview_status=\`$missing_preview_status\`, static_limit_entries=\`$static_limit_entries\`, classifications=\`$class_counts\`, static_limit_kinds=\`$static_limit_kinds\`, actionability_states=\`$actionability_states\`, actionability_categories=\`$actionability_categories\`, repair_packet_ready=\`$repair_packet_ready_entries\`, gate_impact=\`none\`"
                 fi
               done
               echo
@@ -2475,21 +2788,21 @@ pub(super) fn pilot(args: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(&options.out_dir)
         .map_err(|err| format!("create {} failed: {err}", options.out_dir.display()))?;
 
-    let context = output::pilot::PilotSummaryContext {
-        root: &input.root,
-        mode: &input.mode,
-        config_path: config.source_path(),
-        max_seams: options.max_seams,
-        timeout_ms: options.timeout_ms,
-        artifacts: &artifacts,
-    };
-
     let analysis_root = input.root.clone();
     let analysis_config = config.clone();
     let analysis_result = run_pilot_analysis_with_timeout(options.timeout_ms, move || {
         analysis::inventory_classified_seams_at_with_config(&analysis_root, &analysis_config)
     })?;
     let PilotAnalysisResult::Complete(classified) = analysis_result else {
+        let context = output::pilot::PilotSummaryContext {
+            root: &input.root,
+            mode: &input.mode,
+            config_path: config.source_path(),
+            max_seams: options.max_seams,
+            timeout_ms: options.timeout_ms,
+            artifacts: &artifacts,
+            python_first_use: None,
+        };
         std::fs::write(
             &artifacts.pilot_summary_json,
             output::pilot::render_pilot_timeout_summary_json(context),
@@ -2512,6 +2825,17 @@ pub(super) fn pilot(args: &[String]) -> Result<(), String> {
         })?;
         print!("{}", output::pilot::render_pilot_timeout_terminal(context));
         return Ok(());
+    };
+
+    let python_first_use = collect_pilot_python_first_use(&input, &config);
+    let context = output::pilot::PilotSummaryContext {
+        root: &input.root,
+        mode: &input.mode,
+        config_path: config.source_path(),
+        max_seams: options.max_seams,
+        timeout_ms: options.timeout_ms,
+        artifacts: &artifacts,
+        python_first_use: python_first_use.as_ref(),
     };
 
     std::fs::write(
@@ -2571,6 +2895,28 @@ pub(super) fn pilot(args: &[String]) -> Result<(), String> {
         output::pilot::render_pilot_terminal(&classified, context)
     );
     Ok(())
+}
+
+fn collect_pilot_python_first_use(
+    input: &CheckInput,
+    config: &RiprConfig,
+) -> Option<output::pilot::PilotPythonFirstUse> {
+    if !config
+        .languages()
+        .enabled()
+        .contains(&crate::domain::LanguageId::Python)
+    {
+        return None;
+    }
+
+    let mut check_input = input.clone();
+    check_input.format = OutputFormat::Json;
+    Some(
+        match app::check_workspace_with_config(check_input, config) {
+            Ok(output) => output::pilot::PilotPythonFirstUse::from_check_output(&output),
+            Err(error) => output::pilot::PilotPythonFirstUse::analysis_unavailable(error),
+        },
+    )
 }
 
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
@@ -4133,30 +4479,45 @@ fn review_comments_with_diff_loader(
     let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_owners(changed_owners);
-    let classified = analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
+    let changed_owner_names = working_set
+        .changed_owners
+        .iter()
+        .map(|owner| owner.owner.clone())
+        .collect::<Vec<_>>();
+    let scoped_inventory = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+        &input.root,
+        &config,
+        &working_set.files,
+        &changed_owner_names,
+    )?;
     let selection = select_agent_brief_seams(
-        &classified,
+        &scoped_inventory.classified,
         &working_set,
         output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
         AgentBriefPolicy::from_config(&config),
     );
-    let rendered_json = output::review_comments::render_review_comments_json(
-        &input.root,
-        &options.base,
-        &options.head,
-        &input.mode,
-        &config,
+    let analysis_scope = output::review_comments::ReviewCommentsAnalysisScope::limited_diff_scope(
+        &working_set,
+        &scoped_inventory,
+    );
+    let render_context = output::review_comments::ReviewCommentsRenderContext {
+        root: &input.root,
+        base: &options.base,
+        head: &options.head,
+        mode: &input.mode,
+        config: &config,
+    };
+    let rendered_json = output::review_comments::render_review_comments_json_with_scope(
+        &render_context,
         &working_set,
         &selection,
+        &analysis_scope,
     )?;
-    let rendered_md = output::review_comments::render_review_comments_markdown(
-        &input.root,
-        &options.base,
-        &options.head,
-        &input.mode,
-        &config,
+    let rendered_md = output::review_comments::render_review_comments_markdown_with_scope(
+        &render_context,
         &working_set,
         &selection,
+        &analysis_scope,
     );
     let markdown_path = review_comments_markdown_path(&options.out);
     write_text_file(&options.out, &rendered_json)?;
@@ -6641,6 +7002,203 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiffReportFormat {
+    Human,
+    Json,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DiffOptions {
+    root: PathBuf,
+    base: String,
+    head: String,
+    mode: Mode,
+    format: DiffReportFormat,
+    include_unchanged_tests: bool,
+    explicit: CheckInputExplicit,
+}
+
+pub(super) fn diff(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        help::print_diff_help();
+        return Ok(());
+    }
+    let options = parse_diff_options(args)?;
+    let config = load_for_root(&options.root)?;
+    let diff_text = analysis::load_diff_range(&options.root, &options.base, &options.head)?;
+    let changed_files = diff_changed_files_from_text(&diff_text);
+    let diff_file = write_temporary_diff_file(&diff_text)?;
+
+    let check_result = run_diff_check_from_file(&options, &config, &diff_file);
+    let _ = std::fs::remove_file(&diff_file);
+    let output = check_result?;
+
+    let report = output::diff_report::build_diff_report(
+        &output,
+        &options.base,
+        &options.head,
+        changed_files,
+        diff_receipt_path(&options.base, &options.head),
+    );
+    match options.format {
+        DiffReportFormat::Human => {
+            print!("{}", output::diff_report::render_diff_report_human(&report))
+        }
+        DiffReportFormat::Json => {
+            print!("{}", output::diff_report::render_diff_report_json(&report)?)
+        }
+    }
+    Ok(())
+}
+
+fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
+    let mut options = DiffOptions {
+        root: PathBuf::from("."),
+        base: "origin/main".to_string(),
+        head: "HEAD".to_string(),
+        mode: Mode::Draft,
+        format: DiffReportFormat::Human,
+        include_unchanged_tests: true,
+        explicit: CheckInputExplicit::default(),
+    };
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+            }
+            "--base" => {
+                i += 1;
+                options.base = expect_value(args, i, "--base")?.to_string();
+            }
+            "--head" => {
+                i += 1;
+                options.head = expect_value(args, i, "--head")?.to_string();
+            }
+            "--mode" => {
+                i += 1;
+                options.mode = parse_mode(expect_value(args, i, "--mode")?)?;
+                options.explicit.mode = true;
+            }
+            "--format" => {
+                i += 1;
+                options.format = parse_diff_format(expect_value(args, i, "--format")?)?;
+            }
+            "--json" => options.format = DiffReportFormat::Json,
+            "--no-unchanged-tests" => {
+                options.include_unchanged_tests = false;
+                options.explicit.include_unchanged_tests = true;
+            }
+            other => return Err(format!("unknown diff argument {other:?}")),
+        }
+        i += 1;
+    }
+
+    if options.base.trim().is_empty() {
+        return Err("diff --base requires a non-empty revision".to_string());
+    }
+    if options.head.trim().is_empty() {
+        return Err("diff --head requires a non-empty revision".to_string());
+    }
+
+    Ok(options)
+}
+
+fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
+    match value {
+        "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
+        "json" => Ok(DiffReportFormat::Json),
+        _ => Err(format!("unknown diff format {value:?}")),
+    }
+}
+
+fn run_diff_check_from_file(
+    options: &DiffOptions,
+    config: &RiprConfig,
+    diff_file: &Path,
+) -> Result<app::CheckOutput, String> {
+    let mut input = CheckInput {
+        root: options.root.clone(),
+        base: Some(options.base.clone()),
+        diff_file: Some(diff_file.to_path_buf()),
+        mode: options.mode.clone(),
+        format: OutputFormat::Json,
+        include_unchanged_tests: options.include_unchanged_tests,
+    };
+    apply_to_check_input(&mut input, config, options.explicit);
+    app::check_workspace_with_config(input, config)
+}
+
+fn diff_changed_files_from_text(diff_text: &str) -> Vec<output::diff_report::DiffChangedFile> {
+    analysis::parse_unified_diff(diff_text)
+        .into_iter()
+        .map(|file| {
+            let added_lines = file
+                .added_lines
+                .iter()
+                .map(|line| line.line)
+                .collect::<Vec<_>>();
+            let removed_lines = file
+                .removed_lines
+                .iter()
+                .map(|line| line.line)
+                .collect::<Vec<_>>();
+            output::diff_report::DiffChangedFile {
+                path: file.path.display().to_string(),
+                added_count: added_lines.len(),
+                removed_count: removed_lines.len(),
+                added_lines,
+                removed_lines,
+            }
+        })
+        .collect()
+}
+
+fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join("ripr-diff");
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| format!("create temporary diff dir {} failed: {err}", dir.display()))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let path = dir.join(format!("diff-{}-{stamp}.patch", std::process::id()));
+    std::fs::write(&path, diff_text)
+        .map_err(|err| format!("write temporary diff file {} failed: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn diff_receipt_path(base: &str, head: &str) -> String {
+    format!(
+        "target/ripr/receipts/diff-first-{}-{}.json",
+        sanitize_ref_for_path(base),
+        sanitize_ref_for_path(head)
+    )
+}
+
+fn sanitize_ref_for_path(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if sanitized.is_empty() {
+        "ref".to_string()
+    } else {
+        sanitized
+    }
+}
+
 fn render_check_gap_ledger_badge(
     gap_ledger: &Path,
     format: &OutputFormat,
@@ -6879,6 +7437,16 @@ fn report_config_status(root: &Path, ok: &mut bool) {
                 .collect::<Vec<_>>()
                 .join(", ");
             println!("- Enabled languages: {languages}");
+            if let Some(profile) = config.profiles().bun_ub() {
+                println!("- Bun UB profile: configured (preview advisory only)");
+                println!("- Bun UB test roots: {}", profile.test_roots().join(", "));
+                println!("- Bun UB bridge hints: {}", profile.display_bridge_hints());
+                println!(
+                    "- Bun UB authority: no runtime Bun, tsc, tsserver, generated tests, gates, badges, baselines, or support-tier promotion"
+                );
+            } else {
+                println!("- Bun UB profile: not configured");
+            }
         }
         Err(err) => {
             println!("! Config: invalid {CONFIG_FILE_NAME}");
@@ -7367,6 +7935,48 @@ mod tests {
 
         std::fs::remove_dir_all(&dir)
             .map_err(|err| format!("remove gap ledger check output dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn reports_gap_ledger_derives_python_static_limit_as_report_only() -> Result<(), String> {
+        let dir = unique_command_test_dir("gap-ledger-python-static-limit");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create python static-limit gap ledger dir: {err}"))?;
+        let check_output =
+            repo_root().join("fixtures/python_dynamic_dispatch_limit/expected/check.json");
+        let out = dir.join("gap-decision-ledger.json");
+        let out_md = dir.join("gap-decision-ledger.md");
+
+        reports(&args(&[
+            "gap-ledger",
+            "--check-output",
+            &check_output.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+
+        let json_text = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read python static-limit gap ledger JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json_text)
+            .map_err(|err| format!("parse python static-limit gap ledger JSON: {err}"))?;
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["summary"]["records_total"], 1);
+        assert_eq!(value["summary"]["static_limitation_total"], 1);
+        assert_eq!(value["summary"]["projection_agent_packet_eligible"], 0);
+        assert_eq!(value["records"][0]["kind"], "StaticLimitation");
+        assert_eq!(value["records"][0]["repairability"], "analyzer_limitation");
+        assert_eq!(value["records"][0]["static_limit_kind"], "dynamic_dispatch");
+        assert_eq!(
+            value["records"][0]["projection_eligibility"]["agent_packet"]["eligible"],
+            false
+        );
+        assert!(value["records"][0].get("repair_route").is_none());
+
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove python static-limit gap ledger dir: {err}"))?;
         Ok(())
     }
 
@@ -9797,8 +10407,99 @@ language = "rust"
         assert!(rendered_json.contains("\"status\": \"advisory\""));
         assert!(rendered_json.contains("\"base\": \"HEAD~1\""));
         assert!(rendered_json.contains("\"head\": \"HEAD\""));
+        let value: serde_json::Value = serde_json::from_str(&rendered_json)
+            .map_err(|err| format!("parse review comments JSON: {err}"))?;
+        assert_eq!(value["analysis_scope"]["run_status"], "limited_diff_scope");
+        assert_eq!(
+            value["analysis_scope"]["limitation"],
+            "review_comments_diff_scope_only"
+        );
         assert!(rendered_md.contains("# RIPR PR Guidance"));
+        assert!(rendered_md.contains("run status: `limited_diff_scope`"));
         assert!(rendered_md.contains("Advisory static evidence only"));
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_scopes_diff_fast_path_to_changed_files_and_immediate_callers()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-diff-scope");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_comments_scope_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn discounted_total(amount: i32) -> i32 {\n    if amount > 10 { amount - 1 } else { amount }\n}\n",
+        )
+        .map_err(|err| format!("write src/lib.rs: {err}"))?;
+        std::fs::write(
+            root.join("src/wrapper.rs"),
+            "pub fn quote(amount: i32) -> i32 {\n    if discounted_total(amount) > 0 { discounted_total(amount) } else { 0 }\n}\n",
+        )
+        .map_err(|err| format!("write src/wrapper.rs: {err}"))?;
+        std::fs::write(
+            root.join("src/unrelated.rs"),
+            "pub fn unrelated(value: i32) -> i32 {\n    if value > 0 { value } else { 0 }\n}\n",
+        )
+        .map_err(|err| format!("write src/unrelated.rs: {err}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_diff_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    if amount >= 10 { amount - 1 } else { amount }\n+    if amount > 10 { amount - 1 } else { amount }\n".to_string())
+            },
+        )?;
+
+        let rendered_json = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read review comments JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered_json)
+            .map_err(|err| format!("parse review comments JSON: {err}"))?;
+        let scope = &value["analysis_scope"];
+        assert_eq!(scope["scope"], "diff_scoped_changed_files");
+        assert_eq!(scope["run_status"], "limited_diff_scope");
+        assert_eq!(
+            scope["basis"],
+            "changed_production_files_plus_immediate_callers"
+        );
+        assert_eq!(scope["total_production_files"], 3);
+        assert_eq!(scope["production_files_considered"], 2);
+        assert_eq!(
+            scope["changed_production_files"],
+            serde_json::json!(["src/lib.rs"])
+        );
+        assert_eq!(
+            scope["immediate_caller_files"],
+            serde_json::json!(["src/wrapper.rs"])
+        );
+        assert_eq!(
+            scope["scoped_production_files"],
+            serde_json::json!(["src/lib.rs", "src/wrapper.rs"])
+        );
+        assert!(
+            !rendered_json.contains("src/unrelated.rs"),
+            "unrelated production files must stay out of the scoped review report"
+        );
+
+        let rendered_md = std::fs::read_to_string(out.with_extension("md"))
+            .map_err(|err| format!("read review comments Markdown: {err}"))?;
+        assert!(rendered_md.contains("analysis scope: `diff_scoped_changed_files`"));
+        assert!(rendered_md.contains("scoped production files: 2/3"));
+        assert!(rendered_md.contains("review_comments_diff_scope_only"));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
@@ -10132,7 +10833,7 @@ language = "rust"
         let gap_ledger = root.join("gap-ledger.json");
         std::fs::write(
             &gap_ledger,
-            r#"{"records":[{"gap_id":"gap:pr:pricing","canonical_gap_id":"gap:rust:pricing","kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable","scope":"pr_local","evidence_class":"predicate_boundary","gap_state":"actionable","policy_state":"new","repairability":"repairable","anchor":{"file":"src/pricing.rs","line":42,"owner":"pricing::discount"},"repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"tests/pricing.rs","assertion_shape":"assert_eq!(discount(100, 100), 90)","changed_behavior":"amount == threshold"},"verification_commands":["cargo xtask fixtures boundary_gap"],"projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}}]}"#,
+            r#"{"records":[{"gap_id":"gap:pr:pricing","canonical_gap_id":"gap:rust:pricing","kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable","scope":"pr_local","evidence_class":"predicate_boundary","gap_state":"actionable","policy_state":"new","repairability":"repairable","anchor":{"file":"src/pricing.rs","line":42,"owner":"pricing::discount"},"repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"tests/pricing.rs","assertion_shape":"assert_eq!(discount(100, 100), 90)","changed_behavior":"amount == threshold"},"verification_commands":["cargo xtask fixtures boundary_gap"],"receipt_command":"ripr outcome --before target/ripr/workflow/before.json --after target/ripr/workflow/after.json --out target/ripr/receipts/gap-pr-pricing.targeted-test-outcome.json","projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}}]}"#,
         )
         .map_err(|err| format!("write gap ledger: {err}"))?;
 
@@ -10175,6 +10876,323 @@ language = "rust"
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_parses_gap_ledger_language_top_and_format() {
+        assert_eq!(
+            parse_swarm_queue_options(&args(&[
+                "--root",
+                ".",
+                "--gap-ledger",
+                "target/ripr/reports/gap-decision-ledger.json",
+                "--language",
+                "python",
+                "--top",
+                "3",
+                "--format",
+                "json",
+            ])),
+            Ok(SwarmQueueOptions {
+                root: PathBuf::from("."),
+                gap_ledger: PathBuf::from("target/ripr/reports/gap-decision-ledger.json"),
+                language: "python".to_string(),
+                top: 3,
+            })
+        );
+        assert_eq!(
+            parse_swarm_queue_options(&args(&["--format", "md"])),
+            Err("unknown swarm queue format \"md\"; expected `json`".to_string())
+        );
+        assert_eq!(
+            parse_swarm_queue_options(&args(&["--top", "0"])),
+            Err("invalid swarm queue --top: expected a positive integer".to_string())
+        );
+    }
+
+    fn python_swarm_queue_gap_ledger(root: &Path) -> String {
+        serde_json::json!({
+            "root": output::outcome::display_path(root),
+            "generated_at": "unix_ms:1778240100000",
+            "records": [{
+                "gap_id": "gap:python:pricing-boundary",
+                "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                "kind": "MissingBoundaryAssertion",
+                "language": "python",
+                "language_status": "preview",
+                "scope": "pr_local",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "repairable",
+                "authority_boundary": "preview_static_advisory",
+                "anchor": {
+                    "file": "src/pricing.py",
+                    "line": 42,
+                    "owner": "calculate_discount",
+                    "dedupe_fingerprint": "gap:python:pricing"
+                },
+                "evidence_ids": ["evidence:pricing-boundary"],
+                "projection_eligibility": {
+                    "agent_packet": {
+                        "eligible": true,
+                        "reason": "repairable"
+                    }
+                },
+                "repair_route": {
+                    "route_kind": "StrengthenExistingTest",
+                    "target_file": "tests/test_pricing.py",
+                    "related_test": "tests/test_pricing.py::test_calculate_discount_smoke",
+                    "missing_discriminator": "amount == threshold",
+                    "assertion_shape": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                    "changed_behavior": "amount >= threshold",
+                    "stop_conditions": ["Stop if expected value is ambiguous."]
+                },
+                "verification_commands": ["pytest tests/test_pricing.py::test_calculate_discount_smoke"],
+                "receipt_command": "ripr outcome --before before.json --after after.json"
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn swarm_queue_render_blocks_gap_ledger_from_wrong_root() -> Result<(), String> {
+        let temp = unique_command_test_dir("swarm-queue-render-wrong-root");
+        let requested = temp.join("requested");
+        let other = temp.join("other");
+        std::fs::create_dir_all(&requested).map_err(|err| format!("create requested: {err}"))?;
+        std::fs::create_dir_all(&other).map_err(|err| format!("create other: {err}"))?;
+        let options = SwarmQueueOptions {
+            root: requested.clone(),
+            gap_ledger: requested.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+
+        let json = render_swarm_queue_from_gap_ledger_contents(
+            &options,
+            &python_swarm_queue_gap_ledger(&other),
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("wrong_root")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "wrong-root queue should not emit packets: {json}"
+        );
+
+        std::fs::remove_dir_all(&temp).map_err(|err| format!("remove temp: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_render_blocks_gap_ledger_without_root() -> Result<(), String> {
+        let root = unique_command_test_dir("swarm-queue-render-missing-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let options = SwarmQueueOptions {
+            root: root.clone(),
+            gap_ledger: root.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+        let mut ledger =
+            serde_json::from_str::<serde_json::Value>(&python_swarm_queue_gap_ledger(&root))
+                .map_err(|err| format!("parse fixture ledger: {err}"))?;
+        ledger
+            .as_object_mut()
+            .ok_or_else(|| "fixture ledger should be an object".to_string())?
+            .remove("root");
+
+        let json = render_swarm_queue_from_gap_ledger_contents(&options, &ledger.to_string())?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            value
+                .get("blocker")
+                .and_then(|blocker| blocker.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("missing_root")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("blocked_records_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "missing-root queue should not emit packets: {json}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_render_emits_packets_for_matching_root() -> Result<(), String> {
+        let root = unique_command_test_dir("swarm-queue-render-matching-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let options = SwarmQueueOptions {
+            root: root.clone(),
+            gap_ledger: root.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+
+        let json = render_swarm_queue_from_gap_ledger_contents(
+            &options,
+            &python_swarm_queue_gap_ledger(&root),
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        assert_eq!(
+            value.get("status").and_then(serde_json::Value::as_str),
+            Some("advisory")
+        );
+        assert_eq!(
+            value
+                .get("summary")
+                .and_then(|summary| summary.get("returned"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|packets| packets.first())
+                .and_then(|packet| packet.get("allowed_files"))
+                .and_then(serde_json::Value::as_array)
+                .and_then(|files| files.first())
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_pricing.py")
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_queue_root_status_detects_wrong_ledger_root() -> Result<(), String> {
+        let temp = unique_command_test_dir("swarm-queue-root-status");
+        let requested = temp.join("requested");
+        let other = temp.join("other");
+        std::fs::create_dir_all(&requested).map_err(|err| format!("create requested: {err}"))?;
+        std::fs::create_dir_all(&other).map_err(|err| format!("create other: {err}"))?;
+
+        assert_eq!(
+            gap_ledger_root_status(&requested, Some(&requested.display().to_string())),
+            GapLedgerRootStatus::Match
+        );
+        let mismatch = gap_ledger_root_status(&requested, Some(&other.display().to_string()));
+        match mismatch {
+            GapLedgerRootStatus::Mismatch {
+                ledger_root,
+                reason,
+            } => {
+                assert!(ledger_root.contains("other"));
+                assert!(reason.contains("does not match requested --root"));
+            }
+            other_status => return Err(format!("expected mismatch, got {other_status:?}")),
+        }
+        assert_eq!(
+            gap_ledger_root_status(&requested, None),
+            GapLedgerRootStatus::Missing
+        );
+
+        std::fs::remove_dir_all(&temp).map_err(|err| format!("remove temp: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_ingest_parses_result_and_format() {
+        assert_eq!(
+            parse_swarm_ingest_options(&args(&[
+                "--root",
+                ".",
+                "--result",
+                "target/ripr/workflow/agent-result.json",
+                "--format",
+                "json",
+            ])),
+            Ok(SwarmIngestOptions {
+                root: PathBuf::from("."),
+                result: PathBuf::from("target/ripr/workflow/agent-result.json"),
+            })
+        );
+        assert_eq!(
+            parse_swarm_ingest_options(&args(&["--format", "md"])),
+            Err("unknown swarm ingest format \"md\"; expected `json`".to_string())
+        );
+        assert_eq!(
+            parse_swarm_ingest_options(&args(&[])),
+            Err("swarm ingest requires --result <path>".to_string())
+        );
+    }
+
+    #[test]
+    fn swarm_queue_rejects_unknown_subcommands_and_missing_root() {
+        assert_eq!(
+            swarm(&args(&["unknown"])),
+            Err("unknown swarm subcommand \"unknown\"; expected `queue` or `ingest`".to_string())
+        );
+        assert_eq!(swarm(&args(&[])), Ok(()));
+        assert_eq!(swarm(&args(&["queue", "--help"])), Ok(()));
+        assert_eq!(swarm(&args(&["ingest", "--help"])), Ok(()));
+        assert_eq!(
+            swarm(&args(&[
+                "queue",
+                "--root",
+                "target/ripr/missing-swarm-queue-root",
+                "--language",
+                "python",
+            ])),
+            Err(
+                "swarm queue root target/ripr/missing-swarm-queue-root is not a directory"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            swarm(&args(&[
+                "ingest",
+                "--root",
+                "target/ripr/missing-swarm-ingest-root",
+                "--result",
+                "agent-result.json",
+            ])),
+            Err(
+                "swarm ingest root target/ripr/missing-swarm-ingest-root is not a directory"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
@@ -10971,6 +11989,16 @@ language = "rust"
         assert!(summary.contains(".language_status? != \"preview\""));
         assert!(summary.contains("configured preview/advisory"));
         assert!(summary.contains("artifact_entries=\\`$artifact_entries\\`"));
+        assert!(summary.contains("grouped_preview_languages=\"$preview_languages\""));
+        assert!(
+            summary.contains("grouped_preview_languages=\"$grouped_preview_languages javascript\"")
+        );
+        assert!(summary.contains("Grouped preview evidence languages"));
+        assert!(summary.contains("for language in $grouped_preview_languages; do"));
+        assert!(summary.contains("actionability_states"));
+        assert!(summary.contains("actionability_categories"));
+        assert!(summary.contains("repair_packet_ready_entries"));
+        assert!(summary.contains("gate_impact=\\`none\\`"));
         assert!(summary.contains(
             "preview-language groups are advisory presentation only; \\`ripr gate evaluate\\` remains pass/fail authority"
         ));

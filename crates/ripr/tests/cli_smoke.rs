@@ -16,10 +16,33 @@ fn run_ripr(args: &[&str]) -> Output {
 
 fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
     let bin = env!("CARGO_BIN_EXE_ripr");
-    Command::new(bin)
-        .current_dir(workspace_root())
-        .args(args)
-        .output()
+    let root = workspace_root();
+    run_command(bin, Some(&root), args)
+}
+
+fn run_command(
+    program: &str,
+    current_dir: Option<&Path>,
+    args: &[&str],
+) -> Result<Output, std::io::Error> {
+    let mut command = Command::new(program);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
+    command.args(args).output()
+}
+
+fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = run_command("git", Some(root), args)
+        .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "git {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
 }
 
 fn workspace_root() -> PathBuf {
@@ -235,6 +258,106 @@ fn check_json_output_has_stable_contract_fields() {
     assert!(stdout.contains(r#""oracle_kind""#));
     assert!(stdout.contains(r#""recommended_next_step""#));
     assert!(stdout.contains(r#""suggested_next_action""#));
+}
+
+#[test]
+fn diff_json_reports_changed_surface_before_full_repo_context() -> Result<(), String> {
+    let workspace = unique_temp_workspace("diff-first");
+    std::fs::create_dir_all(workspace.join("src")).map_err(|e| format!("create src dir: {e}"))?;
+    std::fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname=\"ripr-diff-first-fixture\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(
+        workspace.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|e| format!("write base src/lib.rs: {e}"))?;
+    run_git(&workspace, &["init"])?;
+    run_git(
+        &workspace,
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_git(&workspace, &["config", "user.name", "RIPR Test"])?;
+    run_git(&workspace, &["add", "."])?;
+    run_git(&workspace, &["commit", "-m", "base"])?;
+    run_git(
+        &workspace,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    )?;
+    std::fs::write(
+        workspace.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|e| format!("write changed src/lib.rs: {e}"))?;
+    run_git(&workspace, &["add", "src/lib.rs"])?;
+    run_git(&workspace, &["commit", "-m", "change threshold boundary"])?;
+
+    let root = workspace.display().to_string();
+    let output = run_ripr(&[
+        "diff",
+        "--root",
+        &root,
+        "--base",
+        "refs/remotes/origin/main",
+        "--head",
+        "HEAD",
+        "--json",
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|e| format!("parse diff JSON: {e}\n{stdout}"))?;
+    assert_eq!(
+        json_pointer_str(&report, "/kind").map_err(|e| e.to_string())?,
+        "ripr_diff"
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/run_status").map_err(|e| e.to_string())?,
+        "diff_complete_full_repo_limited"
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/runtime_status/diff/state").map_err(|e| e.to_string())?,
+        "diff_complete"
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/runtime_status/full_repo_context/state")
+            .map_err(|e| e.to_string())?,
+        "full_repo_limited"
+    );
+    assert!(
+        !json_pointer_bool(
+            &report,
+            "/runtime_status/full_repo_context/downstream_consumable",
+        )
+        .map_err(|e| e.to_string())?
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/changed_files/0/path").map_err(|e| e.to_string())?,
+        "src/lib.rs"
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/receipt/outcome_hint").map_err(|e| e.to_string())?,
+        "diff_complete/full_repo_limited"
+    );
+    assert!(
+        json_pointer_str(&report, "/receipt/path")
+            .map_err(|e| e.to_string())?
+            .contains("diff-first")
+    );
+    let changed_seams = report
+        .pointer("/changed_seams")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "expected changed_seams array".to_string())?;
+    assert!(
+        !changed_seams.is_empty(),
+        "diff-first report should preserve changed-seam evidence: {stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
 }
 
 #[test]
@@ -1899,6 +2022,135 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
 }
 
 #[test]
+fn pilot_accepts_python_project_without_ripr_config() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/python/basic");
+    let out_dir = unique_temp_workspace("pilot-python-basic");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("RIPR pilot complete."));
+    assert!(stdout.contains("Python preview:"));
+    assert!(out_dir.join("pilot-summary.json").exists());
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
+    let root = unique_temp_workspace("pilot-python-git");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"pilot-python-git\"\nversion = \"0.0.0\"\n",
+    )
+    .map_err(|err| format!("write pyproject: {err}"))?;
+    std::fs::write(
+        root.join("src/pricing.py"),
+        "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
+    )
+    .map_err(|err| format!("write baseline pricing: {err}"))?;
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+    )
+    .map_err(|err| format!("write tests: {err}"))?;
+
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&root, &["config", "user.name", "RIPR Test"])?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "base"])?;
+    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    std::fs::write(
+        root.join("src/pricing.py"),
+        "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    )
+    .map_err(|err| format!("write changed pricing: {err}"))?;
+    run_git(&root, &["add", "src/pricing.py"])?;
+    run_git(&root, &["commit", "-m", "change threshold boundary"])?;
+
+    let out_dir = unique_temp_workspace("pilot-python-git-out");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for needle in [
+        "Top recommendation:",
+        "language: python (preview)",
+        "repair action: strengthen_existing_test",
+        "changed owner: calculate_discount",
+        "missing discriminator: amount == threshold",
+        "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
+        "verify: pytest tests/test_pricing.py::test_calculate_discount_smoke",
+        "receipt status: unavailable_until_python_gap_ledger",
+    ] {
+        assert!(stdout.contains(needle), "missing stdout needle: {needle}");
+    }
+    assert!(
+        !stdout.contains("none ranked by the default pilot policy"),
+        "Python repair-card pilot should not render the no-recommendation top line"
+    );
+
+    let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+        .map_err(|err| format!("read pilot summary json: {err}"))?;
+    for needle in [
+        r#""python_first_use": {"#,
+        r#""status": "ready""#,
+        r#""language": "python""#,
+        r#""language_status": "preview""#,
+        r#""repair_action": "strengthen_existing_test""#,
+        r#""changed_owner": "calculate_discount""#,
+        r#""missing_discriminator": "amount == threshold""#,
+        r#""suggested_test_file": "tests/test_pricing.py""#,
+        r#""verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke""#,
+    ] {
+        assert!(
+            summary_json.contains(needle),
+            "missing summary JSON needle: {needle}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn check_detects_python_project_without_ripr_config() {
+    let root = workspace_root().join("fixtures/python/basic");
+    let diff = root.join("diff.patch");
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--diff",
+        &diff.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(r#""language": "python""#));
+    assert!(stdout.contains(r#""language_status": "preview""#));
+    assert!(stdout.contains("python_preview"));
+}
+
+#[test]
 fn pilot_honors_explicit_mode_over_repo_config() -> Result<(), String> {
     let workspace = make_temp_workspace_with_production_seam()?;
     std::fs::write(
@@ -2391,18 +2643,67 @@ fn make_temp_workspace_with_suppressions(
 }
 
 #[test]
-fn check_badge_plus_fails_clearly_when_test_efficiency_report_missing() -> Result<(), String> {
+fn check_badge_plus_missing_test_efficiency_renders_neutral_badge() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
     let diff = sample_diff().display().to_string();
 
-    for format in ["badge-plus-json", "badge-plus-shields"] {
-        let output = run_ripr(&[
-            "check", "--root", &root, "--diff", &diff, "--format", format,
-        ]);
+    for (format, args) in [
+        (
+            "badge-plus-json",
+            vec![
+                "check",
+                "--root",
+                root.as_str(),
+                "--diff",
+                diff.as_str(),
+                "--format",
+                "badge-plus-json",
+            ],
+        ),
+        (
+            "badge-plus-shields",
+            vec![
+                "check",
+                "--root",
+                root.as_str(),
+                "--diff",
+                diff.as_str(),
+                "--format",
+                "badge-plus-shields",
+            ],
+        ),
+        (
+            "repo-badge-plus-json",
+            vec![
+                "check",
+                "--root",
+                root.as_str(),
+                "--format",
+                "repo-badge-plus-json",
+            ],
+        ),
+        (
+            "repo-badge-plus-shields",
+            vec![
+                "check",
+                "--root",
+                root.as_str(),
+                "--format",
+                "repo-badge-plus-shields",
+            ],
+        ),
+    ] {
+        let output = run_ripr(&args);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            !output.status.success(),
-            "format `{format}` should fail when report missing"
+            stdout.contains(r#""message": "needs test-efficiency""#),
+            "stdout must render neutral badge for `{format}`: {stdout}"
+        );
+        assert!(
+            stdout.contains(r#""color": "lightgrey""#),
+            "stdout must render neutral color for `{format}`: {stdout}"
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -2410,8 +2711,12 @@ fn check_badge_plus_fails_clearly_when_test_efficiency_report_missing() -> Resul
             "stderr must name the missing report for `{format}`: {stderr}"
         );
         assert!(
-            stderr.contains("cargo xtask test-efficiency-report"),
-            "stderr must direct the user to the regenerator for `{format}`: {stderr}"
+            stderr.contains("docs/BADGE_ADOPTION.md"),
+            "stderr must point to badge adoption docs for `{format}`: {stderr}"
+        );
+        assert!(
+            !stderr.contains("cargo xtask test-efficiency-report"),
+            "stderr must not hardcode repo-private xtask guidance for `{format}`: {stderr}"
         );
     }
     let _ = std::fs::remove_dir_all(&workspace);
@@ -2656,6 +2961,36 @@ fn check_repo_badge_plus_json_emits_repo_scope_metadata() -> Result<(), String> 
     assert!(stdout.contains(r#""scope": "repo""#));
     assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
     assert!(stdout.contains(r#""label": "ripr+""#));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn check_repo_exposure_summary_json_emits_bounded_summary() -> Result<(), String> {
+    let workspace = make_temp_workspace_with_production_seam()?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--format",
+        "repo-exposure-summary-json",
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(r#""schema_version": "0.1""#));
+    assert!(stdout.contains(r#""format": "repo-exposure-summary-json""#));
+    assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
+    assert!(stdout.contains(r#""raw_seams""#));
+    assert!(stdout.contains(r#""unsuppressed_exposure_gaps""#));
+    assert!(stdout.contains(r#""reason_breakdown""#));
+    assert!(stdout.contains(r#""top_files""#));
+    assert!(!stdout.contains(r#""seams": ["#));
+    assert!(!stdout.contains(r#""evidence_record""#));
+    assert!(!stdout.contains(r#""related_tests""#));
+    assert!(!stdout.contains(r#""observed_values""#));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())

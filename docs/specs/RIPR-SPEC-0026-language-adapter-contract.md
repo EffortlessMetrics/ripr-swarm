@@ -1,6 +1,6 @@
 # RIPR-SPEC-0026: Language Adapter Contract
 
-Status: proposed
+Status: accepted
 
 ## Problem
 
@@ -59,7 +59,8 @@ specs and fixtures justify a higher status.
 | Workspace root | yes | Same root the existing CLI/LSP receives. |
 | Diff (paths + spans) | yes | Same diff inputs as the Rust path. |
 | Source file content | yes | Read through the existing file abstraction. |
-| Repo configuration | yes | `ripr.toml` declares which languages are enabled. |
+| Repo configuration | yes | `ripr.toml` declares which languages are enabled when present. |
+| Project detection | yes | A missing `ripr.toml` may enable a preview adapter only when a language-specific detector recognizes the repository shape. |
 | Cargo feature set | yes | Determines which preview adapters are available in the current binary. |
 | Language router decision | yes | Maps each changed file to at most one adapter. |
 | Existing report inputs | optional | Lane 4 producers continue to consume their existing artifacts; language metadata is additive. |
@@ -76,14 +77,18 @@ fork is permitted.
 
 Additive optional fields:
 
-- `language`: one of `rust`, `typescript`, `python`. Omitted when unknown.
+- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`.
+  Omitted when unknown.
 - `language_status`: `stable` or `preview`. Omitted when `rust`.
+- `probe.owner`: stable owner identifier when a preview adapter can map the
+  changed line to an owner. Per-language specs define the identifier shape.
 - `owner_kind`: bounded vocabulary (`function`, `method`, `class_method`,
   `arrow_function`, `component`, `module_function`); omitted when unknown.
 - `static_limit_kind`: bounded vocabulary describing why a probe could not
   be classified (`dynamic_dispatch`, `metaprogramming`,
   `missing_import_graph`, `decorator_indirection`, `mocked_module`,
-  `unsupported_syntax`).
+  `opaque_custom_assertion_helper`, `property_based_test`,
+  `unresolved_pytest_fixture`, `unsupported_syntax`).
 
 Reports gaining these fields:
 
@@ -106,8 +111,14 @@ Rust-only when only Rust is enabled.
 Routing rules:
 
 - `*.rs` → Rust adapter (always).
-- `*.ts`, `*.tsx`, `*.js`, `*.jsx` → TypeScript adapter (preview, opt-in).
+- `*.ts`, `*.tsx` → TypeScript adapter (preview, opt-in).
+- `*.js`, `*.jsx` → TypeScript-family adapter with JavaScript preview labels
+  (preview, opt-in).
 - `*.py` → Python adapter (preview, opt-in).
+- Perl fact-packet preview is a producer/consumer path, not a live Perl parser
+  route in this contract slice. A configured Perl language value must fail
+  closed unless the binary was built with `lang-perl`, and `ripr check` must not
+  launch `perl-lsp` or inspect live Perl package/runtime state by default.
 - Files matched by no adapter pass through unchanged (no probes, not an
   error).
 
@@ -116,19 +127,26 @@ Repo configuration adds a `[languages]` section to `ripr.toml`:
 ```toml
 [languages]
 enabled = ["rust"]
-# Preview adapters are opt-in. Adding "typescript" or "python" enables them.
+# Preview adapters are opt-in. Adding "typescript", "python", or "perl" enables
+# the corresponding preview surface when the binary supports it.
 ```
 
 The default `enabled` value is `["rust"]`. Preview adapters do not run
-when absent from `enabled`. A `--languages rust,typescript` CLI flag
-overrides config when needed.
+when absent from explicit `enabled`. When `ripr.toml` is missing, a
+language-specific project detector may add a preview adapter for a recognized
+project root; Python project detection is the first such exception. A
+`--languages rust,typescript` CLI flag overrides config when needed.
+
+An explicit `ripr.toml` is authoritative. For example, a Python-shaped
+repository with `[languages] enabled = ["rust"]` must keep Python preview
+disabled.
 
 Runtime opt-in is not the same as build-time availability. The published
 default build may include preview adapter support, but Rust-only binaries
 are allowed. If `languages.enabled` names a preview language that was not
 compiled into the current binary, config validation must fail closed with
 an actionable message naming the missing Cargo feature, such as
-`lang-typescript` or `lang-python`. The editor and other projection
+`lang-typescript`, `lang-python`, or `lang-perl`. The editor and other projection
 surfaces must treat that as unavailable adapter state, not as a reason to
 invent diagnostics.
 
@@ -147,7 +165,9 @@ The contract is supported only when the implementation can show:
 - Additive `language` and `language_status` fields appear only when
   populated and roundtrip through JSON serialization.
 - The language router has fixture coverage for `.rs`, `.ts`, `.tsx`,
-  `.js`, `.jsx`, `.py`, unmatched extensions, and excluded paths.
+  `.js`, `.jsx`, `.py`, unmatched extensions, and excluded paths. Perl
+  fact-packet preview coverage belongs to RIPR-SPEC-0064 until a live Perl
+  router is intentionally added.
 - `ripr.toml` parses `[languages] enabled` and rejects unsupported
   values with a clear error.
 - `ripr.toml` rejects languages whose adapter Cargo feature is unavailable
@@ -164,7 +184,9 @@ The contract is supported only when the implementation can show:
 ## Non-Goals
 
 - No runtime mutation execution.
-- No default-on preview adapters.
+- No blanket default-on preview adapters. Project detection may select a
+  preview adapter for a recognized repository root only when explicit
+  `ripr.toml` language config is absent.
 - No requirement that every distributed binary ships every preview parser
   dependency.
 - No new published crate, binary, LSP server, or editor extension.
@@ -214,6 +236,8 @@ Follow-up fixtures and tests cover:
   `.py`, unmatched extensions, and excluded paths.
 - Repo configuration parsing of `[languages] enabled` including
   unsupported values.
+- Repo configuration parsing rejects `perl` with a clear `lang-perl` message
+  when the current binary lacks the Perl preview feature.
 - Generated CI fixtures for Rust-default and language-grouped advisory
   summaries.
 
@@ -268,4 +292,7 @@ The contract makes these counts available to later metrics surfaces:
 - `language_adapter_static_limit_missing_import_graph`
 - `language_adapter_static_limit_metaprogramming`
 - `language_adapter_static_limit_mocked_module`
+- `language_adapter_static_limit_opaque_custom_assertion_helper`
+- `language_adapter_static_limit_property_based_test`
+- `language_adapter_static_limit_unresolved_pytest_fixture`
 - `language_adapter_static_limit_unsupported_syntax`

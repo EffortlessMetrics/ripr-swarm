@@ -66,6 +66,22 @@ jq -e '
 
 `ripr+` formats read `target/ripr/reports/test-efficiency.json`.
 
+If that file is missing, `badge-plus-*` and `repo-badge-plus-*` formats render a
+neutral badge-generator-safe response instead of exiting nonzero:
+
+```json
+{
+  "schemaVersion": 1,
+  "label": "ripr+",
+  "message": "needs test-efficiency",
+  "color": "lightgrey"
+}
+```
+
+Native JSON uses the same badge schema and includes the diagnostic in
+`warnings[]`. The neutral badge is not a measured `ripr+` value; generate the
+report before publishing or enforcing a `ripr+` count.
+
 Today that report is typically produced by:
 
 ```bash
@@ -74,6 +90,8 @@ cargo xtask test-efficiency-report
 
 That command is appropriate for this repository, but external repositories
 should not be required to copy or vendor repo-private `xtask` internals.
+In this repository, `cargo xtask badges` and `cargo xtask badges --check`
+run this producer before rendering repo `ripr+` badge artifacts.
 
 ### Productization target
 
@@ -89,6 +107,33 @@ Until a public contract like this exists, recommend:
 - external repos can adopt plain `ripr` badge flows now;
 - external repos adopt `ripr+` only when they already have a supported
   `test-efficiency.json` generation path.
+
+### Minimum `test-efficiency.json` shape
+
+The current badge parser expects this top-level shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "tests": [
+    {
+      "name": "test_name",
+      "class": "smoke_only",
+      "path": "tests/example.rs",
+      "reached_owners": ["crate::module::owner"]
+    }
+  ],
+  "metrics": {
+    "tests_scanned": 1,
+    "reason_counts": {
+      "smoke_oracle_only": 1
+    }
+  }
+}
+```
+
+Recognized `class` values and reason strings are defined in
+[BADGE_POLICY.md](BADGE_POLICY.md#test-efficiency-vocabulary-locked).
 
 ## Recommended downstream command sequence
 
@@ -129,6 +174,10 @@ downstream mechanism. In this repository that source is
 `cargo xtask test-efficiency-report`; external repositories should not copy that
 private wrapper. Do not run the `ripr+` commands below until the JSON file
 exists and is part of the downstream repo's badge refresh contract.
+
+For the local checked-in badge endpoints, prefer `cargo xtask badges` or
+`cargo xtask badges --check`; those wrappers regenerate the test-efficiency
+report before requesting repo `ripr+` badge formats.
 
 ```bash
 jq -e '.schema_version' target/ripr/reports/test-efficiency.json

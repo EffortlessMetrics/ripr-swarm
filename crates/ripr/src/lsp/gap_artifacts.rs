@@ -417,6 +417,11 @@ fn validate_actionable_gaps(
 
         if packet_is_actionable(packet) {
             has_actionable_packet = true;
+            require_actionable_packet_string(
+                packet,
+                &["canonical_gap_id"],
+                "actionable packet must carry canonical_gap_id",
+            )?;
             identities.push(
                 identity_from_sources(&[Some(packet)])
                     .ok_or(GapArtifactRejection::MissingIdentity)?,
@@ -1028,7 +1033,7 @@ fn validate_language(
             language.as_str().to_string(),
         ));
     }
-    if !context.enabled_languages.contains(&language) {
+    if !language_enabled(context.enabled_languages, language) {
         return Err(GapArtifactRejection::DisabledLanguage(
             language.as_str().to_string(),
         ));
@@ -1039,6 +1044,12 @@ fn validate_language(
         ));
     }
     Ok(())
+}
+
+fn language_enabled(enabled_languages: &[LanguageId], language: LanguageId) -> bool {
+    enabled_languages.contains(&language)
+        || (language == LanguageId::JavaScript
+            && enabled_languages.contains(&LanguageId::TypeScript))
 }
 
 fn validate_paths(root: &Path, paths: &[String]) -> Result<(), GapArtifactRejection> {
@@ -1101,7 +1112,8 @@ fn language_from_value(value: &Value) -> Result<Option<LanguageId>, GapArtifactR
     match language {
         None => Ok(None),
         Some("rust") => Ok(Some(LanguageId::Rust)),
-        Some("typescript") | Some("javascript") => Ok(Some(LanguageId::TypeScript)),
+        Some("typescript") => Ok(Some(LanguageId::TypeScript)),
+        Some("javascript") => Ok(Some(LanguageId::JavaScript)),
         Some("python") => Ok(Some(LanguageId::Python)),
         Some(other) => Err(GapArtifactRejection::MalformedArtifact(match other {
             "" => "language must not be empty",
@@ -1225,7 +1237,7 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
         return false;
     }
     let tokens = command_tokens(trimmed);
-    if !matches!(tokens.first().map(String::as_str), Some("cargo" | "ripr")) {
+    if !command_program_is_allowed(&tokens) {
         return false;
     }
     for index in 0..tokens.len() {
@@ -1244,9 +1256,23 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     true
 }
 
+fn command_program_is_allowed(tokens: &[String]) -> bool {
+    match tokens.first().map(String::as_str) {
+        Some("cargo" | "ripr" | "pytest") => true,
+        Some("python") => {
+            tokens.get(1).map(String::as_str) == Some("-m")
+                && tokens.get(2).map(String::as_str) == Some("unittest")
+        }
+        _ => false,
+    }
+}
+
 fn looks_like_command_payload(value: &str) -> bool {
     let trimmed = value.trim_start();
-    trimmed.starts_with("cargo ") || trimmed.starts_with("ripr ")
+    trimmed.starts_with("cargo ")
+        || trimmed.starts_with("ripr ")
+        || trimmed.starts_with("pytest ")
+        || trimmed.starts_with("python -m unittest ")
 }
 
 fn command_tokens(command: &str) -> Vec<String> {
@@ -1758,7 +1784,24 @@ mod tests {
 
         assert_eq!(
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
-            Err(GapArtifactRejection::MissingIdentity)
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry canonical_gap_id"
+            ))
+        );
+    }
+
+    #[test]
+    fn actionable_gaps_report_rejects_actionable_packet_without_canonical_gap_id_even_with_seam_id()
+    {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["canonical_gap_id"] = json!(null);
+        artifact["packets"][0]["seam_id"] = json!("fallback-seam-id");
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry canonical_gap_id"
+            ))
         );
     }
 
@@ -1787,6 +1830,22 @@ mod tests {
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
             Err(GapArtifactRejection::MalformedArtifact(
                 "actionable packet must not carry projection_exclusion_reasons"
+            ))
+        );
+    }
+
+    #[test]
+    fn actionable_gaps_report_rejects_cross_language_target_unresolved_packet() {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["public_projection_eligible"] = json!(false);
+        artifact["packets"][0]["projection_exclusion_reasons"] =
+            json!(["cross_language_target_unresolved"]);
+        artifact["packets"][0]["allowed_edit_surface"] = json!([]);
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must be public_projection_eligible"
             ))
         );
     }
@@ -1983,6 +2042,19 @@ mod tests {
     }
 
     #[test]
+    fn actionable_gaps_report_rejects_missing_related_test_or_observer() {
+        let mut artifact = actionable_gaps_report();
+        artifact["packets"][0]["related_test_or_observer"] = json!(null);
+
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::MalformedArtifact(
+                "actionable packet must carry typed related_test_or_observer"
+            ))
+        );
+    }
+
+    #[test]
     fn actionable_gaps_report_rejects_placeholder_guidance_fields() {
         let mut artifact = actionable_gaps_report();
         artifact["packets"][0]["confidence_basis"] = json!("unknown");
@@ -2102,6 +2174,35 @@ mod tests {
         assert_eq!(
             enabled.identities[0].canonical_gap_id.as_deref(),
             Some("gap:py:pricing")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_preview_gap_ledger_is_enabled_by_typescript_adapter() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["gap_id"] = json!("gap:js:pricing");
+        artifact["records"][0]["canonical_gap_id"] = json!("gap:js:pricing");
+        artifact["records"][0]["language"] = json!("javascript");
+
+        let disabled = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]));
+        assert_eq!(
+            disabled,
+            Err(GapArtifactRejection::DisabledLanguage(
+                "javascript".to_string()
+            ))
+        );
+
+        let enabled = validate_gap_artifact(
+            &artifact,
+            &context(&[LanguageId::Rust, LanguageId::TypeScript]),
+        )
+        .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(enabled.language, Some(LanguageId::JavaScript));
+        assert_eq!(enabled.language_status, Some(LanguageStatus::Preview));
+        assert_eq!(
+            enabled.identities[0].canonical_gap_id.as_deref(),
+            Some("gap:js:pricing")
         );
         Ok(())
     }
@@ -2302,6 +2403,35 @@ mod tests {
         let command = "ripr agent verify --root \"/workspace\" --json";
 
         assert!(command_payload_is_safe(&workspace, command));
+    }
+
+    #[test]
+    fn command_payload_accepts_python_test_verify_commands() {
+        let workspace = root();
+
+        assert!(command_payload_is_safe(
+            &workspace,
+            "pytest tests/test_pricing.py::test_discount_boundary"
+        ));
+        assert!(command_payload_is_safe(
+            &workspace,
+            "python -m unittest tests.test_pricing.TestDiscount.test_boundary"
+        ));
+        assert!(!command_payload_is_safe(
+            &workspace,
+            "python script.py --do-anything"
+        ));
+        assert!(!command_payload_is_safe(&workspace, "tox -e py"));
+        assert!(!command_payload_is_safe(
+            &workspace,
+            "pytest ../outside/test_pricing.py"
+        ));
+        assert!(looks_like_command_payload(
+            " pytest tests/test_pricing.py::test_discount_boundary"
+        ));
+        assert!(looks_like_command_payload(
+            "python -m unittest tests.test_pricing.TestDiscount.test_boundary"
+        ));
     }
 
     #[test]

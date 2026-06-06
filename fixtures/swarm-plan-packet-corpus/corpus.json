@@ -35,9 +35,19 @@
           "file": "tests/pricing.rs",
           "name": "pricing_threshold"
         },
+        "allowed_edit_surface": [
+          "tests/pricing.rs"
+        ],
         "confidence_basis": "fixture_backed",
         "must_not_change": [
           "Do not edit production code by default."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.rs",
+            "line": 42,
+            "kind": "weakly_exposed"
+          }
         ],
         "raw_findings": [
           {
@@ -93,9 +103,19 @@
           "file": "tests/parser.rs",
           "name": "parser_missing_input"
         },
+        "allowed_edit_surface": [
+          "tests/parser.rs"
+        ],
         "confidence_basis": "calibrated",
         "must_not_change": [
           "Do not edit parser production code."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/parser.rs",
+            "line": 18,
+            "kind": "weakly_exposed"
+          }
         ],
         "raw_findings": [
           {
@@ -155,6 +175,13 @@
         "must_not_change": [
           "Do not edit production code by default."
         ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.rs",
+            "line": 42,
+            "kind": "weakly_exposed"
+          }
+        ],
         "raw_findings": [
           {
             "file": "src/pricing.rs",
@@ -211,9 +238,19 @@
           "file": "tests/report_golden.rs",
           "name": "renders_config_label"
         },
+        "allowed_edit_surface": [
+          "tests/report_golden.rs"
+        ],
         "confidence_basis": "fixture_backed",
         "must_not_change": [
           "Do not edit production report rendering code by default."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/report.rs",
+            "line": 64,
+            "kind": "exposed"
+          }
         ],
         "raw_findings": [
           {
@@ -272,6 +309,13 @@
         "confidence_basis": "fixture_backed",
         "must_not_change": [
           "Do not edit parser production code by default."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/parser.rs",
+            "line": 28,
+            "kind": "weakly_exposed"
+          }
         ],
         "raw_findings": [
           {
@@ -335,6 +379,13 @@
         "confidence_basis": "static_only",
         "must_not_change": [
           "Do not edit production code by default."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/config.rs",
+            "line": 27,
+            "kind": "static_unknown"
+          }
         ],
         "raw_findings": [
           {
@@ -400,6 +451,13 @@
         "confidence_basis": "limitation_fixture",
         "must_not_change": [
           "Do not edit production iterator or boundary behavior."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/window.rs",
+            "line": 44,
+            "kind": "static_unknown"
+          }
         ],
         "raw_findings": [
           {
@@ -468,6 +526,13 @@
         "must_not_change": [
           "Do not edit production computed-boundary behavior."
         ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.rs",
+            "line": 44,
+            "kind": "static_unknown"
+          }
+        ],
         "raw_findings": [
           {
             "file": "src/pricing.rs",
@@ -535,6 +600,13 @@
         "must_not_change": [
           "Do not edit production event code by default."
         ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/events.rs",
+            "line": 33,
+            "kind": "weakly_exposed"
+          }
+        ],
         "raw_findings": [
           {
             "file": "src/events.rs",
@@ -596,6 +668,13 @@
         "confidence_basis": "fixture_backed",
         "must_not_change": [
           "Do not edit production auth code by default."
+        ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/auth.rs",
+            "line": 55,
+            "kind": "weakly_exposed"
+          }
         ],
         "raw_findings": [
           {
@@ -659,6 +738,13 @@
         "must_not_change": [
           "Do not edit production code by default."
         ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.rs",
+            "line": 71,
+            "kind": "weakly_exposed"
+          }
+        ],
         "raw_findings": [
           {
             "file": "src/limits.rs",
@@ -721,6 +807,13 @@
         "must_not_change": [
           "Do not edit production auth code by default."
         ],
+        "raw_evidence_refs": [
+          {
+            "file": "src/auth.rs",
+            "line": 55,
+            "kind": "weakly_exposed"
+          }
+        ],
         "raw_findings": [
           {
             "file": "src/auth.rs",
@@ -781,6 +874,13 @@
         },
         "confidence_basis": "fixture_backed",
         "must_not_change": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.rs",
+            "line": 71,
+            "kind": "weakly_exposed"
+          }
+        ],
         "raw_findings": [
           {
             "file": "src/limits.rs",
