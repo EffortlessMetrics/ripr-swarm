@@ -33,6 +33,7 @@ Support-tier impact:
   `docs/BLOCKING_READINESS.md`). It promotes no language, surface, or
   evidence class; preview TypeScript/Bun and Perl evidence stays
   outside gate eligibility per the preview evidence boundary.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
@@ -168,17 +169,21 @@ writing both gate-decision surfaces.
 
 ### Required output fields
 
-A decision report a user can act on carries:
+A decision report a user can act on must carry every field below.
+Only `decision` and the per-candidate `gate_reason` are pinned by the
+accepted contract today (`docs/CALIBRATED_GATE_POLICY.md`); the rows
+marked "planned addition" are the target contract delivered by the PR
+gate advisory-behavior slice (see Implementation Mapping).
 
-| Field | Meaning |
-| --- | --- |
-| `decision` | One of the closed decision statuses above. |
-| `reason` | The shortest explanation of why the status holds (per-candidate `gate_reason`). |
-| changed surfaces | Which PR-touched surfaces the candidates live on. |
-| canonical gap deltas | New, resolved, and regressed canonical gap counts and identities. |
-| receipt deltas | Receipts expected, present, and missing for claimed repairs. |
-| runtime status | `run_status` / `runtime_status` of the inputs, so limited or stale evidence is visible in the decision. |
-| local reproduction command | The `ripr gate evaluate ...` invocation that reproduces the decision locally. |
+| Field | Meaning | Status |
+| --- | --- | --- |
+| `decision` | One of the closed decision statuses above. | existing |
+| `reason` | The shortest explanation of why the status holds (per-candidate `gate_reason`). | existing |
+| changed surfaces | Which PR-touched surfaces the candidates live on. | planned addition |
+| canonical gap deltas | New, resolved, and regressed canonical gap counts and identities. | planned addition |
+| receipt deltas | Receipts expected, present, and missing for claimed repairs. | planned addition |
+| runtime status | `run_status` / `runtime_status` of the inputs, so limited or stale evidence is visible in the decision. | planned addition |
+| local reproduction command | The `ripr gate evaluate ...` invocation that reproduces the decision locally. | planned addition |
 
 ### Required versus forbidden wording for clean and empty states
 

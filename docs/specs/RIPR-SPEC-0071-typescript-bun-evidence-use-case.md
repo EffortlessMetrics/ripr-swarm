@@ -36,6 +36,7 @@ Support-tier impact:
   contributes nothing to default gates, public badges, baselines, or
   RIPR Zero. Promotion requires a separate accepted promotion
   contract.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 

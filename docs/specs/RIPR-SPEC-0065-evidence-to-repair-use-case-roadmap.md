@@ -32,6 +32,7 @@ Support-tier impact:
 - None. This spec defines user-facing use-case contracts over existing
   mechanisms; it promotes no language, surface, or evidence class to a
   stronger support tier.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
@@ -92,6 +93,11 @@ roadmap is the start-here index and the cut line.
 | UC7 large repo / diff-first | Can a large repo get useful output without waiting for full-repo analysis? | RIPR-SPEC-0072 (planned) |
 | UC8 receipts and outcomes | Did the attempted repair actually improve evidence? | RIPR-SPEC-0073 (planned) |
 
+The "(planned)" markers are point-in-time. When a child spec registers
+in `docs/specs/README.md` and `policy/doc-artifacts.toml`, the same PR
+updates that row's marker so this index never lags the registry; the
+promotion rule treats a stale marker as unmet evidence.
+
 ### Shared doctrine all use-case specs inherit
 
 - Every surface is a projection of canonical actionability
@@ -103,9 +109,15 @@ roadmap is the start-here index and the cut line.
 - Advisory versus blocking is explicit per surface. Nothing becomes
   blocking by default in this lane.
 - Limited, sampled, and partial runs carry `run_status`, a
-  `limitation_category`, a `repair_route`, and
-  `downstream_consumable = false`; no surface may present them as full
-  runs.
+  `limitation_category`, and a `repair_route`; no surface may present
+  them as full runs. The Lane 1 completeness states (`limited_timeout`,
+  `limited_runner_failure`, `limited_large_cache_skip`,
+  `limited_incomplete_input`, `limited_sampled_input`,
+  `limited_stale_input`) carry `downstream_consumable = false`.
+  Deliberate exception: diff-scoped output (`limited_diff_scope` and
+  the diff phase of the diff report) is `downstream_consumable = true`
+  for its named scope only — never for repo totals — matching the
+  existing `docs/OUTPUT_SCHEMA.md` contract and RIPR-SPEC-0072.
 - Preview evidence (TypeScript/Bun, cross-language) stays advisory and
   never emits public repair packets unless the complete
   actionability/edit/verify/receipt contract is satisfied.
@@ -128,10 +140,16 @@ implementation deltas that close the gaps.
 ### Relationship to existing adoption work
 
 RIPR-SPEC-0009 (defaults-first adoption) covers install-time defaults
-and first-contact ergonomics. This roadmap does not replace it; it
-covers the operating surfaces a user or agent touches after adoption.
-Where the two overlap (first-hour experience), the use-case specs link
-to RIPR-SPEC-0009 rather than restating it.
+and first-contact ergonomics, including standing per-surface default
+contracts (its Surface Defaults table covers badges, LSP, and
+SARIF/CI). This roadmap does not replace it; it covers the operating
+surfaces a user or agent touches after adoption. Where the two overlap
+(first-hour experience), this roadmap imposes a forward obligation:
+use-case specs must link to RIPR-SPEC-0009 wherever they change a
+RIPR-SPEC-0009 surface default (at minimum RIPR-SPEC-0066,
+RIPR-SPEC-0067, and RIPR-SPEC-0069). This obligation is enforced
+through the Required Evidence checklist below, so the promotion rule
+cannot fire while an overlapping child spec omits the link.
 
 ## Non-Goals
 
@@ -158,6 +176,9 @@ to RIPR-SPEC-0009 rather than restating it.
   commands that exist in the current xtask surface.
 - A verifier-style reject list per use-case spec: the enumerated states
   the surface must refuse to render as success.
+- Each use-case spec that changes a RIPR-SPEC-0009 surface default (at
+  minimum RIPR-SPEC-0066, RIPR-SPEC-0067, and RIPR-SPEC-0069) links to
+  RIPR-SPEC-0009 and names the default it changes.
 
 ## Acceptance Examples
 
@@ -166,8 +187,10 @@ to RIPR-SPEC-0009 rather than restating it.
 - An agent integrating via LSP finds in RIPR-SPEC-0069 the exact fields
   a first-useful-action packet carries and the exact states in which no
   action is offered.
-- unsafe-review engineers consume RIPR-SPEC-0070 plus the export schema
-  and never need to parse raw finding internals.
+- unsafe-review engineers consume RIPR-SPEC-0070 plus the existing
+  consumable shapes (the versioned check JSON, evidence records, and
+  `docs/OUTPUT_SCHEMA.md`) and never need to parse raw finding
+  internals; there is no separate export-schema artifact.
 - A Codex planning pass picks its next slice from the use-case
   implementation plan instead of inventing an analyzer-first PR list.
 
@@ -194,13 +217,16 @@ to RIPR-SPEC-0009 rather than restating it.
 
 ## Metrics
 
-- Spec coverage: 9 of 9 use-case specs registered (this roadmap plus
-  0066–0073).
+- Spec coverage: 9 of 9 specs in the set registered (this roadmap plus
+  the eight use-case specs 0066–0073). Throughout this document
+  "use-case spec" means one of the eight children; the roadmap itself
+  is not a use-case spec.
 - Plan linkage: every implementation slice in the use-case plan names
   the spec section it satisfies.
 - Promotion rule: move this roadmap to `accepted` when all eight
-  use-case specs are registered, the implementation plan exists, and
-  active goals route through it.
+  use-case specs are registered with the Required Evidence checklist
+  satisfied (including the RIPR-SPEC-0009 linkage obligation), the
+  implementation plan exists, and active goals route through it.
 - Drift guard: a use-case surface shipping behavior not described by
   its spec is a defect in this roadmap's process, tracked via the spec
   lifecycle dashboard proposal (issue #1040).
