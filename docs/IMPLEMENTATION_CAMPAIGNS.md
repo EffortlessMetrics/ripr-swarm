@@ -4640,9 +4640,11 @@ Closeout:
 
 Campaign ID: `lane1-cross-language-oracle-graph-readiness`
 
-Status: active. `.ripr/goals/active.toml` selects this campaign after
-`lane1-language-aware-placement-navigation` closed with
-`no_current_goal = true`.
+Status: folded into the active post-0.8 operating loop after the bounded
+SPEC-0062, corpus, TS discriminator, and binding-route witness slices landed.
+`.ripr/goals/active.toml` now selects
+`lane1-post-08-operating-loop` so diff-first real-repo operation can happen
+before broader route-quality and cross-language graph promotion work.
 
 This campaign is scoped to live #910 and related #908: Rust seams exercised by
 TypeScript, binding, or FFI surfaces need an explicit oracle graph before RIPR
@@ -4689,9 +4691,16 @@ Work items:
 | `spec/cross-language-oracle-graph-v1` | done | [RIPR-SPEC-0062](specs/RIPR-SPEC-0062-cross-language-oracle-graph.md) defines the bounded #910/#908 graph contract for the configured Bun Blob route: required Rust seam, boundary, binding or FFI edge, external TypeScript callsite, external assertion/oracle, raw evidence refs, allowed states, and fail-closed non-claims before changing analyzer behavior. |
 | `fixtures/cross-language-oracle-graph-corpus` | done | `fixtures/cross-language-oracle-graph-corpus` pins the #910/#908 Bun Blob graph corpus with Rust seam samples, boundary text, binding/FFI hints, external TypeScript callsites, external oracle/assertion samples, advisory or limitation states, structured raw evidence refs, and fail-closed non-claims before analyzer behavior changes. |
 | `analysis/cross-language-ts-discriminator-witness` | done | For the bounded configured Bun Blob route, complete TS discriminator witnesses stay preview-advisory with graph-leg raw refs, while missing-discriminator and mention-only evidence remain cross-language oracle visibility limitations with named missing graph legs and no public repair packets. |
-| `analysis/cross-language-binding-route-witness` | ready | Represent configured binding or FFI route evidence separately from unknown bridge evidence so complete TS discriminators without a named bridge remain limitations rather than `no_static_path` or actionable repair work. |
-| `report/cross-language-oracle-route-quality` | blocked | Readiness and evidence-quality scorecard outputs summarize complete advisory witnesses, missing discriminators, unknown bridges, and public packet exclusions without treating cross-language preview evidence as repair-ready. |
-| `campaign/cross-language-oracle-graph-closeout` | blocked | Close the #910/#908 campaign with issue state, claim boundaries, validation evidence, remaining non-claims, and no successor unless current repo-owned state selects one. |
+| `analysis/cross-language-binding-route-witness` | done | Configured Bun Blob routes now credit a structured `binding_edge` raw ref, while complete TypeScript discriminators with unknown bridge confidence stay `bridge_unknown` static limitations with missing `binding_or_ffi_edge`, no binding raw ref, no placement, and no public repair packet. |
+| `report/cross-language-oracle-route-quality` | done | Readiness and evidence-quality scorecard outputs summarize complete advisory witnesses, missing discriminators, unknown bridges, mention-only limitations, and public packet exclusions without treating cross-language preview evidence as repair-ready. |
+| `report/bun-ub-calibration` | done | `cargo xtask bun-ub-calibration` writes an operator-readable preview/advisory JSON/Markdown receipt for the Bun Blob TypeScript calibration corpus, including TS-discriminated, missing-discriminator, mention-not-observer, bridge_unknown, missing graph leg, non-claim, and `repair_packet_ready=false` rows. |
+| `output/bun-ub-missing-discriminator-placement` | done | Configured Bun Blob missing shared/resizable discriminator rows now name `test/js/web/fetch/blob.test.ts` as advisory TypeScript placement in preview cards, route-quality rows, and Bun UB calibration receipts while bridge-unknown, mention-only, partial-oracle, and target-unresolved rows remain `suggested_test_file=not_applicable` with no public repair packet. |
+| `dogfood/bun-ub-cross-language-witness-receipts` | done | `fixtures/bun-ub-cross-language-dogfood` and `cargo xtask dogfood` now record the #31648 known-good, stripped-resizable, and maxByteLength mention-only operator receipts, including before/after review behavior, manual verdict, advisory action, placement, and `repair_packet_ready=false`. |
+| `docs/bun-ub-typescript-preview-runbook` | done | `docs/BUN_UB_TYPESCRIPT_PREVIEW_RUNBOOK.md` gives Bun operators the copyable advisory loop for configuring the preview, running diff-scoped evidence, interpreting TS-discriminated, missing-discriminator, mention-only, bridge-unknown, and FFI panic-boundary limitation states, and checking calibration/dogfood receipts without runtime Bun, generated tests, public repair packets, gates, badges, baselines, RIPR Zero, or support-tier promotion. |
+| `campaign/cross-language-oracle-graph-closeout` | deferred | Closeout is deferred until the broader post-0.8 loop reaches the cross-language graph and surface-alignment slices, or a narrower issue-backed closeout is selected. |
+
+Focused correction campaign ID:
+`typescript-bun-081-placement-receipt-correction`.
 
 Commands:
 
@@ -4701,6 +4710,10 @@ rtk cargo xtask check-spec-numbering
 rtk cargo xtask check-traceability
 rtk cargo test -p xtask cross_language_oracle_graph_corpus_cases_are_checked -- --test-threads=1
 rtk cargo test -p xtask typescript_bun_ub_calibration_cases_are_checked -- --test-threads=1
+rtk cargo test -p xtask dogfood_bun_ub_cross_language -- --test-threads=1
+rtk cargo test -p xtask bun_ub_calibration -- --test-threads=1
+rtk cargo xtask bun-ub-calibration
+rtk cargo xtask dogfood
 rtk cargo test -p ripr typescript_preview_card_projects_bun_cross_language_grip -- --test-threads=1
 rtk cargo xtask ripr-swarm readiness
 rtk cargo xtask evidence-quality-scorecard
@@ -4728,3 +4741,248 @@ Blocking conditions:
 - changing provider, autonomous edit, mutation-execution, badge, default CI
   blocking, support tier, source release, publishing, signing, marketplace, or
   install-doc behavior without explicit authorization.
+
+## Lane 1 Campaign: Post-0.8 Evidence-To-Repair Operating Loop
+
+Campaign ID: `lane1-post-08-operating-loop`
+
+Status: closed. `.ripr/goals/active.toml` records `status = "closed"` and
+`no_current_goal = true`. The archived manifest lives at
+`.ripr/goals/archive/2026-06-04-lane1-post-08-operating-loop.toml`, and the
+closeout handoff is
+`docs/handoffs/2026-06-04-lane1-post-08-operating-loop-closeout.md`.
+
+The closed manifest records that live queue hygiene,
+#913, #909/#912, Bun UB calibration reporting, diff-first changed-surface mode,
+cross-language oracle fail-closed routing, language-aware target placement
+navigation, the bounded cross-language oracle graph, repair-packet guidance
+quality, attempt-ledger outcome hardening, real repair/analyzer-attempt
+dogfood, route-quality metrics, and surface canonical-state alignment are
+complete in the current repo state. No successor campaign is selected.
+
+Objective:
+
+```text
+Make RIPR's post-0.8 Lane 1 operating loop useful on real large and
+mixed-language repositories: route safe repair packets, fail closed into named
+limitation backlog items, record receipts and outcomes, and use route quality
+to choose the next analyzer work.
+```
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `repo/post-08-queue-hygiene` | done | Live state confirms #680, #582, and the same-file method-chain route split chain are merged or closed; stale local branches from merged PRs and two stale remote heads were pruned. |
+| `review/review-comments-file-line` | done | #913 is closed by #926; review-comments source locations are no longer the next active slice. |
+| `cache/large-seam-cache-explicit` | done | #912 and #909 are closed by the large-cache post-0.8 chain through #936, including explicit skip state and sharded cache follow-ups. |
+| `report/bun-ub-calibration` | done | Inserted before diff-first for the 0.8.1 TypeScript/Bun patch line: the xtask report turns the Bun Blob calibration corpus into advisory JSON/Markdown operator receipts without public repair-packet, gate, badge, runtime, or support-tier authority. |
+| `ripr/diff-first-changed-surface-mode` | done | `ripr diff --base <ref> --head <ref>` emits diff-complete changed-file and changed-seam evidence before full-repo analysis and preserves full-repo limited state. |
+| `analysis/cross-language-oracle-fail-closed` | done | Existing evidence-record, packet-queue, readiness, and scorecard coverage routes unresolved external oracle paths to named limitations rather than wrong-language repair packets. |
+| `report/language-aware-target-placement-v1` | done | #938 through #941 already closed language-aware placement navigation: explicit external observer targets are navigation-only and unresolved binding/FFI targets stay limitations with no LSP repair action. |
+| `analysis/cross-language-oracle-graph-v1` | done | SPEC-0062, the cross-language oracle graph corpus, TS discriminator witness routes, unknown-bridge limitation routing, route-quality report, and Bun UB calibration receipt now validate the bounded configured Bun Blob graph route, including partial external callsites that still lack stable oracle evidence; broader generic graph support remains non-claimed. |
+| `analysis/repair-packet-guidance-quality` | done | Existing swarm-plan packet corpus and focused tests require typed repair route, target shape, verify command, receipt command, allowed edit surface, must-not-change boundaries, confidence, raw evidence refs, and fail-closed missing-field wording before a packet can be queued. |
+| `report/attempt-ledger-outcome-hardening` | done | SPEC-0057, the real-repair-attempts corpus, attempt-ledger report, readiness report, and focused xtask tests preserve latest and historical `not_attempted`, `attempted_no_receipt`, `receipt_present`, `evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`, `unknown`, stale synthetic placeholder cleanup, gap mismatch, latest-attempt projection, and orphan-receipt routing. |
+| `dogfood/real-repair-analyzer-attempts` | done | The real-repair-attempts dogfood corpus and report record 67 repo-local repair or analyzer-route attempts with verify command, receipt route when applicable, before/after state, outcome, must-not-change boundaries, raw evidence refs, and operator notes; the set includes 61 improved, 2 resolved, 2 unchanged, and 2 attempted-without-receipt rows, while readiness keeps the latest 36 improved and 2 resolved packets current and preserves older non-success attempts in durable history. |
+| `report/route-quality-metrics` | done | Readiness and scorecard reports expose repair-route quality, language repair-route quality, top failing repair routes, top missing evidence fields, top limitation routes, limitation route quality, and cross-language oracle route quality. Current readiness derives 38 attempted packets, 36 improved packets, 2 resolved packets, and durable historical non-success counts from real-repair attempts, while focused route-quality tests cover non-empty failing, missing-field, and limitation-route fixtures. |
+| `surface/canonical-state-alignment` | done | Existing surface-projection and user-surface-projection dogfood corpora prove CLI-adjacent, review, LSP/editor, PR comment, badge, and CI examples consume the same canonical repair or limitation state, preserve `canonical_gap_id`, runtime status, receipt state, route-quality non-success cases, and missing-receipt cases, and keep raw findings as supporting evidence rather than product truth. |
+| `campaign/lane1-post-08-closeout` | done | [Lane 1 Post-0.8 Evidence-To-Repair Operating Loop closeout](handoffs/2026-06-04-lane1-post-08-operating-loop-closeout.md) records what users can trust, what remains advisory, what remains non-actionable, validation commands, open issues, explicit non-claims, the archived manifest, and no selected successor. |
+
+Non-claims:
+
+- no provider integration;
+- no autonomous edits;
+- no mutation execution;
+- no default blocking CI or badge semantic switch;
+- no source release, publish, tag, signing, marketplace, or install-doc work
+  without explicit release authorization.
+
+Closeout:
+
+- [Lane 1 Post-0.8 Evidence-To-Repair Operating Loop closeout](handoffs/2026-06-04-lane1-post-08-operating-loop-closeout.md)
+
+## Lane 1 Campaign: Cross-Language Oracle Follow-Up
+
+Campaign ID: `lane1-cross-language-oracle-followup`
+
+Status: closed. `.ripr/goals/active.toml` records `status = "closed"` and
+`no_current_goal = true`. The archived manifest lives at
+`.ripr/goals/archive/2026-06-04-lane1-cross-language-oracle-followup.toml`.
+
+This campaign extends cross-language oracle evidence only through measured,
+profile-backed graph slices. It must not convert TypeScript, binding, FFI, or
+external-oracle evidence into public repair packets until the graph legs and
+canonical actionability fields are explicit.
+
+Objective:
+
+```text
+Make #908/#910 cross-language oracle follow-ups more useful by adding measured
+graph profiles beyond the bounded Bun Blob route while preserving the rule that
+external-language evidence is advisory or a named limitation until every graph
+leg and public repair-packet field is explicit.
+```
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `fixtures/cross-language-copy-to-unshared-profile` | done | Selects the #908/#910 follow-up and pins the `copy_to_unshared` TypeScript-exercised Rust seam as a profile-backed `bridge_unknown` limitation with source locations, missing binding edge, repair route, unlock condition, raw evidence refs, and no public repair-packet fields. |
+| `report/configured-cross-language-ts-placement` | done | Surfaces `test/js/web/fetch/blob.test.ts` only for configured Bun Blob missing-discriminator rows while keeping the result advisory: no public projection, verify command, receipt command, allowed edit surface, wrong Rust test target, or repair packet. |
+| `analysis/cross-language-copy-to-unshared-bridge-route` | done | Adds configured bridge evidence for the `copy_to_unshared` profile and credits the external TypeScript oracle only as a preview/advisory witness; the row still has no verify command, receipt command, allowed edit surface, suggested test file, public projection eligibility, or repair packet. |
+| `analysis/bun-markdown-resizable-cross-language-profile` | done | Adds the #951 `MarkdownObject::to_string` configured `Bun.markdown` profile and credits `test/js/bun/md/md-edge-cases.test.ts` only as a preview/advisory witness when resizable ArrayBuffer, configured bridge, callsite, and strong markdown oracle evidence are present; weak markdown oracle evidence remains a named limitation, and the route still has no suggested test file, verify command, receipt command, allowed edit surface, public projection eligibility, repair packet, or generic TypeScript proof claim. |
+| `dogfood/bun-blob-witness-receipts` | done | Records checked Bun Blob cross-language dogfood receipts for complete advisory, missing-discriminator, bridge-unknown, and partial-oracle cases while preserving advisory-only authority, route-quality counters, non-claims, and no public repair packets. |
+| `fixtures/bun-ffi-negative-offset-panic-boundary-profile` | done | Adds the #950 Bun FFI `FFIObject::read` negative-offset panic-boundary profile as a named static limitation with source locations, FFI binding sample, missing negative-offset panic oracle, missing safe external observer target, unlock condition, raw evidence refs, and no suggested test file, verify command, receipt command, allowed edit surface, public projection eligibility, or repair packet. |
+| `dogfood/bun-ffi-panic-boundary-receipt` | done | Records a checked Bun FFI negative-offset panic-boundary dogfood receipt for #950/#974 that proves the route stays a named limitation with unresolved negative-offset oracle and safe observer target evidence, no suggested test file, no verify command, no receipt command, no allowed edit surface, and no public repair packet. |
+
+Non-claims:
+
+- no generic cross-language oracle proof;
+- no runtime Bun execution;
+- no generated tests;
+- no public repair packet from preview or limitation evidence;
+- no provider integration;
+- no autonomous edits;
+- no mutation execution;
+- no default blocking CI or badge semantic switch;
+- no source release, publish, tag, signing, marketplace, or install-doc work
+  without explicit release authorization.
+
+Closeout:
+
+- [Lane 1 Cross-Language Oracle Follow-Up closeout](handoffs/2026-06-04-lane1-cross-language-oracle-followup-closeout.md)
+
+## Lane 1 Campaign: Cross-Language Guidance Safety
+
+Campaign ID: `lane1-cross-language-guidance-safety`
+
+Status: closed. `.ripr/goals/active.toml` records `status = "closed"` and
+`no_current_goal = true`. The archived manifest lives at
+`.ripr/goals/archive/2026-06-04-lane1-cross-language-guidance-safety.toml`.
+
+This one-slice successor pins the #908 MarkdownObject review-comments guidance
+failure without reopening generic cross-language oracle support. It proves the
+agent-facing prompt fails closed when a Rust seam has external TypeScript
+observer evidence but safe repair target placement remains unresolved.
+
+Objective:
+
+```text
+Pin the #908 MarkdownObject review-comments guidance failure so externally
+observed TypeScript evidence remains navigation-only when safe target placement
+is unresolved, and the agent-facing prompt cannot suggest a wrong Rust test
+target.
+```
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `output/markdownobject-review-comments-target-safety` | done | Adds a MarkdownObject-specific review-comments regression for `src/runtime/api/MarkdownObject.rs` and `test/js/bun/md/md-edge-cases.test.ts`: the row stays `cross_language_target_unresolved`, has no verify command or public repair packet, does not mention `vendor/lolhtml/tests/harness/input.rs`, and exposes the TypeScript observer only as navigation-only context routed to `analysis/cross-language-test-target-inference`. |
+
+Non-claims:
+
+- no #908 or #910 closure claim;
+- no generic TypeScript, JavaScript, binding, or FFI oracle proof;
+- no runtime Bun, Jest, Vitest, `tsc`, `tsserver`, Miri, or mutation
+  execution;
+- no generated tests;
+- no public repair packet from preview or limitation evidence;
+- no provider integration;
+- no autonomous edits;
+- no default blocking CI or badge semantic switch;
+- no source release, publish, tag, signing, marketplace, or install-doc work.
+
+## Lane 1 Campaign: Cross-Language Evidence Router UX
+
+Campaign ID: `cross-language-evidence-router-ux`
+
+Status: active. `.ripr/goals/active.toml` selects this campaign after live queue
+inspection closed the current dangling analysis PR (#982) and
+`cargo xtask goals next` reported `no_current_goal = true`.
+
+This campaign turns the calibrated TypeScript/Bun graph path into a repeatable
+mixed TypeScript plus Rust operating loop. It preserves preview/advisory
+authority: cross-language preview evidence may shape operator and agent
+guidance, but it must not create public repair packets, support-tier promotion,
+gates, badges, release authority, generated tests, or runtime proof claims.
+
+Objective:
+
+```text
+Turn the calibrated TypeScript/Bun graph path into a repeatable mixed
+TypeScript plus Rust operating loop for Bun operators and external coding
+agents, while preserving preview/advisory authority and preventing unresolved
+cross-language evidence from becoming public repair packets.
+```
+
+End state:
+
+- Bun operators can read compact cross-language preview state without
+  inspecting raw preview-card JSON.
+- Configured advisory packets bound agent work and stop when bridge or
+  placement evidence is missing.
+- Proof-mode projection keeps static witnesses distinct from runtime, mutation,
+  Miri, or model proof.
+- Manifest-only stable-byte profiles make future bridge debt visible before
+  analyzer behavior changes.
+- Bridge inventory and dogfood receipts expose calibrated, missing,
+  mention-only, bridge-unknown, and named limitation states.
+- The campaign closes with TypeScript/Bun support still preview/advisory unless
+  a separate accepted promotion contract changes that boundary.
+
+Work items:
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `goals/cross-language-evidence-router-ux-activation` | done | Select RIPR-SPEC-0063 and RIPR-PLAN-0063 as the active Lane 1 successor after `no_current_goal = true`, without changing analyzer behavior, report output, repair-packet authority, release claims, gates, badges, support tiers, or source distribution authority. |
+| `release/typescript-bun-preview-patch-proof` | done | [0.8.1 TypeScript/Bun preview patch proof](handoffs/2026-06-05-0.8.1-typescript-bun-preview-patch-proof.md) records the current Bun Blob / ArrayBuffer calibrated states, `copy_to_unshared`, MarkdownObject, and FFI panic-boundary follow-up status from existing receipts, preview/advisory authority, `repair_packet_ready = false` for cross-language preview rows, and validation results as pass, fail, or not run, without performing a release. |
+| `output/bun-ub-preview-summary` | done | `cargo xtask bun-ub-preview-summary` writes compact advisory JSON/Markdown from existing graph, calibration, and dogfood data, including route counts, named limitations, public packet exclusions, `authority = preview_advisory_only`, and `repair_packet_ready = false`, without changing analyzer behavior, public repair-packet authority, generated tests, gates, badges, or support tiers. |
+| `agent/bun-cross-language-advisory-packet` | done | Configured TypeScript preview cards project a nested Bun cross-language advisory packet through JSON and human output with state, Rust seam, eligible TypeScript placement, missing discriminators, suggested shape, bridge confidence, missing graph legs, `must_not_change`, stop condition, raw evidence refs, and `repair_packet_ready = false`; `bridge_unknown` packets stop on `binding_or_ffi_edge` instead of suggesting test edits. |
+| `output/stable-byte-proof-mode` | done | Configured Bun cross-language grip output projects advisory stable-byte proof mode through TypeScript preview-card JSON and human output, with `observable_red_green`, `mutation_plus_miri`, `helper_gated`, `bridge_unknown`, and `static_limitation` modes, short reasons, and explicit `runtime_execution=false`, `mutation_execution=false`, `miri_execution=false`, and `proof_claim=false` boundaries. |
+| `fixtures/bun-node-fs-scalar-write-profile` | done | The cross-language oracle graph corpus pins node:fs scalar write as a manifest-only `named_static_limitation` with typed witness placement at `test/js/node/fs/fs.test.ts`, `proof_mode = observable_red_green`, missing `binding_or_ffi_edge:node_fs_scalar_write` and `external_oracle:stable_byte_scalar_write` legs, and `repair_packet_ready = false`; it adds no analyzer behavior, runtime execution, generated tests, public repair packet, gate, badge, or support-tier claim. |
+| `fixtures/bun-write-helper-gated-profile` | done | The cross-language oracle graph corpus pins Bun.write as a manifest-only helper-gated `named_static_limitation` with `proof_mode = helper_gated`, `suggested_test_file = not_applicable`, missing `helper:bun_write_fixture_helper`, `binding_or_ffi_edge:bun_write_sink`, and `external_oracle:stable_byte_write` legs, and `repair_packet_ready = false`; it adds no analyzer behavior, runtime execution, generated tests, public repair packet, gate, badge, or support-tier claim. |
+| `analysis/configured-bridge-inventory` | done | `cargo xtask configured-bridge-inventory` writes advisory JSON/Markdown from the existing cross-language oracle graph corpus, listing Blob ArrayBuffer, copy_to_unshared, and MarkdownObject configured bridges; the Bun Blob bridge-unknown row; node:fs scalar write and Bun.write manifest-only future surfaces; named static limitations; and `repair_packet_ready = false`, without analyzer inference, public repair packets, placement from missing inventory rows, gates, badges, or support-tier promotion. |
+| `dogfood/live-bun-stable-byte-receipts` | done | `fixtures/bun-ub-cross-language-dogfood` records live-shaped Bun stable-byte receipts for configured copy_to_unshared and MarkdownObject witnesses, stripped resizable placement, mention-only rejection, bridge_unknown inspection, node:fs scalar write and Bun.write manifest-only limitations, and the FFI panic-boundary limitation; every row stays preview/advisory with manual verdicts, proof mode, review-work notes, `repair_packet_ready = false`, no Rust placement regression, and no runtime, generated-test, public repair-packet, gate, badge, or support-tier claim. |
+| `docs/bun-ub-first-run-polish` | done | The Bun UB TypeScript preview runbook now starts from `ripr.toml`, `ripr doctor`, and `ripr check`, names next actions for missing config, missing discriminator, mention-only, bridge_unknown, and named static limitation states, links the compact summary, advisory packet/proof-mode schema, configured bridge inventory, calibration, and dogfood receipts, and keeps all claims preview/advisory with no new flags, analyzer behavior, generated tests, runtime execution, public repair packets, gates, badges, or support-tier promotion. |
+| `docs/post-081-support-decision` | done | [Post-0.8.1 TypeScript/Bun support decision](handoffs/2026-06-05-post-081-typescript-bun-support-decision.md) keeps TypeScript and JavaScript opt-in preview, bounds calibrated Bun stable-byte evidence to advisory TS-discriminated, missing-discriminator, mention-only, bridge-unknown, and named-limitation states, rejects TypeScript stable support, Bun UB proof, runtime execution, generated tests, default gates, public repair packets, and full Bun binding graph coverage, and requires a separate accepted promotion contract for any stronger claim. |
+
+Commands:
+
+```bash
+rtk cargo xtask check-goals
+rtk cargo xtask goals next
+rtk cargo xtask check-doc-index
+rtk cargo xtask markdown-links
+rtk cargo xtask check-static-language
+rtk cargo xtask check-doc-roles
+rtk cargo xtask check-pr
+rtk git diff --check
+```
+
+Blocking conditions:
+
+- forcing actionability from cross-language preview evidence;
+- creating public repair packets from preview or limitation evidence;
+- suggesting Rust or external-language test targets without explicit bridge,
+  observer, and typed placement evidence;
+- adding or requiring a `ripr check --profile` flag;
+- running `tsc`, `tsserver`, Bun, Jest, Vitest, Miri, mutation engines,
+  providers, or generated tests;
+- changing gates, badges, baselines, RIPR Zero, support tiers, source release,
+  publishing, signing, marketplace, or install-doc behavior;
+- claiming stable TypeScript or JavaScript support, full Bun binding graph
+  coverage, generic cross-language support, runtime execution, or UB proof.
+
+Non-claims:
+
+- no stable TypeScript or JavaScript support claim;
+- no full Bun binding graph;
+- no generic cross-language support for every mixed-language repository;
+- no runtime execution or UB proof claim;
+- no generated tests;
+- no provider integration;
+- no autonomous edits;
+- no public repair packets from preview cross-language evidence;
+- no source release, publish, tag, signing, marketplace, or install-doc work
+  without explicit release authorization.
