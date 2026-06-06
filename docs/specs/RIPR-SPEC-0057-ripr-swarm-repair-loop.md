@@ -46,8 +46,16 @@ The behavior is intentionally narrow:
 - route-quality projection preserves non-success outcomes such as unchanged
   attempts as first-class next actions instead of converting every full
   actionable packet into another blind attempt;
-- attempted packets without receipts route to `collect_missing_attempt_receipts`
-  so downstream surfaces cannot claim improvement from verify evidence alone;
+- route-quality backlog rows preserve sampled missing receipt reasons when
+  available, so receipt-reliability work can distinguish broad verify timeout
+  routes from ordinary absent local receipts;
+- timeout-backed missing receipt reasons route to a bounded verify-route
+  improvement backlog instead of generic receipt collection, because broad
+  verify commands that cannot finish are not safe repair guidance;
+- ordinary attempted packets without receipts route to
+  `collect_missing_attempt_receipts` with a sample packet/gap/repair-kind when
+  one is available, so downstream surfaces cannot claim improvement from verify
+  evidence alone;
 - default operation is dry-run and human-reviewable.
 
 ## Scope
@@ -177,13 +185,27 @@ The backlog may include `limitation_backlog_packets[]` for analyzer work. Those
 packets must include limitation category, repair route, signal count, sample
 canonical gap IDs or source samples when available, dominant evidence class, why
 the item is not actionable, the analyzer unlock condition, and non-claims. Packet
-identity is route-grained so one limitation category can produce separate
-analyzer backlog packets for separate repair routes. They remain non-actionable
-and must not be placed in `top_ready_packets`.
+identity is route- and subroute-grained when `limitation_subroute` is available,
+so one limitation category can produce separate analyzer backlog packets for
+separate repair routes or expression-shaped repair queues. They remain
+non-actionable and must not be placed in `top_ready_packets`.
+The bounded packet set must keep samples for each packet-backed top repair
+route even when that route's representative packet would otherwise fall below
+the highest-volume subroute cutoff. Report-only runtime diagnostics remain in
+runtime status/run-limitations instead of appearing as sample-less limitation
+routes.
 Readiness may project the leading analyzer backlog routes as
-`top_limitation_routes[]`. That projection is separate from
-`repair_route_quality[]`, which is attempt-outcome evidence; limitation routes
-remain non-actionable until the full public packet contract is satisfied.
+`top_limitation_routes[]`. That projection carries `why_not_actionable`, unlock
+conditions, non-claims, and sample subroutes, and the top next action must
+preserve the same non-actionability reason when routing analyzer work. It is
+separate from `repair_route_quality[]`, which is attempt-outcome evidence;
+limitation routes remain non-actionable until the full public packet contract is
+satisfied.
+When readiness consumes older or external backlog packets that omit
+presentation-only route fields, it must preserve the non-actionable boundary by
+filling standard non-claims, fallback why-not-actionable text, fallback unlock
+conditions, and explicit `unknown` evidence class values instead of making those
+routes repair-ready.
 
 ## Required Packet Fields
 
@@ -198,12 +220,12 @@ A packet is swarm-ready only when typed fields provide a closed repair loop.
 | `repair_route` | Required structured route. Prose-only repair guidance is not enough. |
 | `target_test_type` or `target_assertion_shape` | Required when applicable to bound the edit target. |
 | `related_test_or_observer` | Preferred. Missing context lowers readiness unless the packet has a safe typed fallback. |
-| `verify_command` | Required before a packet can be attempted. |
+| `verify_command` | Required before a packet can be attempted. Broad repo-exposure snapshot comparisons are not bounded verify commands unless a narrower typed route is also available. |
 | `receipt_command` | Required before a packet can be swarm-ready. |
 | `raw_findings[]` | Supporting evidence only; never the selection unit. |
 | `static_limitations[]` | Must be empty for repair-ready packets or explicitly handled as a blocked state. |
 | `must_not_change[]` | Required for any attempt that could otherwise broaden into production-code edits. |
-| `allowed_edit_surface[]` | Required bounded workspace-relative file list for delegated edits. |
+| `allowed_edit_surface[]` | Required bounded workspace-relative file list for delegated edits. Derived entries must resolve to existing workspace files before a packet can be swarm-ready. |
 | `confidence_basis` | Required for ranking and blocked-state explanation. |
 
 Missing fields do not make the packet disappear. They move it to a blocked or
@@ -336,7 +358,10 @@ queue changes.
 The attempt ledger must preserve typed route context for each attempt when it
 is available: `evidence_class`, `source_file`, `repair_kind`,
 `target_test_type`, `assertion_shape`, `verify_command`, `verify_result`, and
-`receipt_command`. It must summarize latest attempts by `repair_kind` so
+`receipt_command`. `attempted_no_receipt` rows should also preserve
+`missing_receipt_reason` when the dogfood or outcome source provides one, so
+receipt reliability failures can be routed instead of collapsed into counts.
+It must summarize latest attempts by `repair_kind` so
 repeated unchanged, regressed, no-receipt, missing-verify-result, or unknown
 outcomes become analyzer-improvement signals instead of disappearing into
 aggregate attempt counts.
@@ -344,19 +369,70 @@ Dogfood attempt receipts must not contradict their recorded outcome: movement
 receipt state and explicit `evidence_movement` tokens must not claim improved,
 unchanged, or regressed evidence that conflicts with the outcome, and
 no-receipt attempts must not claim receipt-backed evidence movement.
+Repo-local real repair attempts may be imported into the attempt ledger as
+advisory dogfood evidence. Imported dogfood attempts affect attempt/outcome and
+repair-route-quality summaries, but they do not create public repair packets,
+do not make static limitations swarm-ready, and do not change badge, LSP, PR,
+or CI authority.
 
-Readiness must treat durable `attempts[]` as the source of truth for
-attempt/outcome summary counts, repair-route quality, and missing-evidence-field
-counts when they are present. Stored `summary`, `repair_route_quality[]`, and
-`top_missing_evidence_fields[]` rows are summary output; they must not override
-recomputed latest-attempt state if the two disagree.
+Readiness must preserve durable attempt history separately from current routing
+state. It should forward `attempt_history_summary` when the attempt ledger
+provides it, and derive the same history summary from durable `attempts[]` for
+older ledgers. Current attempt/outcome summary counts, repair-route quality, and
+missing-evidence-field counts remain latest-attempt projections. Stored
+`summary`, `repair_route_quality[]`, and `top_missing_evidence_fields[]` rows are
+summary output; they must not override recomputed latest-attempt state if the
+two disagree.
+Repair-route quality rows should carry sample packet IDs, sample attempt IDs,
+and canonical gap IDs for failing latest attempts when available, and readiness
+should point `improve_repair_route_quality` at the derived route-quality
+backlog packet while preserving the first failed-attempt sample in
+`next_actions[].attempt_id` and the reason text. Route-quality work should
+start from a concrete failed attempt without re-queuing that failed repair
+packet as swarm-ready work.
+Attempt-ledger reports should also project `historical_repair_route_quality[]`,
+`historical_language_repair_route_quality[]`, and
+`top_historical_failing_repair_routes[]` from durable full attempt history. These
+history rows keep older unchanged, regressed, and no-receipt attempts visible
+after a later follow-up improves or resolves the same canonical gap. They are
+route-learning audit evidence, not current routing state; current readiness
+actions still come from latest-attempt repair-route quality and explicit
+missing-evidence rows.
+Attempt-ledger and readiness reports should also project
+`repair_route_quality_backlog[]` from the top failing repair routes. Each row is
+an analyzer/report improvement packet with a stable `packet_id`,
+`improvement_route`, failure counts, dominant failure reason, sample packet IDs,
+sample attempt IDs, canonical gap IDs, an unlock condition, and non-claims. These rows are not
+public repair packets, are not swarm-ready work, and must not change badge, PR,
+LSP, or CI authority.
 The explicit `missing_verify_result` summary count is the closeout counter for
 attempted rows whose verification command is known but whose typed pass/fail or
 not-run result was not preserved.
 Readiness must route `attempted_no_receipt` and `receipt_present` separately:
-no-receipt attempts require collecting the packet receipt, while receipt-present
-attempts require joining before/after evidence movement before route quality can
-claim improvement, regression, or unchanged evidence.
+ordinary no-receipt attempts require collecting the packet receipt, while
+timeout-backed no-receipt attempts require an `improve_repair_route_quality`
+action against the bounded verify-route backlog before operators retry broad
+receipt collection. Receipt-present attempts require joining before/after
+evidence movement before route quality can claim improvement, regression, or
+unchanged evidence.
+When `latest_attempts[]` includes a `receipt_present` sample, readiness should
+copy the first sample packet ID, canonical gap ID, and repair kind into the
+`join_receipt_evidence_movement` next action.
+When `orphaned_receipts[]` includes samples, readiness should copy the first
+sample packet ID, canonical gap ID, and repair kind into the
+`reconcile_orphaned_receipts` next action.
+When `latest_attempts[]` includes `evidence_unchanged` or `evidence_regressed`
+samples, readiness should copy the first matching sample packet ID, canonical
+gap ID, and repair kind into the matching `inspect_unchanged_attempts` or
+`inspect_regressed_attempts` next action.
+When `top_missing_evidence_fields[]` includes `attempt_receipt` or
+`verify_result` samples, readiness should copy the first ordinary
+`attempt_receipt` sample packet ID, canonical gap ID, and repair kind into
+`collect_missing_attempt_receipts`, and copy the first `verify_result` sample
+into `inspect_missing_verify_results`. If the no-receipt sample is explained by
+a timeout-backed route-quality row, readiness should route the sample to
+`improve_repair_route_quality` for the bounded verify-route backlog instead of
+generic receipt collection.
 
 ## Dry-Run Commands
 
@@ -399,18 +475,31 @@ artifact has one, so `blocked_by_missing_context`,
 `blocked_by_static_limitation`, `blocked_by_public_projection_exclusion`, and
 `blocked_by_operator_judgment` do not appear only in raw packet JSON. The table
 must also route field-level blockers such as `not_actionable_gap_state`,
-`missing_verify_command`, `missing_receipt_command`, `missing_repair_route`,
+`missing_verify_command`, `unbounded_verify_command`,
+`missing_receipt_command`, `missing_repair_route`,
 `missing_related_test_or_observer`, `missing_must_not_change`,
-`missing_allowed_edit_surface`, and `missing_raw_evidence_refs`, plus outcome
+`missing_allowed_edit_surface`, `missing_confidence`, and
+`missing_raw_evidence_refs`, plus outcome
 blockers such as `attempted_no_receipt`, `missing_verify_result`,
 `orphan_receipt`, `unchanged_attempt`, and `regressed_attempt`.
 `swarm-plan` must provide non-top-limited packet examples for plan-derived
 blocked classes so readiness examples are not dependent on `--top` truncation.
+Repo-exposure snapshot comparison commands are not by themselves bounded verify
+commands for default swarm delegation; they must be excluded with
+`unbounded_verify_command` unless the packet also supplies or can derive a
+narrower proof route. The only default derived proof route is a typed Rust test
+target: `related_test_or_observer.file` must map to a known workspace package,
+`related_test_or_observer.name` must be a safe cargo test filter, and the
+resulting command is `cargo test -p <package> <test-filter>`.
 
 Readiness must also expose `top_next_action` as a stable projection of
 `next_actions[0]`. Downstream surfaces may show that object directly, but they
 must not treat it as an independent ranking source or reinterpret raw findings
-to produce their own top action.
+to produce their own top action. A `limited_sampled_input` repo-exposure run may
+still put the sampled static-limitation/analyzer backlog first when all
+coordination inputs are readable and no swarm-ready packet exists; the
+`resolve_limited_runtime_status` action must remain visible in `next_actions`
+and the report must keep the run marked limited.
 
 Dogfood receipts must include at least one surface-projection alignment case
 that starts from a single canonical repair packet and receipt-backed attempt,
@@ -558,6 +647,14 @@ Current implementation coverage:
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
   validates `fixtures/actionable-gap-outcomes-corpus/corpus.json` against the
   same outcome joiner used by the report command;
+- `crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts`
+  validates the Python first-PR before/after check-output fixture and expected
+  `ripr outcome` JSON/Markdown receipts for closed, unchanged, and opened
+  canonical gap movement;
+- `xtask::tests::first_successful_pr_corpus_reports_outcome_receipt_drift`
+  pins first-PR outcome-receipt manifest guardrails for missing paths,
+  duplicate receipt IDs, wrong input paths, missing movement, and missing
+  review receipts;
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_reports_contract_drift`
   pins missing, malformed, and mismatched outcome-corpus guardrails;
 - `xtask::tests::ripr_swarm_command_parses_plan_args` pins the
@@ -580,15 +677,25 @@ Current implementation coverage:
   pins durable attempt history and latest-attempt selection;
 - `xtask::tests::ripr_swarm_attempt_ledger_drops_stale_synthetic_not_attempted_rows`
   pins cleanup of retired queue placeholders;
+- `xtask::tests::ripr_swarm_attempt_ledger_synthesizes_current_plan_not_attempted_rows`
+  pins creation of current-plan queue placeholders from swarm-ready packets
+  before receipt or outcome evidence exists;
 - `xtask::tests::ripr_swarm_attempt_ledger_preserves_current_plan_not_attempted_rows`
   pins carry-forward of current queue placeholders;
 - `xtask::tests::ripr_swarm_attempt_ledger_summarizes_repair_route_quality`
   pins typed route context, per-`repair_kind` route-quality metrics, top
   failing routes, and missing evidence fields;
+- `xtask::tests::ripr_swarm_attempt_ledger_imports_real_repair_attempts`
+  pins advisory import of repo-local dogfood repair attempts into durable
+  attempt history and route-quality summaries without creating repair packets;
 - `xtask::tests::ripr_swarm_readiness_consumes_attempt_ledger_counts`
-  pins readiness consumption of the attempt ledger and repair-route quality,
-  plus forwarding of the swarm-plan static-limitation backlog into readiness
-  output.
+  pins readiness consumption of the attempt ledger, durable attempt-history
+  summary, and repair-route quality, plus forwarding of the swarm-plan
+  static-limitation backlog into readiness output.
+- `xtask::tests::ripr_swarm_readiness_recomputes_summary_from_attempts_when_summary_is_stale`
+  pins readiness fallback derivation of durable attempt-history summary from
+  legacy `attempts[]` while keeping current routing counts on the latest attempt
+  per canonical gap.
 - `xtask::tests::ripr_swarm_readiness_audits_blocked_state_routes`
   pins blocked-state counts, reasons, next action kinds, repair routes, example
   packet/canonical gap identities, and Markdown/JSON parity for readiness route
@@ -600,8 +707,17 @@ Current implementation coverage:
   pins route-grained analyzer backlog packet identity when one limitation
   category has multiple repair routes.
 - `xtask::tests::ripr_swarm_readiness_routes_static_limitation_backlog_when_no_ready_packets`
-  pins readiness `top_limitation_routes[]` and sample packet routing without
-  making limitation backlog packets swarm-ready.
+  pins readiness `top_limitation_routes[]`, why-not-actionable projection,
+  subroute-preserving top action text, and sample packet routing without making
+  limitation backlog packets swarm-ready.
+- `xtask::tests::lane1_static_limitation_backlog_keeps_samples_for_each_top_repair_route`
+  pins that bounded backlog packets keep inspectable samples for each
+  packet-backed top repair route even when a low-count route falls below the
+  highest-volume subroute cutoff, while report-only runtime diagnostics stay out
+  of the packet-backed projection.
+- `xtask::tests::ripr_swarm_readiness_hardens_legacy_limitation_backlog_packets`
+  pins readiness fallback non-claims, non-actionability text, unlock conditions,
+  and explicit unknown evidence classes for older limitation backlog packets.
 - `xtask::tests::dogfood_real_repair_attempt_rejects_movement_contradictions`
   pins that real repair attempt receipts cannot record contradictory movement
   claims or claim evidence movement without a receipt.
@@ -638,6 +754,12 @@ become a `full` readiness report. The downstream report keeps the upstream
 repair route and input path so the operator can repair the limiting artifact
 instead of trusting incomplete attempt/outcome evidence.
 
+Readiness reports also expose a coarse `readiness_state` so thin user surfaces
+can answer whether the run is `full`, `limited`, `stale`, or `blocked` without
+collapsing the detailed `run_status` category. Missing or malformed required
+swarm inputs are `blocked`; `limited_stale_input` is `stale`; other
+`limited_*` runtime states remain `limited`; complete runtime state is `full`.
+
 Attempt history must not collapse repeated same-state attempts for the same
 canonical gap when distinct attempt-instance evidence is available. Generated
 `attempt_id` values include the outcome timestamp, receipt artifact path, or
@@ -664,11 +786,17 @@ Future reports should expose:
 - `swarm_missing_repair_route`;
 - `swarm_missing_must_not_change`;
 - `swarm_missing_allowed_edit_surface`;
+- `swarm_missing_confidence`;
 - `swarm_missing_raw_evidence_refs`;
 - `swarm_related_context_missing`;
 - `swarm_static_limitation_packets`;
 - `swarm_high_confidence_packets`;
 - `swarm_attempted_packets`;
+- `swarm_attempt_history_attempts_total`;
+- `swarm_attempt_history_durable_attempts_total`;
+- `swarm_attempt_history_evidence_unchanged`;
+- `swarm_attempt_history_attempted_no_receipt`;
+- `swarm_attempt_history_expected_unchanged`;
 - `swarm_attempted_no_receipt_packets`;
 - `swarm_receipt_present_packets`;
 - `swarm_verified_improved`;

@@ -20,8 +20,19 @@ policy for the current run. See [Configuration](CONFIGURATION.md).
 SARIF output is governed by
 [RIPR-SPEC-0008](specs/RIPR-SPEC-0008-sarif-ci-policy.md). SARIF uses the
 standard SARIF `version: "2.1.0"` envelope rather than `schema_version: "0.1"`.
-Adding SARIF must not change the existing human, JSON, GitHub annotation,
-badge, LSP, or context schemas.
+Adding SARIF or GitHub annotation detail must not remove or rename existing
+JSON, badge, LSP, or context fields. Preview-card `surface_scope` values record
+which public advisory surfaces are currently wired.
+
+`ripr check --format github` emits GitHub Actions workflow-command text rather
+than JSON. For Python preview findings, that message may append either an
+eligible repair-card summary or a no-action/static-limit summary. For Perl
+preview findings with strict fact-packet evidence, it may append a compact
+`perl_preview_card.v1` advisory summary with missing discriminator, suggested
+assertion, suggested location, and verify command. GitHub annotation text does
+not expose receipt commands, edit-boundary authority, or agent packets, and
+remains advisory review context rather than verify, receipt, gate, badge, or
+RIPR Zero authority.
 
 ## Check Output
 
@@ -422,14 +433,161 @@ The evidence-first fields are additive in schema `0.1`:
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
+- `repair_placement` is an additive optional object for preview-language
+  findings that can statically name a bounded test location and command before
+  full repair-card projection. It currently appears for direct weak Python
+  findings with a concrete missing discriminator and a detected pytest or
+  unittest related test. It carries `suggested_test_file`,
+  `suggested_test_name`, optional `suggested_test_node_id`, `verify_command`,
+  and `verify_command_confidence`.
+- `python_repair_card` is an additive optional object for direct weak Python
+  findings that already have a canonical gap, concrete missing discriminator,
+  related-test evidence, placement, and verify command. It is intentionally
+  Python-scoped so it does not collide with the existing GapRecord
+  `repair_card` packet contract. The v1 card carries `card_version`, `source`,
+  `canonical_gap_id`, `language`, `language_status`, `authority_boundary`,
+  `repair_action`, `changed_owner`, `changed_behavior`, `current_test_evidence`,
+  `missing_discriminator`, `recommended_test_shape`, `suggested_assertion`,
+  `suggested_location`, `verify`, `receipt`, `stop_conditions`, and `limits`.
+  `repair_action = "strengthen_existing_test"` means the card and derived
+  packet should strengthen the named weak related test instead of adding a
+  redundant new test.
+  In raw `ripr check` output, `receipt.command` may still be `null` because the
+  renderer does not know where the caller will save before/after check
+  snapshots. Raw check cards include `receipt.guidance`, and pilot projections
+  carry the same text as `receipt_guidance`, so humans and agents can save the
+  check JSON and run `first-pr --check-output` or
+  `reports gap-ledger --check-output`; that bridge can synthesize the concrete
+  receipt route from the supplied check-output path.
+- `preview_actionability` is an additive optional object for TypeScript and
+  JavaScript preview findings. It projects the preview adapter's fail-closed
+  actionability state as structured data while preserving the original
+  `findings[].evidence` strings for compatibility. It is not a repair packet
+  and is not gate, badge, baseline, RIPR Zero, or agent-packet authority.
+  Current fields are `authority_boundary` (`"preview_advisory_only"`),
+  `repair_packet_ready` (`false` for this preview slice), `gap_state`,
+  `actionability_category`, `why_not_actionable`, `repair_route`,
+  `missing_actionability_fields[]`, `missing_graph_legs[]`, nullable
+  `unlock_condition`, `evidence_needed_to_promote`, and `raw_evidence_refs[]`.
+  Raw evidence refs carry the original raw string plus parsed `file`, `line`,
+  `kind`, `source_id`, optional `owner`, optional graph `leg`, and optional
+  source `sample` when present.
+- `typescript_preview_card` is an additive optional object for TypeScript and
+  JavaScript preview findings that already have structured
+  `preview_actionability`. It is an advisory card, not a repair packet. The v1
+  card carries `card_version`, `source`, `language`, `language_status`,
+  `authority_boundary`, `owner`, optional `owner_kind`, `probe_family`,
+  `changed_behavior`, optional `related_test`, `oracle_kind`,
+  `oracle_strength`, optional `bun_cross_language_grip`, optional
+  `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
+  nullable `verify.command`, `why_not_actionable`, `repair_route`,
+  `repair_packet_ready`, and `limits`. The optional
+  `bun_cross_language_grip` object is limited to configured Bun Blob preview
+  evidence and carries `state`, `rust_seam.file`, `rust_seam.owner`,
+  `rust_seam.boundary`, `typescript_evidence.test_file`,
+  `typescript_evidence.verdict`, `typescript_evidence.bridge_confidence`,
+  `typescript_evidence.missing_discriminators[]`, `limitation_category`,
+  `repair_route`, `missing_graph_legs[]`, nullable `unlock_condition`,
+  `raw_evidence_refs[]`, `action`, `suggested_test_file`, optional
+  `placement`, nested `proof_mode`, nested `advisory_packet`, `authority_boundary`, and
+  `repair_packet_ready`. The nested `advisory_packet` is a preview task-shaping
+  packet, not public repair-packet authority. It carries
+  `packet_version = "bun_cross_language_advisory_packet.v1"`,
+  `cross_language_state`, `rust_file`, `rust_owner`, `rust_boundary`,
+  nullable `ts_test_file`, `missing_discriminators[]`, `suggested_shape`,
+  `bridge_confidence`, `missing_graph_legs[]`, nested `proof_mode`,
+  `next_action`,
+  `authority_boundary`, `repair_packet_ready = false`,
+  `public_repair_packet = false`, `must_not_change[]`, `stop_condition`, and
+  `raw_evidence_refs[]`. The nested `proof_mode` object carries `mode`,
+  `reason`, `authority_boundary = "preview_advisory_only"`,
+  `runtime_execution = false`, `mutation_execution = false`,
+  `miri_execution = false`, and `proof_claim = false`. Current modes are
+  `observable_red_green`, `mutation_plus_miri`, `helper_gated`,
+  `bridge_unknown`, and `static_limitation`; these name an advisory proof
+  strategy only and do not report that any runtime, mutation, Miri, or model
+  proof was executed. The current configured Bun Blob route may name
+  `test/js/web/fetch/blob.test.ts` as advisory placement when
+  shared/resizable boundary discriminators are missing on a configured bridge.
+  Mention-only, partial external-oracle, bridge-unknown, and unresolved target
+  cases stay at
+  `suggested_test_file=not_applicable`, emit no `placement`, no verify or
+  receipt command, no allowed edit surface, and no public repair packet until
+  the full public packet fields exist. Configured bridge evidence is a
+  credited `raw_evidence_refs[].leg = "binding_edge"`; a `bridge_unknown`
+  limitation must omit that credited binding raw ref and instead name
+  `binding_or_ffi_edge` in `missing_graph_legs[]`. It is not a generated test,
+  source edit, runtime command, Rust-test placement, gate, badge, baseline, or
+  repair packet.
+  `repair_packet_ready` remains `false` for this preview slice, and nullable
+  `verify.command` must not be interpreted as a delegated repair route.
+- `perl_preview_card` is an additive optional object for Perl preview findings
+  that already have strict fact-packet evidence, canonical gap identity,
+  related-test evidence, missing discriminator evidence, verify-command
+  evidence, receipt evidence, stop conditions, must-not-change constraints, and
+  safe repo-relative raw evidence refs. It is a check JSON, human CLI, SARIF,
+  GitHub annotation, and gap-ledger Markdown advisory card, not a public repair
+  packet. The v1 card carries
+  `card_version`, `source`,
+  `language`, `language_status`, `authority_boundary`, `surface_scope`,
+  `public_projection_ready`, `public_repair_packet`, `repair_packet_ready`,
+  `agent_packet_ready`, `gate_candidate`, `badge_candidate`,
+  `ripr_zero_candidate`, `packet_id`, `canonical_gap_id`, `gap_state`,
+  `changed_owner`, `evidence_class`, `repair_route`,
+  `current_test_evidence`, `missing_discriminator`, `target_test_shape`,
+  `suggested_test_location`, `suggested_assertion`, `verify`, `receipt`,
+  `confidence`, `raw_evidence_refs[]`, `stop_if[]`, `must_not_change[]`, and
+  `limits`. For this slice,
+  `surface_scope = "check_json_human_sarif_github_gap_ledger_markdown"`,
+  `public_repair_packet = false`, `repair_packet_ready = false`,
+  `agent_packet_ready = false`, `gate_candidate = false`,
+  `badge_candidate = false`, and `ripr_zero_candidate = false`.
+  `verify.command` is copied from fact evidence with
+  `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
+  `null` even though receipt evidence is required internally, and
+  `receipt.status = "available_not_delegated"`. Perl preview cards are public
+  check JSON, human CLI, diff-scoped SARIF, GitHub annotation, and gap-ledger
+  Markdown advisory context only. Gap-ledger derivation may emit a PR-local
+  preview `GapRecord` with `projection_eligibility.markdown_advisory = true`
+  so the Markdown ledger can show the changed owner, missing discriminator,
+  suggested assertion, suggested test location, and fact-only verify command.
+  That derived record must keep `agent_packet`, `pr_comment`, `gate_candidate`,
+  `ripr_zero_count`, and `ripr_plus_count` ineligible and must not synthesize a
+  receipt command. Perl preview cards do not project allowed edit surfaces,
+  forbidden files, receipt argv, PR, CI, LSP, swarm routing, badge authority,
+  gate authority, or RIPR Zero authority in this slice.
+- `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
+  Python `GapRecord` entries from findings that carry `python_repair_card`.
+  Those records are advisory preview inputs for `ripr agent packet
+  --gap-ledger ... --gap-id ... --json`; they preserve the canonical Python gap
+  ID, source anchor, suggested test location, verify command, stop conditions,
+  and preview authority boundary without rerunning analysis or claiming
+  before/after closure.
+- `canonical_gap_id` is an additive optional stable identity for a
+  language-qualified behavioral gap when the producer can name one without
+  relying on line numbers alone. Python preview values use
+  `gap:python:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
+  Static-limit findings may omit this field until a non-actionable gap-state
+  projection exists.
+- `canonical_gap_group_size` is the number of raw findings in the current
+  report that share the same `canonical_gap_id`, or omitted when no canonical
+  gap identity is assigned.
+- `canonical_gap` is an additive optional object that carries the identity
+  parts used to derive `canonical_gap_id`: `id`, `language`, `file`, `owner`,
+  `behavior_kind`, `probe_kind`, and `normalized_discriminator`.
+- `probe.owner` is an additive optional stable owner identifier emitted when a
+  preview-language adapter populated a changed owner. Python preview owners use
+  `python:<path>::<owner>`, for example
+  `python:src/pricing.py::calculate_discount`. Module-level Python changes use
+  `<module>` as the owner segment.
 - `language` is the per-finding source language reported by the language
   adapter that produced it (see [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md)).
-  Values are `rust`, `typescript`, or `python`. Omitted when no adapter
-  populated it. Rust findings always carry `language: "rust"`; TypeScript
-  and Python preview adapters land in later Campaign 27 work items.
+  Values are `rust`, `typescript`, `javascript`, `python`, or `perl`. Omitted
+  when no adapter populated it. Rust findings always carry `language: "rust"`;
+  preview adapters set the preview-language value when configured.
 - `language_status` is the per-finding adapter status. Values are `stable`
-  or `preview`. **Omitted for Rust** per RIPR-SPEC-0026; preview adapters
-  (TypeScript, Python) will set `preview` when they land.
+  or `preview`. **Omitted for Rust** per RIPR-SPEC-0026; configured preview
+  adapters set `preview`.
 - `owner_kind` is an additive optional per-finding syntactic owner
   discriminator. It is omitted when no preview adapter populated a bounded
   owner. Values are `function`, `method`, `class_method`, `arrow_function`,
@@ -437,7 +595,9 @@ The evidence-first fields are additive in schema `0.1`:
 - `static_limit_kind` is an additive optional per-finding static limitation
   discriminator. It is omitted when no structured static limit is known. Values
   are `dynamic_dispatch`, `metaprogramming`, `missing_import_graph`,
-  `decorator_indirection`, `mocked_module`, or `unsupported_syntax`.
+  `decorator_indirection`, `mocked_module`,
+  `opaque_custom_assertion_helper`, `property_based_test`,
+  `unresolved_pytest_fixture`, or `unsupported_syntax`.
 
 ## Enums
 
@@ -482,6 +642,9 @@ The evidence-first fields are additive in schema `0.1`:
 - `missing_import_graph`
 - `decorator_indirection`
 - `mocked_module`
+- `opaque_custom_assertion_helper`
+- `property_based_test`
+- `unresolved_pytest_fixture`
 - `unsupported_syntax`
 
 Reserved `flow_sink` values:
@@ -849,6 +1012,37 @@ Every result carries:
 - stable IDs (`finding_id`, `probe_id`, or `seam_id`) when available;
 - class metadata (`classification`, `probe_family`, `grip_class`, or
   `seam_kind`) when available.
+- diff-scoped preview-language Finding results may also carry additive
+  `properties.language`, `properties.language_status`, `properties.owner_kind`,
+  `properties.static_limit_kind`, `properties.preview_actionability`, and
+  `properties.typescript_preview_card`. The `preview_actionability` and
+  TypeScript preview-card shapes match `ripr check --format json` and remain
+  advisory preview context, not SARIF policy decisions or repair packets.
+- Direct weak Python preview Findings with an eligible `python_repair_card` in
+  `ripr check --format json` also carry additive
+  `properties.python_repair_card` in diff-scoped SARIF. The nested card keeps
+  the same preview/advisory boundary, canonical gap ID, missing discriminator,
+  suggested location, verify command, receipt status/guidance, stop
+  conditions, and limits. This is code-scanning context only; it does not make
+  SARIF a repair executor, receipt authority, or gate.
+- Python preview Findings that are not repair-card eligible because they are
+  already observed, have no safe related-test route, are heuristic-only, or hit
+  a static limit carry additive `properties.python_no_action` in diff-scoped
+  SARIF. The nested object marks `repair_packet_ready = false`,
+  `repair_card_present = false`, `no_action_kind`, null verify/receipt
+  commands, stop conditions, and the `preview_advisory_only` authority
+  boundary. Ordinary no-action states use
+  `repairability = "no_action"` with `not_applicable_no_action` verify/receipt
+  status. Static limits use `repairability = "analyzer_limitation"`, include
+  the typed `static_limit_kind`, and use `not_applicable_static_limit` status.
+  This is fail-closed review context only; it must not be treated as an agent
+  packet or closure receipt.
+- Perl preview cards with strict fact-packet evidence also carry additive
+  `properties.perl_preview_card` in diff-scoped SARIF. The nested card matches
+  the `ripr check --format json` shape, keeps receipt commands null and edit
+  boundaries hidden, and remains code-scanning context only. It does not make
+  SARIF a repair executor, receipt authority, gate, badge input, or RIPR Zero
+  authority.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
 when their configured severity is visible. Results whose configured severity is
@@ -1014,6 +1208,174 @@ human-readable but follows the same contract for `kind`, `owner`, and
 inventory introduced by `analysis/repo-ripr-classification-v1`. The artifact
 lands at `target/ripr/reports/repo-exposure.json` when generated via
 `cargo xtask repo-exposure-report`.
+
+The full `repo-exposure-json` artifact is evidence-heavy by design: each seam
+can carry related tests, observed values, missing discriminator records, and the
+Lane 1 `evidence_record` projection. Large repositories should use
+`repo-exposure-summary-json` for ordinary metrics, badge, planning, or CI
+summary workflows, and reserve the full artifact for explicit deep inspection.
+
+### Repo Exposure Summary JSON
+
+`ripr check --root . --format repo-exposure-summary-json` emits a bounded
+aggregate view over the same classified seam inventory. It does not include the
+full `seams[]` array, per-seam `evidence_record`, `related_tests`,
+`observed_values`, or `missing_discriminators` payloads.
+
+```json
+{
+  "schema_version": "0.1",
+  "format": "repo-exposure-summary-json",
+  "tool": "ripr",
+  "ripr_version": "0.7.0",
+  "scope": "repo",
+  "basis": "canonical_actionable_gap",
+  "metadata": {
+    "root": ".",
+    "base": "origin/main",
+    "head": "HEAD",
+    "mode": "draft"
+  },
+  "metrics": {
+    "raw_seams": 135812,
+    "headline_eligible_seams": 120408,
+    "canonical_gap_records": 2722,
+    "raw_actionable_seam_records": 46406,
+    "unsuppressed_exposure_gaps": 2722,
+    "suppressed_exposure_gaps": 0,
+    "grip_class": {
+      "strongly_gripped": 15404,
+      "weakly_gripped": 1800,
+      "ungripped": 0,
+      "reachable_unrevealed": 2,
+      "activation_unknown": 118606,
+      "propagation_unknown": 0,
+      "observation_unknown": 0,
+      "discrimination_unknown": 0,
+      "opaque": 0,
+      "intentional": 0,
+      "suppressed": 0
+    }
+  },
+  "reason_breakdown": {
+    "actionability": {
+      "add_focused_test": 200,
+      "extend_related_test": 2100,
+      "upgrade_assertion": 422
+    },
+    "gap_state": {
+      "actionable": 46406,
+      "already_observed": 15404,
+      "static_limitation": 0
+    },
+    "seam_kind": {
+      "predicate_boundary": 1200,
+      "return_value": 900,
+      "field_construction": 622
+    },
+    "grip_class": {
+      "strongly_gripped": 15404,
+      "weakly_gripped": 1800,
+      "ungripped": 0,
+      "reachable_unrevealed": 2,
+      "activation_unknown": 118606,
+      "propagation_unknown": 0,
+      "observation_unknown": 0,
+      "discrimination_unknown": 0,
+      "opaque": 0,
+      "intentional": 0,
+      "suppressed": 0
+    }
+  },
+  "limits": {
+    "top_files_limit": 25,
+    "top_files_total": 130,
+    "top_files_truncated": true
+  },
+  "top_files": [
+    {
+      "file": "src/pricing.rs",
+      "raw_seams": 480,
+      "headline_eligible_seams": 220,
+      "canonical_gap_records": 30,
+      "unsuppressed_exposure_gaps": 30,
+      "suppressed_exposure_gaps": 0,
+      "reason_breakdown": {
+        "actionability": {
+          "extend_related_test": 20,
+          "upgrade_assertion": 10
+        },
+        "grip_class": {
+          "strongly_gripped": 260,
+          "weakly_gripped": 20,
+          "activation_unknown": 200
+        }
+      }
+    }
+  ]
+}
+```
+
+Field contract:
+
+- `schema_version` - currently `"0.1"` for the bounded summary shape.
+- `format` - always `"repo-exposure-summary-json"`.
+- `scope` - always `"repo"`.
+- `basis` - always `"canonical_actionable_gap"`; the headline metric is the
+  unique canonical actionable gap count, not raw seam inventory.
+- `metadata.root`, `metadata.base`, `metadata.head`, and `metadata.mode` -
+  command context for the analyzed root. `head` records the selected head ref
+  as `HEAD`; this format does not resolve a commit hash.
+- `metrics.raw_seams` - number of classified seam records inspected.
+- `metrics.headline_eligible_seams` - raw seam records whose `grip_class` is
+  headline-eligible.
+- `metrics.canonical_gap_records` - unique canonical gap identities assigned to
+  headline-eligible seam records.
+- `metrics.raw_actionable_seam_records` - raw seam records whose canonical item
+  is actionable and carries a repair route, verify command, and receipt command.
+- `metrics.unsuppressed_exposure_gaps` - unique actionable canonical gap count.
+  This is the summary counterpart of the public repo badge basis.
+- `metrics.suppressed_exposure_gaps` - raw seam records classified as
+  `suppressed`.
+- `metrics.grip_class` - all 11 `SeamGripClass` count buckets.
+- `reason_breakdown.actionability` - unique actionable canonical gap counts by
+  canonical item actionability, such as `add_focused_test`,
+  `extend_related_test`, and `upgrade_assertion`.
+- `reason_breakdown.gap_state` - raw canonical item counts by state, such as
+  `actionable`, `already_observed`, `internal_only`, `static_limitation`, and
+  `unknown`.
+- `reason_breakdown.seam_kind` - unique actionable canonical gap counts by seam
+  kind.
+- `reason_breakdown.grip_class` - same all-bucket class counts as
+  `metrics.grip_class`, repeated for consumers that read breakdowns only.
+- `limits.top_files_limit` - maximum number of `top_files[]` rows returned.
+  The current limit is 25.
+- `limits.top_files_total` and `limits.top_files_truncated` - total file rows
+  before truncation and whether the emitted list is capped.
+- `top_files[]` - bounded file summaries sorted by actionable canonical gap
+  count, then headline-eligible raw seams, raw seams, and file path. File-level
+  `unsuppressed_exposure_gaps` counts unique actionable canonical gap IDs within
+  that file.
+
+The summary format is additive. It does not replace `repo-exposure-json`, which
+remains the full per-seam evidence artifact for deep debugging and downstream
+consumers that require complete evidence records.
+
+`cargo xtask repo-exposure-summary-report` wraps this format with a local
+timeout. The timeout is controlled by `RIPR_REPO_EXPOSURE_SUMMARY_TIMEOUT_MS`
+(default: 240000). If the command times out, exits before a complete summary, or
+cannot start, it writes a warning artifact to the same
+`target/ripr/reports/repo-exposure-summary.json` path with:
+
+- `basis: "limited_runtime_status"`
+- `run_status` such as `limited_timeout`, `limited_runner_failure`, or
+  `limited_incomplete_input`
+- `runtime_status.downstream_consumable: false`
+- an empty `metrics` object and empty `top_files` array
+- `run_limitations[]` with command, timeout, duration, exit code, and stderr/stdout
+  excerpts
+
+Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
@@ -1297,11 +1659,14 @@ Field contract:
   `same_test_file`, `same_module`, `owner_named_test`,
   `import_path_affinity`, `fixture_owner_affinity`. Detection lives in
   `crates/ripr/src/analysis/test_grip_evidence.rs`.
-  `helper_owner_call` is limited to a one-hop same-file helper that directly
-  calls the owner. The helper either carries the specific owner token in its
-  name or is a direct delegating wrapper that calls exactly one specific local
-  owner. Generic owner names, skipped-owner wrappers, and two-hop wrapper chains
-  remain non-activating static limitations.
+  `helper_owner_call` is limited to a one-hop helper or wrapper that directly
+  calls the owner. Supported shapes are same-file helpers, test-local helpers,
+  explicitly qualified test-support helpers, and unambiguous same-package
+  production wrappers. The helper either carries the specific owner token in
+  its name or is a direct delegating wrapper whose supported owner calls all
+  target one specific owner name. Generic owner names, skipped-owner wrappers,
+  mixed-owner wrappers, ambiguous production wrapper names, local test-helper
+  shadows, and two-hop wrapper chains remain non-activating static limitations.
 - `seams[].related_tests[].relation_confidence` — `high`, `medium`,
   `low`, or `opaque`. Mapping from reason: `direct_owner_call`,
   `helper_owner_call` → `high`; `assertion_target_affinity`,
@@ -1389,10 +1754,12 @@ Field contract:
   focused-test instructions. Each entry carries the original `stage`, `state`,
   and `reason` plus a normalized `category` and `repair_route` so Lane 1 can
   group analyzer limits without treating them as user test gaps.
-  Predicate boundaries whose activation operand is local, iterator-derived, or
-  computed use category `activation_boundary_input_unresolved`. Iterator-derived
-  operands route to `analysis/iterator-boundary-operand-resolution`; local or
-  computed operands route to `analysis/local-computed-boundary-operand-resolution`.
+  Predicate boundaries whose activation operand is local, member-access,
+  iterator-derived, or computed use category
+  `activation_boundary_input_unresolved`. Iterator-derived operands route to
+  `analysis/iterator-boundary-operand-resolution`; member-access operands route
+  to `analysis/local-member-boundary-operand-resolution`; local or computed
+  operands route to `analysis/local-computed-boundary-operand-resolution`.
   They must not emit exact boundary candidate values or public repair packets.
 - `seams[].evidence_record.presentation_text` - reserved presentation-text
   evidence-class projection. It is `null` until a fixture-backed presentation
@@ -1679,6 +2046,7 @@ Field contract:
 - `evidence_quality.static_limitation_category_counts` - normalized limitation
   categories such as `activation_value_unresolved`,
   `activation_owner_call_absent`,
+  `activation_owner_call_absent_call_presence_target_affinity`,
   `activation_owner_call_absent_assertion_target_affinity`,
   `activation_owner_call_absent_affinity_only`,
   `activation_owner_call_absent_same_file_only`,
@@ -1691,12 +2059,25 @@ Field contract:
   context but no direct owner call, so it remains a named limitation rather than
   user-facing test repair debt. When the related-test evidence has no direct or
   helper owner-call relation, the category is split into
+  `activation_owner_call_absent_call_presence_target_affinity` routed to
+  `analysis/call-presence-target-affinity-owner-call-tracing` for call-presence
+  target-token affinity,
   `activation_owner_call_absent_assertion_target_affinity` routed to
-  `analysis/assertion-target-affinity-owner-call-tracing`,
+  `analysis/assertion-target-affinity-owner-call-tracing`; return-value
+  assertion-target owner-call absence may route more narrowly to
+  `analysis/assertion-target-return-value-owner-call-tracing` while remaining
+  non-actionable,
   `activation_owner_call_absent_affinity_only` routed to
   `analysis/related-test-affinity-owner-call-tracing`, or
   `activation_owner_call_absent_same_file_only` routed to
-  `analysis/same-file-owner-call-tracing`.
+  `analysis/same-file-owner-call-tracing` when same-file context is the
+  primary non-owner-call relation.
+  Call-presence target-affinity, related-test-affinity, and same-file owner-call
+  absence backlog packets may further split `limitation_subroute` by expression
+  shape, such as receiver-method, associated-call, or function-call
+  missing-owner-call routes, so analyzer work can distinguish local receiver
+  method evidence from free-function call tracing without making the item
+  actionable.
 - `evidence_quality.calibration_availability_counts` - counts keyed by
   `evidence_record.calibration.availability`. These are placeholder coverage
   labels from the static record and do not imply runtime execution.
@@ -1749,6 +2130,7 @@ limited_timeout
 limited_runner_failure
 limited_large_cache_skip
 limited_incomplete_input
+limited_sampled_input
 limited_stale_input
 ```
 
@@ -2161,7 +2543,8 @@ Field contract:
 - `status` - always `"advisory"`.
 - `run_status` - Lane 1 completeness state. Values are `full`,
   `limited_timeout`, `limited_runner_failure`, `limited_large_cache_skip`,
-  `limited_incomplete_input`, or `limited_stale_input`.
+  `limited_incomplete_input`, `limited_sampled_input`, or
+  `limited_stale_input`.
 - `runtime_status` - structured completeness context matching `run_status`.
   Limited states name the phase, input kind or path, limitation category, repair
   route, timing fields when available, and `downstream_consumable`.
@@ -2184,11 +2567,15 @@ Field contract:
   trace events. These diagnostics explain long or pathological audit input
   generation without changing classifications, gate policy, or score semantics.
 - `run_limitations` - bounded report-level limitations. A timed-out
-  repo-exposure subprocess produces a warning audit artifact with a
-  `lane1_repo_exposure_timeout` row, phase/input context, timeout/duration
-  diagnostics, the latency trace tail, and a repair route. A subprocess that
-  exits before writing complete repo-exposure JSON, including a nominally
-  successful exit with an empty or malformed output file, produces
+  repo-exposure subprocess produces a warning audit artifact only when the
+  captured repo-exposure JSON is missing or incomplete. If the captured file is
+  complete and contains a top-level `seams` array, the audit consumes it and
+  records `inputs.repo_exposure_generation.status = "timeout_complete"` instead
+  of claiming a timeout-limited zero-debt artifact. A true timeout limitation
+  includes a `lane1_repo_exposure_timeout` row, phase/input context,
+  timeout/duration diagnostics, the latency trace tail, and a repair route. A
+  subprocess that exits before writing complete repo-exposure JSON, including a
+  nominally successful exit with an empty or malformed output file, produces
   `lane1_repo_exposure_incomplete` with the same bounded diagnostics. Counts in
   such limited artifacts are not complete repo truth and downstream reports must
   surface the limitation instead of treating zeros as absence of gaps. A runner
@@ -2200,14 +2587,20 @@ Field contract:
   `lane1_repo_exposure_large_cache_preflight_skip` with `run_status =
   "limited_large_cache_skip"`, `downstream_consumable = false`, and a repair
   route through `cargo xtask cache report` and `cargo xtask cache gc --dry-run`.
-  A completed audit may also report
+  Current repo seam cache writes entries larger than
+  `RIPR_REPO_SEAM_CACHE_LIMIT` as bounded shard files under `target/ripr/cache`.
+  Older audit artifacts or older cache-store implementations may still report
   `lane1_repo_exposure_cache_store_skipped_large_entry` when the live
   repo-exposure run emitted complete evidence but skipped a full classified
-  seam cache store because the entry exceeded the bounded cache-store limit.
-  The default sampled repo-exposure path records
-  `lane1_repo_exposure_sampled` with input such as
-  `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful work-queue
-  evidence, not full-repo debt totals.
+  seam cache store. That compatibility limitation carries structured
+  `observed_seams` and `cache_limit` fields in addition to the compatibility
+  `input` string, and its repair route names `cargo xtask cache report` plus
+  `RIPR_REPO_SEAM_CACHE_LIMIT` configuration when a machine has enough
+  disk/time budget for larger cache shard writes.
+  The default sampled repo-exposure path records `limited_sampled_input` with
+  `lane1_repo_exposure_sampled` and input such as
+  `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful
+  work-queue evidence, not full-repo debt totals.
   Run-limitation rows also carry `run_status`, `input_kind`, `input_path`,
   `limit_ms`, and `downstream_consumable` so consumers do not need to infer
   completeness from category strings.
@@ -2277,12 +2670,21 @@ Field contract:
   fixture-backed repair slice from live evidence.
 - `finding_alignment.actionable_gap_packets` - bounded top actionable
   canonical gap packets derived from `evidence_record.canonical_item`. Packets
-  are agent-safe work items: they carry stable identity, evidence class, repair
+  are agent-safe work items: they carry stable `canonical_gap_id` identity,
+  evidence class, repair
   kind, `target_test_shape`, related test or observer, verification command,
   receipt command, raw evidence references as supporting evidence, confidence
   basis, conservative `must_not_change` boundaries, and
-  `allowed_edit_surface[]` file bounds. They do not create user work from raw
-  static class alone.
+  `allowed_edit_surface[]` file bounds. Derived edit surfaces must resolve to
+  existing workspace files before public projection or swarm-ready ranking; a
+  guessed or missing file is reported as `missing_allowed_edit_surface`. Packets
+  do not create user work from raw static class alone. A broad repo-exposure
+  snapshot comparison verify command is not enough for swarm-ready routing
+  unless RIPR can derive a narrower `cargo test -p <package> <test-filter>`
+  command from a typed `related_test_or_observer` file/name pair.
+  `seam_id`, `finding_id`, and synthetic packet IDs can help internal
+  diagnostics, but they do not satisfy public repair packet identity; missing
+  canonical identity is reported as `missing_canonical_gap_id`.
   `raw_evidence_refs[]` entries are structured evidence anchors. For public
   projection and swarm planning, at least one entry must carry an anchor field
   (`file`, `path`, or `source_file`) and an identity field (`kind`,
@@ -2293,11 +2695,23 @@ Field contract:
   badge-readiness diagnostics for the emitted packet set. It counts
   public-projection eligible packets, excluded packets, and stable
   `projection_exclusion_reasons` rows such as `not_actionable_gap_state`,
-  `missing_receipt_command`, `missing_related_test_or_observer`, `missing_confidence`,
+  `missing_canonical_gap_id`, `missing_receipt_command`, `missing_repair_kind`,
+  `missing_target_test_shape`, `missing_related_test_or_observer`, `missing_confidence`,
   `missing_must_not_change`, `missing_allowed_edit_surface`,
-  `missing_raw_evidence_refs`, and `static_limitation_present`. This is
-  advisory report evidence only and does not change public badge endpoint
-  semantics.
+  `missing_raw_evidence_refs`, `unbounded_verify_command`, and
+  `static_limitation_present`. This is advisory report evidence only and does
+  not change public badge endpoint semantics. Swarm planning treats explicit
+  packet-field projection exclusions such as `not_actionable_gap_state`,
+  `missing_repair_kind`, `missing_repair_route`, `missing_verify_command`, `unbounded_verify_command`,
+  `missing_receipt_command`, `missing_must_not_change`,
+  `missing_raw_evidence_refs`, `missing_related_test_or_observer`, or
+  `missing_confidence` as field-level blocked states even if stale actionability
+  text, stale route text, stale command, boundary text, placeholder evidence,
+  stale related target text, or stale confidence text is still present in the
+  packet artifact.
+- `static_limitation_present` projection exclusions are routed through
+  `blocked_by_static_limitation` even when an older packet artifact also carries
+  stale actionable-looking repair fields.
 - `finding_alignment.runtime_confidence_by_class` - runtime confidence coverage
   rows at the canonical evidence-class grain. Each row reports canonical item
   count, calibrated-supported, fixture-backed, static-only, unknown-confidence,
@@ -2360,6 +2774,9 @@ full or limited before acting on them.
 analyzer repair routes from the source Lane 1 audit so downstream swarm
 surfaces can explain why no packet is safely actionable without turning those
 limitations into user repair work.
+For `top_categories[]`, `repair_route` is the dominant route from the
+route-grained backlog packets for that category when packet evidence exists;
+otherwise it uses the category fallback route.
 
 ```json
 {
@@ -2403,21 +2820,30 @@ limitations into user repair work.
     "source": "lane1-evidence-audit.static_limitations",
     "top_categories": [
       {
-        "category": "activation_value_unresolved",
-        "count": 141,
-        "repair_route": "analysis/value-resolution-audit-fixes"
+        "category": "activation_boundary_input_unresolved",
+        "count": 297,
+        "repair_route": "analysis/local-computed-boundary-operand-resolution"
+      }
+    ],
+    "top_subroutes": [
+      {
+        "category": "activation_owner_call_absent_call_presence_target_affinity",
+        "subroute": "bare_alias_unsupported",
+        "count": 12,
+        "repair_route": "analysis/call-presence-target-affinity-owner-call-tracing"
       }
     ],
     "top_repair_routes": [
       {
-        "repair_route": "analysis/value-resolution-audit-fixes",
-        "count": 141
+        "repair_route": "analysis/local-computed-boundary-operand-resolution",
+        "count": 297
       }
     ],
     "limitation_backlog_packets": [
       {
         "packet_id": "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution",
         "limitation_category": "activation_boundary_input_unresolved",
+        "limitation_subroute": "activation_boundary_input_unresolved",
         "repair_route": "analysis/local-computed-boundary-operand-resolution",
         "signal_count": 297,
         "sample_canonical_gap_ids": ["gap:idx-offset-local"],
@@ -2425,16 +2851,20 @@ limitations into user repair work.
           {
             "canonical_gap_id": "gap:idx-offset-local",
             "evidence_class": "predicate_boundary",
-            "source_file": "src/window.rs"
+            "source_file": "src/window.rs",
+            "line": 44,
+            "expression": "idx >= offset",
+            "limitation_reason": "local/computed operand cannot be mapped to a safe test input"
           }
         ],
         "dominant_evidence_class": "predicate_boundary",
         "why_not_actionable": "activation inputs cannot yet be mapped to a safe concrete test value",
-        "unlock_condition": "implement `analysis/local-computed-boundary-operand-resolution` so local, iterator, or computed operands can be resolved before candidate values are recommended",
+        "unlock_condition": "implement `analysis/local-computed-boundary-operand-resolution` so local, member-access, iterator, or computed operands can be resolved before candidate values are recommended",
         "non_claims": [
           "not a public repair packet",
           "not swarm-ready work",
           "do not edit tests from this backlog item alone",
+          "do not invent exact candidate values",
           "do not invent exact boundary candidate values"
         ]
       }
@@ -2548,11 +2978,19 @@ operators can see which named analyzer limitations are blocking routeable
 packets. It is backlog routing evidence only; it must not be counted as
 repair-ready packet work.
 `static_limitation_backlog.limitation_backlog_packets[]` turns top limitation
-routes into analyzer work packets with sample IDs, dominant evidence class,
-unlock condition, and non-claims. Packet identity is route-grained:
-the same limitation category can emit separate backlog packets for separate
-analyzer repair routes. These packets are not public repair packets and must not
-enter the swarm-ready queue.
+routes into analyzer work packets with sample IDs, source file, optional line,
+expression, limitation reason, dominant evidence class, unlock condition, and
+non-claims. `limitation_subroute` names the more specific analyzer bucket when a
+category is still too broad, such as target-affinity owner-call cases that are
+blocked by unsupported alias or ambiguity shapes. Packet identity is route- and
+subroute-grained: the same limitation category can emit separate backlog packets
+for separate analyzer repair routes or named subroutes. These packets are not
+public repair packets and must not enter the swarm-ready queue.
+The `summary.static_limitation_packets` count is limited to public repair
+packets that carry static limitations. `summary.static_limitation_backlog_packets`
+and `summary.static_limitation_backlog_signals` summarize the separate analyzer
+backlog so consumers can route analyzer work even when no public repair packets
+are emitted.
 
 ```json
 {
@@ -2582,6 +3020,14 @@ enter the swarm-ready queue.
         "repair_route": "analysis/value-resolution-audit-fixes"
       }
     ],
+    "top_subroutes": [
+      {
+        "category": "activation_value_unresolved",
+        "subroute": "activation_value_unresolved",
+        "count": 141,
+        "repair_route": "analysis/value-resolution-audit-fixes"
+      }
+    ],
     "top_repair_routes": [
       {
         "repair_route": "analysis/value-resolution-audit-fixes",
@@ -2599,17 +3045,42 @@ enter the swarm-ready queue.
     "blocked_by_public_projection_exclusion_packets": 0,
     "blocked_by_operator_judgment_packets": 1,
     "public_projection_excluded_packets": 0,
+    "missing_canonical_gap_id": 0,
     "missing_verify_command": 0,
     "missing_receipt_command": 0,
+    "missing_repair_kind": 0,
     "missing_repair_route": 0,
+    "missing_target_test_shape": 0,
     "missing_must_not_change": 0,
     "missing_allowed_edit_surface": 0,
+    "missing_confidence": 0,
     "missing_raw_evidence_refs": 0,
+    "missing_related_test_or_observer": 3,
     "related_context_missing": 3,
     "static_limitation_packets": 2,
+    "static_limitation_backlog_packets": 6,
+    "static_limitation_backlog_signals": 141,
     "high_confidence_packets": 4
   },
   "blocked_state_examples": [
+    {
+      "state": "missing_canonical_gap_id",
+      "example_packet_id": "packet:missing-canonical-gap-id",
+      "example_canonical_gap_id": "packet-fallback-seam-id",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_missing_context": ["canonical_gap_id"],
+      "example_projection_exclusion_reasons": ["missing_canonical_gap_id"],
+      "example_blocked_reasons": ["missing_canonical_gap_id"]
+    },
+    {
+      "state": "missing_target_test_shape",
+      "example_packet_id": "packet:missing-target-test-shape",
+      "example_canonical_gap_id": "gap:missing-target-test-shape",
+      "example_repair_kind": "add_boundary_assertion",
+      "example_missing_context": ["target_test_shape"],
+      "example_projection_exclusion_reasons": [],
+      "example_blocked_reasons": ["missing_target_test_shape"]
+    },
     {
       "state": "missing_allowed_edit_surface",
       "example_packet_id": "packet:missing-edit-surface",
@@ -2651,6 +3122,7 @@ enter the swarm-ready queue.
       "allowed_edit_surface": ["tests/pricing.rs"],
       "allowed_edit_surface_count": 1,
       "related_test_or_observer_available": true,
+      "must_not_change": ["production behavior"],
       "must_not_change_count": 1,
       "raw_findings_count": 2,
       "raw_findings_supporting_only": true,
@@ -2673,9 +3145,10 @@ enter the swarm-ready queue.
 ```
 
 `swarm_state = queued` means the packet is ready for a bounded dry-run repair
-attempt. Queued packets require a structured `repair_route` object and a typed
+attempt. Queued packets require a structured `repair_route` object, a typed
 workspace-relative `related_test_or_observer` or `candidate_value_or_observer`
-target. Candidate prose, `repair_route_source` hints, and top-level
+target, and an `allowed_edit_surface[]` entry that resolves to an existing
+workspace file. Candidate prose, `repair_route_source` hints, and top-level
 repair-shape strings remain supporting context only; they do not authorize file
 edits or swarm-ready ranking by themselves. Packets missing required typed
 context use `blocked_by_missing_context`. Packets with static limitations use
@@ -2688,6 +3161,21 @@ remain visible but are not default
 swarm-ready until upstream evidence is fixture-backed, calibrated, or explicitly
 operator-selected. Ranking is advisory and never redefines actionability; it
 starts from the canonical packet state already emitted by Lane 1.
+
+`projection_exclusion_reasons[]` includes `unbounded_verify_command` when the
+packet's only verify route is a broad `ripr agent verify` repo-exposure snapshot
+comparison. Those commands require separately generating before/after
+repo-exposure artifacts and are not a bounded proof command for agent-safe
+repair delegation. `swarm-plan` treats this as a verify-command field blocker
+and also applies this exclusion when reading older artifacts that predate the
+reason, so legacy packets do not remain swarm-ready solely because they carry
+the old broad verify command.
+
+`summary.public_projection_exclusion_reasons[]` is a stable reason-count
+breakdown for packets routed through `blocked_by_public_projection_exclusion`.
+Readiness preserves the same rows so operators can inspect the dominant
+projection policy reason instead of treating all public-projection exclusions as
+one generic blocked bucket.
 
 ## RIPR Swarm Attempt Dry Run
 
@@ -2865,8 +3353,9 @@ packet so attempt history remains visible without creating new actionable gaps.
 
 ## RIPR Swarm Attempt Ledger
 
-`cargo xtask ripr-swarm attempt-ledger` joins the swarm plan and
-actionable-gap outcome report into durable attempt history:
+`cargo xtask ripr-swarm attempt-ledger` joins the swarm plan,
+actionable-gap outcome report, optional real repair attempts, and prior ledger
+into durable attempt history:
 
 ```text
 target/ripr/reports/swarm-attempt-ledger.json
@@ -2874,16 +3363,21 @@ target/ripr/reports/swarm-attempt-ledger.md
 ```
 
 The command reads `target/ripr/reports/swarm-plan.json`,
-`target/ripr/reports/actionable-gap-outcomes.json`, and any existing
-`target/ripr/reports/swarm-attempt-ledger.json` by default. It preserves prior
-durable attempt entries by `attempt_id`, drops stale synthetic `not_attempted`
+`target/ripr/reports/actionable-gap-outcomes.json`, any existing
+`target/ripr/reports/swarm-attempt-ledger.json`, and
+`fixtures/real-repair-attempts/corpus.json` by default. The real-repair-attempts
+input is advisory dogfood evidence; it is imported as attempt history and route
+quality, not as a new public repair packet. The command preserves prior durable
+attempt entries by `attempt_id`, drops stale synthetic `not_attempted`
 placeholders when their packet is no longer present in the current swarm plan,
-adds the current outcome join, and highlights the latest attempt per
-`canonical_gap_id`. It does not execute repairs, edit files, run tests, create
-receipts, call providers, run mutation testing, change PR/CI rendering, change
-editor/LSP behavior, change gates, or change public badges.
+adds the current outcome join, imports real dogfood attempts, and highlights the
+latest attempt per `canonical_gap_id`. It does not execute repairs, edit files,
+run tests, create receipts, call providers, run mutation testing, change PR/CI
+rendering, change editor/LSP behavior, change gates, or change public badges.
 The Markdown sibling includes a `Runtime Status` table with the same
-completeness fields as JSON before listing ledger inputs.
+completeness fields as JSON before listing ledger inputs. `attempted_no_receipt`
+entries may carry `missing_receipt_reason` so receipt reliability failures remain
+actionable operator evidence instead of only route-quality counts.
 
 ```json
 {
@@ -2920,6 +3414,11 @@ completeness fields as JSON before listing ledger inputs.
       "path": "target/ripr/reports/swarm-attempt-ledger.json",
       "state": "read",
       "limitation": null
+    },
+    "real_repair_attempts": {
+      "path": "fixtures/real-repair-attempts/corpus.json",
+      "state": "read",
+      "limitation": null
     }
   },
   "summary": {
@@ -2931,13 +3430,30 @@ completeness fields as JSON before listing ledger inputs.
     "missing_verify_result": 0,
     "evidence_improved": 2,
     "evidence_unchanged": 1,
+    "expected_unchanged": 0,
     "evidence_regressed": 0,
     "resolved": 0,
     "unknown": 0,
     "orphaned_receipts": 1
   },
+  "attempt_history_summary": {
+    "attempts_total": 5,
+    "durable_attempts_total": 4,
+    "canonical_gaps_total": 3,
+    "not_attempted": 1,
+    "attempted_no_receipt": 1,
+    "receipt_present": 0,
+    "missing_verify_result": 0,
+    "evidence_improved": 2,
+    "evidence_unchanged": 1,
+    "expected_unchanged": 0,
+    "evidence_regressed": 0,
+    "resolved": 0,
+    "unknown": 0
+  },
   "repair_route_quality": [
     {
+      "language": null,
       "repair_kind": "add_boundary_assertion",
       "repair_kind_attempted": 2,
       "repair_kind_improved": 1,
@@ -2947,14 +3463,89 @@ completeness fields as JSON before listing ledger inputs.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5
+      "repair_kind_success_rate": 0.5,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "language_repair_route_quality": [
+    {
+      "language": "typescript",
+      "repair_kind": "sharpen_static_limitation_route",
+      "repair_kind_attempted": 1,
+      "repair_kind_improved": 1,
+      "repair_kind_unchanged": 0,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 0,
+      "repair_kind_dominant_failure_reason": null,
+      "repair_kind_success_rate": 1.0,
+      "sample_packet_ids": ["packet-ts-route-001"],
+      "sample_attempt_ids": ["attempt-ts-route-001"],
+      "sample_canonical_gap_ids": ["gap:ts-route"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "historical_repair_route_quality": [
+    {
+      "language": null,
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 3,
+      "repair_kind_improved": 2,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 1,
+      "repair_kind_dominant_failure_reason": "unchanged",
+      "repair_kind_success_rate": 0.667,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "historical_language_repair_route_quality": [
+    {
+      "language": "typescript",
+      "repair_kind": "sharpen_static_limitation_route",
+      "repair_kind_attempted": 2,
+      "repair_kind_improved": 2,
+      "repair_kind_unchanged": 0,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 0,
+      "repair_kind_dominant_failure_reason": null,
+      "repair_kind_success_rate": 1.0,
+      "sample_packet_ids": ["packet-ts-route-001"],
+      "sample_attempt_ids": ["attempt-ts-route-001"],
+      "sample_canonical_gap_ids": ["gap:ts-route"],
+      "sample_missing_receipt_reasons": []
     }
   ],
   "top_failing_repair_routes": [
     {
+      "language": null,
       "repair_kind": "add_boundary_assertion",
       "repair_kind_attempted": 2,
       "repair_kind_improved": 1,
@@ -2964,16 +3555,70 @@ completeness fields as JSON before listing ledger inputs.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5
+      "repair_kind_success_rate": 0.5,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "top_historical_failing_repair_routes": [
+    {
+      "language": null,
+      "repair_kind": "add_boundary_assertion",
+      "repair_kind_attempted": 3,
+      "repair_kind_improved": 2,
+      "repair_kind_unchanged": 1,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 1,
+      "repair_kind_dominant_failure_reason": "unchanged",
+      "repair_kind_success_rate": 0.667,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "repair_route_quality_backlog": [
+    {
+      "packet_id": "route-quality:add-boundary-assertion:unchanged",
+      "repair_kind": "add_boundary_assertion",
+      "improvement_route": "analysis/repair-route-guidance/add-boundary-assertion",
+      "failure_count": 1,
+      "dominant_failure_reason": "unchanged",
+      "dominant_failure_count": 1,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": [],
+      "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
+      "unlock_condition": "update `add_boundary_assertion` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
+      "non_claims": [
+        "not a public repair packet",
+        "not swarm-ready work",
+        "do not retry this repair kind from this backlog item alone",
+        "do not promote or downgrade actionability from route-quality evidence alone",
+        "do not change badge or gate semantics from route-quality evidence alone"
+      ]
     }
   ],
   "top_missing_evidence_fields": [
     {
       "label": "receipt_command",
-      "count": 1
+      "count": 1,
+      "sample_packet_ids": ["packet-boundary-001"],
+      "sample_canonical_gap_ids": ["gap:abc"],
+      "sample_repair_kinds": ["add_boundary_assertion"]
     }
   ],
   "attempts": [
@@ -2991,12 +3636,14 @@ completeness fields as JSON before listing ledger inputs.
       "verify_command": "cargo test -p ripr boundary_gap",
       "verify_result": "pass",
       "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+      "missing_receipt_reason": null,
       "before_gap_state": "weakly_gripped",
       "after_gap_state": "strongly_gripped",
       "outcome": "evidence_improved",
       "timestamp": "unix_ms:1778240100000",
       "receipt_state": "receipt_movement_improved",
       "movement_source": "agent_receipt",
+      "route_quality_expectation": null,
       "reason": "Matched agent receipt artifact."
     }
   ],
@@ -3015,12 +3662,14 @@ completeness fields as JSON before listing ledger inputs.
       "verify_command": "cargo test -p ripr boundary_gap",
       "verify_result": "pass",
       "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+      "missing_receipt_reason": null,
       "before_gap_state": "weakly_gripped",
       "after_gap_state": "strongly_gripped",
       "outcome": "evidence_improved",
       "timestamp": "unix_ms:1778240100000",
       "receipt_state": "receipt_movement_improved",
       "movement_source": "agent_receipt",
+      "route_quality_expectation": null,
       "reason": "Matched agent receipt artifact."
     }
   ],
@@ -3046,9 +3695,17 @@ completeness fields as JSON before listing ledger inputs.
 `latest_attempts[]` is the current routing view, one entry per canonical gap,
 and is the source readiness uses for
 attempt/improved/unchanged/regressed/resolved counts. The ledger preserves
+current `top_ready_packets[]` as synthetic `not_attempted` queue placeholders
+until a receipt or outcome row replaces them. It preserves
 `attempted_no_receipt`, `receipt_present`, `evidence_improved`,
 `evidence_unchanged`, `evidence_regressed`, `resolved`, and `unknown` outcomes.
-It preserves `not_attempted` rows only when they remain tied to the current
+`summary` is the latest-projection state used for current routing, except
+`summary.attempts_total`, which reports the durable row count for operator
+visibility. `attempt_history_summary` counts full durable `attempts[]` history
+before latest-attempt collapse and is the place to inspect prior unchanged,
+no-receipt, regressed, or expected-unchanged outcomes that were superseded by a
+newer current attempt.
+It preserves prior `not_attempted` rows only when they remain tied to the current
 swarm plan or carry durable receipt/verification evidence; stale synthetic
 `not_attempted` placeholders are dropped so retired packets do not create
 route-quality or missing-field noise. Missing outcome inputs make the ledger
@@ -3060,6 +3717,16 @@ less complete.
 Attempted rows with no `verify_result` contribute to
 `summary.missing_verify_result` and to `top_missing_evidence_fields[]` as
 `verify_result`.
+`route_quality_expectation = "expected_unchanged_negative_capability"` keeps an
+`evidence_unchanged` attempt visible while marking the unchanged result as the
+expected trust-boundary outcome. When such an attempt is the latest row for its
+canonical gap, it increments `summary.expected_unchanged` and
+`repair_kind_expected_unchanged`; it does not contribute to
+`repair_kind_failure_count`, top failing repair routes, or route-quality backlog
+packets. If a newer improved or resolved attempt supersedes it, the expected
+unchanged row remains in durable `attempts[]` history but no longer affects
+latest-route quality counts. It still contributes to
+`attempt_history_summary.expected_unchanged`.
 
 Generated `attempt_id` values include a stable attempt-instance suffix when the
 outcome carries one, preferring explicit outcome `attempt_instance`, then
@@ -3069,13 +3736,50 @@ a new history row from a plain ledger rerun over the same artifacts.
 
 `repair_route_quality[]` is grouped from latest attempts by `repair_kind` and
 reports attempted, improved, unchanged, regressed, resolved, no-receipt,
-receipt-only, missing-verify-result, unknown, and success-rate counts.
-`top_failing_repair_routes[]` is the subset with unchanged, regressed,
-no-receipt, missing-verify-result, or unknown outcomes,
-ordered for analyzer-improvement routing. `top_missing_evidence_fields[]`
-counts missing route/verify/receipt fields that prevent route-quality analysis.
-`repair_kind_failure_count` is the sum of unchanged, regressed, no-receipt,
-missing-verify-result, and unknown latest attempts.
+receipt-only, missing-verify-result, expected-unchanged, unknown, and
+success-rate counts.
+Rows include `language = null` because they are repo-level repair-kind rollups.
+`language_repair_route_quality[]` is the additive language-scoped projection
+grouped by `language` and `repair_kind` for attempts that carry a known language
+field. It lets TypeScript/JavaScript preview route outcomes be measured without
+promoting preview evidence into public repair packets, badge inputs, or gates.
+`historical_repair_route_quality[]` and
+`historical_language_repair_route_quality[]` use the same row shape over the
+durable full attempt history instead of the latest-attempt projection. They keep
+older unchanged, regressed, and no-receipt attempts visible after a later
+follow-up improves or resolves the same canonical gap. They are audit evidence;
+current routing still comes from latest-attempt `repair_route_quality[]`.
+`top_failing_repair_routes[]` is the subset with unexpected unchanged,
+regressed, no-receipt, missing-verify-result, or unknown outcomes,
+ordered for analyzer-improvement routing. Repair-route quality rows include
+sample packet IDs, attempt IDs, and canonical gap IDs for representative attempted rows when
+available, so successful and failing route metrics both remain inspectable.
+`top_failing_repair_routes[]` and `repair_route_quality_backlog[]` still derive
+their routing from failing attempts and preserve the concrete failed-attempt
+sample in both `next_actions[].attempt_id` and the reason text when available.
+`repair_route_quality_backlog[]` converts
+top failing repair routes into analyzer/report backlog packets with stable
+packet IDs, improvement routes, unlock conditions, samples, and non-claims; the
+rows are not public repair packets, are not swarm-ready work, and do not promote
+or downgrade actionability by themselves.
+`top_historical_failing_repair_routes[]` applies the same failing-route ordering
+to durable history. It is for route-learning audits and must not be used as the
+current next action when the latest-attempt projection has already improved or
+resolved the route.
+When `sample_missing_receipt_reasons[]` shows that no-receipt attempts timed
+out before receipt capture, readiness routes that sample to the bounded
+verify-route `improve_repair_route_quality` action instead of generic
+`collect_missing_attempt_receipts`. Ordinary missing receipts still route to
+receipt collection.
+`top_missing_evidence_fields[]`
+counts missing route/verify/receipt fields that prevent route-quality analysis
+and includes sample packet IDs, canonical gap IDs, and repair kinds when the
+row is derived from attempts. Legacy label/count-only rows remain readable and
+default sample arrays to empty.
+`repair_kind_failure_count` is the sum of unexpected unchanged, regressed,
+no-receipt, missing-verify-result, and unknown latest attempts. Expected
+unchanged negative-capability rows remain counted in `repair_kind_unchanged`
+and `repair_kind_expected_unchanged`, but are excluded from failure routing.
 `repair_kind_dominant_failure_reason` is the highest-count failing bucket, with
 deterministic tie preference for regressed, missing-verify-result, unchanged,
 no-receipt, then unknown.
@@ -3112,7 +3816,11 @@ non-consumable for downstream attempt/outcome claims until the missing artifact
 is regenerated.
 
 Swarm plan, attempt-ledger, and readiness reports include `run_status` and
-`runtime_status`. Readiness preserves limited swarm-plan, actionable-gap
+`runtime_status`. Readiness also includes `readiness_state`, a coarse
+user-facing class with one of `full`, `limited`, `stale`, or `blocked`.
+`readiness_state` is additive: consumers that need the exact runtime limitation
+should continue reading `run_status` and `runtime_status`. Readiness preserves
+limited swarm-plan, actionable-gap
 outcome, and attempt-ledger inputs, and reports missing or malformed required
 plan input as `limited_incomplete_input` instead of turning absent packets into a
 clean zero-ready state. Missing outcomes or attempt ledger inputs also report
@@ -3138,12 +3846,35 @@ Readiness forwards `static_limitation_backlog` from `swarm-plan` so thin
 surfaces can show the leading analyzer repair routes when no packet is safely
 actionable. This field is advisory limitation backlog, not a public actionable
 count and not a CI gate predicate.
+Readiness summary counts keep the same split as the plan summary:
+`static_limitation_packets` counts public repair packets blocked by static
+limitations, while `static_limitation_backlog_packets` and
+`static_limitation_backlog_signals` describe the separate analyzer backlog.
 `top_limitation_routes[]` is a readiness-level projection of those analyzer
-routes with sample packet context. It is intentionally separate from
-`repair_route_quality[]`, which is based only on latest repair attempts.
+routes with sample packet context, sample category/subroute, sample canonical
+gap IDs, sample source locations, `why_not_actionable`, unlock conditions, and
+non-claims so operators can inspect the backlog without treating it as repair
+work. It is intentionally separate from `repair_route_quality[]`, which is
+based only on latest repair attempts.
+The backlog packet set is bounded, but it preserves representative samples for
+each packet-backed top repair route in addition to the highest-volume subroutes
+so low-count routes do not collapse to `unknown` sample context. Report-only
+runtime diagnostics remain in `runtime_status` and `run_limitations`, not in
+the packet-backed route projection.
+For older or external backlog packets that omit presentation-only route fields,
+readiness fills standard non-claims, fallback non-actionability text, fallback
+unlock conditions, and explicit `unknown` evidence class values rather than
+dropping the route or making it look repair-ready.
+`attempt_history_summary` preserves durable attempt-ledger history before
+readiness collapses to latest attempts for current routing counts. Use it to
+inspect prior unchanged, no-receipt, regressed, or expected-unchanged outcomes
+without treating those superseded rows as current route-quality failures.
 `top_next_action` is a single-object projection of `next_actions[0]` for
 thin downstream surfaces that need one canonical next route without
-reinterpreting the full advisory queue.
+reinterpreting the full advisory queue. When that action routes static
+limitation backlog, its reason preserves the sample subroute and
+`why_not_actionable` text so thin surfaces can explain why the route is
+analyzer work rather than a repair packet.
 When all required inputs are readable but a non-consumable limited runtime state
 is preserved from one input, readiness emits
 `resolve_limited_runtime_status` before packet or route-quality actions so
@@ -3153,6 +3884,14 @@ regenerates or inspects the limiting input, for example
 `cargo xtask lane1-evidence-audit` for sampled, timed-out, runner-failed, or
 incomplete repo-exposure generation and cache report/GC commands for large cache
 limits.
+Readiness also includes `cross_language_oracle_route_quality`, a SPEC-0062
+preview-only summary over the checked Bun Blob cross-language oracle graph
+corpus. This section counts complete advisory witnesses, missing discriminator
+limitations, mention-only limitations, unknown bridge limitations, and public
+packet exclusions while keeping all rows `repair_packet_ready = false`. It is
+operator route-quality evidence only; it does not create repair packets, verify
+commands, receipt commands, source edits, generated tests, gates, badges, or
+support-tier claims.
 
 ```json
 {
@@ -3161,6 +3900,7 @@ limits.
   "report": "swarm-readiness",
   "scope": "repo",
   "status": "advisory",
+  "readiness_state": "full",
   "run_status": "full",
   "runtime_status": {
     "state": "full",
@@ -3200,19 +3940,40 @@ limits.
     "blocked_by_public_projection_exclusion_packets": 0,
     "blocked_by_operator_judgment_packets": 1,
     "public_projection_excluded_packets": 0,
+    "missing_canonical_gap_id": 0,
     "missing_verify_command": 0,
     "missing_verify_result": 0,
     "missing_receipt_command": 0,
+    "missing_repair_kind": 0,
+    "missing_target_test_shape": 0,
     "static_limitation_packets": 2,
+    "static_limitation_backlog_packets": 6,
+    "static_limitation_backlog_signals": 141,
     "high_confidence_packets": 4,
     "attempted_packets": 3,
     "attempted_no_receipt_packets": 0,
     "receipt_present_packets": 0,
     "improved_packets": 2,
     "unchanged_packets": 1,
+    "expected_unchanged_packets": 0,
     "regressed_packets": 0,
     "resolved_packets": 1,
     "orphaned_receipts": 0
+  },
+  "attempt_history_summary": {
+    "attempts_total": 6,
+    "durable_attempts_total": 5,
+    "canonical_gaps_total": 4,
+    "not_attempted": 1,
+    "attempted_no_receipt": 1,
+    "receipt_present": 0,
+    "missing_verify_result": 0,
+    "evidence_improved": 2,
+    "evidence_unchanged": 2,
+    "expected_unchanged": 1,
+    "evidence_regressed": 0,
+    "resolved": 1,
+    "unknown": 0
   },
   "static_limitation_backlog": {
     "source": "lane1-evidence-audit.static_limitations",
@@ -3236,10 +3997,27 @@ limits.
       "signal_count": 141,
       "sample_packet_id": "limitation:activation-value-unresolved:value-resolution-audit-fixes",
       "sample_limitation_category": "activation_value_unresolved",
+      "sample_limitation_subroute": "activation_value_unresolved",
       "sample_canonical_gap_ids": ["gap:value-resolution"],
+      "sample_sources": [
+        {
+          "canonical_gap_id": "gap:value-resolution",
+          "evidence_class": "predicate_boundary",
+          "source_file": "crates/ripr/src/analysis/value_resolution.rs",
+          "line": 88,
+          "expression": "idx >= offset",
+          "limitation_reason": "activation value cannot be safely mapped to a test input"
+        }
+      ],
       "dominant_evidence_class": "predicate_boundary",
       "why_not_actionable": "activation value cannot be safely mapped to a test input",
-      "unlock_condition": "implement analyzer value-resolution before public repair packets are emitted"
+      "unlock_condition": "implement analyzer value-resolution before public repair packets are emitted",
+      "non_claims": [
+        "not a public repair packet",
+        "not swarm-ready work",
+        "do not edit tests from this backlog item alone",
+        "do not invent exact candidate values"
+      ]
     }
   ],
   "blocked_state_routes": [
@@ -3279,6 +4057,7 @@ limits.
   ],
   "repair_route_quality": [
     {
+      "language": null,
       "repair_kind": "add_boundary_assertion",
       "repair_kind_attempted": 2,
       "repair_kind_improved": 1,
@@ -3288,14 +4067,92 @@ limits.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5
+      "repair_kind_success_rate": 0.5,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": []
     }
   ],
+  "language_repair_route_quality": [
+    {
+      "language": "typescript",
+      "repair_kind": "sharpen_static_limitation_route",
+      "repair_kind_attempted": 1,
+      "repair_kind_improved": 1,
+      "repair_kind_unchanged": 0,
+      "repair_kind_regressed": 0,
+      "repair_kind_resolved": 0,
+      "repair_kind_attempted_no_receipt": 0,
+      "repair_kind_receipt_present": 0,
+      "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
+      "repair_kind_unknown": 0,
+      "repair_kind_failure_count": 0,
+      "repair_kind_dominant_failure_reason": null,
+      "repair_kind_success_rate": 1.0,
+      "sample_packet_ids": [],
+      "sample_attempt_ids": [],
+      "sample_canonical_gap_ids": [],
+      "sample_missing_receipt_reasons": []
+    }
+  ],
+  "cross_language_oracle_route_quality": {
+    "status": "pass",
+    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "cases_total": 9,
+    "passing_cases": 9,
+    "failing_cases": 0,
+    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
+    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
+    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
+    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
+    "cross_language_oracle_graph_mention_only_limitations": 1,
+    "cross_language_oracle_graph_panic_boundary_limitations": 1,
+    "cross_language_oracle_graph_public_packet_exclusions": 9,
+    "repair_packet_ready_cases": 0,
+    "authority_boundary": "preview_advisory_only",
+    "non_claims": [
+      "not a public repair packet",
+      "not badge or gate input",
+      "not runtime Bun execution",
+      "not generated tests",
+      "not source edits",
+      "not full cross-language proof",
+      "not support-tier promotion"
+    ],
+    "rows": [
+      {
+        "case_id": "bun_blob_bridge_unknown_limitation",
+        "expected_state": "bridge_unknown",
+        "observed_state": "bridge_unknown",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": ["binding_or_ffi_edge"],
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "unlock_condition": "Name a configured or generated binding edge from the TypeScript Blob surface to Blob::from_js_without_defer_gc."
+      },
+      {
+        "case_id": "bun_blob_missing_external_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_external_oracle",
+        "observed_state": "rust_ungripped_ts_missing_external_oracle",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": ["external_oracle:stable_byte_copy"],
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
+      }
+    ]
+  },
   "top_failing_repair_routes": [
     {
+      "language": null,
       "repair_kind": "add_boundary_assertion",
       "repair_kind_attempted": 2,
       "repair_kind_improved": 1,
@@ -3305,40 +4162,73 @@ limits.
       "repair_kind_attempted_no_receipt": 0,
       "repair_kind_receipt_present": 0,
       "repair_kind_missing_verify_result": 0,
+      "repair_kind_expected_unchanged": 0,
       "repair_kind_unknown": 0,
       "repair_kind_failure_count": 1,
       "repair_kind_dominant_failure_reason": "unchanged",
-      "repair_kind_success_rate": 0.5
+      "repair_kind_success_rate": 0.5,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"]
+    }
+  ],
+  "repair_route_quality_backlog": [
+    {
+      "packet_id": "route-quality:add-boundary-assertion:unchanged",
+      "repair_kind": "add_boundary_assertion",
+      "improvement_route": "analysis/repair-route-guidance/add-boundary-assertion",
+      "failure_count": 1,
+      "dominant_failure_reason": "unchanged",
+      "dominant_failure_count": 1,
+      "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
+      "sample_canonical_gap_ids": ["gap:def"],
+      "sample_missing_receipt_reasons": [],
+      "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
+      "unlock_condition": "update `add_boundary_assertion` guidance so a future attempt can produce evidence_improved or resolved instead of evidence_unchanged",
+      "non_claims": [
+        "not a public repair packet",
+        "not swarm-ready work",
+        "do not retry this repair kind from this backlog item alone",
+        "do not promote or downgrade actionability from route-quality evidence alone",
+        "do not change badge or gate semantics from route-quality evidence alone"
+      ]
     }
   ],
   "top_missing_evidence_fields": [
     {
       "label": "receipt_command",
-      "count": 1
+      "count": 1,
+      "sample_packet_ids": ["packet-boundary-001"],
+      "sample_canonical_gap_ids": ["gap:abc"],
+      "sample_repair_kinds": ["add_boundary_assertion"]
     }
   ],
   "top_next_action": {
     "kind": "improve_repair_route_quality",
-    "packet_id": null,
+    "packet_id": "route-quality:add-boundary-assertion:unchanged",
+    "attempt_id": "attempt-boundary-002",
     "canonical_gap_id": null,
     "evidence_class": null,
     "repair_kind": "add_boundary_assertion",
-    "command": "cargo xtask ripr-swarm attempt-ledger",
-    "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); inspect route guidance before increasing packet volume"
+    "command": "cargo xtask ripr-swarm readiness",
+    "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002` attempt `attempt-boundary-002`"
   },
   "next_actions": [
     {
       "kind": "improve_repair_route_quality",
-      "packet_id": null,
+      "packet_id": "route-quality:add-boundary-assertion:unchanged",
+      "attempt_id": "attempt-boundary-002",
       "canonical_gap_id": null,
       "evidence_class": null,
       "repair_kind": "add_boundary_assertion",
-      "command": "cargo xtask ripr-swarm attempt-ledger",
-      "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); inspect route guidance before increasing packet volume"
+      "command": "cargo xtask ripr-swarm readiness",
+      "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002` attempt `attempt-boundary-002`"
     },
     {
       "kind": "inspect_unchanged_attempts",
       "packet_id": null,
+      "attempt_id": null,
       "canonical_gap_id": null,
       "evidence_class": null,
       "repair_kind": null,
@@ -3394,7 +4284,9 @@ derived from the same plan and outcome artifacts. It can point operators to a
 ready dry-run packet, missing verify/receipt source fields, orphaned receipts,
 unchanged or regressed attempts, static-limitation backlog work, or
 operator-judgment packets that are visible but not default swarm-ready. It does
-not execute the action or consume raw findings as work. `top_next_action` is
+not execute the action or consume raw findings as work. Route-quality next
+actions may carry `attempt_id` to point at the concrete failed receipt sample
+behind the analyzer/report backlog route. `top_next_action` is
 the first item in that queue, duplicated as a stable object for badge, LSP, PR,
 CI, or other thin surfaces that should not implement their own ranking rules.
 `blocked_state_routes[]` gives every reported blocked packet or attempt state a
@@ -3402,9 +4294,13 @@ count, reason, next action kind, repair route, and example packet/canonical gap
 identity when source artifacts provide one, so no blocked class is visible only
 through raw packet JSON. It includes coarse states such as
 `blocked_by_missing_context`, field-level blockers such as
-`missing_allowed_edit_surface` and `missing_raw_evidence_refs`, and outcome
-blockers such as `orphan_receipt`, `unchanged_attempt`, and
-`regressed_attempt`.
+`missing_canonical_gap_id`, `missing_repair_kind`, `missing_target_test_shape`, `missing_allowed_edit_surface`,
+`missing_confidence`, `missing_raw_evidence_refs`, and
+`missing_related_test_or_observer`, and outcome blockers such as `orphan_receipt`,
+`unchanged_attempt`, and
+`regressed_attempt`. For `blocked_by_static_limitation`, readiness prefers the
+top static-limitation backlog route and sample packet when available, so the
+blocked route names the analyzer repair lane instead of a generic report rerun.
 
 
 ## Evidence Quality Scorecard
@@ -3449,6 +4345,14 @@ matching `static_limitations.by_category` rows as static limitations even if an
 older or partial audit summary did not increment `summary.static_limitations_total`.
 This keeps limited artifacts visible in the headline static-limitation count
 instead of presenting a misleading zero.
+The scorecard also includes `cross_language_oracle_route_quality`, the same
+SPEC-0062 preview-only route-quality summary emitted by swarm readiness. It is
+included so evidence-quality readers can see whether the checked Bun Blob
+cross-language corpus is credited, missing a discriminator, mention-only, bridge
+unknown, or excluded from public repair packets without running a separate
+analyzer path. It remains advisory and does not change gate, badge, baseline,
+repair-packet, generated-test, source-edit, provider, runtime, or support-tier
+authority.
 
 ```json
 {
@@ -3641,6 +4545,48 @@ instead of presenting a misleading zero.
     "public_projection_excluded_packets": 0,
     "projection_exclusion_reasons": []
   },
+  "cross_language_oracle_route_quality": {
+    "status": "pass",
+    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "cases_total": 9,
+    "passing_cases": 9,
+    "failing_cases": 0,
+    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
+    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
+    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
+    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
+    "cross_language_oracle_graph_mention_only_limitations": 1,
+    "cross_language_oracle_graph_panic_boundary_limitations": 1,
+    "cross_language_oracle_graph_public_packet_exclusions": 9,
+    "repair_packet_ready_cases": 0,
+    "authority_boundary": "preview_advisory_only",
+    "rows": [
+      {
+        "case_id": "bun_blob_missing_resizable_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_discriminator",
+        "observed_state": "rust_ungripped_ts_missing_discriminator",
+        "status": "pass",
+        "missing_discriminators": ["resizable_array_buffer"],
+        "missing_graph_legs": [
+          "boundary_discriminator:resizable_array_buffer"
+        ],
+        "repair_packet_ready": false,
+        "unlock_condition": "Prove a TypeScript Blob observer for a resizable ArrayBuffer on the configured bridge before placement or actionability is suggested."
+      },
+      {
+        "case_id": "bun_blob_missing_external_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_external_oracle",
+        "observed_state": "rust_ungripped_ts_missing_external_oracle",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": [
+          "external_oracle:stable_byte_copy"
+        ],
+        "repair_packet_ready": false,
+        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
+      }
+    ]
+  },
   "recommended_repairs": [
     {
       "slice": "analysis/related-test-ranking-audit-fixes",
@@ -3724,6 +4670,14 @@ Field contract:
   exclusion reasons such as missing receipt paths. This is advisory
   badge-readiness evidence only; it does not switch public badges or PR/CI
   rendering.
+- `cross_language_oracle_route_quality` - the checked SPEC-0062 Bun Blob route
+  summary. It reports complete advisory witnesses, missing discriminator
+  limitations, mention-only limitations, unknown bridge limitations, public
+  packet exclusions, row-level missing graph legs, unlock conditions, and
+  `repair_packet_ready=false`. It is preview/advisory evidence only and does not
+  create public repair packets, verify commands, receipt commands, source edits,
+  generated tests, runtime execution, gates, badges, baselines, RIPR Zero, or
+  support-tier claims.
 - `evidence_class_work_queue` - the audit-derived
   `finding_alignment.coverage.evidence_class_work_queue` section carried
   forward so the scorecard names the next evidence classes to burn down from
@@ -3783,9 +4737,10 @@ exiting before producing trend evidence. Metric rows may still carry current
 values, but movement and badge-readiness deltas remain unknown.
 
 Trend JSON includes `run_status` and `runtime_status`. A limited current
-scorecard is preserved as `limited_incomplete_input`; an explicit missing or
-malformed previous artifact also produces a limited trend state. Missing
-implicit history remains an unknown trend, not a gate or badge claim.
+scorecard preserves its runtime state, including `limited_sampled_input` or
+`limited_incomplete_input`; an explicit missing or malformed previous artifact
+also produces a limited trend state. Missing implicit history remains an
+unknown trend, not a gate or badge claim.
 
 ```json
 {
@@ -4016,10 +4971,11 @@ Field contract:
 
 ## Targeted-Test Outcome Report
 
-`ripr outcome --before <repo-exposure-json> --after <repo-exposure-json>`
-compares two repo exposure snapshots and prints Markdown by default. Use
-`--format json` for the machine-readable shape, or `--out <path>` to write the
-rendered receipt to disk.
+`ripr outcome --before <snapshot-json> --after <snapshot-json>` compares two
+static RIPR snapshots and prints Markdown by default. The snapshots can be
+repo-exposure JSON with `seams[]` or check-output JSON with `findings[]` that
+carry canonical gap IDs. Use `--format json` for the machine-readable shape, or
+`--out <path>` to write the rendered receipt to disk.
 
 ```text
 ripr outcome --before before.json --after after.json
@@ -4029,7 +4985,10 @@ ripr outcome --before before.json --after after.json --out target/ripr/outcome/t
 
 The report is an advisory receipt for the targeted-test loop. It does not run
 analysis, mutation testing, SARIF policy, or badge generation; it only compares
-the two supplied `repo-exposure-json` artifacts.
+the two supplied static artifacts. Repo-exposure seams are matched by
+`seam_id`; check-output findings are matched by `canonical_gap_id`, which lets
+Python preview repair cards produce before/after receipts without a Python-only
+receipt command.
 
 JSON shape:
 
@@ -4059,7 +5018,17 @@ JSON shape:
     "unchanged": 12,
     "regressed": 0,
     "new": 0,
-    "removed": 1
+    "removed": 1,
+    "gap_movement": {
+      "closed": 2,
+      "opened": 0,
+      "strengthened": 0,
+      "weakened": 0,
+      "unchanged": 12,
+      "new": 0,
+      "removed": 1,
+      "changed": 0
+    }
   },
   "moved": [
     {
@@ -4070,6 +5039,7 @@ JSON shape:
       "before": "weakly_gripped",
       "after": "strongly_gripped",
       "direction": "improved",
+      "gap_movement": "closed",
       "evidence_delta": [
         "grip class moved from weakly_gripped to strongly_gripped",
         "discriminate evidence moved from missing to yes",
@@ -4105,6 +5075,16 @@ JSON shape:
   "new": [],
   "removed": [],
   "review_receipt": {
+    "gap_movement": {
+      "closed": 2,
+      "opened": 0,
+      "strengthened": 0,
+      "weakened": 0,
+      "unchanged": 12,
+      "new": 0,
+      "removed": 1,
+      "changed": 0
+    },
     "what_changed": [
       "Compared before snapshot target/ripr/before.json with after snapshot target/ripr/after.json.",
       "Static seam movement: 2 moved, 12 unchanged, 0 regressed, 0 new, 1 removed."
@@ -4117,6 +5097,7 @@ JSON shape:
     ],
     "movement_after_verification": [
       "2 improved, 0 changed without ranking higher, 0 regressed, 12 unchanged.",
+      "Gap movement: 2 closed, 0 opened, 0 strengthened, 0 weakened, 12 unchanged, 0 new, 1 removed, 0 changed.",
       "predicate_boundary at src/pricing.rs:88 moved weakly_gripped -> strongly_gripped (improved)."
     ],
     "remaining_weak_or_unknown": [
@@ -4143,12 +5124,60 @@ JSON shape:
 }
 ```
 
+For check-output snapshots, `seam_id` is the canonical gap ID. A Python preview
+gap that moves from `weakly_exposed` to `exposed` is rendered as
+`weakly_gripped -> strongly_gripped` with `gap_movement = "closed"`. This is
+still static/advisory evidence: verify success and a closed gap movement are
+receipt signals, not runtime mutation proof or correctness proof.
+The Python first-PR fixture pins this path with before/after check-output
+snapshots and expected closed, unchanged, opened, strengthened, and weakened
+receipts at
+`fixtures/first_successful_pr/python-preview-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-preview-gap/inputs/reports/no-path-check.json`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.json`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/closed.md`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/unchanged.json`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/unchanged.md`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/opened.json`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/opened.md`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/strengthened.json`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/strengthened.md`,
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.json`,
+and
+`fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.md`.
+The non-boundary return-value receipt path is pinned by
+`fixtures/first_successful_pr/python-return-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-return-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-return-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/python-return-gap/expected/outcome/closed.md`.
+The exception-path receipt path is pinned by
+`fixtures/first_successful_pr/python-exception-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-exception-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-exception-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/python-exception-gap/expected/outcome/closed.md`.
+The field/object receipt path is pinned by
+`fixtures/first_successful_pr/python-field-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-field-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-field-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/python-field-gap/expected/outcome/closed.md`.
+The output/log receipt path is pinned by
+`fixtures/first_successful_pr/python-output-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/python-output-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.md`.
+
 Field contract:
 
 - `schema_version` — currently `"0.1"`.
 - `status` — always `"advisory"`; this report is a receipt, not a CI policy.
-- `inputs.before` / `inputs.after` — normalized paths to the compared
-  `repo-exposure-json` artifacts.
+- `inputs.before` / `inputs.after` — normalized paths to the compared static
+  evidence snapshots. Supported snapshots are `repo-exposure-json` artifacts
+  with `seams[]` or check-output JSON artifacts with `findings[]`.
 - `before` / `after` — grip-class counts computed from the supplied seams. The
   report emits `seams_total` plus every known `SeamGripClass` bucket, even when
   a bucket is zero.
@@ -4156,6 +5185,15 @@ Field contract:
   `seam_id` changed grip class without ranking lower; `regressed` means the
   after class ranked lower than the before class; `unchanged` means the class
   stayed the same; `new` and `removed` cover seam IDs present in only one input.
+- `summary.gap_movement` - comparable canonical gap movement counts derived
+  from each matched row's `gap_movement`: `closed`, `opened`, `strengthened`
+  for row-level `improved`, `weakened` for row-level `regressed`,
+  `unchanged`, and `changed`. `new` and `removed` are one-sided identity counts.
+  These counts are receipt signals for static evidence movement; they are not
+  mutation proof or correctness proof.
+- `review_receipt.remaining_weak_or_unknown` includes unchanged, regressed, and
+  improved-but-still-attention-needed rows. A strengthened row is not treated as
+  closed unless the after snapshot no longer needs review attention.
 - `moved[]` / `unchanged[]` / `regressed[]` — matched seams with before/after
   grip classes, a direction string, and evidence-delta hints. When
   `seams[].evidence_record` is present, the comparison prefers that shared
@@ -4188,17 +5226,17 @@ Field contract:
   what reviewers should inspect or avoid inferring. It does not add gate
   authority or runtime evidence beyond the compared snapshots.
 
-The Markdown surface prints the same summary, highlights moved, unchanged,
-regressed, new, and removed seams for human review, and includes a "Review
-Receipt" section with the same reviewer-native fields. Unchanged seams can
-still carry evidence-delta hints, such as a new observed value, so reviewers can
-see when a targeted test improved rendered evidence without changing the grip
-class.
+The Markdown surface prints the same summary plus a "Gap Movement" table,
+highlights moved, unchanged, regressed, new, and removed seams for human review,
+and includes a "Review Receipt" section with the same reviewer-native fields.
+Unchanged seams can still carry evidence-delta hints, such as a new observed
+value, so reviewers can see when a targeted test improved rendered evidence
+without changing the grip class.
 
 ## Agent Verify
 
-`ripr agent verify --root <workspace> --before <repo-exposure-json> --after
-<repo-exposure-json> --json` compares two saved static repo-exposure snapshots
+`ripr agent verify --root <workspace> --before <snapshot-json> --after
+<snapshot-json> --json` compares two saved static snapshots
 under the workspace root and emits a compact agent-focused JSON summary. It
 reuses the targeted-test outcome comparison engine, but names the buckets for
 the active agent loop:
@@ -4208,8 +5246,8 @@ ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.js
 ```
 
 The command does not run analysis, mutation testing, SARIF policy, badge
-generation, LSP refresh, or cache warm-up. It only compares the supplied
-`repo-exposure-json` artifacts after validating they resolve under `--root`.
+generation, LSP refresh, or cache warm-up. It only compares the supplied static
+artifacts after validating they resolve under `--root`.
 
 JSON shape:
 
@@ -4228,7 +5266,17 @@ JSON shape:
     "regressed": 0,
     "unchanged": 0,
     "new": 0,
-    "resolved": 0
+    "resolved": 0,
+    "gap_movement": {
+      "closed": 1,
+      "opened": 0,
+      "strengthened": 0,
+      "weakened": 0,
+      "unchanged": 0,
+      "new": 0,
+      "removed": 0,
+      "changed": 0
+    }
   },
   "changed_seams": [
     {
@@ -4239,6 +5287,7 @@ JSON shape:
       "before": "weakly_gripped",
       "after": "strongly_gripped",
       "change": "improved",
+      "gap_movement": "closed",
       "evidence_delta": [
         "grip class moved from weakly_gripped to strongly_gripped",
         "missing discriminator no longer reported: discount_threshold (equality boundary)"
@@ -4289,6 +5338,9 @@ Field contract:
 - `summary.resolved` - seam IDs absent from the after snapshot. This is
   advisory; it can mean a gap was fixed, or that the seam disappeared because
   the code changed.
+- `summary.gap_movement` - the same additive static gap-movement summary used
+  by `ripr outcome`, so agent receipts can read closed/opened/strengthened/
+  weakened/unchanged/new/removed/changed counts without scanning every row.
 - `changed_seams[]` - improved, same-rank changed, and regressed matched seams.
 - `unchanged_seams[]` - matched seams whose class stayed the same. These can
   still carry `evidence_delta` hints when rendered evidence improved without
@@ -4296,7 +5348,8 @@ Field contract:
 - `changed_seams[]` / `unchanged_seams[]` carry the same additive
   evidence-record movement fields as `ripr outcome`: stage deltas,
   observed-value movement, missing-discriminator movement, oracle strength
-  movement, related-test count movement, and `no_movement_reason`.
+  movement, related-test count movement, `gap_movement`, and
+  `no_movement_reason`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
@@ -4468,14 +5521,19 @@ ripr review-comments \
 ```
 
 The command is a pure renderer. The default path joins existing static seam
-evidence with the changed-line diff. When `--gap-ledger` is supplied, the
-command does not rerun analysis; it renders changed-line repair cards only from
-explicit `GapRecord` entries with `projection_eligibility.pr_comment.eligible =
-true`, PR-local scope, a stable anchor, a dedupe fingerprint, a repair route,
-and verification commands. It does not post to GitHub, run mutation testing,
-refresh LSP state, edit source files, or generate tests. CI can use the JSON to
-write a job summary and emit check annotations by default. Inline PR review
-comments require a custom explicit opt-in publisher.
+evidence with the changed-line diff, but it reports a scoped review input
+instead of full-repo truth: changed production files plus bounded immediate
+caller files. The JSON and Markdown carry `analysis_scope.run_status =
+"limited_diff_scope"` and the `review_comments_diff_scope_only` limitation
+route so large-repo users can see the narrowed basis. When `--gap-ledger` is
+supplied, the command does not rerun analysis; it renders changed-line repair
+cards only from explicit `GapRecord` entries with
+`projection_eligibility.pr_comment.eligible = true`, PR-local scope, a stable
+anchor, a dedupe fingerprint, a repair route, and verification commands. It
+does not post to GitHub, run mutation testing, refresh LSP state, edit source
+files, or generate tests. CI can use the JSON to write a job summary and emit
+check annotations by default. Inline PR review comments require a custom
+explicit opt-in publisher.
 
 JSON shape:
 
@@ -4490,6 +5548,24 @@ JSON shape:
   "mode": "draft",
   "inputs": {
     "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
+  },
+  "analysis_scope": {
+    "scope": "diff_scoped_changed_files",
+    "run_status": "limited_diff_scope",
+    "basis": "changed_production_files_plus_immediate_callers",
+    "changed_files": ["src/pricing.rs"],
+    "changed_lines": 1,
+    "changed_owner_functions": 1,
+    "changed_production_files": ["src/pricing.rs"],
+    "immediate_caller_files": ["src/checkout.rs"],
+    "scoped_production_files": ["src/pricing.rs", "src/checkout.rs"],
+    "total_rust_files": 412000,
+    "total_production_files": 411000,
+    "production_files_considered": 2,
+    "classified_seams_considered": 7,
+    "downstream_consumable": true,
+    "limitation": "review_comments_diff_scope_only",
+    "repair_route": "analysis/diff-scoped-large-repo-review-fast-path"
   },
   "limits": {
     "max_inline_comments": 3,
@@ -4515,6 +5591,14 @@ JSON shape:
       "kind": "predicate_boundary",
       "grip_class": "weakly_gripped",
       "severity": "warning",
+      "source_location": {
+        "file": "src/pricing.rs",
+        "limitation": null,
+        "line": 88,
+        "repair_route": null,
+        "span": null,
+        "status": "resolved"
+      },
       "reason": "Related tests reach and observe the owner but miss the equality boundary.",
       "missing_discriminator": "amount == discount_threshold",
       "suggested_test": {
@@ -4561,6 +5645,15 @@ Field contract:
   and RIPR analysis mode used to render the report.
 - `inputs.gap_ledger` - optional explicit gap decision ledger used for
   repair-card projection. It is present only when `--gap-ledger` is supplied.
+- `analysis_scope` - optional scoped-input metadata for renderer paths that
+  run analysis. The default diff renderer emits `scope =
+  "diff_scoped_changed_files"`, `run_status = "limited_diff_scope"`, changed
+  files, changed owner count, changed production files, immediate caller files,
+  total production-file counts, the classified seam count considered, and the
+  `review_comments_diff_scope_only` limitation route. This makes the report
+  useful on large repos without representing the scoped review as full-repo
+  evidence. Gap-ledger rendering may omit this field because its authority is
+  the supplied ledger artifact.
 - `limits.max_inline_comments` - default cap for changed-line annotations.
 - `limits.max_summary_items` - default cap for total recommendations.
 - `summary.comments` - count of guidance items with safe changed-line
@@ -4585,6 +5678,11 @@ Field contract:
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
+- `comments[].source_location` - canonical source coordinate for the seam or
+  gap record rendered next to the seam ID in Markdown. When resolution is not
+  available, `status` is `"source_location_unresolved"`, `file` and `line`
+  render as unknown, `limitation` is `"source_location_unresolved"`, and
+  `repair_route` is `"analysis/source-location-resolution"`.
 - `comments[].reason` - short static-evidence explanation for why a focused
   test would be useful.
 - `comments[].missing_discriminator` - missing value, branch, variant, or
@@ -4599,9 +5697,10 @@ Field contract:
   comment body instead of raw static classes. It carries gap kind, changed
   behavior when available, why the gap matters, the bounded repair route,
   evidence IDs, verification commands, source artifact, and authority boundary.
-- `summary_only[]` - same recommendation shape without `placement`. CI should
-  show these in the Markdown/job summary but must not invent a changed-line
-  annotation for them.
+- `summary_only[]` - same recommendation shape without `placement`. These rows
+  still carry `source_location` for navigable Markdown and JSON parity. CI
+  should show these in the Markdown/job summary but must not invent a
+  changed-line annotation for them.
 - `suppressed[]` - bounded records for recommendations hidden by caps or
   nearby test changes.
 - `warnings[]` - selection warnings from the agent brief selection path.
@@ -4786,6 +5885,390 @@ Existing-comment metadata may be supplied to plan upsert behavior:
 Generated CI may upload and summarize the publish plan only when explicit
 configuration requests `plan` or `inline` mode. The default remains job summary,
 check annotations, and uploaded artifacts without durable PR comments.
+
+## Bun UB TypeScript Calibration Report
+
+The Bun UB TypeScript calibration report is a repo-local operator receipt for
+the preview Bun Blob / `ArrayBuffer` stable-byte corpus. It summarizes whether
+the calibrated cases are TS-discriminated, missing shared/resizable
+discriminators, mention-only rather than observed, or blocked by an unknown
+bridge. It is advisory preview evidence only.
+
+The repo-local report command is:
+
+```text
+cargo xtask bun-ub-calibration \
+  --corpus fixtures/typescript-bun-ub-calibration/corpus.json \
+  --out target/ripr/reports/bun-ub-calibration.json \
+  --out-md target/ripr/reports/bun-ub-calibration.md
+```
+
+With defaults, `cargo xtask bun-ub-calibration` writes:
+
+```text
+target/ripr/reports/bun-ub-calibration.json
+target/ripr/reports/bun-ub-calibration.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "bun-ub-calibration",
+  "status": "pass",
+  "source_path": "fixtures/typescript-bun-ub-calibration/corpus.json",
+  "authority_boundary": "preview_advisory_only",
+  "summary": {
+    "cases_total": 7,
+    "passing_cases": 7,
+    "failing_cases": 0,
+    "ts_discriminated_cases": 1,
+    "ts_missing_resizable_cases": 1,
+    "ts_missing_shared_cases": 1,
+    "ts_missing_shared_and_resizable_cases": 1,
+    "ts_missing_external_oracle_cases": 1,
+    "ts_mention_not_observer_cases": 1,
+    "bridge_unknown_cases": 1,
+    "missing_discriminator_cases": 3,
+    "public_packet_exclusions": 7,
+    "repair_packet_ready_cases": 0
+  },
+  "operator_question": "This Rust/FFI seam changed. Do Bun's TypeScript integration tests discriminate the boundary that would catch the stable-byte bug?",
+  "calibration_boundary": "Bun UB TypeScript calibration is preview/advisory only...",
+  "non_claims": [
+    "no provider calls",
+    "no source edits",
+    "no generated tests",
+    "no runtime Bun execution",
+    "no mutation execution",
+    "no default gates",
+    "no public badge contribution",
+    "no baseline authority",
+    "no RIPR Zero authority",
+    "no support-tier promotion",
+    "no public repair packet",
+    "no full cross-language proof"
+  ],
+  "rows": [
+    {
+      "case_id": "bun_blob_resizable_missing",
+      "source": "#31648-stripped-resizable",
+      "expected_state": "ts_missing_resizable",
+      "observed_state": "ts_missing_resizable",
+      "status": "pass",
+      "rust_seam": {
+        "file": "src/jsc/Blob.rs",
+        "owner": "Blob::from_js_without_defer_gc",
+        "boundary": "array_buffer.shared || array_buffer.resizable"
+      },
+      "typescript_evidence": {
+        "test_file": "test/js/web/fetch/blob.test.ts",
+        "entrypoints": ["new Blob", "blob.arrayBuffer"],
+        "shared_array_buffer": true,
+        "resizable_array_buffer": false,
+        "view_backed_blob_input": true,
+        "stable_byte_copy_oracle": true,
+        "max_byte_length_mention_only": false
+      },
+      "bridge_confidence": "configured_hint",
+      "expected_action": "route_cross_language_oracle_visibility_limitation",
+      "expected_missing_discriminators": ["resizable_array_buffer"],
+      "missing_discriminators": ["resizable_array_buffer"],
+      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "suggested_shape": "add or inspect a resizable ArrayBuffer Blob stable-byte discriminator in the configured TypeScript observer file; keep repair_packet_ready=false until verify, receipt, and edit-surface evidence exists",
+      "authority_boundary": "preview_advisory_only",
+      "repair_packet_ready": false,
+      "non_claims": ["runtime Bun execution", "generated tests"],
+      "reason": "Missing the resizable ArrayBuffer discriminator in the manifest calibration case.",
+      "errors": []
+    }
+  ]
+}
+```
+
+`status` is `pass` only when every row matches its expected state and no row is
+`repair_packet_ready`. `bridge_unknown` rows name `binding_or_ffi_edge` in
+`missing_graph_legs[]`; mention-only rows name
+`external_blob_or_stable_byte_observer`. The report does not run Bun, `tsc`,
+`tsserver`, mutation, providers, generated tests, source edits, gates, badges,
+baselines, RIPR Zero, or support-tier promotion.
+
+## Bun UB Preview Summary Report
+
+The Bun UB preview summary is a compact operator surface built from existing
+Bun UB calibration, cross-language oracle graph, and dogfood receipt data. It
+summarizes route counts, named static limitations, public packet exclusions,
+and receipt state without creating public repair packets.
+
+The repo-local report command is:
+
+```text
+cargo xtask bun-ub-preview-summary \
+  --calibration-corpus fixtures/typescript-bun-ub-calibration/corpus.json \
+  --graph-corpus fixtures/cross-language-oracle-graph-corpus/corpus.json \
+  --dogfood-corpus fixtures/bun-ub-cross-language-dogfood/corpus.json \
+  --out target/ripr/reports/bun-ub-preview-summary.json \
+  --out-md target/ripr/reports/bun-ub-preview-summary.md
+```
+
+With defaults, `cargo xtask bun-ub-preview-summary` writes:
+
+```text
+target/ripr/reports/bun-ub-preview-summary.json
+target/ripr/reports/bun-ub-preview-summary.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "bun-ub-preview-summary",
+  "status": "pass",
+  "authority": "preview_advisory_only",
+  "authority_boundary": "preview_advisory_only",
+  "repair_packet_ready": false,
+  "source_paths": {
+    "calibration": "fixtures/typescript-bun-ub-calibration/corpus.json",
+    "cross_language_oracle_graph": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "dogfood": "fixtures/bun-ub-cross-language-dogfood/corpus.json"
+  },
+  "summary": {
+    "calibration_cases_total": 7,
+    "route_quality_cases_total": 9,
+    "dogfood_receipts_total": 4,
+    "route_state_counts": {
+      "rust_ungripped_ts_discriminated": 3,
+      "rust_ungripped_ts_missing_discriminator": 1,
+      "bridge_unknown": 1,
+      "ts_mention_not_observer": 1
+    },
+    "dogfood_state_counts": {
+      "rust_ungripped_ts_discriminated": 1,
+      "rust_ungripped_ts_missing_discriminator": 1,
+      "ts_mention_not_observer": 1,
+      "public_reachable_panic_boundary_unrevealed": 1
+    },
+    "named_static_limitations": [
+      {
+        "category": "cross_language_oracle_visibility_unresolved",
+        "count": 4,
+        "repair_routes": ["analysis/cross-language-oracle-visibility"],
+        "sample_case_ids": ["bun_blob_bridge_unknown_limitation"]
+      }
+    ],
+    "public_packet_exclusions": 20,
+    "repair_packet_ready_cases": 0
+  },
+  "calibrated_routes": [
+    {
+      "route_label": "bun_blob_missing_resizable_oracle_limitation",
+      "profile": "bun_blob_array_buffer",
+      "case_id": "bun_blob_missing_resizable_oracle_limitation",
+      "state": "rust_ungripped_ts_missing_discriminator",
+      "gap_state": "static_limitation",
+      "limitation_category": "cross_language_oracle_visibility_unresolved",
+      "repair_route": "analysis/cross-language-oracle-visibility",
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "missing_discriminators": ["resizable_array_buffer"],
+      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
+      "public_projection_eligible": false,
+      "repair_packet_ready": false,
+      "authority_boundary": "preview_advisory_only",
+      "unlock_condition": "prove the external oracle path and keep typed placement evidence"
+    }
+  ],
+  "dogfood_receipts": [
+    {
+      "case_id": "bun_blob_missing_resizable_receipt",
+      "source_case": "bun_blob_resizable_missing",
+      "route_quality_case": "bun_blob_missing_resizable_oracle_limitation",
+      "state": "rust_ungripped_ts_missing_discriminator",
+      "receipt_state": "closed",
+      "operator_action": "add_resizable_blob_discriminator",
+      "proof_mode": "preview_manifest_receipt",
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "repair_packet_ready": false,
+      "authority_boundary": "preview_advisory_only",
+      "errors": []
+    }
+  ],
+  "non_claims": [
+    "preview/advisory only",
+    "no public repair packet",
+    "no runtime Bun execution",
+    "no TypeScript execution",
+    "no mutation execution",
+    "no provider calls",
+    "no generated tests",
+    "no source edits",
+    "no gates or badges",
+    "no support-tier promotion",
+    "no full cross-language proof"
+  ],
+  "errors": []
+}
+```
+
+Markdown shape:
+
+```text
+# Bun UB Preview Summary
+
+Status: `pass`
+
+authority = preview_advisory_only
+
+repair_packet_ready: false
+
+## Source Paths
+## Summary
+## State Counts
+## Named Static Limitations
+## Calibrated Routes
+## Dogfood Receipts
+## Non-Claims
+```
+
+`status` is `pass` only when the source calibration and route-quality reports
+pass, dogfood receipts validate, every source keeps
+`authority_boundary = preview_advisory_only`, and
+`repair_packet_ready_cases = 0`. This report does not run Bun, `tsc`,
+`tsserver`, Jest, Vitest, Miri, mutation, providers, generated tests, source
+edits, gates, badges, baselines, RIPR Zero, support-tier promotion, or
+`ripr check --profile`. It is not a TypeScript/JavaScript stability claim, a
+full Bun binding graph, a runtime UB proof, or a public repair packet source.
+
+## Configured Bridge Inventory Report
+
+The configured bridge inventory is a report-only Bun cross-language profile
+inventory built from the existing cross-language oracle graph corpus. It makes
+current configured bridges and manifest-only future surfaces visible without
+adding analyzer behavior or a full Bun binding graph.
+
+The repo-local report command is:
+
+```text
+cargo xtask configured-bridge-inventory \
+  --graph-corpus fixtures/cross-language-oracle-graph-corpus/corpus.json \
+  --out target/ripr/reports/configured-bridge-inventory.json \
+  --out-md target/ripr/reports/configured-bridge-inventory.md
+```
+
+With defaults, `cargo xtask configured-bridge-inventory` writes:
+
+```text
+target/ripr/reports/configured-bridge-inventory.json
+target/ripr/reports/configured-bridge-inventory.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "configured-bridge-inventory",
+  "status": "pass",
+  "authority": "preview_advisory_only",
+  "authority_boundary": "preview_advisory_only",
+  "repair_packet_ready": false,
+  "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+  "summary": {
+    "configured_bridge_profiles": 3,
+    "bridge_unknown_profiles": 1,
+    "future_or_missing_surfaces": 2,
+    "named_static_limitation_profiles": 1,
+    "repair_packet_ready_cases": 0,
+    "s3_surfaces_backed_by_corpus": false
+  },
+  "configured_bridges": [
+    {
+      "profile": "bun_blob_array_buffer",
+      "label": "Blob ArrayBuffer",
+      "surface_state": "configured",
+      "rust_file": "src/jsc/Blob.rs",
+      "rust_owner": "Blob::from_js_without_defer_gc",
+      "bridge_kind": "configured_bridge",
+      "bridge_confidence": "configured_hint",
+      "external_surface": "test/js/web/fetch/blob.test.ts",
+      "source_cases": ["bun_blob_complete_ts_discriminated_advisory"],
+      "missing_graph_legs": [],
+      "inventory_action": "inventory_only",
+      "repair_packet_ready": false,
+      "public_projection_eligible": false,
+      "authority_boundary": "preview_advisory_only"
+    }
+  ],
+  "bridge_unknown": [
+    {
+      "profile": "bun_blob_array_buffer",
+      "label": "Blob ArrayBuffer",
+      "surface_state": "bridge_unknown",
+      "missing_graph_legs": ["binding_or_ffi_edge"],
+      "inventory_action": "inventory_only",
+      "repair_packet_ready": false
+    }
+  ],
+  "future_or_missing_surfaces": [
+    {
+      "profile": "bun_write_helper_gated",
+      "label": "Bun.write sink",
+      "surface_state": "manifest_only",
+      "missing_graph_legs": [
+        "helper:bun_write_fixture_helper",
+        "binding_or_ffi_edge:bun_write_sink",
+        "external_oracle:stable_byte_write"
+      ],
+      "inventory_action": "inventory_only",
+      "repair_packet_ready": false
+    }
+  ],
+  "named_static_limitations": [],
+  "non_claims": [
+    "preview/advisory only",
+    "report-only bridge inventory",
+    "no inferred reachability",
+    "no full Bun binding graph",
+    "no public repair packet",
+    "no placement from missing inventory rows",
+    "no runtime Bun execution",
+    "no TypeScript execution",
+    "no mutation execution",
+    "no provider calls",
+    "no generated tests",
+    "no source edits",
+    "no gates or badges",
+    "no support-tier promotion"
+  ],
+  "errors": []
+}
+```
+
+Markdown shape:
+
+```text
+# Configured Bridge Inventory
+
+Status: `pass`
+
+authority = preview_advisory_only
+
+repair_packet_ready: false
+
+## Summary
+## Configured Bridges
+## Bridge Unknown
+## Future Or Missing Surfaces
+## Named Static Limitations
+## Non-Claims
+```
+
+`status` is `pass` only when required configured bridge profiles and
+manifest-only future surfaces are present in the corpus and no row claims a
+repair packet. Missing inventory entries are `inventory_only`; they do not
+become repair tasks or TypeScript placement suggestions.
 
 ## Recommendation Calibration Report
 
@@ -8270,11 +9753,11 @@ map.
 
 `ripr first-pr` writes the first successful PR front-door packet from explicit
 existing RIPR artifacts. `cargo xtask first-pr` remains a repo-local wrapper
-over the same public command. The packet selects one top repairable
-PR-local Rust gap when the gap decision ledger supplies one, or emits a bounded
-no-action or blocked recovery state. It does not rerun hidden analysis, edit
-source, generate tests, call providers, run mutation testing, change gate
-policy, or change CI blocking.
+over the same public command. The packet selects one top repairable PR-local
+stable Rust gap or preview Python gap when the gap decision ledger supplies
+one, or emits a bounded no-action or blocked recovery state. It does not rerun
+hidden analysis, edit source, generate tests, call providers, run mutation
+testing, change gate policy, or change CI blocking.
 
 Command shape:
 
@@ -8283,6 +9766,7 @@ ripr first-pr \
   --root . \
   --base origin/main \
   --head HEAD \
+  --check-output target/ripr/reports/check.json \
   --gap-ledger target/ripr/reports/gap-decision-ledger.json \
   --first-action target/ripr/reports/first-useful-action.json \
   --review-comments target/ripr/review/comments.json \
@@ -8298,6 +9782,14 @@ The command writes:
 target/ripr/reports/start-here.json
 target/ripr/reports/start-here.md
 ```
+
+When `--check-output` is supplied, `ripr first-pr` treats the saved check JSON
+as an explicit input artifact and materializes
+`target/ripr/reports/gap-decision-ledger.{json,md}` before selecting the
+start-here repair. This is the direct Python preview path for actionable
+`python_repair_card` records that already came from `ripr check`; it does not
+rerun hidden analysis, run tests, import Python code, generate tests, or change
+gate authority.
 
 JSON shape:
 
@@ -8387,8 +9879,10 @@ Field contract:
 - `selected.canonical_gap_id` and `selected.gap_id` identify the repair unit
   when a top gap is selected. Generated CI and report indexes should prefer the
   canonical gap id when present.
-- `selected.language` and `selected.language_status` keep Rust stable evidence
-  distinct from preview evidence when a top gap is selected.
+- `selected.language` and `selected.language_status` keep stable Rust evidence
+  distinct from preview Python evidence when a top gap is selected. Preview
+  Python top gaps use `selected.output_state = "preview_limited"` and remain
+  advisory repair routing, not support-tier promotion.
 - `selected.current_evidence_strength`,
   `selected.missing_discriminator`, and `selected.focused_proof_intent`
   provide the one-screen recommendation contract. They are derived from typed
@@ -8426,9 +9920,14 @@ Field contract:
   produce a repair interruption.
 - `preflight` is present for the public `ripr first-pr` command path. It
   records read-only front-door checks for root, Git worktree, base/head refs,
-  diff presence, Cargo workspace, `ripr.toml` defaulting, output directory, and
-  write/check mode. It does not create analyzer facts and does not become gate
-  authority.
+  diff presence, supported project marker, `ripr.toml` defaulting, output
+  directory, and write/check mode. Supported project markers currently mean a
+  Cargo workspace or Python preview project root. Preflight does not create
+  analyzer facts and does not become gate authority.
+- `inputs.check_output` is present only when `--check-output` was supplied.
+  In that mode, the start-here packet can include a `check_output` artifact and
+  the `gap_ledger` artifact is the ledger materialized from that saved check
+  JSON rather than from repo-exposure evidence.
 - `preflight.status` is `ready` when the command can proceed without setup
   attention, or `needs_attention` when a setup check has a recovery/no-action
   note. A `needs_attention` preflight can still accompany an explicit
@@ -9227,10 +10726,212 @@ and seams whose configured severity is `off` return an actionable error.
 the same packet envelope from one explicit `GapRecord`, matched by `gap_id` or
 `canonical_gap_id`. This mode does not rerun analysis and does not infer
 projectability from raw classifications. The selected record must have
-`projection_eligibility.agent_packet.eligible = true`, a `repair_route`, and
-`verification_commands`. Records that are already observed, waived,
+`projection_eligibility.agent_packet.eligible = true`, a `repair_route`,
+`verification_commands`, and a bounded edit surface from `repair_route.target_file`
+or a path-like `repair_route.related_test` fallback. Records that are already observed, waived,
 suppressed, preview-gating ineligible, or otherwise not agent-packet eligible
 return an actionable error instead of a repair packet.
+
+When the gap ledger was derived from check JSON, actionable Python
+`python_repair_card` findings become preview-language GapRecords with
+`policy_state = "new"`, `repairability = "repairable"`, gate and RIPR-zero
+projection ineligible, and `agent_packet` projection eligible. If the raw
+repair card does not carry `receipt.command`, the check-output ledger bridge
+synthesizes a deterministic command that compares the supplied before check
+JSON with `target/ripr/reports/after-check.json` and writes a gap-scoped receipt
+under `target/ripr/receipts/`. This keeps Python packets delegable without
+claiming runtime proof or gate authority.
+
+`ripr swarm queue --language python --top 10` reads
+`target/ripr/reports/gap-decision-ledger.json` by default and emits a
+GapRecord-backed queue of bounded agent-packet work. The queue does not rerun
+analysis and only includes records that can already render through
+`ripr agent packet --gap-ledger ... --gap-id ... --json`. Static limitations,
+already-observed/no-action records, records without verify commands, and
+records without `allowed_edit_surface` are counted in `exclusion_reasons`
+instead of entering `packets[]`.
+
+The queue envelope is:
+
+```json
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "report": "swarm-queue",
+  "scope": "repo",
+  "source": "gap_decision_ledger",
+  "status": "advisory",
+  "inputs": {
+    "root": ".",
+    "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
+    "language": "python",
+    "top": 10
+  },
+  "summary": {
+    "records_total": 3,
+    "language_records_total": 3,
+    "queue_total": 2,
+    "returned": 2,
+    "stale_total": 0,
+    "excluded_records_total": 1,
+    "conflict_groups_total": 1
+  },
+  "conflict_groups": [
+    {
+      "conflict_group": "file:tests/test_pricing.py",
+      "size": 2,
+      "gap_ids": ["gap:python:pricing-boundary", "gap:python:pricing-return"]
+    }
+  ],
+  "exclusion_reasons": [
+    {
+      "reason": "is not agent-packet eligible: already_observed",
+      "count": 1
+    }
+  ],
+  "packets": [
+    {
+      "priority": 1,
+      "queue_state": "queued",
+      "staleness_status": "not_evaluated",
+      "staleness_reason": "GapRecord queue rendering does not compare the ledger with current git state yet.",
+      "gap_id": "gap:python:pricing-boundary",
+      "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+      "language": "python",
+      "language_status": "preview",
+      "repair_kind": "StrengthenExistingTest",
+      "changed_owner": "calculate_discount",
+      "missing_discriminator": "amount == threshold",
+      "suggested_test_file": "tests/test_pricing.py",
+      "suggested_test_name": "test_calculate_discount_smoke",
+      "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+      "conflict_group": "file:tests/test_pricing.py",
+      "conflict_group_size": 2,
+      "allowed_edit_surface": ["tests/test_pricing.py"],
+      "allowed_files": ["tests/test_pricing.py"],
+      "forbidden_files": ["src/pricing.py"],
+      "packet_command_args": [
+        "ripr",
+        "agent",
+        "packet",
+        "--root",
+        ".",
+        "--gap-ledger",
+        "target/ripr/reports/gap-decision-ledger.json",
+        "--gap-id",
+        "gap:python:pricing-boundary",
+        "--json"
+      ]
+    }
+  ]
+}
+```
+
+`staleness_status = "not_evaluated"` is intentional when no receipt freshness
+state is attached. Consumers must treat it as a stop-and-refresh signal, not
+freshness proof. If a GapRecord receipt says the packet is stale, mismatched, or
+already resolved, the queue keeps the item visible with
+`queue_state = "blocked_stale"`, `staleness_status = "stale"`, and a
+`staleness_reason`; schedulers must refresh instead of assigning that packet.
+`summary.stale_total` counts those visible stale packets. `conflict_group_size >
+1` means another queued packet targets the same edit surface, so schedulers
+should avoid assigning those packets in parallel.
+
+If the gap decision ledger omits top-level `root` provenance, or declares a
+`root` that clearly differs from the selected `--root`, `ripr swarm queue`
+fails closed with `status = "blocked"`, `blocker.kind = "missing_root"` or
+`blocker.kind = "wrong_root"`, and `packets = []`. The blocked queue preserves
+`inputs.gap_ledger_root`, `inputs.gap_ledger_generated_at`, and
+language-scoped blocked counts so schedulers can stop instead of assigning
+stale, rootless, or wrong-workspace packets. Regenerate the gap decision ledger
+for the selected root before rerunning the queue.
+
+`ripr swarm ingest --result target/ripr/workflow/agent-result.json` reads one
+external agent result artifact and emits an advisory classification. It does not
+trust an agent success claim, rerun the verify command, write receipts, call
+providers, generate tests, or inspect source code. Missing verify evidence is
+classified as `uncertain`, and edits to packet `forbidden_files` are classified
+as `edited_forbidden_file` before any reported verify or receipt success.
+`attempt_outcome` uses the shared repair-loop outcome vocabulary so downstream
+ledgers can distinguish `attempted_no_receipt`, `receipt_present`,
+`evidence_improved`, `evidence_unchanged`, `evidence_regressed`, `resolved`,
+and `unknown` without reinterpreting raw agent output.
+The Python preview first-PR fixture pins this path with
+`fixtures/first_successful_pr/python-preview-gap/inputs/agent-results/closed.json`
+and
+`fixtures/first_successful_pr/python-preview-gap/expected/swarm-ingest/closed.json`.
+
+The ingest envelope is:
+
+```json
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "report": "swarm-ingest",
+  "scope": "agent_result",
+  "source": "external_agent_result",
+  "status": "advisory",
+  "attempt_outcome": "unknown",
+  "inputs": {
+    "result": "target/ripr/workflow/agent-result.json"
+  },
+  "classification": {
+    "state": "edited_forbidden_file",
+    "outcome": "unknown",
+    "reason": "Agent result reports edits to files forbidden by the packet.",
+    "gap_id": "gap:python:pricing-boundary",
+    "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+  },
+  "evidence": {
+    "agent_status": "completed",
+    "stop_reason": null,
+    "staleness_status": "not_evaluated",
+    "edited_files": ["tests/test_pricing.py", "app/pricing.py"],
+    "allowed_files": ["tests/test_pricing.py"],
+    "forbidden_files": ["app/pricing.py"],
+    "edited_forbidden_files": ["app/pricing.py"],
+    "verify": {
+      "present": true,
+      "status": "passed",
+      "exit_code": 0,
+      "passed": true,
+      "failed": false
+    },
+    "receipt": {
+      "present": true,
+      "path": "target/ripr/receipts/gap-python-pricing-boundary.targeted-test-outcome.json",
+      "movement": "resolved"
+    }
+  },
+  "safety": {
+    "forbidden_edit_flagged": true,
+    "requires_human_review": true,
+    "trusted_success": false
+  },
+  "next_action": {
+    "kind": "edited_forbidden_file",
+    "summary": "Reject or manually review the attempt before using any test repair."
+  },
+  "must_not_infer": [
+    "do not trust agent-reported success without verify evidence",
+    "do not treat missing verify output as closed",
+    "do not ignore forbidden production-code edits",
+    "do not run providers, generate tests, run mutation testing, or claim runtime proof from ingest"
+  ]
+}
+```
+
+`classification.state` is one of `closed`, `partially_improved`,
+`verify_failed`, `edited_forbidden_file`, `stopped_by_agent`, `stale_packet`,
+or `uncertain`. Closure requires both passing verify evidence and recognized
+receipt movement such as `resolved` or `closed`; passing verify with only
+`improved` movement is `partially_improved`. `classification.outcome` and the
+top-level `attempt_outcome` are one of `attempted_no_receipt`,
+`receipt_present`, `evidence_improved`, `evidence_unchanged`,
+`evidence_regressed`, `resolved`, or `unknown`. Ingest keeps
+`status: "advisory"` even when `attempt_outcome = "resolved"` because it
+classifies an external result artifact; it does not run verification or write
+the receipt.
 
 ```json
 {
@@ -9473,6 +11174,8 @@ Field contract:
   versions may add tasks like `"strengthen_oracle"` or
   `"add_match_arm_observer"`. Gap-ledger packet mode also uses
   `"write_targeted_test"` for repairable assertion routes,
+  `"strengthen_targeted_test"` for Python preview routes that strengthen an
+  existing weak related test,
   `"inspect_static_limitation"` for explicit inspection routes, and
   `"add_output_golden"` for `MissingOutputContract` records whose repair
   route is `AddOutputGolden`.
@@ -9485,6 +11188,27 @@ Field contract:
   evidence summary in the form `<evidence_class> / <gap_state>`. Present only
   when `source = "gap_decision_ledger"` and mirrored in the copyable packet so
   agent work orders carry the same current-evidence vocabulary as `first-pr`.
+- `packets[].allowed_edit_surface` - GapRecord safety scope in gap-ledger
+  packet mode. It is the route target file when supplied, or a path-like
+  `related_test` fallback for older artifacts. If no bounded edit surface is
+  available, packet rendering fails closed instead of emitting delegable work.
+- `packets[].allowed_files` and `packets[].forbidden_files` - compatibility
+  GapRecord safety scope in gap-ledger packet mode. `allowed_files` mirrors
+  `allowed_edit_surface`. `forbidden_files` is the source anchor file when it
+  differs from the allowed file. Python preview packets use this to bound
+  agents to the suggested test file and keep production Python files read-only.
+- `packets[].must_not_change` - GapRecord safety boundaries in gap-ledger
+  packet mode. The list mirrors the copyable packet's do-not-do section so
+  JSON consumers and agent handoffs receive the same edit and authority limits.
+- `packets[].conflict_group` - optional gap-ledger packet grouping key used by
+  swarm schedulers to avoid parallel edits to the same target file. It is
+  `file:<allowed_edit_surface>` when an edit surface exists and otherwise falls back to the
+  selected gap ID.
+- `packets[].receipt_command` and `packets[].receipt_status` - receipt
+  projection in gap-ledger packet mode. Rendering fails closed when an
+  agent-packet-eligible GapRecord lacks `receipt_command`; emitted packets use
+  `receipt_status: "available"`. This prevents delegable repair work without a
+  receipt route.
 - `packets[].static_evidence_boundary` - optional static/advisory non-claim
   string. Gap-ledger packet mode uses the same boundary text as `first-pr` so
   coding agents do not infer runtime mutation proof, coverage adequacy, gate
@@ -9493,7 +11217,12 @@ Field contract:
   and `dedupe_fingerprint` when supplied by the ledger.
 - `packets[].repair_route` - optional full GapRecord repair route. Present
   for gap-ledger packet mode and mirrors the source ledger instead of
-  reconstructing repair intent from rendered prose.
+  reconstructing repair intent from rendered prose. `repair_route` may include
+  `missing_discriminator` when the source record can name the exact missing
+  proof separately from the suggested assertion shape.
+- `packets[].missing_discriminator` - optional first-screen missing proof copied
+  from `repair_route.missing_discriminator` when supplied, with compatibility
+  fallback to `assertion_shape` or `changed_behavior` for older GapRecords.
 - `packets[].verification_commands` and `packets[].verify_command` - optional
   GapRecord verification commands. `verify_command` is the first command and
   is provided for existing single-command consumers.
@@ -9503,8 +11232,9 @@ Field contract:
   of inventing a fix.
 - `packets[].repair_card` - optional GapRecord-backed repair card carrying
   repair text, route, source artifact, verification commands, and the
-  current evidence strength, static evidence boundary, and authority boundary.
-  It is the same repair vocabulary used by PR comment projection.
+  current evidence strength, receipt status, static evidence boundary, and
+  authority boundary. It is the same repair vocabulary used by PR comment
+  projection.
 - `packets[].llm_guidance.copyable_packet` - optional GapRecord-backed
   pasteable repair packet for coding agents. It carries `task`, `context`,
   `repair`, `verification`, `receipt`, `stop_conditions`, `do_not_do`,
@@ -9848,7 +11578,9 @@ refresh behavior, or emit runtime mutation claims.
 
 `ripr pilot` writes a first-run operator packet under `target/ripr/pilot/` by
 default. It reuses the repo-exposure and agent seam packet renderers, then adds
-a small summary that ranks the next actionable seams.
+a small summary that ranks the next actionable seams. When Python preview is
+enabled, the pilot also projects the top diff-scoped Python repair card from the
+existing `check` path as advisory first-use guidance.
 
 Pilot files:
 
@@ -9909,10 +11641,66 @@ target/ripr/pilot/pilot-summary.md
       "targeted_test_brief": "Target seam:\n- src/lib.rs:2\n..."
     }
   ],
+  "python_first_use": null,
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json",
     "outcome_command": "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+  }
+}
+```
+
+For Python preview roots with a diff-scoped repair card, `python_first_use`
+is populated:
+
+```json
+{
+  "status": "ready",
+  "language": "python",
+  "language_status": "preview",
+  "authority_boundary": "preview_advisory_only",
+  "findings_total": 1,
+  "repair_cards_total": 1,
+  "limitation_count": 0,
+  "analysis_error": null,
+  "supported_features": [
+    "project_detection",
+    "diff_owner_mapping",
+    "pytest_oracle_facts",
+    "unittest_oracle_facts",
+    "repair_cards"
+  ],
+  "deferred_features": [
+    "outcome_receipts",
+    "runtime_mutation_execution",
+    "gate_authority",
+    "generated_tests"
+  ],
+  "top_repair_card": {
+    "card_version": "python_repair_card.v1",
+    "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+    "language": "python",
+    "language_status": "preview",
+    "authority_boundary": "preview_advisory_only",
+    "repair_action": "strengthen_existing_test",
+    "changed_owner": "calculate_discount",
+    "missing_discriminator": "amount == threshold",
+    "suggested_test_file": "tests/test_pricing.py",
+    "suggested_test_name": "test_calculate_discount_smoke",
+    "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+    "receipt_command": null,
+    "receipt_status": "unavailable_until_python_gap_ledger",
+    "receipt_guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.",
+    "stop_conditions": [
+      "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+      "Stop if the expected value for the missing discriminator is ambiguous.",
+      "Stop if adding the test appears to require a production-code edit."
+    ],
+    "limits": [
+      "Syntax-first Python preview evidence only.",
+      "No source edits, generated tests, mutation execution, provider calls, or gate authority.",
+      "Verify success alone is not a gap-closure receipt."
+    ]
   }
 }
 ```
@@ -9984,6 +11772,12 @@ Field contract:
 - `top_actionable_seams[].targeted_test_brief` — human-readable work order
   derived from the same fields as the agent seam packet. Placeholders are
   intentional; RIPR does not invent expected values.
+- `python_first_use` — `null` when Python preview first-use projection was not
+  collected for this pilot run. When present, it reports the Python preview
+  status (`ready`, `no_python_findings`, `no_repair_cards`, or
+  `analysis_unavailable`), counts, supported and deferred features, and the top
+  `python_repair_card` using the same advisory card fields emitted by
+  `ripr check --json`.
 - `next` — advisory follow-up commands. Complete summaries include the public
   `ripr outcome` before/after receipt command. Partial summaries include a
   retry command with a larger explicit timeout.
@@ -10140,6 +11934,27 @@ Seam diagnostics also drive editor code actions:
 - `Refresh Analysis - Saved Workspace Check` remains available for every
   request.
 
+Validated GapRecord diagnostics use the same code-action surface for
+repair-routing records. Python preview GapRecords accept bounded `pytest ...`
+and `python -m unittest ...` verification commands, expose verify and receipt
+copy actions when those commands are safe, expose `Agent handoff: copy Python
+packet` to copy the same GapRecord-backed agent packet as `ripr agent packet
+--gap-ledger ... --gap-id ...`, expose `Copy Python repair card` to copy a
+current validated GapRecord repair-card brief for safe target-file routes through
+`ripr.copyTargetedTestBrief`, can open `repair_route.target_file` when
+`related_test` is a bare test name, and expose `Write Python test: copy pytest
+skeleton` for pytest-backed repairs. The Python agent-packet action appears
+only for current validated Python GapRecord diagnostics with
+`gap_state = "actionable"`, `repairability = "repairable"`, safe gap-ledger and
+repair-route paths, and safe verify plus receipt commands. The copied repair
+card includes the current-GapRecord freshness cue, changed owner, changed
+behavior, current weak test evidence, missing discriminator, suggested
+assertion and location, verify and receipt commands when safe, stop conditions,
+and static preview limits. The copied skeleton is a fail-fast work order with
+the canonical gap, missing discriminator, suggested file, verify command, stop
+conditions, and a `NotImplementedError` placeholder; it does not edit files or
+silently create a passing test.
+
 These actions do not edit files, generate tests, or add CodeLens
 surface. The pre-4B `Finding`/`AnalysisSnapshot` hover and context
 actions continue to work for diff-scoped diagnostics; seam diagnostics
@@ -10241,7 +12056,9 @@ fixtures/boundary_gap/expected/report-packet-index/<case>/index.md
 fixtures/finding-alignment-dogfood/corpus.json
 fixtures/surface-projection-alignment/corpus.json
 fixtures/real-repair-attempts/corpus.json
+fixtures/python-real-repo-evals/corpus.json
 fixtures/user-surface-projection-alignment/corpus.json
+fixtures/bun-ub-cross-language-dogfood/corpus.json
 ```
 
 The report is advisory. It runs `ripr check --mode fast` against stable fixture
@@ -10284,6 +12101,29 @@ The checked real repair attempt receipts are read from
 attempts, including improved/resolved movement and unchanged or missing-receipt
 non-success cases, so failed or incomplete attempts remain visible instead of
 being hidden from the repair queue.
+The checked Python real-repo eval receipts are read from
+`fixtures/python-real-repo-evals/` and record the top Python repair card,
+bounded agent packet, ranked top-3 repair-card findings, verify command,
+before/after receipt movement, false-positive notes, and unsupported limitation
+kinds. The report derives `python_repair_routing_quality` from those receipts,
+including top-1 actionable usefulness, top-3 actionable precision over captured
+ranked repair-card findings, verify-command validity, agent-packet boundary
+validity, concrete-discriminator and test-location coverage,
+false-actionable and crash rates, receipt closure rate, and unsupported
+limitation distribution. Eval cases with fewer than three ranked repair-card
+findings must include an explicit limit reason.
+The checked Bun UB cross-language witness receipts are read from
+`fixtures/bun-ub-cross-language-dogfood/` and record the calibrated
+#31648-shaped known-good, stripped-resizable, maxByteLength mention-only,
+bridge-unknown, configured copy_to_unshared, configured MarkdownObject, node:fs
+scalar write manifest-only, Bun.write helper-gated, and FFI panic-boundary
+operator cases. The `bun_ub_cross_language_witnesses` JSON section includes
+`default_ci_blocking: false`, `preview_authority: "advisory"`, summary counts,
+including `bridge_unknown` and `named_static_limitation`, case ids, source
+calibration or profile cases, route-quality cases, Rust seam fields, observed
+state, missing discriminators or graph legs, suggested TypeScript test file,
+manual verdict, operator action, bridge and placement verdicts, proof mode, raw
+evidence refs, non-claims, and `repair_packet_ready: false`.
 The checked user-surface projection receipts are read from
 `fixtures/user-surface-projection-alignment/` and prove badge, LSP, PR comment,
 and CI projection examples share the same canonical gap, packet or limitation
@@ -10349,8 +12189,8 @@ JSON shape:
     "default_ci_blocking": false,
     "receipt_dir": "fixtures/first_successful_pr",
     "metrics": {
-      "first_run_packets_total": 4,
-      "first_run_top_gap_selected_total": 2,
+      "first_run_packets_total": 5,
+      "first_run_top_gap_selected_total": 3,
       "first_run_no_action_total": 1,
       "first_run_blocked_total": 1,
       "first_run_missing_artifact_total": 0,
@@ -10373,6 +12213,22 @@ JSON shape:
         "expected_status": "actionable",
         "expected_state": "top_gap",
         "description": "A repairable Rust boundary gap becomes the top first-run repair.",
+        "errors": []
+      },
+      {
+        "name": "python-preview-gap",
+        "expected_dir": "fixtures/first_successful_pr/python-preview-gap/expected",
+        "json_path": "fixtures/first_successful_pr/python-preview-gap/expected/start-here.json",
+        "markdown_path": "fixtures/first_successful_pr/python-preview-gap/expected/start-here.md",
+        "status": "actionable",
+        "state": "top_gap",
+        "output_state": "preview_limited",
+        "top_gap_kind": "MissingBoundaryAssertion",
+        "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+        "next_command": null,
+        "expected_status": "actionable",
+        "expected_state": "top_gap",
+        "description": "A repairable Python preview gap becomes a preview-limited first-run repair.",
         "errors": []
       }
     ]
@@ -10571,6 +12427,118 @@ JSON shape:
         "missing_receipt_reason": null,
         "reason": "A real merged repair-loop PR converted attempt outcomes into route-quality evidence.",
         "errors": []
+      }
+    ]
+  },
+  "python_real_repo_evals": {
+    "default_ci_blocking": false,
+    "receipt_dir": "fixtures/python-real-repo-evals",
+    "summary": {
+      "cases": 7,
+      "closed": 7,
+      "usable": 7
+    },
+    "cases": [
+      {
+        "name": "decorated_route_status_pytest_receipt",
+        "repo_shape": "decorated_route_pytest",
+        "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422",
+        "repair_card_present": true,
+        "agent_packet_present": true,
+        "agent_packet_task": "Strengthen the existing decorated-route pytest test with response.status_code == 422.",
+        "agent_packet_command": "ripr agent packet --root target/ripr/python-real-repo-evals/decorated-route-receipt --gap-ledger gap-ledger.json --gap-id gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422 --json",
+        "agent_packet_allowed_files": ["tests/test_checkout.py"],
+        "agent_packet_forbidden_files": ["app/checkout.py"],
+        "agent_packet_stop_if": ["import cannot be resolved", "expected status code is ambiguous", "production code edit appears necessary"],
+        "missing_discriminator": "response.status_code == 422",
+        "suggested_test_file": "tests/test_checkout.py",
+        "verify_command": "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+        "verify_result": "pass",
+        "receipt_result": "pass",
+        "gap_movement": "closed",
+        "unsupported_limitations": ["dynamic_route_registration"],
+        "ranked_top_3_findings": [
+          {
+            "rank": 1,
+            "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422",
+            "repair_card_present": true,
+            "usability": "usable",
+            "missing_discriminator": "response.status_code == 422",
+            "suggested_test_file": "tests/test_checkout.py",
+            "verify_command": "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+            "false_positive_notes": "none observed",
+            "reason": "Rank 1 repair card matched the closed Python receipt."
+          }
+        ],
+        "ranked_top_3_limit_reason": "Focused eval emitted one Python repair card; no rank 2 or rank 3 repairable Python finding was present.",
+        "errors": []
+      }
+    ]
+  },
+  "python_repair_routing_quality": {
+    "default_ci_blocking": false,
+    "input": "fixtures/python-real-repo-evals/corpus.json",
+    "quality_gate": {
+      "status": "pass",
+      "reason": "All checked top Python repair cards are usable, verifiable, placed, and receipt-backed without observed false actionability"
+    },
+    "summary": {
+      "cases": 7,
+      "top_1_actionable_precision": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "top_3_actionable_precision": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "verify_command_validity": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "agent_packet_boundary_validity": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "concrete_discriminator_rate": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "related_test_location_rate": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "receipt_closure_rate": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      },
+      "false_actionable_rate": {
+        "status": "pass",
+        "count": 0,
+        "checked": 7
+      },
+      "crash_rate": {
+        "status": "pass",
+        "count": 0,
+        "checked": 7
+      },
+      "ranked_top_3_cases_with_capture": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
+      }
+    },
+    "unsupported_limitation_distribution": [
+      {
+        "kind": "dynamic_route_registration",
+        "cases": 1
       }
     ]
   },
@@ -10860,14 +12828,20 @@ are repo-scoped projection inputs for reports, badges, LSP diagnostics, and
 agent packets when the evidence record already supplies a repair route and
 verification command.
 
-`ripr reports gap-ledger --check-output <path>` derives PR-local
-presentation/output contract gap records from an existing check JSON
-`finding_alignment.items[]` section. Supported visible output text without a
-checked observer becomes `MissingOutputContract` with
+`ripr reports gap-ledger --check-output <path>` derives PR-local records from
+an existing check JSON `finding_alignment.items[]` section and actionable
+Python `findings[].python_repair_card` objects. Supported visible output text
+without a checked observer becomes `MissingOutputContract` with
 `repair_route.route_kind = "AddOutputGolden"` and
-`verification_commands = ["cargo xtask goldens check"]`. Visibility-unknown
-presentation text remains a static limitation and does not become a generic
-`static_unknown` repair instruction.
+`verification_commands = ["cargo xtask goldens check"]`. Actionable Python
+repair cards become preview-language records with bounded test edit surfaces,
+verify commands, and a synthesized `ripr outcome` command that compares the
+supplied before check JSON with `target/ripr/reports/after-check.json`.
+Python static-limit findings with `static_limit_kind` become report-only
+`StaticLimitation` records with `repairability = "analyzer_limitation"` and no
+agent-packet projection. Visibility-unknown presentation text and Python static
+limits remain limitations and do not become generic `static_unknown` repair
+instructions.
 
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does

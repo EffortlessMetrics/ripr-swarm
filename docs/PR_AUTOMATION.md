@@ -50,6 +50,7 @@ cargo xtask critic
 cargo xtask reports index
 cargo xtask receipts
 cargo xtask receipts check
+cargo xtask repo-exposure-summary-report
 cargo xtask doctor
 cargo xtask specs next
 cargo xtask check-allow-attributes
@@ -95,7 +96,11 @@ advisory actionable repair front panel: when existing
 `target/ripr/reports/actionable-gaps.json`, `actionable-gap-outcomes.json`, or
 `pr-review-front-panel.json` artifacts are present, it names repo and PR-local
 actionable counts, receipt movement state, static-limited counts, and one top
-next repair packet before raw path inventory. Missing artifacts stay visible as
+next repair packet before raw path inventory. When the actionable artifact
+contains an eligible Python preview packet, the same front panel also names the
+top Python repair card with its canonical gap, changed owner, missing
+discriminator, suggested test target, verify command, receipt command, stop
+conditions, and preview/advisory boundary. Missing artifacts stay visible as
 regeneration guidance; the summary does not infer analyzer truth, gate status,
 runtime proof, mutation proof, source edits, or generated tests.
 
@@ -156,6 +161,19 @@ generated badge endpoint diffs in ordinary PRs, and `check-generated-clean`,
 which rejects generated target/sample build residue. Before writing the final
 report index, it also refreshes the deterministic suggested-fixes patch under
 `target/ripr/reports/`.
+
+`repo-exposure-summary-report` is the ordinary repo-local summary route. It
+writes `target/ripr/reports/repo-exposure-summary.json` from
+`repo-exposure-summary-json` and avoids the per-seam evidence payloads carried
+by full `repo-exposure-json`. The command is bounded by
+`RIPR_REPO_EXPOSURE_SUMMARY_TIMEOUT_MS` (default: 240000). On timeout or
+incomplete output, it overwrites stale summary JSON with a warning artifact whose
+`runtime_status.downstream_consumable` is `false` and whose `metrics` object does
+not claim a gap count. `cargo xtask ripr-plus --repo-exposure-summary
+target/ripr/reports/repo-exposure-summary.json` may reuse this artifact only
+when it is downstream-consumable; timeout and limited artifacts fail
+deliberately. Use `repo-exposure-report` only when an operator explicitly needs
+the full classified seam inventory for deep inspection.
 
 `fixtures` validates fixture contract shape, runs `ripr check` for fixture
 directories when they exist, writes actual outputs under

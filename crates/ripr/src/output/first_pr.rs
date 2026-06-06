@@ -2,7 +2,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
     check_repo_exposure_command, display_path, outcome_command, shell_arg,
 };
-use crate::config::CONFIG_FILE_NAME;
+use crate::config::{CONFIG_FILE_NAME, detect_python_project};
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
@@ -23,6 +23,7 @@ const START_HERE_MD: &str = "start-here.md";
 const DEFAULT_REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_JSON: &str = "target/ripr/reports/repo-exposure-latency.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_REPORT: &str = "target/ripr/reports/repo-exposure-latency.md";
+const DEFAULT_CHECK_OUTPUT: &str = "target/ripr/reports/check.json";
 const DEFAULT_GAP_LEDGER: &str = "target/ripr/reports/gap-decision-ledger.json";
 const DEFAULT_FIRST_ACTION: &str = "target/ripr/reports/first-useful-action.json";
 const DEFAULT_REVIEW_COMMENTS: &str = "target/ripr/review/comments.json";
@@ -37,6 +38,7 @@ struct FirstPrOptions {
     root: String,
     base: String,
     head: String,
+    check_output: Option<String>,
     gap_ledger: String,
     first_action: String,
     review_comments: String,
@@ -54,6 +56,7 @@ impl Default for FirstPrOptions {
             root: DEFAULT_ROOT.to_string(),
             base: DEFAULT_BASE.to_string(),
             head: DEFAULT_HEAD.to_string(),
+            check_output: None,
             gap_ledger: DEFAULT_GAP_LEDGER.to_string(),
             first_action: DEFAULT_FIRST_ACTION.to_string(),
             review_comments: DEFAULT_REVIEW_COMMENTS.to_string(),
@@ -100,6 +103,10 @@ fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
             "--head" => {
                 i += 1;
                 options.head = non_empty_arg(args, i, "--head")?.to_string();
+            }
+            "--check-output" => {
+                i += 1;
+                options.check_output = Some(non_empty_arg(args, i, "--check-output")?.to_string());
             }
             "--gap-ledger" => {
                 i += 1;
@@ -152,7 +159,7 @@ fn print_help() {
 }
 
 fn first_pr_help_text() -> &'static str {
-    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable\n  - verify command / receipt command / receipt path: static movement proof rail"
+    "Create the start-here packet for one PR from existing RIPR artifacts.\n\nusage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]\n\nStart-here language:\n  - start here: open target/ripr/reports/start-here.md first when it exists\n  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action\n  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work\n  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof\n  - preview-limited evidence: syntax-first and advisory, with static limits before repair language\n  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable\n  - verify command / receipt command / receipt path: static movement proof rail"
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -162,6 +169,9 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         .clone()
         .or_else(|| git_preflight_recovery(&root, options));
     let output_root = if root_recovery.is_some() { repo } else { &root };
+    if preflight_recovery.is_none() {
+        materialize_check_output_gap_ledger(&root, options)?;
+    }
     let packet = match preflight_recovery {
         Some(selection) => render_start_here_recovery_packet(&root, options, selection),
         None => render_start_here_packet(&root, options),
@@ -239,7 +249,7 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
             format!("The gap decision ledger could not be parsed: {message}"),
             Some(format!(
                 "Regenerate the gap ledger with `{}` before assigning repair work.",
-                regenerate_gap_ledger_command(&options.gap_ledger)
+                regenerate_gap_ledger_command(root, options)
             )),
         ),
     };
@@ -274,13 +284,26 @@ fn render_start_here_packet_with_selection(
     warnings: Vec<String>,
     preflight: Option<FirstPrPreflight>,
 ) -> Value {
-    let artifacts = vec![
+    let mut artifacts = Vec::new();
+    if let Some(check_output) = options.check_output.as_deref() {
+        artifacts.push(artifact_status(
+            root,
+            "check_output",
+            "Check output",
+            check_output,
+            Some(format!(
+                "ripr check --root {} --base {} --json > {}",
+                options.root, options.base, check_output
+            )),
+        ));
+    }
+    artifacts.extend([
         artifact_status(
             root,
             "gap_ledger",
             "Gap decision ledger",
             &options.gap_ledger,
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         ),
         artifact_status(
             root,
@@ -333,7 +356,26 @@ fn render_start_here_packet_with_selection(
                 with_extension(&options.gate_decision, "md")
             )),
         ),
-    ];
+    ]);
+
+    let mut inputs = json!({
+        "gap_ledger": options.gap_ledger,
+        "base": options.base,
+        "head": options.head,
+        "first_action": options.first_action,
+        "review_comments": options.review_comments,
+        "agent_packet": options.agent_packet,
+        "gate_decision": options.gate_decision,
+        "receipts_dir": options.receipts_dir
+    });
+    if let Some(check_output) = options.check_output.as_deref()
+        && let Some(inputs) = inputs.as_object_mut()
+    {
+        inputs.insert(
+            "check_output".to_string(),
+            Value::String(check_output.to_string()),
+        );
+    }
 
     let mut packet = json!({
         "schema_version": SCHEMA_VERSION,
@@ -342,18 +384,9 @@ fn render_start_here_packet_with_selection(
         "status": selection.status(),
         "posture": "advisory",
         "root": options.root,
-        "inputs": {
-            "gap_ledger": options.gap_ledger,
-            "base": options.base,
-            "head": options.head,
-            "first_action": options.first_action,
-            "review_comments": options.review_comments,
-            "agent_packet": options.agent_packet,
-            "gate_decision": options.gate_decision,
-            "receipts_dir": options.receipts_dir
-        },
+        "inputs": inputs,
         "selected": selection.to_json(),
-        "commands": selection.commands_json(options),
+        "commands": selection.commands_json(root, options),
         "artifacts": artifacts,
         "authority": {
             "status": "advisory",
@@ -373,6 +406,49 @@ fn render_start_here_packet_with_selection(
         packet["preflight"] = preflight.to_json();
     }
     packet
+}
+
+fn materialize_check_output_gap_ledger(
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Result<(), String> {
+    let Some(check_output) = options.check_output.as_deref() else {
+        return Ok(());
+    };
+    let check_output_path = resolve_path(root, check_output);
+    let contents = fs::read_to_string(&check_output_path).map_err(|err| {
+        format!(
+            "first-pr --check-output {} is invalid: read failed: {err}",
+            check_output_path.display()
+        )
+    })?;
+    let report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: options.root.clone(),
+            generated_at: "first-pr-check-output".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: check_output.to_string(),
+            records_json: Ok(contents),
+        },
+    );
+    let json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
+    let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
+    let gap_ledger_path = resolve_path(root, &options.gap_ledger);
+    if let Some(parent) = gap_ledger_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    fs::write(&gap_ledger_path, json)
+        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_path.display()))?;
+    let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
+    if let Some(parent) = gap_ledger_markdown.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    fs::write(&gap_ledger_markdown, markdown)
+        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_markdown.display()))?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -538,7 +614,7 @@ fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight
     if git_available && base_ok && head_ok {
         preflight_diff_check(root, options, &mut checks);
     }
-    checks.push(preflight_cargo_check(root));
+    checks.push(preflight_project_check(root));
     checks.push(preflight_config_check(root));
     checks.push(preflight_output_check(root, options));
     checks.push(PreflightCheck::ok(
@@ -739,7 +815,7 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
     }
 }
 
-fn preflight_cargo_check(root: &Path) -> PreflightCheck {
+fn preflight_project_check(root: &Path) -> PreflightCheck {
     let manifest = root.join("Cargo.toml");
     if manifest.is_file() {
         PreflightCheck::ok(
@@ -748,12 +824,22 @@ fn preflight_cargo_check(root: &Path) -> PreflightCheck {
             "Cargo.toml was found at the workspace root.",
         )
         .with_path(manifest.display().to_string())
+    } else if detect_python_project(root) {
+        PreflightCheck::ok(
+            "python_project",
+            "Python project",
+            "Python project markers were found; first-pr can consume Python preview gap-ledger records.",
+        )
+        .with_path(root.display().to_string())
     } else {
         PreflightCheck::needs_attention(
             "cargo_workspace",
             "Cargo workspace",
             "No Cargo.toml was found at the workspace root.",
-            Some("Run from a Rust/Cargo workspace or pass --root <cargo-workspace>.".to_string()),
+            Some(
+                "Run from a Rust/Cargo workspace, a Python project root, or pass --root <repo>."
+                    .to_string(),
+            ),
         )
         .with_path(manifest.display().to_string())
     }
@@ -875,10 +961,13 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         ));
     }
     if !root.join("Cargo.toml").is_file() {
+        if detect_python_project(root) {
+            return None;
+        }
         return Some(Selection::blocked(
             "wrong_root",
             format!(
-                "The first-pr root `{}` is not a Rust/Cargo workspace because Cargo.toml is missing. Pass the repository root with `--root` before assigning repair work.",
+                "The first-pr root `{}` is not a Rust/Cargo workspace because Cargo.toml is missing, and no Python project markers were found. Pass the repository root with `--root` before assigning repair work.",
                 options.root
             ),
             Some(doctor_command(&options.root)),
@@ -1046,11 +1135,11 @@ impl Selection {
         Some(top_gap.agent_packet_command.clone())
     }
 
-    fn commands_json(&self, options: &FirstPrOptions) -> Value {
+    fn commands_json(&self, root: &Path, options: &FirstPrOptions) -> Value {
         let mut commands = Map::new();
         commands.insert(
             "regenerate_gap_ledger".to_string(),
-            Value::String(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Value::String(regenerate_gap_ledger_command(root, options)),
         );
         match self {
             Self::TopGap(top_gap) => {
@@ -1215,14 +1304,14 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         return Selection::blocked(
             "timeout",
             "The gap decision ledger reports a timeout; refresh the first-run evidence before assigning repair work.".to_string(),
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if ledger_reports_stale(gap_ledger) {
         return Selection::blocked(
             "stale_artifact",
             "The gap decision ledger is stale; refresh the first-run evidence before assigning repair work.".to_string(),
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if let Some(observed_root) = string_path(gap_ledger, &["root"])
@@ -1234,7 +1323,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
                 "The gap decision ledger was generated for root `{observed_root}`, but first-pr is running for `{}`.",
                 options.root
             ),
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if ledger_reports_blocked(gap_ledger) {
@@ -1251,7 +1340,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         return Selection::blocked(
             "blocked_artifact",
             message,
-            Some(regenerate_gap_ledger_command(&options.gap_ledger)),
+            Some(regenerate_gap_ledger_command(root, options)),
         );
     }
     if ledger_reports_empty_diff(gap_ledger) {
@@ -1262,7 +1351,7 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         );
     }
     if let Some(record) = records.iter().copied().find(is_first_run_repairable_gap) {
-        return Selection::TopGap(Box::new(top_gap_from_record(record, options)));
+        return Selection::TopGap(Box::new(top_gap_from_record(record, root, options)));
     }
     Selection::no_action(
         "no_action",
@@ -1273,6 +1362,15 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
 }
 
 fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Selection {
+    if uses_python_check_output_gap_ledger(root) {
+        return Selection::missing_artifact(
+            "gap_ledger",
+            "Gap decision ledger",
+            &options.gap_ledger,
+            regenerate_gap_ledger_command(root, options),
+        );
+    }
+
     let repo_exposure = resolve_path(root, DEFAULT_REPO_EXPOSURE);
     if !repo_exposure.exists() {
         return missing_repo_exposure_selection(root, options);
@@ -1281,7 +1379,7 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
         "gap_ledger",
         "Gap decision ledger",
         &options.gap_ledger,
-        regenerate_gap_ledger_command(&options.gap_ledger),
+        regenerate_gap_ledger_command(root, options),
     )
 }
 
@@ -1436,8 +1534,7 @@ fn root_mismatch(expected_root: &Path, expected_arg: &str, observed_root: &str) 
 }
 
 fn is_first_run_repairable_gap(record: &&Value) -> bool {
-    string_path(record, &["language"]).is_some_and(|value| value == "rust")
-        && string_path(record, &["language_status"]).is_some_and(|value| value == "stable")
+    first_pr_language_is_supported(record)
         && string_path(record, &["scope"]).is_some_and(|value| value == "pr_local")
         && string_path(record, &["gap_state"]).is_some_and(|value| value == "actionable")
         && string_path(record, &["repairability"]).is_some_and(|value| value == "repairable")
@@ -1447,17 +1544,29 @@ fn is_first_run_repairable_gap(record: &&Value) -> bool {
         && first_string_array_item(record, &["verification_commands"]).is_some()
 }
 
-fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelection {
+fn first_pr_language_is_supported(record: &Value) -> bool {
+    matches!(
+        (
+            string_path(record, &["language"]).as_deref(),
+            string_path(record, &["language_status"]).as_deref(),
+        ),
+        (Some("rust"), Some("stable")) | (Some("python"), Some("preview"))
+    )
+}
+
+fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) -> TopGapSelection {
     let repair_route = record.get("repair_route");
     let anchor = record.get("anchor");
     let gap_id = string_path(record, &["gap_id"]).unwrap_or_else(|| "unknown-gap".to_string());
     let kind = string_path(record, &["kind"]).unwrap_or_else(|| "Unknown".to_string());
+    let language = string_path(record, &["language"]);
+    let language_status = string_path(record, &["language_status"]);
     let changed_behavior = string_from_sources(&[
         (repair_route, &["changed_behavior"]),
         (Some(record), &["changed_behavior"]),
     ]);
     let verify_command = first_string_array_item(record, &["verification_commands"])
-        .unwrap_or_else(|| regenerate_gap_ledger_command(&options.gap_ledger));
+        .unwrap_or_else(|| regenerate_gap_ledger_command(root, options));
     let receipt_path = string_path(record, &["receipt_path"])
         .or_else(|| string_path(record, &["receipt", "path"]))
         .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
@@ -1482,23 +1591,32 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
     let target_file = string_from_sources(&[(repair_route, &["target_file"])]);
     let related_test = string_from_sources(&[(repair_route, &["related_test"])]);
     let suggested_assertion = string_from_sources(&[(repair_route, &["assertion_shape"])]);
+    let missing_discriminator = if language.as_deref() == Some("python") {
+        string_from_sources(&[
+            (repair_route, &["missing_discriminator"]),
+            (Some(record), &["missing_discriminator"]),
+        ])
+    } else {
+        None
+    }
+    .unwrap_or_else(|| missing_discriminator_for_gap(&kind, suggested_assertion.as_deref()));
     TopGapSelection {
         gap_id: gap_id.clone(),
         canonical_gap_id: string_path(record, &["canonical_gap_id"]),
-        language: string_path(record, &["language"]),
-        language_status: string_path(record, &["language_status"]),
+        language: language.clone(),
+        language_status: language_status.clone(),
         kind: kind.clone(),
         source_artifact: options.gap_ledger.clone(),
         changed_behavior,
-        current_evidence_strength: current_evidence_strength_for_gap(&kind),
-        missing_discriminator: missing_discriminator_for_gap(&kind, suggested_assertion.as_deref()),
+        current_evidence_strength: current_evidence_strength_for_gap(&kind, language.as_deref()),
+        missing_discriminator,
         focused_proof_intent: focused_proof_intent(
             &repair_route_kind,
             target_file.as_deref(),
             suggested_assertion.as_deref(),
             related_test.as_deref(),
         ),
-        why: why_for_gap(&kind),
+        why: why_for_gap(&kind, language.as_deref()),
         repair_route: repair_route_kind,
         target_file,
         related_test,
@@ -1523,16 +1641,33 @@ fn top_gap_from_record(record: &Value, options: &FirstPrOptions) -> TopGapSelect
     }
 }
 
-fn current_evidence_strength_for_gap(kind: &str) -> String {
-    match kind {
-        "MissingBoundaryAssertion" | "MissingValueAssertion" | "MissingErrorDiscriminator" => {
+fn current_evidence_strength_for_gap(kind: &str, language: Option<&str>) -> String {
+    match (language, kind) {
+        (Some("python"), "MissingBoundaryAssertion")
+        | (Some("python"), "MissingValueAssertion")
+        | (Some("python"), "MissingErrorDiscriminator") => {
+            "Static evidence found related Python test context, but the current proof is weak because the discriminator is missing.".to_string()
+        }
+        (Some("python"), "MissingSideEffectObserver") => {
+            "Static evidence found related Python test context, but the current proof does not observe the changed output or side effect.".to_string()
+        }
+        (_, "MissingBoundaryAssertion")
+        | (_, "MissingValueAssertion")
+        | (_, "MissingErrorDiscriminator") => {
             "Static evidence found related Rust test context, but the current proof is weak because the discriminator is missing.".to_string()
         }
-        "MissingOutputContract" => {
+        (_, "MissingOutputContract") => {
             "Static evidence found changed user-facing output, but no checked output or golden proof is attached.".to_string()
         }
         _ => {
-            "The gap ledger marked this PR-local stable Rust gap as actionable and repairable; no runtime proof is claimed.".to_string()
+            let language_label = match language {
+                Some("python") => "preview Python",
+                Some("rust") | None => "stable Rust",
+                Some(other) => other,
+            };
+            format!(
+                "The gap ledger marked this PR-local {language_label} gap as actionable and repairable; no runtime proof is claimed."
+            )
         }
     }
 }
@@ -1574,6 +1709,11 @@ fn focused_proof_intent(
         "AddBoundaryAssertion" => suggested_assertion
             .map(|assertion| format!("Add a focused boundary assertion{target}: `{assertion}`."))
             .unwrap_or_else(|| format!("Add a focused boundary assertion{target}.")),
+        "StrengthenExistingTest" => suggested_assertion
+            .map(|assertion| {
+                format!("Strengthen the existing related test{target}: `{assertion}`.")
+            })
+            .unwrap_or_else(|| format!("Strengthen the existing related test{target}.")),
         "AddValueAssertion" => suggested_assertion
             .map(|assertion| format!("Add a focused value assertion{target}: `{assertion}`."))
             .unwrap_or_else(|| format!("Add a focused value assertion{target}.")),
@@ -1586,21 +1726,42 @@ fn focused_proof_intent(
     }
 }
 
-fn why_for_gap(kind: &str) -> String {
-    match kind {
-        "MissingBoundaryAssertion" => {
+fn why_for_gap(kind: &str, language: Option<&str>) -> String {
+    match (language, kind) {
+        (Some("python"), "MissingBoundaryAssertion") => {
+            "A related Python test reaches this change, but no boundary discriminator was found for the changed behavior.".to_string()
+        }
+        (Some("python"), "MissingValueAssertion") => {
+            "A related Python test reaches this change, but no exact value assertion was found for the changed behavior.".to_string()
+        }
+        (Some("python"), "MissingErrorDiscriminator") => {
+            "A related Python test reaches this error path, but no error discriminator was found for the changed behavior.".to_string()
+        }
+        (Some("python"), "MissingSideEffectObserver") => {
+            "A related Python test reaches this change, but no output or side-effect observer was found for the changed behavior.".to_string()
+        }
+        (_, "MissingBoundaryAssertion") => {
             "A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior.".to_string()
         }
-        "MissingOutputContract" => {
+        (_, "MissingOutputContract") => {
             "User-facing output changed, but the gap ledger did not find checked output or golden evidence for the changed text.".to_string()
         }
-        "MissingValueAssertion" => {
+        (_, "MissingValueAssertion") => {
             "A related Rust test reaches this change, but no exact value assertion was found for the changed behavior.".to_string()
         }
-        "MissingErrorDiscriminator" => {
+        (_, "MissingErrorDiscriminator") => {
             "A related Rust test reaches this error path, but no error discriminator was found for the changed behavior.".to_string()
         }
-        _ => "The gap ledger marked this PR-local stable Rust gap as repairable and policy-targeted.".to_string(),
+        _ => {
+            let language_label = match language {
+                Some("python") => "preview Python",
+                Some("rust") | None => "stable Rust",
+                Some(other) => other,
+            };
+            format!(
+                "The gap ledger marked this PR-local {language_label} gap as repairable and policy-targeted."
+            )
+        }
     }
 }
 
@@ -1744,11 +1905,44 @@ fn bool_path(value: &Value, path: &[&str]) -> Option<bool> {
     path_value(value, path)?.as_bool()
 }
 
-fn regenerate_gap_ledger_command(out: &str) -> String {
+fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> String {
+    if uses_python_check_output_gap_ledger(root) {
+        return regenerate_python_gap_ledger_command(options);
+    }
+    regenerate_repo_exposure_gap_ledger_command(&options.gap_ledger)
+}
+
+fn uses_python_check_output_gap_ledger(root: &Path) -> bool {
+    detect_python_project(root) && !root.join("Cargo.toml").is_file()
+}
+
+fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
     format!(
         "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out {out} --out-md {}",
         with_extension(out, "md")
     )
+}
+
+fn regenerate_python_gap_ledger_command(options: &FirstPrOptions) -> String {
+    let root = shell_arg(&options.root);
+    let base = shell_arg(&options.base);
+    let check_output = shell_arg(
+        options
+            .check_output
+            .as_deref()
+            .unwrap_or(DEFAULT_CHECK_OUTPUT),
+    );
+    let out = shell_arg(&options.gap_ledger);
+    let out_md = shell_arg(&with_extension(&options.gap_ledger, "md"));
+    if options.check_output.is_some() {
+        format!(
+            "ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+        )
+    } else {
+        format!(
+            "ripr check --root {root} --base {base} --json > {check_output} && ripr reports gap-ledger --check-output {check_output} --root {root} --out {out} --out-md {out_md}"
+        )
+    }
 }
 
 fn regenerate_repo_exposure_command(root: &str) -> String {
@@ -2109,7 +2303,10 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         "- Output state: `{}`\n",
         selected_output_state(selected, "top_gap")
     ));
-    out.push_str("- Safe next action: repair one named stable Rust gap.\n");
+    out.push_str(&format!(
+        "- Safe next action: repair one named {}.\n",
+        top_gap_language_label(selected)
+    ));
     let kind = selected
         .get("kind")
         .and_then(Value::as_str)
@@ -2201,6 +2398,17 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("agent_packet_command").and_then(Value::as_str) {
         out.push_str("Agent packet command:\n");
         out.push_str(&format!("`{command}`\n"));
+    }
+}
+
+fn top_gap_language_label(selected: &Value) -> &'static str {
+    match (
+        string_path(selected, &["language"]).as_deref(),
+        string_path(selected, &["language_status"]).as_deref(),
+    ) {
+        (Some("python"), Some("preview")) => "preview Python gap",
+        (Some("rust"), Some("stable")) => "stable Rust gap",
+        _ => "gap",
     }
 }
 
@@ -2481,6 +2689,8 @@ mod tests {
             "origin/main".to_string(),
             "--head".to_string(),
             "HEAD".to_string(),
+            "--check-output".to_string(),
+            "check.json".to_string(),
             "--gap-ledger".to_string(),
             "gap.json".to_string(),
             "--out-dir".to_string(),
@@ -2490,6 +2700,7 @@ mod tests {
         assert_eq!(parsed.root, "repo");
         assert_eq!(parsed.base, "origin/main");
         assert_eq!(parsed.head, "HEAD");
+        assert_eq!(parsed.check_output.as_deref(), Some("check.json"));
         assert_eq!(parsed.gap_ledger, "gap.json");
         assert_eq!(parsed.out_dir, "out");
         assert!(parsed.check);
@@ -2506,6 +2717,7 @@ mod tests {
     fn first_pr_help_pins_start_here_language() {
         let help = first_pr_help_text();
         assert!(help.contains("ripr first-pr|start-here"));
+        assert!(help.contains("--check-output <path>"));
         assert!(help.contains("Start-here language:"));
         assert!(help.contains("safe next action"));
         assert!(
@@ -2946,6 +3158,34 @@ mod tests {
     }
 
     #[test]
+    fn missing_python_gap_ledger_uses_check_output_bridge() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-missing-gap-ledger")?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert_eq!(packet["selected"]["artifact"]["path"], DEFAULT_GAP_LEDGER);
+        let command = packet["selected"]["regeneration_command"]
+            .as_str()
+            .ok_or_else(|| "selected regeneration command missing".to_string())?;
+        assert!(command.contains(
+            "ripr check --root . --base origin/main --json > target/ripr/reports/check.json"
+        ));
+        assert!(command.contains(
+            "ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md"
+        ));
+        assert!(!command.contains("--repo-exposure"));
+        assert_eq!(packet["commands"]["regenerate_gap_ledger"], command);
+        assert_eq!(packet["artifacts"][0]["regeneration_command"], command);
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
     fn missing_root_writes_recovery_packet_without_creating_root() -> Result<(), String> {
         let repo = temp_repo("first-pr-missing-root")?;
         let options = FirstPrOptions {
@@ -3317,6 +3557,119 @@ mod tests {
     }
 
     #[test]
+    fn python_preview_gap_ledger_is_selected_for_start_here() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-preview")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        fs::write(
+            repo.join("app/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        write_json(
+            &repo.join(DEFAULT_GAP_LEDGER),
+            ledger_with_python_repairable_gap(),
+        )?;
+
+        let options = FirstPrOptions {
+            preflight: true,
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "actionable");
+        assert_eq!(packet["selected"]["state"], "top_gap");
+        assert_eq!(
+            packet["selected"]["output_state"],
+            START_HERE_PREVIEW_LIMITED
+        );
+        assert_eq!(packet["selected"]["language"], "python");
+        assert_eq!(packet["selected"]["language_status"], "preview");
+        assert_eq!(
+            packet["selected"]["missing_discriminator"],
+            "amount == threshold"
+        );
+        assert_eq!(
+            packet["selected"]["verify_command"],
+            "pytest tests/test_pricing.py::test_calculate_discount_smoke"
+        );
+        assert_eq!(
+            packet["selected"]["receipt_command_source"],
+            "gap_ledger.receipt_command"
+        );
+        let python_project = preflight_check(&packet, "python_project")?;
+        assert_eq!(python_project["status"], "ok");
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(summary.contains("Safe next action: repair one named gap `gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold`"));
+        assert!(summary.contains(
+            "Verify command: `pytest tests/test_pricing.py::test_calculate_discount_smoke`"
+        ));
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn python_check_output_materializes_gap_ledger_for_start_here() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-check-output")?;
+        fs::create_dir_all(repo.join("app")).map_err(|err| format!("mkdir app: {err}"))?;
+        fs::write(
+            repo.join("app/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    return amount >= threshold\n",
+        )
+        .map_err(|err| format!("write app/pricing.py: {err}"))?;
+        run_git_setup(&repo, &["add", "app/pricing.py"])?;
+        run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
+        write_json(
+            &repo.join(DEFAULT_CHECK_OUTPUT),
+            check_output_with_python_repair_card(),
+        )?;
+
+        let options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            preflight: true,
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+
+        let ledger = read_packet(&repo.join(DEFAULT_GAP_LEDGER))?;
+        assert_eq!(ledger["inputs"]["source_kind"], "check_output");
+        assert_eq!(ledger["inputs"]["records"], DEFAULT_CHECK_OUTPUT);
+        assert_eq!(
+            ledger["records"][0]["receipt_command"],
+            "ripr outcome --before target/ripr/reports/check.json --after target/ripr/reports/after-check.json --format json --out target/ripr/receipts/gap-python-app-pricing.py-calculate_discount-predicate_boundary-amount-threshold.json"
+        );
+
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "actionable");
+        assert_eq!(packet["inputs"]["check_output"], DEFAULT_CHECK_OUTPUT);
+        assert_eq!(packet["selected"]["source_artifact"], DEFAULT_GAP_LEDGER);
+        assert_eq!(
+            packet["selected"]["receipt_command_source"],
+            "gap_ledger.receipt_command"
+        );
+        assert_eq!(
+            packet["selected"]["receipt_command"],
+            "ripr outcome --before target/ripr/reports/check.json --after target/ripr/reports/after-check.json --format json --out target/ripr/receipts/gap-python-app-pricing.py-calculate_discount-predicate_boundary-amount-threshold.json"
+        );
+        assert_eq!(
+            packet["selected"]["agent_packet_command"],
+            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json"
+        );
+        assert!(repo.join(DEFAULT_GAP_LEDGER).is_file());
+        assert!(
+            repo.join(with_extension(DEFAULT_GAP_LEDGER, "md"))
+                .is_file()
+        );
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
     fn preflight_reports_missing_git_base_and_config_defaults() -> Result<(), String> {
         let repo = temp_repo("first-pr-preflight-missing-base")?;
         fs::write(repo.join("Cargo.toml"), "[workspace]\n")
@@ -3436,6 +3789,123 @@ mod tests {
         })
     }
 
+    fn ledger_with_python_repairable_gap() -> Value {
+        json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "gap_decision_ledger",
+            "status": "advisory",
+            "records": [
+                {
+                    "gap_id": "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                    "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                    "kind": "MissingBoundaryAssertion",
+                    "language": "python",
+                    "language_status": "preview",
+                    "scope": "pr_local",
+                    "current_evidence_strength": "weakly_exposed",
+                    "changed_behavior": "if amount >= threshold:",
+                    "missing_discriminator": "amount == threshold",
+                    "gap_state": "actionable",
+                    "policy_state": "new",
+                    "repairability": "repairable",
+                    "static_limit_kind": "python_preview",
+                    "static_limit_detail": "Python repair cards are preview advisory evidence.",
+                    "anchor": {
+                        "file": "app/pricing.py",
+                        "line": 2,
+                        "owner": "python:app/pricing.py::calculate_discount",
+                        "dedupe_fingerprint": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold"
+                    },
+                    "repair_route": {
+                        "route_kind": "StrengthenExistingTest",
+                        "target_file": "tests/test_pricing.py",
+                        "related_test": "test_calculate_discount_smoke",
+                        "assertion_shape": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                        "missing_discriminator": "amount == threshold",
+                        "changed_behavior": "if amount >= threshold:",
+                        "stop_conditions": [
+                            "import cannot be resolved",
+                            "expected value is ambiguous",
+                            "production code edit appears necessary"
+                        ]
+                    },
+                    "verification_commands": [
+                        "pytest tests/test_pricing.py::test_calculate_discount_smoke"
+                    ],
+                    "receipt_command": "ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json"
+                }
+            ]
+        })
+    }
+
+    fn check_output_with_python_repair_card() -> Value {
+        json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "findings": [
+                {
+                    "id": "probe:app_pricing.py:2:python_preview",
+                    "classification": "weakly_exposed",
+                    "probe": {
+                        "file": "app/pricing.py",
+                        "line": 2,
+                        "family": "predicate_boundary"
+                    },
+                    "canonical_gap": {
+                        "id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                        "file": "app/pricing.py",
+                        "owner": "python:app/pricing.py::calculate_discount",
+                        "behavior_kind": "predicate_boundary"
+                    },
+                    "related_tests": [
+                        {
+                            "file": "tests/test_pricing.py",
+                            "line": 4,
+                            "name": "test_calculate_discount"
+                        }
+                    ],
+                    "python_repair_card": {
+                        "language": "python",
+                        "language_status": "preview",
+                        "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                        "changed_owner": "python:app/pricing.py::calculate_discount",
+                        "changed_behavior": "if amount >= threshold:",
+                        "current_test_evidence": [
+                            "tests/test_pricing.py reaches calculate_discount",
+                            "existing test asserts broad success"
+                        ],
+                        "missing_discriminator": "amount == threshold",
+                        "repair_action": "strengthen_existing_test",
+                        "test_shape": "pytest exact boundary assertion",
+                        "suggested_assertion": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                        "suggested_location": {
+                            "source_file": "app/pricing.py",
+                            "test_file": "tests/test_pricing.py",
+                            "test_name": "test_calculate_discount_smoke"
+                        },
+                        "verify": {
+                            "command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+                            "confidence": "high"
+                        },
+                        "receipt": {
+                            "status": "unavailable_until_saved_check_output"
+                        },
+                        "stop_conditions": [
+                            "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+                            "Stop if the expected value for the missing discriminator is ambiguous.",
+                            "Stop if adding the test appears to require a production-code edit."
+                        ],
+                        "limits": [
+                            "static advisory evidence only"
+                        ],
+                        "authority_boundary": "preview_advisory_only"
+                    }
+                }
+            ]
+        })
+    }
+
     fn write_json(path: &Path, value: Value) -> Result<(), String> {
         let parent = path
             .parent()
@@ -3483,6 +3953,17 @@ mod tests {
         Ok(path)
     }
 
+    fn temp_python_repo(name: &str) -> Result<PathBuf, String> {
+        let path = write_temp_root(&env::temp_dir(), name)?;
+        fs::write(
+            path.join("pyproject.toml"),
+            "[project]\nname = \"first-pr-python-test\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write temp pyproject.toml: {err}"))?;
+        init_git_repo_with_initial_files(&path, &["pyproject.toml"])?;
+        Ok(path)
+    }
+
     fn temp_cargo_root_outside_repo(name: &str) -> Result<PathBuf, String> {
         let repo_root = fixture_repo_root()?;
         let parent = repo_root
@@ -3496,12 +3977,7 @@ mod tests {
     }
 
     fn write_temp_cargo_root(parent: &Path, name: &str) -> Result<PathBuf, String> {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|err| format!("system clock error: {err}"))?
-            .as_nanos();
-        let path = parent.join(format!("ripr-{name}-{}-{stamp}", std::process::id()));
-        fs::create_dir_all(&path).map_err(|err| format!("mkdir {}: {err}", path.display()))?;
+        let path = write_temp_root(parent, name)?;
         fs::write(
             path.join("Cargo.toml"),
             "[package]\nname = \"first-pr-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
@@ -3510,11 +3986,27 @@ mod tests {
         Ok(path)
     }
 
+    fn write_temp_root(parent: &Path, name: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("system clock error: {err}"))?
+            .as_nanos();
+        let path = parent.join(format!("ripr-{name}-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&path).map_err(|err| format!("mkdir {}: {err}", path.display()))?;
+        Ok(path)
+    }
+
     fn init_git_repo(path: &Path) -> Result<(), String> {
+        init_git_repo_with_initial_files(path, &["Cargo.toml"])
+    }
+
+    fn init_git_repo_with_initial_files(path: &Path, files: &[&str]) -> Result<(), String> {
         run_git_setup(path, &["init"])?;
         run_git_setup(path, &["config", "user.email", "ripr@example.invalid"])?;
         run_git_setup(path, &["config", "user.name", "RIPR Test"])?;
-        run_git_setup(path, &["add", "Cargo.toml"])?;
+        for file in files {
+            run_git_setup(path, &["add", file])?;
+        }
         run_git_setup(path, &["commit", "-m", "init"])?;
         run_git_setup(path, &["update-ref", "refs/remotes/origin/main", "HEAD"])
     }

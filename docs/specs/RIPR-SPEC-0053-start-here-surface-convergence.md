@@ -217,6 +217,14 @@ Actionable Rust gap:
 - PR/CI, CLI, and editor surfaces name the same gap identity, repair route,
   verify command, receipt command, and receipt state.
 
+Preview Python top gap:
+
+- Start-here surfaces may select a Python preview gap from explicit gap-ledger
+  evidence, but must show `language_status = "preview"`,
+  `output_state = "preview_limited"`, static-limit/advisory boundary, verify
+  command, and receipt command before any repair guidance is treated as a work
+  order.
+
 No actionable gap:
 
 - Surfaces report no actionable gap without implying coverage adequacy,

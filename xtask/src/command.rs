@@ -20,8 +20,10 @@ pub(crate) enum XtaskCommand {
     BadgeArtifacts,
     RepoBadgeArtifacts(Vec<String>),
     BadgeBasis(Vec<String>),
+    RiprPlus(Vec<String>),
     RepoSeamInventory,
     RepoExposureReport,
+    RepoExposureSummaryReport,
     RepoExposureLatencyReport,
     RepoContractReport,
     PrBody(Vec<String>),
@@ -41,6 +43,9 @@ pub(crate) enum XtaskCommand {
     ReleaseUploadAssets(Vec<String>),
     TargetedTestOutcome(Vec<String>),
     MutationCalibration(Vec<String>),
+    BunUbCalibration(Vec<String>),
+    BunUbPreviewSummary(Vec<String>),
+    ConfiguredBridgeInventory(Vec<String>),
     RecommendationCalibration(Vec<String>),
     SarifPolicy(Vec<String>),
     ImpactedEvidence(Vec<String>),
@@ -139,8 +144,10 @@ impl XtaskCommand {
             "badge-artifacts" => Self::BadgeArtifacts,
             "repo-badge-artifacts" => Self::RepoBadgeArtifacts(rest),
             "badge-basis" => Self::BadgeBasis(rest),
+            "ripr-plus" => Self::RiprPlus(rest),
             "repo-seam-inventory" => Self::RepoSeamInventory,
             "repo-exposure-report" => Self::RepoExposureReport,
+            "repo-exposure-summary-report" => Self::RepoExposureSummaryReport,
             "repo-exposure-latency-report" => Self::RepoExposureLatencyReport,
             "repo-contract-report" => Self::RepoContractReport,
             "pr-body" => Self::PrBody(rest),
@@ -160,6 +167,9 @@ impl XtaskCommand {
             "release-upload-assets" => Self::ReleaseUploadAssets(rest),
             "targeted-test-outcome" => Self::TargetedTestOutcome(rest),
             "mutation-calibration" => Self::MutationCalibration(rest),
+            "bun-ub-calibration" => Self::BunUbCalibration(rest),
+            "bun-ub-preview-summary" => Self::BunUbPreviewSummary(rest),
+            "configured-bridge-inventory" => Self::ConfiguredBridgeInventory(rest),
             "recommendation-calibration" => Self::RecommendationCalibration(rest),
             "sarif-policy" => Self::SarifPolicy(rest),
             "impacted-evidence" => Self::ImpactedEvidence(rest),
@@ -294,8 +304,10 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "badge-artifacts",
         "repo-badge-artifacts [--gap-ledger <path>]",
         "badge-basis [--gap-ledger <path>] [--include-seam-classes]",
+        "ripr-plus [--gap-ledger <path>] [--repo-exposure-summary <path>]",
         "repo-seam-inventory",
         "repo-exposure-report",
+        "repo-exposure-summary-report",
         "repo-exposure-latency-report",
         "repo-contract-report",
         "pr-body --work-item <id>",
@@ -320,6 +332,9 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "release-upload-assets --version <version>",
         "targeted-test-outcome --before <path> --after <path>",
         "mutation-calibration [root] --mutants-json <path>",
+        "bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]",
+        "bun-ub-preview-summary [--calibration-corpus <path>] [--graph-corpus <path>] [--dogfood-corpus <path>] [--out <path>] [--out-md <path>]",
+        "configured-bridge-inventory [--graph-corpus <path>] [--out <path>] [--out-md <path>]",
         "recommendation-calibration [--root <path>] [--pr-guidance <path>] [--outcome-receipts <path>] [--out <path>]",
         "sarif-policy --current <path> [--baseline <path>]",
         "impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]",
@@ -567,6 +582,13 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Audits public badge endpoint counts, current repo badge basis, seam-native inventory pressure, and the recommended actionable gap projection without editing badges/*.json; --include-seam-classes opts into the expensive full class breakdown.",
         ),
         command_entry(
+            "ripr-plus [--gap-ledger <path>] [--repo-exposure-summary <path>]",
+            "report_only",
+            "target/ripr/reports/ripr-plus.{json,md}",
+            false,
+            "Writes the repo-wide RIPR+ quality receipt from bounded repo-exposure-summary-json canonical actionable gaps, not raw seam inventory; --repo-exposure-summary reuses a downstream-consumable bounded summary artifact, and --gap-ledger uses an existing gap decision ledger through repo-badge-json to avoid an expensive fresh repo scan.",
+        ),
+        command_entry(
             "repo-seam-inventory",
             "report_only",
             "target/ripr/reports/repo-seams.{json,md}",
@@ -578,7 +600,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "report_only",
             "target/ripr/reports/repo-exposure.{json,md}",
             false,
-            "Writes repo exposure reports.",
+            "Writes full evidence-heavy repo exposure reports for explicit deep inspection.",
+        ),
+        command_entry(
+            "repo-exposure-summary-report",
+            "report_only",
+            "target/ripr/reports/repo-exposure-summary.json",
+            false,
+            "Writes the bounded repo exposure summary JSON for ordinary local metrics, planning, and CI-safe inspection.",
         ),
         command_entry(
             "repo-exposure-latency-report",
@@ -672,11 +701,11 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Prints one bounded swarm repair packet for operator handoff without editing files, running tests, calling providers, or creating receipts.",
         ),
         command_entry(
-            "ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>]",
+            "ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>] [--real-repair-attempts <path>]",
             "report_only",
             "target/ripr/reports/swarm-attempt-ledger.{json,md}",
             false,
-            "Builds durable attempt history from swarm plan, outcome, and prior ledger artifacts without executing repairs.",
+            "Builds durable attempt history from swarm plan, outcome, prior ledger, and real repair attempt artifacts without executing repairs.",
         ),
         command_entry(
             "ripr-swarm readiness [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--attempt-ledger <path>]",
@@ -747,6 +776,27 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/mutation-calibration.{json,md}",
             false,
             "Imports supplied runtime mutation results into advisory reports; does not run mutation testing.",
+        ),
+        command_entry(
+            "bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]",
+            "report_only",
+            "target/ripr/reports/bun-ub-calibration.{json,md} or explicit --out paths",
+            false,
+            "Writes advisory Bun UB TypeScript calibration reports; does not run Bun, TypeScript, mutation, providers, generated tests, or source edits.",
+        ),
+        command_entry(
+            "bun-ub-preview-summary [--calibration-corpus <path>] [--graph-corpus <path>] [--dogfood-corpus <path>] [--out <path>] [--out-md <path>]",
+            "report_only",
+            "target/ripr/reports/bun-ub-preview-summary.{json,md} or explicit --out paths",
+            false,
+            "Writes a compact advisory Bun UB preview summary from existing calibration, graph, and dogfood data; does not run Bun, TypeScript, mutation, providers, generated tests, or source edits.",
+        ),
+        command_entry(
+            "configured-bridge-inventory [--graph-corpus <path>] [--out <path>] [--out-md <path>]",
+            "report_only",
+            "target/ripr/reports/configured-bridge-inventory.{json,md} or explicit --out paths",
+            false,
+            "Writes a report-only configured bridge inventory from existing cross-language oracle graph data; does not infer reachability, create repair packets, suggest placement from missing inventory rows, run Bun or TypeScript, create gates/badges, or promote support status.",
         ),
         command_entry(
             "recommendation-calibration [--root <path>] [--pr-guidance <path>] [--outcome-receipts <path>] [--out <path>]",
@@ -865,7 +915,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "report_only",
             "stdout and target/ripr/reports/cache-report.{md,json}",
             false,
-            "Reports target/ripr/cache families and largest files without reading or deleting source, build, report, receipt, PR, review, workflow, or agent artifacts.",
+            "Reports target/ripr/cache families, largest files, and sharded cache sets without reading or deleting source, build, report, receipt, PR, review, workflow, or agent artifacts.",
         ),
         command_entry(
             "cache gc [--dry-run] [--max-size-gb <n>] [--ttl-days <n>]",
@@ -1365,6 +1415,14 @@ mod tests {
         assert!(
             note("badge-basis [--gap-ledger <path>] [--include-seam-classes]")
                 .contains("Audits public badge endpoint counts")
+        );
+        assert!(
+            note("ripr-plus [--gap-ledger <path>] [--repo-exposure-summary <path>]")
+                .contains("canonical actionable gaps")
+        );
+        assert!(
+            note("ripr-plus [--gap-ledger <path>] [--repo-exposure-summary <path>]")
+                .contains("downstream-consumable bounded summary artifact")
         );
     }
 

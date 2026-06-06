@@ -4,14 +4,16 @@ Status: accepted
 
 ## Problem
 
-RIPR now has the repair-loop architecture needed for a useful Rust first run:
+RIPR now has the repair-loop architecture needed for a useful first run:
 gap decision ledger, first useful action, PR repair cards, agent packets,
 receipts, generated CI summaries, optional gates, and report packet navigation.
 Those artifacts are correct but still require a new user to know too much
-internal report topology.
+internal report topology. Stable Rust gaps remain the primary first-run path;
+preview-language gaps may enter the same front door only when explicit
+artifact evidence already names the advisory boundary.
 
-A first-time adopter should be able to run one obvious path on one Rust PR and
-answer:
+A first-time adopter should be able to run one obvious path on one supported PR
+and answer:
 
 ```text
 What happened?
@@ -29,9 +31,11 @@ manual pilot, coding-agent, and advisory-CI adoption.
 
 ## Behavior
 
-RIPR should provide one documented first-run path for a Rust PR. The public
-path is `ripr first-pr`; the repo-local `cargo xtask first-pr` command remains
-a compatibility wrapper over the same first-run packet contract.
+RIPR should provide one documented first-run path for a stable Rust PR, plus
+preview/advisory projection for Python gaps when a gap ledger already supplies
+repairable preview records. The public path is `ripr first-pr`; the repo-local
+`cargo xtask first-pr` command remains a compatibility wrapper over the same
+first-run packet contract.
 
 The target flow is:
 
@@ -39,7 +43,7 @@ The target flow is:
 install or use local binary
 -> run first PR path
 -> read start-here packet
--> inspect top repairable Rust gap or no-action state
+-> inspect top repairable supported gap or no-action state
 -> copy bounded repair packet
 -> add one focused test or output proof outside RIPR
 -> run verification command
@@ -57,9 +61,10 @@ mutation testing, publish comments, or change gate policy.
 
 The public `ripr first-pr` command should include a read-only preflight section
 in the start-here packet. The preflight answers whether the supplied root,
-Git worktree, base/head refs, diff, Cargo workspace, repository config,
-artifact output directory, and write/check mode are usable for the first-run
-path.
+Git worktree, base/head refs, diff, supported project marker, repository
+config, artifact output directory, and write/check mode are usable for the
+first-run path. Supported project markers currently mean a Cargo workspace or a
+Python preview project root.
 
 Preflight checks explain setup and recovery. They do not create analyzer facts,
 rank gaps, edit source, generate tests, run mutation testing, or decide gate
@@ -86,7 +91,7 @@ The packet must answer these reviewer questions in stable, user-facing terms:
 | Question | Required answer |
 | --- | --- |
 | What happened? | First-run status and selected state. |
-| What matters most? | One top repairable Rust gap, or a no-action/error state. |
+| What matters most? | One top repairable stable Rust gap, one preview Python gap from explicit gap-ledger evidence, or a no-action/error state. |
 | What should happen next? | One repair, refresh, retry, inspect, or no-action step, with changed behavior, current evidence strength, missing discriminator, and focused proof intent when a repairable gap is selected. |
 | Which artifact backs it? | Paths to the source gap ledger, repair card, agent packet, receipt, and gate decision when present. |
 | Which command regenerates the missing piece? | A copyable command when the packet knows one. |
@@ -100,8 +105,8 @@ machine-readable form consumed by generated CI, LSP orchestration, and agents.
 
 The packet should select at most one top item for the first screen:
 
-1. A PR-local, Rust, repairable, unsuppressed, unwaived, non-baseline gap with
-   a repair route and verification command.
+1. A PR-local repairable, unsuppressed, unwaived, non-baseline stable Rust gap
+   or preview Python gap with a repair route and verification command.
 2. A missing required artifact state with a regeneration command.
 3. A stale, wrong-root, malformed, timeout, or other blocked state with a retry
    or inspection command.
@@ -140,7 +145,7 @@ No-action states must be explicit. A first-run packet may select no-action when
 the best available artifact says:
 
 - empty diff;
-- no projectable Rust gap;
+- no projectable supported gap;
 - already observed;
 - waived;
 - suppressed;
