@@ -751,6 +751,66 @@ mod tests {
     }
 
     #[test]
+    fn same_file_method_chain_owner_call_tracing_covers_activation_alias_helpers() {
+        let owner = function(
+            "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(amount) = raw_amount { amount >= threshold } else { false }\n}",
+        );
+        let parameters = function_parameters(&owner);
+
+        assert_eq!(
+            boundary_local_operand_parameter(&owner, &parameters, "amount"),
+            Some("raw_amount".to_string())
+        );
+        assert_eq!(
+            boundary_local_operand_parameter(&owner, &parameters, ""),
+            None
+        );
+        assert!(body_contains_wrapped_local_alias(
+            &owner.body,
+            "Some",
+            "amount",
+            "raw_amount"
+        ));
+        let match_body =
+            "match raw_amount {\n    Some(amount) => amount >= threshold,\n    None => false,\n}";
+        assert!(body_contains_wrapped_local_alias(
+            match_body,
+            "Some",
+            "amount",
+            "raw_amount"
+        ));
+        assert!(body_contains_match_parameter(match_body, "raw_amount"));
+        assert!(body_contains_wrapper_pattern(match_body, "Some", "amount"));
+        assert!(body_contains_direct_local_alias(
+            "let amount = raw_amount;\namount >= threshold",
+            "amount",
+            "raw_amount"
+        ));
+        assert!(!body_contains_match_parameter(
+            "// match raw_amount { Some(amount) => amount >= threshold }",
+            "raw_amount"
+        ));
+        assert!(!body_contains_wrapper_pattern(
+            "// Some(amount) => amount >= threshold",
+            "Some",
+            "amount"
+        ));
+        assert!(!body_contains_direct_local_alias(
+            "let amount = raw_amount_extra;",
+            "amount",
+            "raw_amount"
+        ));
+        assert!(starts_with_identifier_token(
+            " raw_amount.required_discriminator()",
+            "raw_amount"
+        ));
+        assert!(!starts_with_identifier_token(
+            " raw_amount_extra.required_discriminator()",
+            "raw_amount"
+        ));
+    }
+
+    #[test]
     fn activation_evidence_uses_exact_if_let_parameter_name_for_boundary_operand_alias() {
         let owner = function(
             "pub fn score(raw_amount: Option<i32>, raw_amount_extra: Option<i32>, threshold: i32) -> bool {\n    if let Some(amount) = raw_amount_extra { amount >= threshold } else { false }\n}",

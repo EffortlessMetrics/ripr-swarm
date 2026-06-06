@@ -20,8 +20,19 @@ policy for the current run. See [Configuration](CONFIGURATION.md).
 SARIF output is governed by
 [RIPR-SPEC-0008](specs/RIPR-SPEC-0008-sarif-ci-policy.md). SARIF uses the
 standard SARIF `version: "2.1.0"` envelope rather than `schema_version: "0.1"`.
-Adding SARIF must not change the existing human, JSON, GitHub annotation,
-badge, LSP, or context schemas.
+Adding SARIF or GitHub annotation detail must not remove or rename existing
+JSON, badge, LSP, or context fields. Preview-card `surface_scope` values record
+which public advisory surfaces are currently wired.
+
+`ripr check --format github` emits GitHub Actions workflow-command text rather
+than JSON. For Python preview findings, that message may append either an
+eligible repair-card summary or a no-action/static-limit summary. For Perl
+preview findings with strict fact-packet evidence, it may append a compact
+`perl_preview_card.v1` advisory summary with missing discriminator, suggested
+assertion, suggested location, and verify command. GitHub annotation text does
+not expose receipt commands, edit-boundary authority, or agent packets, and
+remains advisory review context rather than verify, receipt, gate, badge, or
+RIPR Zero authority.
 
 ## Check Output
 
@@ -456,9 +467,95 @@ The evidence-first fields are additive in schema `0.1`:
   Current fields are `authority_boundary` (`"preview_advisory_only"`),
   `repair_packet_ready` (`false` for this preview slice), `gap_state`,
   `actionability_category`, `why_not_actionable`, `repair_route`,
-  `missing_actionability_fields[]`, `evidence_needed_to_promote`, and
-  `raw_evidence_refs[]`. Raw evidence refs carry the original raw string plus
-  parsed `file`, `line`, `kind`, `source_id`, and optional `owner` when present.
+  `missing_actionability_fields[]`, `missing_graph_legs[]`, nullable
+  `unlock_condition`, `evidence_needed_to_promote`, and `raw_evidence_refs[]`.
+  Raw evidence refs carry the original raw string plus parsed `file`, `line`,
+  `kind`, `source_id`, optional `owner`, optional graph `leg`, and optional
+  source `sample` when present.
+- `typescript_preview_card` is an additive optional object for TypeScript and
+  JavaScript preview findings that already have structured
+  `preview_actionability`. It is an advisory card, not a repair packet. The v1
+  card carries `card_version`, `source`, `language`, `language_status`,
+  `authority_boundary`, `owner`, optional `owner_kind`, `probe_family`,
+  `changed_behavior`, optional `related_test`, `oracle_kind`,
+  `oracle_strength`, optional `bun_cross_language_grip`, optional
+  `missing_discriminator`, `suggested_assertion_shape`, `static_limits`,
+  nullable `verify.command`, `why_not_actionable`, `repair_route`,
+  `repair_packet_ready`, and `limits`. The optional
+  `bun_cross_language_grip` object is limited to configured Bun Blob preview
+  evidence and carries `state`, `rust_seam.file`, `rust_seam.owner`,
+  `rust_seam.boundary`, `typescript_evidence.test_file`,
+  `typescript_evidence.verdict`, `typescript_evidence.bridge_confidence`,
+  `typescript_evidence.missing_discriminators[]`, `limitation_category`,
+  `repair_route`, `missing_graph_legs[]`, nullable `unlock_condition`,
+  `raw_evidence_refs[]`, `action`, `suggested_test_file`, optional
+  `placement`, nested `proof_mode`, nested `advisory_packet`, `authority_boundary`, and
+  `repair_packet_ready`. The nested `advisory_packet` is a preview task-shaping
+  packet, not public repair-packet authority. It carries
+  `packet_version = "bun_cross_language_advisory_packet.v1"`,
+  `cross_language_state`, `rust_file`, `rust_owner`, `rust_boundary`,
+  nullable `ts_test_file`, `missing_discriminators[]`, `suggested_shape`,
+  `bridge_confidence`, `missing_graph_legs[]`, nested `proof_mode`,
+  `next_action`,
+  `authority_boundary`, `repair_packet_ready = false`,
+  `public_repair_packet = false`, `must_not_change[]`, `stop_condition`, and
+  `raw_evidence_refs[]`. The nested `proof_mode` object carries `mode`,
+  `reason`, `authority_boundary = "preview_advisory_only"`,
+  `runtime_execution = false`, `mutation_execution = false`,
+  `miri_execution = false`, and `proof_claim = false`. Current modes are
+  `observable_red_green`, `mutation_plus_miri`, `helper_gated`,
+  `bridge_unknown`, and `static_limitation`; these name an advisory proof
+  strategy only and do not report that any runtime, mutation, Miri, or model
+  proof was executed. The current configured Bun Blob route may name
+  `test/js/web/fetch/blob.test.ts` as advisory placement when
+  shared/resizable boundary discriminators are missing on a configured bridge.
+  Mention-only, partial external-oracle, bridge-unknown, and unresolved target
+  cases stay at
+  `suggested_test_file=not_applicable`, emit no `placement`, no verify or
+  receipt command, no allowed edit surface, and no public repair packet until
+  the full public packet fields exist. Configured bridge evidence is a
+  credited `raw_evidence_refs[].leg = "binding_edge"`; a `bridge_unknown`
+  limitation must omit that credited binding raw ref and instead name
+  `binding_or_ffi_edge` in `missing_graph_legs[]`. It is not a generated test,
+  source edit, runtime command, Rust-test placement, gate, badge, baseline, or
+  repair packet.
+  `repair_packet_ready` remains `false` for this preview slice, and nullable
+  `verify.command` must not be interpreted as a delegated repair route.
+- `perl_preview_card` is an additive optional object for Perl preview findings
+  that already have strict fact-packet evidence, canonical gap identity,
+  related-test evidence, missing discriminator evidence, verify-command
+  evidence, receipt evidence, stop conditions, must-not-change constraints, and
+  safe repo-relative raw evidence refs. It is a check JSON, human CLI, SARIF,
+  GitHub annotation, and gap-ledger Markdown advisory card, not a public repair
+  packet. The v1 card carries
+  `card_version`, `source`,
+  `language`, `language_status`, `authority_boundary`, `surface_scope`,
+  `public_projection_ready`, `public_repair_packet`, `repair_packet_ready`,
+  `agent_packet_ready`, `gate_candidate`, `badge_candidate`,
+  `ripr_zero_candidate`, `packet_id`, `canonical_gap_id`, `gap_state`,
+  `changed_owner`, `evidence_class`, `repair_route`,
+  `current_test_evidence`, `missing_discriminator`, `target_test_shape`,
+  `suggested_test_location`, `suggested_assertion`, `verify`, `receipt`,
+  `confidence`, `raw_evidence_refs[]`, `stop_if[]`, `must_not_change[]`, and
+  `limits`. For this slice,
+  `surface_scope = "check_json_human_sarif_github_gap_ledger_markdown"`,
+  `public_repair_packet = false`, `repair_packet_ready = false`,
+  `agent_packet_ready = false`, `gate_candidate = false`,
+  `badge_candidate = false`, and `ripr_zero_candidate = false`.
+  `verify.command` is copied from fact evidence with
+  `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
+  `null` even though receipt evidence is required internally, and
+  `receipt.status = "available_not_delegated"`. Perl preview cards are public
+  check JSON, human CLI, diff-scoped SARIF, GitHub annotation, and gap-ledger
+  Markdown advisory context only. Gap-ledger derivation may emit a PR-local
+  preview `GapRecord` with `projection_eligibility.markdown_advisory = true`
+  so the Markdown ledger can show the changed owner, missing discriminator,
+  suggested assertion, suggested test location, and fact-only verify command.
+  That derived record must keep `agent_packet`, `pr_comment`, `gate_candidate`,
+  `ripr_zero_count`, and `ripr_plus_count` ineligible and must not synthesize a
+  receipt command. Perl preview cards do not project allowed edit surfaces,
+  forbidden files, receipt argv, PR, CI, LSP, swarm routing, badge authority,
+  gate authority, or RIPR Zero authority in this slice.
 - `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
   Python `GapRecord` entries from findings that carry `python_repair_card`.
   Those records are advisory preview inputs for `ripr agent packet
@@ -485,8 +582,8 @@ The evidence-first fields are additive in schema `0.1`:
   `<module>` as the owner segment.
 - `language` is the per-finding source language reported by the language
   adapter that produced it (see [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md)).
-  Values are `rust`, `typescript`, `javascript`, or `python`. Omitted when no
-  adapter populated it. Rust findings always carry `language: "rust"`;
+  Values are `rust`, `typescript`, `javascript`, `python`, or `perl`. Omitted
+  when no adapter populated it. Rust findings always carry `language: "rust"`;
   preview adapters set the preview-language value when configured.
 - `language_status` is the per-finding adapter status. Values are `stable`
   or `preview`. **Omitted for Rust** per RIPR-SPEC-0026; configured preview
@@ -917,9 +1014,10 @@ Every result carries:
   `seam_kind`) when available.
 - diff-scoped preview-language Finding results may also carry additive
   `properties.language`, `properties.language_status`, `properties.owner_kind`,
-  `properties.static_limit_kind`, and `properties.preview_actionability`. The
-  `preview_actionability` shape matches `ripr check --format json` and remains
-  advisory preview context, not a SARIF policy decision or repair packet.
+  `properties.static_limit_kind`, `properties.preview_actionability`, and
+  `properties.typescript_preview_card`. The `preview_actionability` and
+  TypeScript preview-card shapes match `ripr check --format json` and remain
+  advisory preview context, not SARIF policy decisions or repair packets.
 - Direct weak Python preview Findings with an eligible `python_repair_card` in
   `ripr check --format json` also carry additive
   `properties.python_repair_card` in diff-scoped SARIF. The nested card keeps
@@ -927,6 +1025,24 @@ Every result carries:
   suggested location, verify command, receipt status/guidance, stop
   conditions, and limits. This is code-scanning context only; it does not make
   SARIF a repair executor, receipt authority, or gate.
+- Python preview Findings that are not repair-card eligible because they are
+  already observed, have no safe related-test route, are heuristic-only, or hit
+  a static limit carry additive `properties.python_no_action` in diff-scoped
+  SARIF. The nested object marks `repair_packet_ready = false`,
+  `repair_card_present = false`, `no_action_kind`, null verify/receipt
+  commands, stop conditions, and the `preview_advisory_only` authority
+  boundary. Ordinary no-action states use
+  `repairability = "no_action"` with `not_applicable_no_action` verify/receipt
+  status. Static limits use `repairability = "analyzer_limitation"`, include
+  the typed `static_limit_kind`, and use `not_applicable_static_limit` status.
+  This is fail-closed review context only; it must not be treated as an agent
+  packet or closure receipt.
+- Perl preview cards with strict fact-packet evidence also carry additive
+  `properties.perl_preview_card` in diff-scoped SARIF. The nested card matches
+  the `ripr check --format json` shape, keeps receipt commands null and edit
+  boundaries hidden, and remains code-scanning context only. It does not make
+  SARIF a repair executor, receipt authority, gate, badge input, or RIPR Zero
+  authority.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
 when their configured severity is visible. Results whose configured severity is
@@ -1638,10 +1754,12 @@ Field contract:
   focused-test instructions. Each entry carries the original `stage`, `state`,
   and `reason` plus a normalized `category` and `repair_route` so Lane 1 can
   group analyzer limits without treating them as user test gaps.
-  Predicate boundaries whose activation operand is local, iterator-derived, or
-  computed use category `activation_boundary_input_unresolved`. Iterator-derived
-  operands route to `analysis/iterator-boundary-operand-resolution`; local or
-  computed operands route to `analysis/local-computed-boundary-operand-resolution`.
+  Predicate boundaries whose activation operand is local, member-access,
+  iterator-derived, or computed use category
+  `activation_boundary_input_unresolved`. Iterator-derived operands route to
+  `analysis/iterator-boundary-operand-resolution`; member-access operands route
+  to `analysis/local-member-boundary-operand-resolution`; local or computed
+  operands route to `analysis/local-computed-boundary-operand-resolution`.
   They must not emit exact boundary candidate values or public repair packets.
 - `seams[].evidence_record.presentation_text` - reserved presentation-text
   evidence-class projection. It is `null` until a fixture-backed presentation
@@ -1945,7 +2063,10 @@ Field contract:
   `analysis/call-presence-target-affinity-owner-call-tracing` for call-presence
   target-token affinity,
   `activation_owner_call_absent_assertion_target_affinity` routed to
-  `analysis/assertion-target-affinity-owner-call-tracing`,
+  `analysis/assertion-target-affinity-owner-call-tracing`; return-value
+  assertion-target owner-call absence may route more narrowly to
+  `analysis/assertion-target-return-value-owner-call-tracing` while remaining
+  non-actionable,
   `activation_owner_call_absent_affinity_only` routed to
   `analysis/related-test-affinity-owner-call-tracing`, or
   `activation_owner_call_absent_same_file_only` routed to
@@ -1953,9 +2074,9 @@ Field contract:
   primary non-owner-call relation.
   Call-presence target-affinity, related-test-affinity, and same-file owner-call
   absence backlog packets may further split `limitation_subroute` by expression
-  shape, such as method-chain, associated-call, or function-call
-  missing-owner-call routes, so analyzer work can distinguish local
-  method-chain tracing from free-function call tracing without making the item
+  shape, such as receiver-method, associated-call, or function-call
+  missing-owner-call routes, so analyzer work can distinguish local receiver
+  method evidence from free-function call tracing without making the item
   actionable.
 - `evidence_quality.calibration_availability_counts` - counts keyed by
   `evidence_record.calibration.availability`. These are placeholder coverage
@@ -2446,11 +2567,15 @@ Field contract:
   trace events. These diagnostics explain long or pathological audit input
   generation without changing classifications, gate policy, or score semantics.
 - `run_limitations` - bounded report-level limitations. A timed-out
-  repo-exposure subprocess produces a warning audit artifact with a
-  `lane1_repo_exposure_timeout` row, phase/input context, timeout/duration
-  diagnostics, the latency trace tail, and a repair route. A subprocess that
-  exits before writing complete repo-exposure JSON, including a nominally
-  successful exit with an empty or malformed output file, produces
+  repo-exposure subprocess produces a warning audit artifact only when the
+  captured repo-exposure JSON is missing or incomplete. If the captured file is
+  complete and contains a top-level `seams` array, the audit consumes it and
+  records `inputs.repo_exposure_generation.status = "timeout_complete"` instead
+  of claiming a timeout-limited zero-debt artifact. A true timeout limitation
+  includes a `lane1_repo_exposure_timeout` row, phase/input context,
+  timeout/duration diagnostics, the latency trace tail, and a repair route. A
+  subprocess that exits before writing complete repo-exposure JSON, including a
+  nominally successful exit with an empty or malformed output file, produces
   `lane1_repo_exposure_incomplete` with the same bounded diagnostics. Counts in
   such limited artifacts are not complete repo truth and downstream reports must
   surface the limitation instead of treating zeros as absence of gaps. A runner
@@ -2462,10 +2587,16 @@ Field contract:
   `lane1_repo_exposure_large_cache_preflight_skip` with `run_status =
   "limited_large_cache_skip"`, `downstream_consumable = false`, and a repair
   route through `cargo xtask cache report` and `cargo xtask cache gc --dry-run`.
-  A completed audit may also report
+  Current repo seam cache writes entries larger than
+  `RIPR_REPO_SEAM_CACHE_LIMIT` as bounded shard files under `target/ripr/cache`.
+  Older audit artifacts or older cache-store implementations may still report
   `lane1_repo_exposure_cache_store_skipped_large_entry` when the live
   repo-exposure run emitted complete evidence but skipped a full classified
-  seam cache store because the entry exceeded the bounded cache-store limit.
+  seam cache store. That compatibility limitation carries structured
+  `observed_seams` and `cache_limit` fields in addition to the compatibility
+  `input` string, and its repair route names `cargo xtask cache report` plus
+  `RIPR_REPO_SEAM_CACHE_LIMIT` configuration when a machine has enough
+  disk/time budget for larger cache shard writes.
   The default sampled repo-exposure path records `limited_sampled_input` with
   `lane1_repo_exposure_sampled` and input such as
   `repo-exposure-json:limit_5000_of_39685`; sampled counts are useful
@@ -2728,7 +2859,7 @@ otherwise it uses the category fallback route.
         ],
         "dominant_evidence_class": "predicate_boundary",
         "why_not_actionable": "activation inputs cannot yet be mapped to a safe concrete test value",
-        "unlock_condition": "implement `analysis/local-computed-boundary-operand-resolution` so local, iterator, or computed operands can be resolved before candidate values are recommended",
+        "unlock_condition": "implement `analysis/local-computed-boundary-operand-resolution` so local, member-access, iterator, or computed operands can be resolved before candidate values are recommended",
         "non_claims": [
           "not a public repair packet",
           "not swarm-ready work",
@@ -3338,6 +3469,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": []
     }
@@ -3360,6 +3492,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": null,
       "repair_kind_success_rate": 1.0,
       "sample_packet_ids": ["packet-ts-route-001"],
+      "sample_attempt_ids": ["attempt-ts-route-001"],
       "sample_canonical_gap_ids": ["gap:ts-route"],
       "sample_missing_receipt_reasons": []
     }
@@ -3382,6 +3515,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.667,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": []
     }
@@ -3404,6 +3538,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": null,
       "repair_kind_success_rate": 1.0,
       "sample_packet_ids": ["packet-ts-route-001"],
+      "sample_attempt_ids": ["attempt-ts-route-001"],
       "sample_canonical_gap_ids": ["gap:ts-route"],
       "sample_missing_receipt_reasons": []
     }
@@ -3426,6 +3561,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": []
     }
@@ -3448,6 +3584,7 @@ actionable operator evidence instead of only route-quality counts.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.667,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": []
     }
@@ -3461,6 +3598,7 @@ actionable operator evidence instead of only route-quality counts.
       "dominant_failure_reason": "unchanged",
       "dominant_failure_count": 1,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": [],
       "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
@@ -3614,11 +3752,12 @@ current routing still comes from latest-attempt `repair_route_quality[]`.
 `top_failing_repair_routes[]` is the subset with unexpected unchanged,
 regressed, no-receipt, missing-verify-result, or unknown outcomes,
 ordered for analyzer-improvement routing. Repair-route quality rows include
-sample packet IDs and canonical gap IDs for representative attempted rows when
+sample packet IDs, attempt IDs, and canonical gap IDs for representative attempted rows when
 available, so successful and failing route metrics both remain inspectable.
 `top_failing_repair_routes[]` and `repair_route_quality_backlog[]` still derive
 their routing from failing attempts and preserve the concrete failed-attempt
-sample in the reason text. `repair_route_quality_backlog[]` converts
+sample in both `next_actions[].attempt_id` and the reason text when available.
+`repair_route_quality_backlog[]` converts
 top failing repair routes into analyzer/report backlog packets with stable
 packet IDs, improvement routes, unlock conditions, samples, and non-claims; the
 rows are not public repair packets, are not swarm-ready work, and do not promote
@@ -3745,6 +3884,14 @@ regenerates or inspects the limiting input, for example
 `cargo xtask lane1-evidence-audit` for sampled, timed-out, runner-failed, or
 incomplete repo-exposure generation and cache report/GC commands for large cache
 limits.
+Readiness also includes `cross_language_oracle_route_quality`, a SPEC-0062
+preview-only summary over the checked Bun Blob cross-language oracle graph
+corpus. This section counts complete advisory witnesses, missing discriminator
+limitations, mention-only limitations, unknown bridge limitations, and public
+packet exclusions while keeping all rows `repair_packet_ready = false`. It is
+operator route-quality evidence only; it does not create repair packets, verify
+commands, receipt commands, source edits, generated tests, gates, badges, or
+support-tier claims.
 
 ```json
 {
@@ -3926,6 +4073,7 @@ limits.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": []
     }
@@ -3948,10 +4096,60 @@ limits.
       "repair_kind_dominant_failure_reason": null,
       "repair_kind_success_rate": 1.0,
       "sample_packet_ids": [],
+      "sample_attempt_ids": [],
       "sample_canonical_gap_ids": [],
       "sample_missing_receipt_reasons": []
     }
   ],
+  "cross_language_oracle_route_quality": {
+    "status": "pass",
+    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "cases_total": 9,
+    "passing_cases": 9,
+    "failing_cases": 0,
+    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
+    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
+    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
+    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
+    "cross_language_oracle_graph_mention_only_limitations": 1,
+    "cross_language_oracle_graph_panic_boundary_limitations": 1,
+    "cross_language_oracle_graph_public_packet_exclusions": 9,
+    "repair_packet_ready_cases": 0,
+    "authority_boundary": "preview_advisory_only",
+    "non_claims": [
+      "not a public repair packet",
+      "not badge or gate input",
+      "not runtime Bun execution",
+      "not generated tests",
+      "not source edits",
+      "not full cross-language proof",
+      "not support-tier promotion"
+    ],
+    "rows": [
+      {
+        "case_id": "bun_blob_bridge_unknown_limitation",
+        "expected_state": "bridge_unknown",
+        "observed_state": "bridge_unknown",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": ["binding_or_ffi_edge"],
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "unlock_condition": "Name a configured or generated binding edge from the TypeScript Blob surface to Blob::from_js_without_defer_gc."
+      },
+      {
+        "case_id": "bun_blob_missing_external_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_external_oracle",
+        "observed_state": "rust_ungripped_ts_missing_external_oracle",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": ["external_oracle:stable_byte_copy"],
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
+      }
+    ]
+  },
   "top_failing_repair_routes": [
     {
       "language": null,
@@ -3970,6 +4168,7 @@ limits.
       "repair_kind_dominant_failure_reason": "unchanged",
       "repair_kind_success_rate": 0.5,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"]
     }
   ],
@@ -3982,6 +4181,7 @@ limits.
       "dominant_failure_reason": "unchanged",
       "dominant_failure_count": 1,
       "sample_packet_ids": ["packet-boundary-002"],
+      "sample_attempt_ids": ["attempt-boundary-002"],
       "sample_canonical_gap_ids": ["gap:def"],
       "sample_missing_receipt_reasons": [],
       "why_action_required": "`add_boundary_assertion` produced unchanged evidence; refine target shape, assertion guidance, or evidence expectations before increasing packet volume",
@@ -4007,25 +4207,28 @@ limits.
   "top_next_action": {
     "kind": "improve_repair_route_quality",
     "packet_id": "route-quality:add-boundary-assertion:unchanged",
+    "attempt_id": "attempt-boundary-002",
     "canonical_gap_id": null,
     "evidence_class": null,
     "repair_kind": "add_boundary_assertion",
     "command": "cargo xtask ripr-swarm readiness",
-    "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002`"
+    "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002` attempt `attempt-boundary-002`"
   },
   "next_actions": [
     {
       "kind": "improve_repair_route_quality",
       "packet_id": "route-quality:add-boundary-assertion:unchanged",
+      "attempt_id": "attempt-boundary-002",
       "canonical_gap_id": null,
       "evidence_class": null,
       "repair_kind": "add_boundary_assertion",
       "command": "cargo xtask ripr-swarm readiness",
-      "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002`"
+      "reason": "`add_boundary_assertion` has 1 failing latest attempt(s); dominant reason `unchanged` appears 1 time(s); route backlog packet `route-quality:add-boundary-assertion:unchanged` through `analysis/repair-route-guidance/add-boundary-assertion` before increasing packet volume; sample failed packet `packet-boundary-002` attempt `attempt-boundary-002`"
     },
     {
       "kind": "inspect_unchanged_attempts",
       "packet_id": null,
+      "attempt_id": null,
       "canonical_gap_id": null,
       "evidence_class": null,
       "repair_kind": null,
@@ -4081,7 +4284,9 @@ derived from the same plan and outcome artifacts. It can point operators to a
 ready dry-run packet, missing verify/receipt source fields, orphaned receipts,
 unchanged or regressed attempts, static-limitation backlog work, or
 operator-judgment packets that are visible but not default swarm-ready. It does
-not execute the action or consume raw findings as work. `top_next_action` is
+not execute the action or consume raw findings as work. Route-quality next
+actions may carry `attempt_id` to point at the concrete failed receipt sample
+behind the analyzer/report backlog route. `top_next_action` is
 the first item in that queue, duplicated as a stable object for badge, LSP, PR,
 CI, or other thin surfaces that should not implement their own ranking rules.
 `blocked_state_routes[]` gives every reported blocked packet or attempt state a
@@ -4140,6 +4345,14 @@ matching `static_limitations.by_category` rows as static limitations even if an
 older or partial audit summary did not increment `summary.static_limitations_total`.
 This keeps limited artifacts visible in the headline static-limitation count
 instead of presenting a misleading zero.
+The scorecard also includes `cross_language_oracle_route_quality`, the same
+SPEC-0062 preview-only route-quality summary emitted by swarm readiness. It is
+included so evidence-quality readers can see whether the checked Bun Blob
+cross-language corpus is credited, missing a discriminator, mention-only, bridge
+unknown, or excluded from public repair packets without running a separate
+analyzer path. It remains advisory and does not change gate, badge, baseline,
+repair-packet, generated-test, source-edit, provider, runtime, or support-tier
+authority.
 
 ```json
 {
@@ -4332,6 +4545,48 @@ instead of presenting a misleading zero.
     "public_projection_excluded_packets": 0,
     "projection_exclusion_reasons": []
   },
+  "cross_language_oracle_route_quality": {
+    "status": "pass",
+    "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "cases_total": 9,
+    "passing_cases": 9,
+    "failing_cases": 0,
+    "cross_language_oracle_graph_complete_advisory_witnesses": 3,
+    "cross_language_oracle_graph_missing_discriminator_limitations": 1,
+    "cross_language_oracle_graph_missing_external_oracle_limitations": 1,
+    "cross_language_oracle_graph_bridge_unknown_limitations": 1,
+    "cross_language_oracle_graph_mention_only_limitations": 1,
+    "cross_language_oracle_graph_panic_boundary_limitations": 1,
+    "cross_language_oracle_graph_public_packet_exclusions": 9,
+    "repair_packet_ready_cases": 0,
+    "authority_boundary": "preview_advisory_only",
+    "rows": [
+      {
+        "case_id": "bun_blob_missing_resizable_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_discriminator",
+        "observed_state": "rust_ungripped_ts_missing_discriminator",
+        "status": "pass",
+        "missing_discriminators": ["resizable_array_buffer"],
+        "missing_graph_legs": [
+          "boundary_discriminator:resizable_array_buffer"
+        ],
+        "repair_packet_ready": false,
+        "unlock_condition": "Prove a TypeScript Blob observer for a resizable ArrayBuffer on the configured bridge before placement or actionability is suggested."
+      },
+      {
+        "case_id": "bun_blob_missing_external_oracle_limitation",
+        "expected_state": "rust_ungripped_ts_missing_external_oracle",
+        "observed_state": "rust_ungripped_ts_missing_external_oracle",
+        "status": "pass",
+        "missing_discriminators": [],
+        "missing_graph_legs": [
+          "external_oracle:stable_byte_copy"
+        ],
+        "repair_packet_ready": false,
+        "unlock_condition": "Connect the partial Blob observer evidence to a stable byte oracle before crediting the Rust seam or suggesting placement."
+      }
+    ]
+  },
   "recommended_repairs": [
     {
       "slice": "analysis/related-test-ranking-audit-fixes",
@@ -4415,6 +4670,14 @@ Field contract:
   exclusion reasons such as missing receipt paths. This is advisory
   badge-readiness evidence only; it does not switch public badges or PR/CI
   rendering.
+- `cross_language_oracle_route_quality` - the checked SPEC-0062 Bun Blob route
+  summary. It reports complete advisory witnesses, missing discriminator
+  limitations, mention-only limitations, unknown bridge limitations, public
+  packet exclusions, row-level missing graph legs, unlock conditions, and
+  `repair_packet_ready=false`. It is preview/advisory evidence only and does not
+  create public repair packets, verify commands, receipt commands, source edits,
+  generated tests, runtime execution, gates, badges, baselines, RIPR Zero, or
+  support-tier claims.
 - `evidence_class_work_queue` - the audit-derived
   `finding_alignment.coverage.evidence_class_work_queue` section carried
   forward so the scorecard names the next evidence classes to burn down from
@@ -5258,14 +5521,19 @@ ripr review-comments \
 ```
 
 The command is a pure renderer. The default path joins existing static seam
-evidence with the changed-line diff. When `--gap-ledger` is supplied, the
-command does not rerun analysis; it renders changed-line repair cards only from
-explicit `GapRecord` entries with `projection_eligibility.pr_comment.eligible =
-true`, PR-local scope, a stable anchor, a dedupe fingerprint, a repair route,
-and verification commands. It does not post to GitHub, run mutation testing,
-refresh LSP state, edit source files, or generate tests. CI can use the JSON to
-write a job summary and emit check annotations by default. Inline PR review
-comments require a custom explicit opt-in publisher.
+evidence with the changed-line diff, but it reports a scoped review input
+instead of full-repo truth: changed production files plus bounded immediate
+caller files. The JSON and Markdown carry `analysis_scope.run_status =
+"limited_diff_scope"` and the `review_comments_diff_scope_only` limitation
+route so large-repo users can see the narrowed basis. When `--gap-ledger` is
+supplied, the command does not rerun analysis; it renders changed-line repair
+cards only from explicit `GapRecord` entries with
+`projection_eligibility.pr_comment.eligible = true`, PR-local scope, a stable
+anchor, a dedupe fingerprint, a repair route, and verification commands. It
+does not post to GitHub, run mutation testing, refresh LSP state, edit source
+files, or generate tests. CI can use the JSON to write a job summary and emit
+check annotations by default. Inline PR review comments require a custom
+explicit opt-in publisher.
 
 JSON shape:
 
@@ -5280,6 +5548,24 @@ JSON shape:
   "mode": "draft",
   "inputs": {
     "gap_ledger": "target/ripr/reports/gap-decision-ledger.json"
+  },
+  "analysis_scope": {
+    "scope": "diff_scoped_changed_files",
+    "run_status": "limited_diff_scope",
+    "basis": "changed_production_files_plus_immediate_callers",
+    "changed_files": ["src/pricing.rs"],
+    "changed_lines": 1,
+    "changed_owner_functions": 1,
+    "changed_production_files": ["src/pricing.rs"],
+    "immediate_caller_files": ["src/checkout.rs"],
+    "scoped_production_files": ["src/pricing.rs", "src/checkout.rs"],
+    "total_rust_files": 412000,
+    "total_production_files": 411000,
+    "production_files_considered": 2,
+    "classified_seams_considered": 7,
+    "downstream_consumable": true,
+    "limitation": "review_comments_diff_scope_only",
+    "repair_route": "analysis/diff-scoped-large-repo-review-fast-path"
   },
   "limits": {
     "max_inline_comments": 3,
@@ -5305,6 +5591,14 @@ JSON shape:
       "kind": "predicate_boundary",
       "grip_class": "weakly_gripped",
       "severity": "warning",
+      "source_location": {
+        "file": "src/pricing.rs",
+        "limitation": null,
+        "line": 88,
+        "repair_route": null,
+        "span": null,
+        "status": "resolved"
+      },
       "reason": "Related tests reach and observe the owner but miss the equality boundary.",
       "missing_discriminator": "amount == discount_threshold",
       "suggested_test": {
@@ -5351,6 +5645,15 @@ Field contract:
   and RIPR analysis mode used to render the report.
 - `inputs.gap_ledger` - optional explicit gap decision ledger used for
   repair-card projection. It is present only when `--gap-ledger` is supplied.
+- `analysis_scope` - optional scoped-input metadata for renderer paths that
+  run analysis. The default diff renderer emits `scope =
+  "diff_scoped_changed_files"`, `run_status = "limited_diff_scope"`, changed
+  files, changed owner count, changed production files, immediate caller files,
+  total production-file counts, the classified seam count considered, and the
+  `review_comments_diff_scope_only` limitation route. This makes the report
+  useful on large repos without representing the scoped review as full-repo
+  evidence. Gap-ledger rendering may omit this field because its authority is
+  the supplied ledger artifact.
 - `limits.max_inline_comments` - default cap for changed-line annotations.
 - `limits.max_summary_items` - default cap for total recommendations.
 - `summary.comments` - count of guidance items with safe changed-line
@@ -5375,6 +5678,11 @@ Field contract:
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
+- `comments[].source_location` - canonical source coordinate for the seam or
+  gap record rendered next to the seam ID in Markdown. When resolution is not
+  available, `status` is `"source_location_unresolved"`, `file` and `line`
+  render as unknown, `limitation` is `"source_location_unresolved"`, and
+  `repair_route` is `"analysis/source-location-resolution"`.
 - `comments[].reason` - short static-evidence explanation for why a focused
   test would be useful.
 - `comments[].missing_discriminator` - missing value, branch, variant, or
@@ -5389,9 +5697,10 @@ Field contract:
   comment body instead of raw static classes. It carries gap kind, changed
   behavior when available, why the gap matters, the bounded repair route,
   evidence IDs, verification commands, source artifact, and authority boundary.
-- `summary_only[]` - same recommendation shape without `placement`. CI should
-  show these in the Markdown/job summary but must not invent a changed-line
-  annotation for them.
+- `summary_only[]` - same recommendation shape without `placement`. These rows
+  still carry `source_location` for navigable Markdown and JSON parity. CI
+  should show these in the Markdown/job summary but must not invent a
+  changed-line annotation for them.
 - `suppressed[]` - bounded records for recommendations hidden by caps or
   nearby test changes.
 - `warnings[]` - selection warnings from the agent brief selection path.
@@ -5576,6 +5885,390 @@ Existing-comment metadata may be supplied to plan upsert behavior:
 Generated CI may upload and summarize the publish plan only when explicit
 configuration requests `plan` or `inline` mode. The default remains job summary,
 check annotations, and uploaded artifacts without durable PR comments.
+
+## Bun UB TypeScript Calibration Report
+
+The Bun UB TypeScript calibration report is a repo-local operator receipt for
+the preview Bun Blob / `ArrayBuffer` stable-byte corpus. It summarizes whether
+the calibrated cases are TS-discriminated, missing shared/resizable
+discriminators, mention-only rather than observed, or blocked by an unknown
+bridge. It is advisory preview evidence only.
+
+The repo-local report command is:
+
+```text
+cargo xtask bun-ub-calibration \
+  --corpus fixtures/typescript-bun-ub-calibration/corpus.json \
+  --out target/ripr/reports/bun-ub-calibration.json \
+  --out-md target/ripr/reports/bun-ub-calibration.md
+```
+
+With defaults, `cargo xtask bun-ub-calibration` writes:
+
+```text
+target/ripr/reports/bun-ub-calibration.json
+target/ripr/reports/bun-ub-calibration.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "bun-ub-calibration",
+  "status": "pass",
+  "source_path": "fixtures/typescript-bun-ub-calibration/corpus.json",
+  "authority_boundary": "preview_advisory_only",
+  "summary": {
+    "cases_total": 7,
+    "passing_cases": 7,
+    "failing_cases": 0,
+    "ts_discriminated_cases": 1,
+    "ts_missing_resizable_cases": 1,
+    "ts_missing_shared_cases": 1,
+    "ts_missing_shared_and_resizable_cases": 1,
+    "ts_missing_external_oracle_cases": 1,
+    "ts_mention_not_observer_cases": 1,
+    "bridge_unknown_cases": 1,
+    "missing_discriminator_cases": 3,
+    "public_packet_exclusions": 7,
+    "repair_packet_ready_cases": 0
+  },
+  "operator_question": "This Rust/FFI seam changed. Do Bun's TypeScript integration tests discriminate the boundary that would catch the stable-byte bug?",
+  "calibration_boundary": "Bun UB TypeScript calibration is preview/advisory only...",
+  "non_claims": [
+    "no provider calls",
+    "no source edits",
+    "no generated tests",
+    "no runtime Bun execution",
+    "no mutation execution",
+    "no default gates",
+    "no public badge contribution",
+    "no baseline authority",
+    "no RIPR Zero authority",
+    "no support-tier promotion",
+    "no public repair packet",
+    "no full cross-language proof"
+  ],
+  "rows": [
+    {
+      "case_id": "bun_blob_resizable_missing",
+      "source": "#31648-stripped-resizable",
+      "expected_state": "ts_missing_resizable",
+      "observed_state": "ts_missing_resizable",
+      "status": "pass",
+      "rust_seam": {
+        "file": "src/jsc/Blob.rs",
+        "owner": "Blob::from_js_without_defer_gc",
+        "boundary": "array_buffer.shared || array_buffer.resizable"
+      },
+      "typescript_evidence": {
+        "test_file": "test/js/web/fetch/blob.test.ts",
+        "entrypoints": ["new Blob", "blob.arrayBuffer"],
+        "shared_array_buffer": true,
+        "resizable_array_buffer": false,
+        "view_backed_blob_input": true,
+        "stable_byte_copy_oracle": true,
+        "max_byte_length_mention_only": false
+      },
+      "bridge_confidence": "configured_hint",
+      "expected_action": "route_cross_language_oracle_visibility_limitation",
+      "expected_missing_discriminators": ["resizable_array_buffer"],
+      "missing_discriminators": ["resizable_array_buffer"],
+      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "suggested_shape": "add or inspect a resizable ArrayBuffer Blob stable-byte discriminator in the configured TypeScript observer file; keep repair_packet_ready=false until verify, receipt, and edit-surface evidence exists",
+      "authority_boundary": "preview_advisory_only",
+      "repair_packet_ready": false,
+      "non_claims": ["runtime Bun execution", "generated tests"],
+      "reason": "Missing the resizable ArrayBuffer discriminator in the manifest calibration case.",
+      "errors": []
+    }
+  ]
+}
+```
+
+`status` is `pass` only when every row matches its expected state and no row is
+`repair_packet_ready`. `bridge_unknown` rows name `binding_or_ffi_edge` in
+`missing_graph_legs[]`; mention-only rows name
+`external_blob_or_stable_byte_observer`. The report does not run Bun, `tsc`,
+`tsserver`, mutation, providers, generated tests, source edits, gates, badges,
+baselines, RIPR Zero, or support-tier promotion.
+
+## Bun UB Preview Summary Report
+
+The Bun UB preview summary is a compact operator surface built from existing
+Bun UB calibration, cross-language oracle graph, and dogfood receipt data. It
+summarizes route counts, named static limitations, public packet exclusions,
+and receipt state without creating public repair packets.
+
+The repo-local report command is:
+
+```text
+cargo xtask bun-ub-preview-summary \
+  --calibration-corpus fixtures/typescript-bun-ub-calibration/corpus.json \
+  --graph-corpus fixtures/cross-language-oracle-graph-corpus/corpus.json \
+  --dogfood-corpus fixtures/bun-ub-cross-language-dogfood/corpus.json \
+  --out target/ripr/reports/bun-ub-preview-summary.json \
+  --out-md target/ripr/reports/bun-ub-preview-summary.md
+```
+
+With defaults, `cargo xtask bun-ub-preview-summary` writes:
+
+```text
+target/ripr/reports/bun-ub-preview-summary.json
+target/ripr/reports/bun-ub-preview-summary.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "bun-ub-preview-summary",
+  "status": "pass",
+  "authority": "preview_advisory_only",
+  "authority_boundary": "preview_advisory_only",
+  "repair_packet_ready": false,
+  "source_paths": {
+    "calibration": "fixtures/typescript-bun-ub-calibration/corpus.json",
+    "cross_language_oracle_graph": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+    "dogfood": "fixtures/bun-ub-cross-language-dogfood/corpus.json"
+  },
+  "summary": {
+    "calibration_cases_total": 7,
+    "route_quality_cases_total": 9,
+    "dogfood_receipts_total": 4,
+    "route_state_counts": {
+      "rust_ungripped_ts_discriminated": 3,
+      "rust_ungripped_ts_missing_discriminator": 1,
+      "bridge_unknown": 1,
+      "ts_mention_not_observer": 1
+    },
+    "dogfood_state_counts": {
+      "rust_ungripped_ts_discriminated": 1,
+      "rust_ungripped_ts_missing_discriminator": 1,
+      "ts_mention_not_observer": 1,
+      "public_reachable_panic_boundary_unrevealed": 1
+    },
+    "named_static_limitations": [
+      {
+        "category": "cross_language_oracle_visibility_unresolved",
+        "count": 4,
+        "repair_routes": ["analysis/cross-language-oracle-visibility"],
+        "sample_case_ids": ["bun_blob_bridge_unknown_limitation"]
+      }
+    ],
+    "public_packet_exclusions": 20,
+    "repair_packet_ready_cases": 0
+  },
+  "calibrated_routes": [
+    {
+      "route_label": "bun_blob_missing_resizable_oracle_limitation",
+      "profile": "bun_blob_array_buffer",
+      "case_id": "bun_blob_missing_resizable_oracle_limitation",
+      "state": "rust_ungripped_ts_missing_discriminator",
+      "gap_state": "static_limitation",
+      "limitation_category": "cross_language_oracle_visibility_unresolved",
+      "repair_route": "analysis/cross-language-oracle-visibility",
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "missing_discriminators": ["resizable_array_buffer"],
+      "missing_graph_legs": ["boundary_discriminator:resizable_array_buffer"],
+      "public_projection_eligible": false,
+      "repair_packet_ready": false,
+      "authority_boundary": "preview_advisory_only",
+      "unlock_condition": "prove the external oracle path and keep typed placement evidence"
+    }
+  ],
+  "dogfood_receipts": [
+    {
+      "case_id": "bun_blob_missing_resizable_receipt",
+      "source_case": "bun_blob_resizable_missing",
+      "route_quality_case": "bun_blob_missing_resizable_oracle_limitation",
+      "state": "rust_ungripped_ts_missing_discriminator",
+      "receipt_state": "closed",
+      "operator_action": "add_resizable_blob_discriminator",
+      "proof_mode": "preview_manifest_receipt",
+      "suggested_test_file": "test/js/web/fetch/blob.test.ts",
+      "repair_packet_ready": false,
+      "authority_boundary": "preview_advisory_only",
+      "errors": []
+    }
+  ],
+  "non_claims": [
+    "preview/advisory only",
+    "no public repair packet",
+    "no runtime Bun execution",
+    "no TypeScript execution",
+    "no mutation execution",
+    "no provider calls",
+    "no generated tests",
+    "no source edits",
+    "no gates or badges",
+    "no support-tier promotion",
+    "no full cross-language proof"
+  ],
+  "errors": []
+}
+```
+
+Markdown shape:
+
+```text
+# Bun UB Preview Summary
+
+Status: `pass`
+
+authority = preview_advisory_only
+
+repair_packet_ready: false
+
+## Source Paths
+## Summary
+## State Counts
+## Named Static Limitations
+## Calibrated Routes
+## Dogfood Receipts
+## Non-Claims
+```
+
+`status` is `pass` only when the source calibration and route-quality reports
+pass, dogfood receipts validate, every source keeps
+`authority_boundary = preview_advisory_only`, and
+`repair_packet_ready_cases = 0`. This report does not run Bun, `tsc`,
+`tsserver`, Jest, Vitest, Miri, mutation, providers, generated tests, source
+edits, gates, badges, baselines, RIPR Zero, support-tier promotion, or
+`ripr check --profile`. It is not a TypeScript/JavaScript stability claim, a
+full Bun binding graph, a runtime UB proof, or a public repair packet source.
+
+## Configured Bridge Inventory Report
+
+The configured bridge inventory is a report-only Bun cross-language profile
+inventory built from the existing cross-language oracle graph corpus. It makes
+current configured bridges and manifest-only future surfaces visible without
+adding analyzer behavior or a full Bun binding graph.
+
+The repo-local report command is:
+
+```text
+cargo xtask configured-bridge-inventory \
+  --graph-corpus fixtures/cross-language-oracle-graph-corpus/corpus.json \
+  --out target/ripr/reports/configured-bridge-inventory.json \
+  --out-md target/ripr/reports/configured-bridge-inventory.md
+```
+
+With defaults, `cargo xtask configured-bridge-inventory` writes:
+
+```text
+target/ripr/reports/configured-bridge-inventory.json
+target/ripr/reports/configured-bridge-inventory.md
+```
+
+JSON shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "report": "configured-bridge-inventory",
+  "status": "pass",
+  "authority": "preview_advisory_only",
+  "authority_boundary": "preview_advisory_only",
+  "repair_packet_ready": false,
+  "source_path": "fixtures/cross-language-oracle-graph-corpus/corpus.json",
+  "summary": {
+    "configured_bridge_profiles": 3,
+    "bridge_unknown_profiles": 1,
+    "future_or_missing_surfaces": 2,
+    "named_static_limitation_profiles": 1,
+    "repair_packet_ready_cases": 0,
+    "s3_surfaces_backed_by_corpus": false
+  },
+  "configured_bridges": [
+    {
+      "profile": "bun_blob_array_buffer",
+      "label": "Blob ArrayBuffer",
+      "surface_state": "configured",
+      "rust_file": "src/jsc/Blob.rs",
+      "rust_owner": "Blob::from_js_without_defer_gc",
+      "bridge_kind": "configured_bridge",
+      "bridge_confidence": "configured_hint",
+      "external_surface": "test/js/web/fetch/blob.test.ts",
+      "source_cases": ["bun_blob_complete_ts_discriminated_advisory"],
+      "missing_graph_legs": [],
+      "inventory_action": "inventory_only",
+      "repair_packet_ready": false,
+      "public_projection_eligible": false,
+      "authority_boundary": "preview_advisory_only"
+    }
+  ],
+  "bridge_unknown": [
+    {
+      "profile": "bun_blob_array_buffer",
+      "label": "Blob ArrayBuffer",
+      "surface_state": "bridge_unknown",
+      "missing_graph_legs": ["binding_or_ffi_edge"],
+      "inventory_action": "inventory_only",
+      "repair_packet_ready": false
+    }
+  ],
+  "future_or_missing_surfaces": [
+    {
+      "profile": "bun_write_helper_gated",
+      "label": "Bun.write sink",
+      "surface_state": "manifest_only",
+      "missing_graph_legs": [
+        "helper:bun_write_fixture_helper",
+        "binding_or_ffi_edge:bun_write_sink",
+        "external_oracle:stable_byte_write"
+      ],
+      "inventory_action": "inventory_only",
+      "repair_packet_ready": false
+    }
+  ],
+  "named_static_limitations": [],
+  "non_claims": [
+    "preview/advisory only",
+    "report-only bridge inventory",
+    "no inferred reachability",
+    "no full Bun binding graph",
+    "no public repair packet",
+    "no placement from missing inventory rows",
+    "no runtime Bun execution",
+    "no TypeScript execution",
+    "no mutation execution",
+    "no provider calls",
+    "no generated tests",
+    "no source edits",
+    "no gates or badges",
+    "no support-tier promotion"
+  ],
+  "errors": []
+}
+```
+
+Markdown shape:
+
+```text
+# Configured Bridge Inventory
+
+Status: `pass`
+
+authority = preview_advisory_only
+
+repair_packet_ready: false
+
+## Summary
+## Configured Bridges
+## Bridge Unknown
+## Future Or Missing Surfaces
+## Named Static Limitations
+## Non-Claims
+```
+
+`status` is `pass` only when required configured bridge profiles and
+manifest-only future surfaces are present in the corpus and no row claims a
+repair packet. Missing inventory entries are `inventory_only`; they do not
+become repair tasks or TypeScript placement suggestions.
 
 ## Recommendation Calibration Report
 
@@ -11365,6 +12058,7 @@ fixtures/surface-projection-alignment/corpus.json
 fixtures/real-repair-attempts/corpus.json
 fixtures/python-real-repo-evals/corpus.json
 fixtures/user-surface-projection-alignment/corpus.json
+fixtures/bun-ub-cross-language-dogfood/corpus.json
 ```
 
 The report is advisory. It runs `ripr check --mode fast` against stable fixture
@@ -11409,14 +12103,27 @@ non-success cases, so failed or incomplete attempts remain visible instead of
 being hidden from the repair queue.
 The checked Python real-repo eval receipts are read from
 `fixtures/python-real-repo-evals/` and record the top Python repair card,
-ranked top-3 repair-card findings, verify command, before/after receipt
-movement, false-positive notes, and unsupported limitation kinds. The report
-derives `python_repair_routing_quality` from those receipts, including top-1
-actionable usefulness, top-3 actionable precision over captured ranked
-repair-card findings, verify-command validity, concrete-discriminator and
-test-location coverage, false-actionable and crash rates, receipt closure rate,
-and unsupported limitation distribution. Eval cases with fewer than three
-ranked repair-card findings must include an explicit limit reason.
+bounded agent packet, ranked top-3 repair-card findings, verify command,
+before/after receipt movement, false-positive notes, and unsupported limitation
+kinds. The report derives `python_repair_routing_quality` from those receipts,
+including top-1 actionable usefulness, top-3 actionable precision over captured
+ranked repair-card findings, verify-command validity, agent-packet boundary
+validity, concrete-discriminator and test-location coverage,
+false-actionable and crash rates, receipt closure rate, and unsupported
+limitation distribution. Eval cases with fewer than three ranked repair-card
+findings must include an explicit limit reason.
+The checked Bun UB cross-language witness receipts are read from
+`fixtures/bun-ub-cross-language-dogfood/` and record the calibrated
+#31648-shaped known-good, stripped-resizable, maxByteLength mention-only,
+bridge-unknown, configured copy_to_unshared, configured MarkdownObject, node:fs
+scalar write manifest-only, Bun.write helper-gated, and FFI panic-boundary
+operator cases. The `bun_ub_cross_language_witnesses` JSON section includes
+`default_ci_blocking: false`, `preview_authority: "advisory"`, summary counts,
+including `bridge_unknown` and `named_static_limitation`, case ids, source
+calibration or profile cases, route-quality cases, Rust seam fields, observed
+state, missing discriminators or graph legs, suggested TypeScript test file,
+manual verdict, operator action, bridge and placement verdicts, proof mode, raw
+evidence refs, non-claims, and `repair_packet_ready: false`.
 The checked user-surface projection receipts are read from
 `fixtures/user-surface-projection-alignment/` and prove badge, LSP, PR comment,
 and CI projection examples share the same canonical gap, packet or limitation
@@ -11727,9 +12434,9 @@ JSON shape:
     "default_ci_blocking": false,
     "receipt_dir": "fixtures/python-real-repo-evals",
     "summary": {
-      "cases": 6,
-      "closed": 6,
-      "usable": 6
+      "cases": 7,
+      "closed": 7,
+      "usable": 7
     },
     "cases": [
       {
@@ -11737,6 +12444,12 @@ JSON shape:
         "repo_shape": "decorated_route_pytest",
         "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422",
         "repair_card_present": true,
+        "agent_packet_present": true,
+        "agent_packet_task": "Strengthen the existing decorated-route pytest test with response.status_code == 422.",
+        "agent_packet_command": "ripr agent packet --root target/ripr/python-real-repo-evals/decorated-route-receipt --gap-ledger gap-ledger.json --gap-id gap:python:app/checkout.py:checkout:field_value:field_construction:response.status_code=422 --json",
+        "agent_packet_allowed_files": ["tests/test_checkout.py"],
+        "agent_packet_forbidden_files": ["app/checkout.py"],
+        "agent_packet_stop_if": ["import cannot be resolved", "expected status code is ambiguous", "production code edit appears necessary"],
         "missing_discriminator": "response.status_code == 422",
         "suggested_test_file": "tests/test_checkout.py",
         "verify_command": "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
@@ -11770,51 +12483,56 @@ JSON shape:
       "reason": "All checked top Python repair cards are usable, verifiable, placed, and receipt-backed without observed false actionability"
     },
     "summary": {
-      "cases": 6,
+      "cases": 7,
       "top_1_actionable_precision": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
       },
       "top_3_actionable_precision": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
       },
       "verify_command_validity": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
+      },
+      "agent_packet_boundary_validity": {
+        "status": "pass",
+        "count": 7,
+        "checked": 7
       },
       "concrete_discriminator_rate": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
       },
       "related_test_location_rate": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
       },
       "receipt_closure_rate": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
       },
       "false_actionable_rate": {
         "status": "pass",
         "count": 0,
-        "checked": 6
+        "checked": 7
       },
       "crash_rate": {
         "status": "pass",
         "count": 0,
-        "checked": 6
+        "checked": 7
       },
       "ranked_top_3_cases_with_capture": {
         "status": "pass",
-        "count": 6,
-        "checked": 6
+        "count": 7,
+        "checked": 7
       }
     },
     "unsupported_limitation_distribution": [

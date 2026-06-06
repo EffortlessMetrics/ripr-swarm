@@ -16,7 +16,8 @@ concurrency:
 jobs:
   coverage:
     name: rust-coverage
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
