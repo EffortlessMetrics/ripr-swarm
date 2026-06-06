@@ -37,6 +37,7 @@ Support-tier impact:
   `downstream_consumable = false` (diff-scoped output is consumable
   only for its named scope, never as repo totals). The canonical
   support-tier boundary is unchanged.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
