@@ -33,6 +33,7 @@ Support-tier impact:
   `docs/BLOCKING_READINESS.md`). It promotes no language, surface, or
   evidence class; preview TypeScript/Bun and Perl evidence stays
   outside gate eligibility per the preview evidence boundary.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 

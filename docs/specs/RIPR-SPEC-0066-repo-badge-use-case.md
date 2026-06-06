@@ -33,6 +33,7 @@ Support-tier impact:
   evidence class. Preview-language evidence (TypeScript/Bun, Perl)
   remains excluded from public badge contribution per the existing
   preview evidence boundary in `docs/BLOCKING_READINESS.md`.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
