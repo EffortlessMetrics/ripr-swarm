@@ -32,6 +32,7 @@ Support-tier impact:
 - None. This spec defines user-facing use-case contracts over existing
   mechanisms; it promotes no language, surface, or evidence class to a
   stronger support tier.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
