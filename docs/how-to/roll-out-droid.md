@@ -11,6 +11,8 @@ and pilot the setup before broad enablement.
 the first rollout wave:
 
 - MiniMax M3 runs directly through Factory Droid BYOK.
+- Keep the previous MiniMax M2.7 workflow revision as the rollback path if the
+  M3 provider bridge has a live Droid compatibility issue.
 - Automatic PR review, trusted manual `@droid`, and scheduled security scan are
   separate workflows.
 - Droid workflows use SHA-pinned third-party actions.
