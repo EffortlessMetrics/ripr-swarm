@@ -121,14 +121,34 @@ vocabulary and no other:
 | `resolved` | swarm ingest `attempt_outcome` | existing |
 | `unknown` | swarm ingest `attempt_outcome` | existing |
 | `orphan_receipt` | receipt on disk with no matching current gap | planned addition |
-| `stale_receipt` | `receipt_stale` lifecycle state | existing |
-| `gap_mismatch` | `receipt_gap_mismatch` lifecycle state | existing |
+| `receipt_stale` | `receipt_stale` lifecycle state | planned addition |
+| `receipt_gap_mismatch` | `receipt_gap_mismatch` lifecycle state | planned addition |
 
 `receipt_missing`, `receipt_found`, and `receipt_not_applicable`
 remain the receipt-presence axis underneath this vocabulary; they
-feed it but are not attempt outcomes themselves. The two planned
-additions (`not_attempted`, `orphan_receipt`) require schema and
-fixture updates before any surface emits them.
+feed it but are not attempt outcomes themselves. The four planned
+additions (`not_attempted`, `orphan_receipt`, `receipt_stale`,
+`receipt_gap_mismatch`) require schema and fixture updates before
+any surface emits them as attempt outcomes. The `receipt_stale` and
+`receipt_gap_mismatch` strings already exist as lifecycle states in
+`crates/ripr/src/output/receipt_lifecycle.rs`, but no surface emits
+them as an attempt outcome today — swarm ingest classifies a stale
+packet as outcome `unknown` — so promoting them to attempt outcomes
+is the same gated work as the other planned rows. (`not_attempted`
+keeps the outcome string already used by the `cargo xtask
+actionable-gap-outcomes` rows of RIPR-SPEC-0031 and the swarm
+attempt ledger of RIPR-SPEC-0057.)
+
+Attempt-outcome strings must never be routed through
+`normalize_receipt_lifecycle_state`
+(`crates/ripr/src/output/receipt_lifecycle.rs`); that normalizer
+serves the receipt-presence axis only. It rewrites the legacy input
+aliases `stale_receipt` / `gap_mismatch` into `receipt_stale` /
+`receipt_gap_mismatch` — which is why this vocabulary uses the
+canonical `receipt_*` forms rather than the aliases — and it
+rewrites `not_attempted` into `receipt_not_applicable`, so applying
+it to an attempt outcome would silently produce a string outside
+this closed vocabulary.
 
 ### Outcome resolution rules
 
@@ -143,7 +163,13 @@ fixture updates before any surface emits them.
 4. An unrecognized movement string resolves to the presence-based
    outcome, never to an improvement.
 5. Receipt movement is valid only with before/after snapshot
-   provenance (the receipt's sha256 artifact fields).
+   provenance (the receipt's sha256 artifact fields). Planned
+   enforcement: rules 1–4 match current `classify_swarm_result`
+   behavior, but swarm-ingest classification today reads
+   `receipt.provenance.movement` without validating snapshot
+   provenance; the agent-receipt artifact carries sha256 provenance
+   by construction, and the ingest-side validation is a named
+   implementation slice in the linked plan.
 
 ### Required and forbidden wording
 
@@ -172,10 +198,11 @@ schema work lands against a contract:
   `evidence_regressed`.
 - `repair_kind_success_rate` — improved over attempted, per kind,
   receipt-backed only.
-- `limitation_route_sharpened` — limitation routes whose follow-up
-  produced a narrower or better-named limitation.
-- `limitation_route_promoted` — limitation routes whose follow-up
-  produced actionable evidence.
+- `limitation_repair_route_sharpened` — limitation repair routes
+  (the `repair_route` field attached to a named limitation) whose
+  follow-up produced a narrower or better-named limitation.
+- `limitation_repair_route_promoted` — limitation repair routes
+  whose follow-up produced actionable evidence.
 - `top_failing_routes` — routes with the highest unchanged plus
   regressed share.
 - `top_missing_fields` — the actionability fields most often
@@ -225,7 +252,9 @@ as success:
   anything other than an uncertain presence-based outcome.
 - A receipt-absent attempt counted toward `evidence_improved`,
   `resolved`, or any route-quality success numerator.
-- Receipt movement emitted without before/after snapshot provenance.
+- Receipt movement emitted without before/after snapshot provenance
+  (planned enforcement; see outcome resolution rule 5 — swarm-ingest
+  classification does not yet validate snapshot provenance).
 - An unrecognized movement string mapped to an improvement outcome.
 - Any rendering of `trusted_success = true`.
 - A forbidden-file edit that does not flag
@@ -290,8 +319,9 @@ silently dropping it or matching it to the wrong gap.
 - plans/use-case-specs/implementation-plan.md (planned) — the
   "receipt outcome quality" slice: emit the closed outcome
   vocabulary end to end (swarm ingest → gap decision ledger →
-  scorecard), including the planned `not_attempted` and
-  `orphan_receipt` states.
+  scorecard), including the planned `not_attempted`,
+  `orphan_receipt`, `receipt_stale`, and `receipt_gap_mismatch`
+  attempt-outcome states.
 - plans/use-case-specs/implementation-plan.md (planned) — the
   "route metrics" slice: extend the evidence-quality scorecard and
   trend schemas with the route-quality metrics named above, fed only
@@ -309,8 +339,8 @@ silently dropping it or matching it to the wrong gap.
 - Planned route-quality metrics (scorecard/trend extension):
   `repair_kind_attempted`, `repair_kind_improved`,
   `repair_kind_unchanged`, `repair_kind_regressed`,
-  `repair_kind_success_rate`, `limitation_route_sharpened`,
-  `limitation_route_promoted`, `top_failing_routes`,
+  `repair_kind_success_rate`, `limitation_repair_route_sharpened`,
+  `limitation_repair_route_promoted`, `top_failing_routes`,
   `top_missing_fields`.
 - Promotion rule: move this spec to `accepted` when the closed
   outcome vocabulary is emitted end to end across ingest, ledger,

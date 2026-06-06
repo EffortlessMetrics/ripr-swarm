@@ -20,14 +20,19 @@ Linked plan:
 
 Linked issues:
 
-- #1031 — make diff-first the productive default path on large repos
+- [#1031](https://github.com/EffortlessMetrics/ripr-swarm/issues/1031)
+  — make diff-first the productive default path on large repos
 
 Linked PRs:
 
-- #928 `cache: surface large seam-cache skips` (merged)
-- #933 `cache: shard large repo seam cache entries` (merged)
-- #934 `report: summarize sharded cache sets` (merged)
-- #935 `analysis: add diff-scoped review fast path` (merged)
+- [#928](https://github.com/EffortlessMetrics/ripr-swarm/pull/928)
+  `cache: surface large seam-cache skips` (merged)
+- [#933](https://github.com/EffortlessMetrics/ripr-swarm/pull/933)
+  `cache: shard large repo seam cache entries` (merged)
+- [#934](https://github.com/EffortlessMetrics/ripr-swarm/pull/934)
+  `report: summarize sharded cache sets` (merged)
+- [#935](https://github.com/EffortlessMetrics/ripr-swarm/pull/935)
+  `analysis: add diff-scoped review fast path` (merged)
 
 Support-tier impact:
 
@@ -103,6 +108,17 @@ for full-repo analysis?
   shard surfaces a named limited state with `observed_seams` and
   `cache_limit` fields and a configuration route (#928).
 
+The `downstream_consumable = true` carried by the diff phase and by
+`limited_diff_scope` review-comments output is a deliberate, named
+exception to the Lane 1 doctrine that limited runs carry
+`downstream_consumable = false`: diff-scoped output is consumable for
+its named scope only, never as repo-level totals (see Non-claims).
+The Lane 1 completeness states (`limited_timeout`,
+`limited_runner_failure`, `limited_large_cache_skip`,
+`limited_incomplete_input`, `limited_sampled_input`,
+`limited_stale_input`) keep `downstream_consumable = false`, matching
+the `docs/OUTPUT_SCHEMA.md` contract.
+
 ### Required behavior
 
 1. Changed seams are analyzed and rendered before any full-repo
@@ -111,7 +127,10 @@ for full-repo analysis?
    observed seam count and the configured limit, never a bare skip.
 3. The observed seam count is emitted on every scoped or sampled
    surface, alongside the total when the total is known (for
-   example `repo-exposure-json:limit_5000_of_39685`).
+   example the historical `repo-exposure-json:limit_5000_of_39685`
+   input string recorded in `docs/OUTPUT_SCHEMA.md`; seam totals are
+   per-snapshot and drift as the repo grows, so this example does
+   not contradict the 53,531-seam measurement in Problem).
 4. The configured cache limit (`RIPR_REPO_SEAM_CACHE_LIMIT` value in
    effect) is emitted whenever it bounds the run.
 5. Every limited state carries a `repair_route` that names the
@@ -123,7 +142,8 @@ for full-repo analysis?
 
 | State | Where it appears |
 | --- | --- |
-| `diff_complete_full_repo_limited` | diff report `run_status` |
+| `diff_complete_full_repo_limited` | diff report `run_status` and `runtime_status.state` |
+| `diff_complete/full_repo_limited` | diff report `receipt.outcome_hint` (compound form of the same state) |
 | `diff_complete` | diff report `runtime_status.diff.state` |
 | `full_repo_limited` | diff report `full_repo_context.state` |
 | `full_repo_context_not_run` | diff report `limitation_category` |
@@ -138,6 +158,13 @@ for full-repo analysis?
 
 This vocabulary is closed. A new limited state requires an update to
 `docs/OUTPUT_SCHEMA.md` and this spec before any surface emits it.
+
+This list covers the diff report, review-comments, and Lane 1 audit
+surfaces named above; it composes with the downstream export
+vocabulary in RIPR-SPEC-0070 rather than replacing it. Non-limited
+run-status values (for example the review-comments `scoped` value,
+currently constructed only in test helpers) are intentionally
+outside this table because they name scope, not partiality.
 
 ### Required and forbidden wording
 
@@ -236,7 +263,9 @@ and a route through `cargo xtask cache report` plus
 
 A default Lane 1 audit on this repository records
 `limited_sampled_input` with input such as
-`repo-exposure-json:limit_5000_of_39685`, contributes the limitation
+`repo-exposure-json:limit_5000_of_39685` (a historical snapshot
+recorded in `docs/OUTPUT_SCHEMA.md`; the observed total tracks the
+live repo and was 53,531 on 2026-06-06), contributes the limitation
 to the headline summary, and names the unsampled route. The sampled
 counts read as work-queue evidence, not repo debt totals.
 
