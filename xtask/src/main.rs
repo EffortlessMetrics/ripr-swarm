@@ -70025,27 +70025,27 @@ fn check_droid_common(
         ));
     }
 
-    if require_review_model && !has_active_line(&lines, "review_model: \"custom:MiniMax-M2.7-0\"") {
+    if require_review_model && !has_active_line(&lines, "review_model: \"custom:MiniMax-M3-0\"") {
         violations.push(format!(
-            "{path_label}: review_model must be custom:MiniMax-M2.7-0"
+            "{path_label}: review_model must be custom:MiniMax-M3-0"
         ));
     }
 
-    if !has_active_line(&lines, "security_model: \"custom:MiniMax-M2.7-0\"") {
+    if !has_active_line(&lines, "security_model: \"custom:MiniMax-M3-0\"") {
         violations.push(format!(
-            "{path_label}: security_model must be custom:MiniMax-M2.7-0"
+            "{path_label}: security_model must be custom:MiniMax-M3-0"
         ));
     }
 
-    if !has_active_line(&lines, "$HOME/.factory/settings.local.json") {
+    if !has_active_line(&lines, "$HOME/.factory/settings.json") {
         violations.push(format!(
-            "{path_label}: must write $HOME/.factory/settings.local.json"
+            "{path_label}: must write $HOME/.factory/settings.json"
         ));
     }
 
     if !has_active_line(&lines, "${MINIMAX_API_KEY}") {
         violations.push(format!(
-            "{path_label}: must keep ${{MINIMAX_API_KEY}} literal in settings.local.json"
+            "{path_label}: must keep ${{MINIMAX_API_KEY}} literal in settings.json"
         ));
     }
 
@@ -70055,12 +70055,22 @@ fn check_droid_common(
         ));
     }
 
-    if forbids_active_line(&lines, "ANTHROPIC_AUTH_TOKEN")
-        || forbids_active_line(&lines, "ANTHROPIC_BASE_URL")
-    {
-        violations.push(format!(
-            "{path_label}: must not set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_BASE_URL"
-        ));
+    for anthropic_global in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"] {
+        let empty_double_quoted = format!("{anthropic_global}: \"\"");
+        let empty_single_quoted = format!("{anthropic_global}: ''");
+        let has_empty_override = has_active_line(&lines, &empty_double_quoted)
+            || has_active_line(&lines, &empty_single_quoted);
+        let has_non_empty_override = lines.iter().any(|line| {
+            line.starts_with(&format!("{anthropic_global}:"))
+                && line != &empty_double_quoted
+                && line != &empty_single_quoted
+        });
+
+        if !has_empty_override || has_non_empty_override {
+            violations.push(format!(
+                "{path_label}: must clear {anthropic_global} with an empty step env override"
+            ));
+        }
     }
 
     let lower_lines: Vec<String> = lines.iter().map(|l| l.to_ascii_lowercase()).collect();
@@ -92751,8 +92761,8 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
     #[test]
     fn strip_yaml_comment_preserves_line_without_comment() {
         assert_eq!(
-            strip_yaml_comment("review_model: \"custom:MiniMax-M2.7-0\""),
-            "review_model: \"custom:MiniMax-M2.7-0\""
+            strip_yaml_comment("review_model: \"custom:MiniMax-M3-0\""),
+            "review_model: \"custom:MiniMax-M3-0\""
         );
     }
 
@@ -92787,19 +92797,19 @@ active: true
 
     #[test]
     fn has_active_line_finds_active_content() {
-        let lines = active_yaml_lines("review_model: \"custom:MiniMax-M2.7-0\"");
+        let lines = active_yaml_lines("review_model: \"custom:MiniMax-M3-0\"");
         assert!(has_active_line(
             &lines,
-            "review_model: \"custom:MiniMax-M2.7-0\""
+            "review_model: \"custom:MiniMax-M3-0\""
         ));
     }
 
     #[test]
     fn has_active_line_ignores_commented_content() {
-        let lines = active_yaml_lines("# review_model: \"custom:MiniMax-M2.7-0\"");
+        let lines = active_yaml_lines("# review_model: \"custom:MiniMax-M3-0\"");
         assert!(!has_active_line(
             &lines,
-            "review_model: \"custom:MiniMax-M2.7-0\""
+            "review_model: \"custom:MiniMax-M3-0\""
         ));
     }
 
@@ -92903,8 +92913,8 @@ active: true
     fn check_droid_common_flags_missing_same_repo_guard() {
         let mut violations = Vec::new();
         let yaml = "\
-review_model: \"custom:MiniMax-M2.7-0\"
-security_model: \"custom:MiniMax-M2.7-0\"
+review_model: \"custom:MiniMax-M3-0\"
+security_model: \"custom:MiniMax-M3-0\"
 ";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(violations.iter().any(|v| v.contains("same-repo guard")));
@@ -92915,8 +92925,10 @@ security_model: \"custom:MiniMax-M2.7-0\"
         let mut violations = Vec::new();
         let yaml = "\
 # ANTHROPIC_AUTH_TOKEN: something
-review_model: \"custom:MiniMax-M2.7-0\"
-security_model: \"custom:MiniMax-M2.7-0\"
+ANTHROPIC_AUTH_TOKEN: \"\"
+ANTHROPIC_BASE_URL: \"\"
+review_model: \"custom:MiniMax-M3-0\"
+security_model: \"custom:MiniMax-M3-0\"
 ";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(!violations.iter().any(|v| v.contains("ANTHROPIC")));
@@ -92927,8 +92939,8 @@ security_model: \"custom:MiniMax-M2.7-0\"
         let mut violations = Vec::new();
         let yaml = "\
 ANTHROPIC_AUTH_TOKEN: something
-review_model: \"custom:MiniMax-M2.7-0\"
-security_model: \"custom:MiniMax-M2.7-0\"
+review_model: \"custom:MiniMax-M3-0\"
+security_model: \"custom:MiniMax-M3-0\"
 ";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(violations.iter().any(|v| v.contains("ANTHROPIC")));
@@ -92939,7 +92951,7 @@ security_model: \"custom:MiniMax-M2.7-0\"
         let mut violations = Vec::new();
         let yaml = "\
 # settings: |
-review_model: \"custom:MiniMax-M2.7-0\"
+review_model: \"custom:MiniMax-M3-0\"
 ";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(!violations.iter().any(|v| v.contains("settings:")));
@@ -92967,39 +92979,39 @@ settings: |
     #[test]
     fn check_droid_common_flags_missing_review_model() {
         let mut violations = Vec::new();
-        let yaml = "security_model: \"custom:MiniMax-M2.7-0\"\n";
+        let yaml = "security_model: \"custom:MiniMax-M3-0\"\n";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(
             violations
                 .iter()
-                .any(|v| v.contains("review_model must be custom:MiniMax-M2.7-0"))
+                .any(|v| v.contains("review_model must be custom:MiniMax-M3-0"))
         );
     }
 
     #[test]
     fn check_droid_common_flags_missing_security_model() {
         let mut violations = Vec::new();
-        let yaml = "review_model: \"custom:MiniMax-M2.7-0\"\n";
+        let yaml = "review_model: \"custom:MiniMax-M3-0\"\n";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(
             violations
                 .iter()
-                .any(|v| v.contains("security_model must be custom:MiniMax-M2.7-0"))
+                .any(|v| v.contains("security_model must be custom:MiniMax-M3-0"))
         );
     }
 
     #[test]
     fn check_droid_common_flags_missing_settings_local_json() {
         let mut violations = Vec::new();
-        let yaml = "review_model: \"custom:MiniMax-M2.7-0\"\n";
+        let yaml = "review_model: \"custom:MiniMax-M3-0\"\n";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
-        assert!(violations.iter().any(|v| v.contains("settings.local.json")));
+        assert!(violations.iter().any(|v| v.contains("settings.json")));
     }
 
     #[test]
     fn check_droid_common_flags_missing_literal_minimax_key() {
         let mut violations = Vec::new();
-        let yaml = "review_model: \"custom:MiniMax-M2.7-0\"\n";
+        let yaml = "review_model: \"custom:MiniMax-M3-0\"\n";
         check_droid_common(&mut violations, "test.yml", yaml, true, true);
         assert!(violations.iter().any(|v| v.contains("${MINIMAX_API_KEY}")));
     }
@@ -93024,8 +93036,8 @@ settings: |
     fn check_droid_common_flags_missing_show_full_output_false() {
         let mut violations = Vec::new();
         let yaml = "\
-security_model: \"custom:MiniMax-M2.7-0\"
-$HOME/.factory/settings.local.json
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
 ${MINIMAX_API_KEY}
 ";
         check_droid_common(&mut violations, "test.yml", yaml, false, false);
@@ -93036,8 +93048,8 @@ ${MINIMAX_API_KEY}
     fn check_droid_common_flags_missing_debug_artifact_disable() {
         let mut violations = Vec::new();
         let yaml = "\
-security_model: \"custom:MiniMax-M2.7-0\"
-$HOME/.factory/settings.local.json
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
 ${MINIMAX_API_KEY}
 show_full_output: false
 ";
@@ -93053,8 +93065,8 @@ show_full_output: false
     fn check_droid_common_flags_missing_github_cli_bootstrap() {
         let mut violations = Vec::new();
         let yaml = "\
-security_model: \"custom:MiniMax-M2.7-0\"
-$HOME/.factory/settings.local.json
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
 ${MINIMAX_API_KEY}
 show_full_output: false
 upload_debug_artifacts: false
@@ -93086,8 +93098,8 @@ upload_debug_artifacts: false
     fn check_droid_common_allows_security_scan_without_review_model_or_same_repo_guard() {
         let mut violations = Vec::new();
         let yaml = "\
-security_model: \"custom:MiniMax-M2.7-0\"
-$HOME/.factory/settings.local.json
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
 ${MINIMAX_API_KEY}
 show_full_output: false
 upload_debug_artifacts: false
@@ -93096,7 +93108,7 @@ upload_debug_artifacts: false
         assert!(
             !violations
                 .iter()
-                .any(|v| v.contains("review_model must be custom:MiniMax-M2.7-0"))
+                .any(|v| v.contains("review_model must be custom:MiniMax-M3-0"))
         );
         assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
     }
@@ -93117,7 +93129,7 @@ jobs:
     steps:
       - name: Configure MiniMax BYOK for Factory Droid
         run: |
-          cat > "$HOME/.factory/settings.local.json" <<'JSON'
+          cat > "$HOME/.factory/settings.json" <<'JSON'
           {"apiKey": "${MINIMAX_API_KEY}"}
           JSON
       - name: Ensure GitHub CLI for Droid Action
@@ -93129,11 +93141,14 @@ jobs:
           sha256sum -c gh.sha256
           echo "/tmp/gh_2.82.1_linux_amd64/bin" >> "$GITHUB_PATH"
       - uses: EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec
+        env:
+          ANTHROPIC_AUTH_TOKEN: ""
+          ANTHROPIC_BASE_URL: ""
         with:
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7
-          security_model: "custom:MiniMax-M2.7-0"
+          security_model: "custom:MiniMax-M3-0"
           security_severity_threshold: medium
           security_block_on_critical: true
           security_block_on_high: false
