@@ -96,7 +96,8 @@ The TypeScript adapter promises, syntax-first and without `tsc`,
 - infer bounded verify commands where the runner is obvious from the
   framework hint, emitted as command text only, never executed;
 - emit repair packets only when the complete packet contract below is
-  satisfied;
+  satisfied — field completeness is necessary but not sufficient for
+  public emission (see the packet contract below);
 - fail closed into a named limitation category otherwise.
 
 ### Supported v1 vocabulary (closed list)
@@ -130,7 +131,7 @@ Each category is a named fail-closed route, never an empty result:
 | --- | --- |
 | `unknown_framework` | new named category; nearest existing vocab is `static_limit_kind = "unsupported_syntax"` |
 | `dynamic_helper` | `static_limit_kind` `dynamic_dispatch` / `mocked_module` family |
-| `opaque_matcher` | oracle present but outside the supported shapes; stays weak, no repair shape |
+| `opaque_matcher` | new named category; nearest existing vocab is `static_limit_kind = "opaque_custom_assertion_helper"` — oracle present but outside the supported shapes; stays weak, no repair shape |
 | `unresolved_bridge` | `bridge_unknown` state / `binding_or_ffi_edge` missing graph leg |
 | `missing_verify_command` | `missing_actionability_fields: verify_command` |
 | `cross_language_oracle_unresolved` | `cross_language_oracle_visibility_unresolved` with repair route `analysis/cross-language-oracle-visibility` |
@@ -143,19 +144,28 @@ The public projection is the existing
 `missing_discriminator`, `suggested_assertion_shape`,
 `why_not_actionable`, `repair_route`, `repair_packet_ready`, and
 `limits[]`. For configured Bun routes the card carries
-`bun_cross_language_grip` with `state`, the Rust seam triple
-(`rust_file`, `rust_owner`, `rust_boundary`), `ts_test_file`,
-`ts_verdict`, `bridge_confidence`, `missing_discriminators[]`,
+`bun_cross_language_grip` with `state`, the nested Rust seam triple
+(`rust_seam.file`, `rust_seam.owner`, `rust_seam.boundary`), the
+nested TypeScript evidence block (`typescript_evidence.test_file`,
+`typescript_evidence.verdict`,
+`typescript_evidence.bridge_confidence`,
+`typescript_evidence.missing_discriminators[]`),
 `limitation_category`, `repair_route`, `missing_graph_legs[]`,
 `unlock_condition`, `raw_evidence_refs[]`, `action`,
 `suggested_test_file`, ranked `placement`, `authority_boundary`, and
-`repair_packet_ready`.
+`repair_packet_ready`. The flat names (`rust_file`, `rust_owner`,
+`rust_boundary`, `ts_test_file`, `ts_verdict`) are the internal
+struct shape; in public card JSON they appear only inside the nested
+`advisory_packet` object, per the `typescript_preview_card.v1`
+section of `docs/OUTPUT_SCHEMA.md`.
 
 Grip states are the closed set from the post-0.8.1 decision:
 `rust_ungripped_ts_discriminated`,
 `rust_ungripped_ts_missing_discriminator`, `ts_mention_not_observer`,
-`bridge_unknown`, plus the named static-limitation routes (including
-`rust_ungripped_ts_missing_external_oracle`).
+`bridge_unknown`, plus the named static-limitation route
+`rust_ungripped_ts_missing_external_oracle` — the same five states
+the Required Evidence fixtures enumerate. No other grip state ships
+without amending this spec.
 
 Every grip projects `TypeScriptBunStableByteProofMode`: `mode`
 (`observable_red_green`, `mutation_plus_miri`, `helper_gated`,
@@ -174,27 +184,41 @@ which Bun routes are modeled at all.
 
 ### Public repair packet contract
 
-A public TypeScript repair packet requires every one of:
+A public TypeScript repair packet inherits the RIPR-SPEC-0061 repair
+packet requirements in full; this list restates them and adds the
+TypeScript-specific fields (`language` with `language_status`, and
+the explicit `gap_state`). It requires every one of:
 
+- `packet_id`
 - `canonical_gap_id`
 - `language` (with `language_status`)
 - `gap_state = "actionable"`
 - `repair_kind`
 - target shape (target test file/type plus suggested assertion)
+- `related_test_or_observer`
 - `verify_command`
 - `receipt_command`
 - `allowed_edit_surface`
 - `must_not_change`
 - `confidence`
-- `raw_evidence_refs`
+- `raw_evidence_refs[]`, structured per RIPR-SPEC-0061: each
+  reference carries an anchor field (`file`, `path`, or
+  `source_file`) and an identity field (`kind`, `source_id`,
+  `evidence_record_ref`, or `canonical_gap_id`); placeholder refs do
+  not satisfy the requirement
 
-Anything missing fails closed into one of the named limitation
-categories above, recorded in `missing_actionability_fields`, with
-`repair_packet_ready = false` and `public_repair_packet = false`. No
-current TypeScript/Bun surface satisfies this contract; the Bun
-advisory packet (`bun_cross_language_advisory_packet.v1`) exists
-precisely to carry the route, stop condition, and must-not-change
-constraints while staying non-public.
+Satisfying this field contract is necessary but not sufficient for
+public emission. The post-0.8.1 decision lists public repair packets
+from TypeScript/Bun preview evidence as a Non-Claim: emitting them
+additionally requires a separate accepted promotion contract,
+regardless of field completeness. Anything missing fails closed into
+one of the named limitation categories above, recorded in
+`missing_actionability_fields`, with `repair_packet_ready = false`
+and `public_repair_packet = false`. No current TypeScript/Bun surface
+satisfies this contract; the Bun advisory packet
+(`bun_cross_language_advisory_packet.v1`) exists precisely to carry
+the route, stop condition, and must-not-change constraints while
+staying non-public.
 
 ### Non-claims
 
@@ -354,8 +378,9 @@ RIPR-SPEC-0027 fixture corpus and the Bun calibration tests in
 - Verify-command inference coverage: supported-framework findings
   with a bounded command versus `missing_verify_command`.
 - Repair-packet fail-closed rate: packets refused per missing field;
-  the public-packet emission count must remain zero until the full
-  contract is satisfiable.
+  the public-packet emission count must remain zero until a separate
+  promotion contract is accepted (per the post-0.8.1 decision), not
+  merely until the full field contract is satisfiable.
 - Bun grip-state distribution
   (`language_adapter_typescript_bun_ub_cross_language_grip_states`)
   with proof-mode booleans audited to remain false.
