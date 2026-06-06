@@ -1,6 +1,6 @@
 # Cross-Language Evidence Router UX Plan
 
-Status: active; first seven implementation work items complete
+Status: active; first eight implementation work items complete
 Owner: language-adapter-swarm
 Plan artifact: RIPR-PLAN-0063
 Linked proposal: n/a
@@ -32,7 +32,11 @@ helper, bridge, and oracle unlock legs. `cargo xtask configured-bridge-inventory
 now writes a report-only configured bridge inventory from existing graph-corpus
 data, listing configured bridges, bridge-unknown rows, manifest-only future
 surfaces, and named limitations without analyzer inference or repair packets.
-The next implementation slice is `dogfood/live-bun-stable-byte-receipts`.
+`fixtures/bun-ub-cross-language-dogfood` now records live-shaped stable-byte
+receipts for configured copy_to_unshared and MarkdownObject witnesses, stripped
+resizable placement, mention-only rejection, bridge_unknown routing, node:fs and
+Bun.write manifest-only limitations, and the FFI panic-boundary limitation. The
+campaign is closed with no selected successor.
 
 This plan turns that bounded path into a repeatable mixed TypeScript plus Rust
 operating loop. It does not reopen generic TypeScript support and it does not
@@ -447,11 +451,14 @@ Revert the inventory report, tests, and docs references.
 ### Notes
 
 This item makes configuration debt visible while deliberately avoiding a full
-binding graph.
+binding graph. The implemented report command is
+`cargo xtask configured-bridge-inventory`; it intentionally omits S3 or any
+other placeholder unless corpus metadata backs it, and all inventory rows remain
+non-repair tasks.
 
 ## Work Item: dogfood/live-bun-stable-byte-receipts
 
-Status: ready
+Status: done
 Linked proposal: n/a
 Linked spec: RIPR-SPEC-0063
 Linked ADR: n/a
@@ -506,7 +513,7 @@ for the next profile or bridge slice.
 
 ## Work Item: docs/bun-ub-first-run-polish
 
-Status: ready
+Status: done
 Linked proposal: n/a
 Linked spec: RIPR-SPEC-0063
 Linked ADR: n/a
@@ -559,7 +566,7 @@ plan, not in the operator runbook.
 
 ## Work Item: docs/post-081-support-decision
 
-Status: ready
+Status: done
 Linked proposal: n/a
 Linked spec: RIPR-SPEC-0030, RIPR-SPEC-0063
 Linked ADR: n/a

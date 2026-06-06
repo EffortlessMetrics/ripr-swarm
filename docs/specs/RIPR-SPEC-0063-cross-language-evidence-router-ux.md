@@ -165,11 +165,13 @@ Configured:
 Missing or future:
   node:fs scalar write sink
   Bun.write sink
-  S3 stable-byte sink
+  S3 stable-byte sink (only after corpus metadata backs it)
 ```
 
 The inventory is report-only. It must not infer reachability, emit repair
-packets, or promote support status.
+packets, or promote support status. Future rows must come from corpus-backed
+metadata; the inventory must not emit S3 or any other placeholder from prose
+alone.
 
 ## Required Evidence
 
@@ -337,6 +339,8 @@ Implemented and planned tests:
 - `xtask/src/main.rs::tests::cross_language_profile_intake_requires_manifest_rows`
 - `xtask/src/main.rs::tests::cross_language_profile_intake_requires_helper_gated_rows`
 - `xtask/src/main.rs::tests::configured_bridge_inventory_reports_missing_future_surfaces`
+- `xtask/src/main.rs::tests::configured_bridge_inventory_command_writes_markdown_and_json`
+- `xtask/src/main.rs::tests::configured_bridge_inventory_accepts_custom_paths_and_rejects_bad_args`
 - `xtask/src/main.rs::tests::live_bun_stable_byte_dogfood_receipts_are_checked`
 
 Existing related tests are owned by RIPR-SPEC-0062 and remain the proof for the
@@ -344,8 +348,10 @@ current bounded graph behavior. The Bun preview summary, advisory packet,
 stable-byte proof-mode rows, and node:fs scalar-write manifest-only intake row
 are now implemented; the Bun.write helper-gated manifest-only intake row is
 also implemented. `cargo xtask configured-bridge-inventory` now implements the
-report-only bridge inventory over the existing graph corpus. Live dogfood
-expansion remains planned until that slice lands.
+report-only bridge inventory over the existing graph corpus. The live Bun
+stable-byte dogfood receipt pack is now implemented in
+`fixtures/bun-ub-cross-language-dogfood` and checked by
+`live_bun_stable_byte_dogfood_receipts_are_checked`.
 
 ## Implementation Mapping
 

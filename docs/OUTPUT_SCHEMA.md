@@ -20,14 +20,19 @@ policy for the current run. See [Configuration](CONFIGURATION.md).
 SARIF output is governed by
 [RIPR-SPEC-0008](specs/RIPR-SPEC-0008-sarif-ci-policy.md). SARIF uses the
 standard SARIF `version: "2.1.0"` envelope rather than `schema_version: "0.1"`.
-Adding SARIF must not change the existing human, JSON, GitHub annotation,
-badge, LSP, or context schemas.
+Adding SARIF or GitHub annotation detail must not remove or rename existing
+JSON, badge, LSP, or context fields. Preview-card `surface_scope` values record
+which public advisory surfaces are currently wired.
 
 `ripr check --format github` emits GitHub Actions workflow-command text rather
 than JSON. For Python preview findings, that message may append either an
-eligible repair-card summary or a no-action/static-limit summary. No-action
-annotation text explicitly says no repair card or agent packet was emitted, and
-remains advisory review context rather than verify, receipt, or gate authority.
+eligible repair-card summary or a no-action/static-limit summary. For Perl
+preview findings with strict fact-packet evidence, it may append a compact
+`perl_preview_card.v1` advisory summary with missing discriminator, suggested
+assertion, suggested location, and verify command. GitHub annotation text does
+not expose receipt commands, edit-boundary authority, or agent packets, and
+remains advisory review context rather than verify, receipt, gate, badge, or
+RIPR Zero authority.
 
 ## Check Output
 
@@ -520,8 +525,10 @@ The evidence-first fields are additive in schema `0.1`:
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command
   evidence, receipt evidence, stop conditions, must-not-change constraints, and
-  safe repo-relative raw evidence refs. It is a check-JSON-only advisory card,
-  not a public repair packet. The v1 card carries `card_version`, `source`,
+  safe repo-relative raw evidence refs. It is a check JSON, human CLI, SARIF,
+  GitHub annotation, and gap-ledger Markdown advisory card, not a public repair
+  packet. The v1 card carries
+  `card_version`, `source`,
   `language`, `language_status`, `authority_boundary`, `surface_scope`,
   `public_projection_ready`, `public_repair_packet`, `repair_packet_ready`,
   `agent_packet_ready`, `gate_candidate`, `badge_candidate`,
@@ -530,16 +537,25 @@ The evidence-first fields are additive in schema `0.1`:
   `current_test_evidence`, `missing_discriminator`, `target_test_shape`,
   `suggested_test_location`, `suggested_assertion`, `verify`, `receipt`,
   `confidence`, `raw_evidence_refs[]`, `stop_if[]`, `must_not_change[]`, and
-  `limits`. For this slice, `surface_scope = "check_json_only"`,
+  `limits`. For this slice,
+  `surface_scope = "check_json_human_sarif_github_gap_ledger_markdown"`,
   `public_repair_packet = false`, `repair_packet_ready = false`,
   `agent_packet_ready = false`, `gate_candidate = false`,
   `badge_candidate = false`, and `ripr_zero_candidate = false`.
   `verify.command` is copied from fact evidence with
   `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
-  `null` even though receipt evidence is required internally. Perl preview
-  cards do not project allowed edit surfaces, forbidden files, receipt argv,
-  SARIF properties, Markdown, PR, CI, LSP, swarm routing, badge authority, gate
-  authority, or RIPR Zero authority in this first public slice.
+  `null` even though receipt evidence is required internally, and
+  `receipt.status = "available_not_delegated"`. Perl preview cards are public
+  check JSON, human CLI, diff-scoped SARIF, GitHub annotation, and gap-ledger
+  Markdown advisory context only. Gap-ledger derivation may emit a PR-local
+  preview `GapRecord` with `projection_eligibility.markdown_advisory = true`
+  so the Markdown ledger can show the changed owner, missing discriminator,
+  suggested assertion, suggested test location, and fact-only verify command.
+  That derived record must keep `agent_packet`, `pr_comment`, `gate_candidate`,
+  `ripr_zero_count`, and `ripr_plus_count` ineligible and must not synthesize a
+  receipt command. Perl preview cards do not project allowed edit surfaces,
+  forbidden files, receipt argv, PR, CI, LSP, swarm routing, badge authority,
+  gate authority, or RIPR Zero authority in this slice.
 - `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
   Python `GapRecord` entries from findings that carry `python_repair_card`.
   Those records are advisory preview inputs for `ripr agent packet
@@ -1021,9 +1037,12 @@ Every result carries:
   the typed `static_limit_kind`, and use `not_applicable_static_limit` status.
   This is fail-closed review context only; it must not be treated as an agent
   packet or closure receipt.
-- Perl preview cards are intentionally not SARIF properties in this slice.
-  `findings[].perl_preview_card` is check-JSON-only advisory context until a
-  later output PR wires a separate SARIF contract.
+- Perl preview cards with strict fact-packet evidence also carry additive
+  `properties.perl_preview_card` in diff-scoped SARIF. The nested card matches
+  the `ripr check --format json` shape, keeps receipt commands null and edit
+  boundaries hidden, and remains code-scanning context only. It does not make
+  SARIF a repair executor, receipt authority, gate, badge input, or RIPR Zero
+  authority.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
 when their configured severity is visible. Results whose configured severity is
@@ -12095,13 +12114,16 @@ limitation distribution. Eval cases with fewer than three ranked repair-card
 findings must include an explicit limit reason.
 The checked Bun UB cross-language witness receipts are read from
 `fixtures/bun-ub-cross-language-dogfood/` and record the calibrated
-#31648-shaped known-good, stripped-resizable, and maxByteLength mention-only
+#31648-shaped known-good, stripped-resizable, maxByteLength mention-only,
+bridge-unknown, configured copy_to_unshared, configured MarkdownObject, node:fs
+scalar write manifest-only, Bun.write helper-gated, and FFI panic-boundary
 operator cases. The `bun_ub_cross_language_witnesses` JSON section includes
 `default_ci_blocking: false`, `preview_authority: "advisory"`, summary counts,
-case ids, source calibration cases, route-quality cases, Rust seam fields,
-observed state, missing discriminators or graph legs, suggested TypeScript test
-file, manual verdict, operator action, bridge and placement verdicts, proof
-mode, raw evidence refs, non-claims, and `repair_packet_ready: false`.
+including `bridge_unknown` and `named_static_limitation`, case ids, source
+calibration or profile cases, route-quality cases, Rust seam fields, observed
+state, missing discriminators or graph legs, suggested TypeScript test file,
+manual verdict, operator action, bridge and placement verdicts, proof mode, raw
+evidence refs, non-claims, and `repair_packet_ready: false`.
 The checked user-surface projection receipts are read from
 `fixtures/user-surface-projection-alignment/` and prove badge, LSP, PR comment,
 and CI projection examples share the same canonical gap, packet or limitation
