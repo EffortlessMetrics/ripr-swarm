@@ -9,14 +9,19 @@ use crate::analysis::seams::SeamGripClass;
 use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
-    ExposureClass, Finding, MissingDiscriminatorFact, RelatedTest, StageEvidence, ValueFact,
+    ExposureClass, Finding, LanguageId, LanguageStatus, MissingDiscriminatorFact, RelatedTest,
+    StageEvidence, ValueFact,
 };
+use crate::output::perl_preview_card::{perl_preview_card, perl_preview_card_json_value};
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
 };
 use crate::output::python_repair_card::{python_repair_card, python_repair_card_json_value};
 use crate::output::suppressions::{
     SuppressionEntry, SuppressionKind, current_iso_date, is_expired,
+};
+use crate::output::typescript_preview_card::{
+    typescript_preview_card, typescript_preview_card_json_value,
 };
 use serde_json::{Map, Value, json};
 use std::path::Path;
@@ -25,6 +30,7 @@ const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const RIPR_SARIF_SCHEMA_VERSION: &str = "0.1";
 const SARIF_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md";
+const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 
 /// Render diff-scoped Findings as SARIF.
 pub(crate) fn render_findings_sarif(
@@ -252,10 +258,25 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
             preview_actionability_json_value(&actionability),
         );
     }
-    if let Some(card) = python_repair_card(finding) {
+    let python_card = python_repair_card(finding);
+    if let Some(card) = &python_card {
         properties.insert(
             "python_repair_card".to_string(),
-            python_repair_card_json_value(&card),
+            python_repair_card_json_value(card),
+        );
+    } else if let Some(no_action) = python_no_action_properties(finding) {
+        properties.insert("python_no_action".to_string(), no_action);
+    }
+    if let Some(card) = typescript_preview_card(finding) {
+        properties.insert(
+            "typescript_preview_card".to_string(),
+            typescript_preview_card_json_value(&card),
+        );
+    }
+    if let Some(card) = perl_preview_card(finding) {
+        properties.insert(
+            "perl_preview_card".to_string(),
+            perl_preview_card_json_value(&card),
         );
     }
     properties.insert(
@@ -318,6 +339,178 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
         json!(finding.recommended_next_step.as_deref().unwrap_or("")),
     );
     Value::Object(properties)
+}
+
+fn python_no_action_properties(finding: &Finding) -> Option<Value> {
+    if finding.language != Some(LanguageId::Python)
+        || finding.language_status != Some(LanguageStatus::Preview)
+    {
+        return None;
+    }
+    if let Some(no_action_kind) = python_ordinary_no_action_kind(finding) {
+        return Some(python_ordinary_no_action_properties(
+            finding,
+            no_action_kind,
+        ));
+    }
+    python_static_limit_no_action_properties(finding)
+}
+
+fn python_ordinary_no_action_kind(finding: &Finding) -> Option<&'static str> {
+    match &finding.class {
+        ExposureClass::Exposed => Some("already_observed"),
+        ExposureClass::NoStaticPath => Some("no_related_test"),
+        ExposureClass::WeaklyExposed if python_finding_is_heuristic_only(finding) => {
+            Some("heuristic_only")
+        }
+        _ => None,
+    }
+}
+
+fn python_finding_is_heuristic_only(finding: &Finding) -> bool {
+    finding
+        .evidence
+        .iter()
+        .any(|item| item.starts_with("related_test_uncertain:"))
+        || finding
+            .ripr
+            .reach
+            .summary
+            .contains("heuristic Python test link")
+}
+
+fn python_ordinary_no_action_properties(finding: &Finding, no_action_kind: &str) -> Value {
+    let changed_owner = finding.probe.owner.as_ref().map(|owner| owner.0.as_str());
+    let stop_conditions = python_ordinary_no_action_stop_conditions(finding, no_action_kind);
+    json!({
+        "source": "check_python_preview",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": PYTHON_PREVIEW_AUTHORITY_BOUNDARY,
+        "repairability": "no_action",
+        "repair_packet_ready": false,
+        "repair_card_present": false,
+        "gap_state": no_action_kind,
+        "no_action_kind": no_action_kind,
+        "changed_owner": changed_owner,
+        "why_not_actionable": python_ordinary_no_action_reason(no_action_kind),
+        "verify": {
+            "command": Value::Null,
+            "status": "not_applicable_no_action"
+        },
+        "receipt": {
+            "command": Value::Null,
+            "status": "not_applicable_no_action"
+        },
+        "stop_conditions": stop_conditions,
+        "limits": [
+            "Syntax-first Python preview evidence only.",
+            "No repair card or agent packet emitted for no-action Python states.",
+            "No source edits, generated tests, mutation execution, provider calls, or gate authority."
+        ]
+    })
+}
+
+fn python_ordinary_no_action_reason(no_action_kind: &str) -> &'static str {
+    match no_action_kind {
+        "already_observed" => {
+            "Current Python test evidence already observes the changed behavior; no missing proof was routed."
+        }
+        "no_related_test" => {
+            "No related Python test was statically linked, so RIPR cannot choose a safe edit target."
+        }
+        "heuristic_only" => {
+            "Only heuristic Python related-test proximity was found, so bounded repair routing would overclaim."
+        }
+        _ => "Python preview did not find a bounded repair route.",
+    }
+}
+
+fn python_ordinary_no_action_stop_conditions(
+    finding: &Finding,
+    no_action_kind: &str,
+) -> Vec<&'static str> {
+    let mut stop_conditions = finding
+        .effective_stop_reasons()
+        .iter()
+        .map(|reason| reason.as_str())
+        .collect::<Vec<_>>();
+    if stop_conditions.is_empty() {
+        stop_conditions.push(match no_action_kind {
+            "already_observed" => "missing_proof_already_observed",
+            "no_related_test" => "related_python_test_not_found",
+            "heuristic_only" => "related_test_link_uncertain",
+            _ => "no_repair_packet_emitted",
+        });
+    }
+    stop_conditions
+}
+
+fn python_static_limit_no_action_properties(finding: &Finding) -> Option<Value> {
+    let static_limit_kind = finding.static_limit_kind?;
+    let static_limit_kind = static_limit_kind.as_str();
+    let stop_reasons = finding
+        .effective_stop_reasons()
+        .iter()
+        .map(|reason| reason.as_str())
+        .collect::<Vec<_>>();
+    let changed_owner = finding.probe.owner.as_ref().map(|owner| owner.0.as_str());
+    let why_not_actionable = python_static_limit_detail(finding, static_limit_kind);
+
+    Some(json!({
+        "source": "check_python_preview",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": PYTHON_PREVIEW_AUTHORITY_BOUNDARY,
+        "repairability": "analyzer_limitation",
+        "repair_packet_ready": false,
+        "repair_card_present": false,
+        "gap_state": "static_limitation",
+        "no_action_kind": "static_limit",
+        "static_limit_kind": static_limit_kind,
+        "changed_owner": changed_owner,
+        "why_not_actionable": why_not_actionable,
+        "verify": {
+            "command": Value::Null,
+            "status": "not_applicable_static_limit"
+        },
+        "receipt": {
+            "command": Value::Null,
+            "status": "not_applicable_static_limit"
+        },
+        "stop_conditions": stop_reasons,
+        "limits": [
+            "Syntax-first Python preview evidence only.",
+            "No repair card or agent packet emitted for static limits.",
+            "No source edits, generated tests, mutation execution, provider calls, or gate authority."
+        ]
+    }))
+}
+
+fn python_static_limit_detail(finding: &Finding, static_limit_kind: &str) -> String {
+    finding
+        .missing
+        .iter()
+        .find_map(|detail| non_empty(detail).map(ToString::to_string))
+        .or_else(|| {
+            finding
+                .evidence
+                .iter()
+                .find(|detail| {
+                    detail.contains("static_limit") || detail.contains(static_limit_kind)
+                })
+                .cloned()
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "Python preview reported static limit `{static_limit_kind}` without a bounded repair route."
+            )
+        })
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
 }
 
 fn seam_properties(entry: &ClassifiedSeam, severity: ConfigSeverity) -> Value {
@@ -575,7 +768,7 @@ mod tests {
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
         LanguageId, LanguageStatus, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
         ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState, StaticLimitKind, Summary, SymbolId, ValueContext,
+        StageState, StaticLimitKind, StopReason, Summary, SymbolId, ValueContext,
     };
     use serde_json::Value;
     use std::path::PathBuf;
@@ -701,6 +894,219 @@ mod tests {
             card["receipt"]["status"],
             "unavailable_until_python_gap_ledger"
         );
+        assert!(result["properties"].get("python_no_action").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_projects_python_static_limit_no_action_properties() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = &mut output.findings[0];
+        finding.id = "probe:src_runtime.py:2:python_preview".to_string();
+        finding.class = ExposureClass::StaticUnknown;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.static_limit_kind = Some(StaticLimitKind::DynamicDispatch);
+        finding.probe.id = ProbeId("probe:src_runtime.py:2:python_preview".to_string());
+        finding.probe.location = SourceLocation::new("src/runtime.py", 2, 1);
+        finding.probe.owner = Some(SymbolId("python:src/runtime.py::dispatch".to_string()));
+        finding.probe.expression = "return getattr(handler, name)(payload)".to_string();
+        finding.missing = vec![
+            "Static limit `dynamic_dispatch` prevents bounded repair routing because syntax alone cannot resolve runtime getattr dispatch.".to_string(),
+        ];
+        finding.stop_reasons = vec![StopReason::DynamicDispatchUnresolved];
+        finding.related_tests = vec![RelatedTest {
+            name: "test_dispatch_total".to_string(),
+            file: PathBuf::from("tests/test_runtime.py"),
+            line: 4,
+            oracle: Some("assert dispatch(\"total\", 10) == 10".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+        }];
+
+        let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
+        let sarif = parse_json(&rendered)?;
+        let result = first_result(&sarif)?;
+        let no_action = &result["properties"]["python_no_action"];
+
+        assert_eq!(result["ruleId"], "ripr.finding.static_unknown");
+        assert_eq!(result["properties"]["language"], "python");
+        assert_eq!(result["properties"]["language_status"], "preview");
+        assert_eq!(
+            result["properties"]["static_limit_kind"],
+            "dynamic_dispatch"
+        );
+        assert!(result["properties"].get("python_repair_card").is_none());
+        assert_eq!(no_action["authority_boundary"], "preview_advisory_only");
+        assert_eq!(no_action["repairability"], "analyzer_limitation");
+        assert_eq!(no_action["repair_packet_ready"], false);
+        assert_eq!(no_action["repair_card_present"], false);
+        assert_eq!(no_action["static_limit_kind"], "dynamic_dispatch");
+        assert_eq!(
+            no_action["changed_owner"],
+            "python:src/runtime.py::dispatch"
+        );
+        assert!(
+            no_action["why_not_actionable"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("dynamic_dispatch"))
+        );
+        assert_eq!(no_action["verify"]["command"], Value::Null);
+        assert_eq!(no_action["verify"]["status"], "not_applicable_static_limit");
+        assert_eq!(no_action["receipt"]["command"], Value::Null);
+        assert_eq!(
+            no_action["receipt"]["status"],
+            "not_applicable_static_limit"
+        );
+        assert_eq!(
+            no_action["stop_conditions"][0],
+            "dynamic_dispatch_unresolved"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_projects_perl_preview_card_properties() -> Result<(), String> {
+        let mut output = sample_output();
+        add_perl_preview_card_inputs(&mut output.findings[0]);
+
+        let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
+        let sarif = parse_json(&rendered)?;
+        let result = first_result(&sarif)?;
+        let card = &result["properties"]["perl_preview_card"];
+
+        assert_eq!(card["card_version"], "perl_preview_card.v1");
+        assert_eq!(card["language"], "perl");
+        assert_eq!(card["language_status"], "preview");
+        assert_eq!(card["authority_boundary"], "preview_advisory_only");
+        assert_eq!(
+            card["surface_scope"],
+            "check_json_human_sarif_github_gap_ledger_markdown"
+        );
+        assert_eq!(card["public_repair_packet"], false);
+        assert_eq!(card["repair_packet_ready"], false);
+        assert_eq!(card["agent_packet_ready"], false);
+        assert_eq!(card["gate_candidate"], false);
+        assert_eq!(card["badge_candidate"], false);
+        assert_eq!(card["ripr_zero_candidate"], false);
+        assert_eq!(card["packet_id"], "perl-preview:gap-return");
+        assert_eq!(
+            card["canonical_gap_id"],
+            "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value"
+        );
+        assert_eq!(
+            card["changed_owner"],
+            "perl:lib/My/App.pm::My::App::discount"
+        );
+        assert_eq!(card["repair_route"], "add_exact_return_assertion");
+        assert_eq!(card["missing_discriminator"], "return_value");
+        assert_eq!(
+            card["target_test_shape"],
+            "Test::More exact_return_assertion"
+        );
+        assert_eq!(card["suggested_test_location"], "t/app.t::discount_smoke");
+        assert_eq!(card["verify"]["command"], "prove t/app.t");
+        assert_eq!(card["verify"]["status"], "fact_only_not_delegated");
+        assert!(card["receipt"]["command"].is_null());
+        assert_eq!(card["receipt"]["status"], "available_not_delegated");
+        assert_eq!(card["raw_evidence_refs"][0]["file"], "lib/My/App.pm");
+        assert_eq!(card["raw_evidence_refs"][0]["line"], 8);
+        assert!(card.get("allowed_edit_surface").is_none());
+        assert!(card.get("allowed_edit_boundaries").is_none());
+        assert!(card.get("forbidden_files").is_none());
+        assert!(card.get("receipt_command").is_none());
+        assert!(result["properties"].get("perl_repair_card").is_none());
+        assert!(
+            result["properties"]
+                .get("perl_internal_agent_packet")
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_projects_python_ordinary_no_action_properties() -> Result<(), String> {
+        let mut already_observed = sample_finding();
+        already_observed.id = "probe:src_pricing.py:2:observed".to_string();
+        already_observed.class = ExposureClass::Exposed;
+        already_observed.language = Some(LanguageId::Python);
+        already_observed.language_status = Some(LanguageStatus::Preview);
+        already_observed.probe.owner =
+            Some(SymbolId("python:src/pricing.py::discount".to_string()));
+        already_observed.recommended_next_step = None;
+
+        let mut no_related = sample_finding();
+        no_related.id = "probe:src_pricing.py:4:no_path".to_string();
+        no_related.class = ExposureClass::NoStaticPath;
+        no_related.language = Some(LanguageId::Python);
+        no_related.language_status = Some(LanguageStatus::Preview);
+        no_related.probe.location = SourceLocation::new("src/pricing.py", 4, 1);
+        no_related.probe.owner = Some(SymbolId("python:src/pricing.py::discount".to_string()));
+        no_related.related_tests.clear();
+        no_related.recommended_next_step = None;
+
+        let mut heuristic_only = sample_finding();
+        heuristic_only.id = "probe:src_pricing.py:6:heuristic".to_string();
+        heuristic_only.class = ExposureClass::WeaklyExposed;
+        heuristic_only.language = Some(LanguageId::Python);
+        heuristic_only.language_status = Some(LanguageStatus::Preview);
+        heuristic_only.probe.location = SourceLocation::new("src/pricing.py", 6, 1);
+        heuristic_only.probe.owner = Some(SymbolId("python:src/pricing.py::discount".to_string()));
+        heuristic_only.evidence =
+            vec!["related_test_uncertain: test_name_similarity (test_discount)".to_string()];
+        heuristic_only.recommended_next_step = None;
+
+        let output = CheckOutput {
+            findings: vec![already_observed, no_related, heuristic_only],
+            ..sample_output()
+        };
+
+        let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
+        let sarif = parse_json(&rendered)?;
+        let results = results(&sarif)?;
+
+        let expected = [
+            (
+                "already_observed",
+                "missing_proof_already_observed",
+                "already observes",
+            ),
+            (
+                "no_related_test",
+                "related_python_test_not_found",
+                "No related Python test",
+            ),
+            (
+                "heuristic_only",
+                "related_test_link_uncertain",
+                "Only heuristic Python related-test proximity",
+            ),
+        ];
+        for (result, (kind, stop_condition, reason_text)) in results.iter().zip(expected) {
+            let no_action = &result["properties"]["python_no_action"];
+            assert!(result["properties"].get("python_repair_card").is_none());
+            assert_eq!(no_action["authority_boundary"], "preview_advisory_only");
+            assert_eq!(no_action["repairability"], "no_action");
+            assert_eq!(no_action["repair_packet_ready"], false);
+            assert_eq!(no_action["repair_card_present"], false);
+            assert_eq!(no_action["gap_state"], kind);
+            assert_eq!(no_action["no_action_kind"], kind);
+            assert_eq!(
+                no_action["changed_owner"],
+                "python:src/pricing.py::discount"
+            );
+            assert!(
+                no_action["why_not_actionable"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains(reason_text)),
+                "expected reason containing {reason_text:?}, got {no_action:?}"
+            );
+            assert_eq!(no_action["verify"]["command"], Value::Null);
+            assert_eq!(no_action["verify"]["status"], "not_applicable_no_action");
+            assert_eq!(no_action["receipt"]["command"], Value::Null);
+            assert_eq!(no_action["receipt"]["status"], "not_applicable_no_action");
+            assert_eq!(no_action["stop_conditions"][0], stop_condition);
+        }
         Ok(())
     }
 
@@ -743,6 +1149,76 @@ mod tests {
             result["properties"]["preview_actionability"]["raw_evidence_refs"][0]["file"],
             "src/lib.ts"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_preserves_bun_cross_language_grip_card_properties() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = &mut output.findings[0];
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.owner_kind = Some(OwnerKind::Function);
+        finding.evidence = vec![
+            "owner: Blob::from_js_without_defer_gc".to_string(),
+            "gap_state: static_limitation".to_string(),
+            "actionability_category: cross_language_oracle_visibility_unresolved".to_string(),
+            "why_not_actionable: configured Bun Blob TypeScript preview evidence is missing external discriminator(s): resizable_array_buffer; placement can name the existing TypeScript Blob test file, but RIPR cannot emit a public repair packet without verification, receipt, and edit-surface evidence".to_string(),
+            "repair_route: analysis/cross-language-oracle-visibility".to_string(),
+            "missing_actionability_fields: verify_command, receipt_command, must_not_change, allowed_edit_surface".to_string(),
+            "missing_graph_legs: boundary_discriminator:resizable_array_buffer".to_string(),
+            "unlock_condition: add or inspect the missing external TypeScript discriminator(s) in test/js/web/fetch/blob.test.ts and keep repair-packet projection blocked until verify, receipt, and edit-surface evidence exists".to_string(),
+            "evidence_needed_to_promote: the missing TypeScript discriminator in the configured Blob test file plus verify command, receipt command, and edit constraints before repair-packet projection".to_string(),
+            "raw_evidence_ref: leg=rust_seam;file=src/jsc/Blob.rs;line=42;kind=rust_boundary;source_id=probe:src_jsc_Blob_rs:42:typescript_bun_ub_cross_language_preview;owner=Blob::from_js_without_defer_gc;sample=array_buffer.shared || array_buffer.resizable".to_string(),
+            "typescript_bun_ub_bridge_hint: confidence=configured_hint rust_file=src/jsc/Blob.rs rust_owner=Blob::from_js_without_defer_gc rust_boundary=\"array_buffer.shared || array_buffer.resizable\" ts_test_file=test/js/web/fetch/blob.test.ts".to_string(),
+            "typescript_bun_ub_bridge_verdict: ts_missing_resizable missing_discriminators=resizable_array_buffer action=route_cross_language_oracle_visibility_limitation suggested_test_file=test/js/web/fetch/blob.test.ts repair_packet_ready=false".to_string(),
+            "typescript_bun_ub_cross_language_grip: state=rust_ungripped_ts_missing_discriminator rust_grip=ungripped ts_verdict=ts_missing_resizable action=route_cross_language_oracle_visibility_limitation authority=preview_advisory_only suggested_test_file=test/js/web/fetch/blob.test.ts repair_packet_ready=false".to_string(),
+            "typescript_bun_ub_test_placement: rank=1 suggested_test_file=test/js/web/fetch/blob.test.ts reason=\"existing Blob + ArrayBuffer integration tests live there; missing discriminator is resizable ArrayBuffer\" basis=configured_bridge_suggested_test_file,same_js_surface,same_boundary_vocabulary authority=preview_advisory_only repair_packet_ready=false".to_string(),
+        ];
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "resizable_array_buffer".to_string(),
+            reason: "missing resizable ArrayBuffer discriminator".to_string(),
+            flow_sink: None,
+        }];
+
+        let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
+        let sarif = parse_json(&rendered)?;
+        let result = first_result(&sarif)?;
+        let grip = &result["properties"]["typescript_preview_card"]["bun_cross_language_grip"];
+
+        assert_eq!(grip["state"], "rust_ungripped_ts_missing_discriminator");
+        assert_eq!(grip["rust_seam"]["file"], "src/jsc/Blob.rs");
+        assert_eq!(
+            grip["typescript_evidence"]["missing_discriminators"][0],
+            "resizable_array_buffer"
+        );
+        assert_eq!(
+            grip["limitation_category"],
+            "cross_language_oracle_visibility_unresolved"
+        );
+        assert_eq!(
+            grip["repair_route"],
+            "analysis/cross-language-oracle-visibility"
+        );
+        assert_eq!(
+            grip["missing_graph_legs"][0],
+            "boundary_discriminator:resizable_array_buffer"
+        );
+        assert_eq!(grip["raw_evidence_refs"][0]["leg"], "rust_seam");
+        assert_eq!(
+            grip["suggested_test_file"],
+            "test/js/web/fetch/blob.test.ts"
+        );
+        assert_eq!(
+            grip["placement"]["suggested_test_file"],
+            "test/js/web/fetch/blob.test.ts"
+        );
+        assert_eq!(
+            grip["placement"]["reason"],
+            "existing Blob + ArrayBuffer integration tests live there; missing discriminator is resizable ArrayBuffer"
+        );
+        assert_eq!(grip["placement"]["repair_packet_ready"], false);
+        assert_eq!(grip["repair_packet_ready"], false);
         Ok(())
     }
 
@@ -882,6 +1358,88 @@ weakly_gripped = "note"
             return Err("missing SARIF results array".to_string());
         };
         Ok(results.iter().collect())
+    }
+
+    fn add_perl_preview_card_inputs(finding: &mut Finding) {
+        finding.id = "probe:lib_My_App_pm:8:perl_return".to_string();
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value"
+                .to_string(),
+            language: "perl".to_string(),
+            file: "lib/My/App.pm".to_string(),
+            owner: "perl:lib/My/App.pm::My::App::discount".to_string(),
+            behavior_kind: "return_value".to_string(),
+            probe_kind: "exact_return_assertion".to_string(),
+            normalized_discriminator: "return_value".to_string(),
+        });
+        finding.probe = Probe {
+            id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
+            location: SourceLocation::new("lib/My/App.pm", 8, 5),
+            owner: Some(SymbolId(
+                "perl:lib/My/App.pm::My::App::discount".to_string(),
+            )),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("return $price".to_string()),
+            after: Some("return $discounted".to_string()),
+            expression: "return $discounted".to_string(),
+            expected_sinks: vec!["return_value".to_string()],
+            required_oracles: vec!["exact_return_assertion".to_string()],
+        };
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.ripr = RiprEvidence {
+            reach: stage(
+                StageState::Yes,
+                "Perl fact packet links the related test to the changed owner",
+            ),
+            infect: stage(
+                StageState::Yes,
+                "Changed return value reaches the owner result",
+            ),
+            propagate: stage(
+                StageState::Yes,
+                "Return value can propagate to Test::More assertion",
+            ),
+            reveal: RevealEvidence {
+                observe: stage(StageState::Yes, "Related test reaches the changed owner"),
+                discriminate: stage(StageState::Weak, "Exact return discriminator is missing"),
+            },
+        };
+        finding.confidence = 0.8;
+        finding.evidence = vec![
+            "perl_packet_id: perl-preview:gap-return".to_string(),
+            "perl_repair_kind: add_exact_return_assertion".to_string(),
+            "perl_target_test_shape: Test::More exact_return_assertion".to_string(),
+            "perl_suggested_test_location: t/app.t::discount_smoke".to_string(),
+            "perl_suggested_assertion: assert the exact returned `return_value` value".to_string(),
+            "perl_verify_command: prove t/app.t".to_string(),
+            "perl_receipt_command: ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id perl-gap --json".to_string(),
+            "perl_confidence: medium".to_string(),
+            "perl_allowed_edit_boundary: t/app.t".to_string(),
+            "perl_forbidden_edit_boundary: lib/My/App.pm, badges/ripr-plus.json".to_string(),
+            "perl_stop_if: perl-lsp packet status changes".to_string(),
+            "perl_must_not_change: do not edit Perl production code".to_string(),
+            "raw_evidence_ref: leg=perl_change;file=lib/My/App.pm;line=8;kind=perl_change;source_id=change:lib/My/App.pm:8:return;owner=perl:lib/My/App.pm::My::App::discount;sample=return $discounted".to_string(),
+            "raw_evidence_ref: leg=perl_oracle;file=t/app.t;line=7;kind=perl_oracle;source_id=oracle:t/app.t:7:is;owner=perl:lib/My/App.pm::My::App::discount;sample=is(discount(...), 90)".to_string(),
+        ];
+        finding.missing = vec!["return_value".to_string()];
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "return_value".to_string(),
+            reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
+                .to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests = vec![RelatedTest {
+            name: "discount_smoke".to_string(),
+            file: PathBuf::from("t/app.t"),
+            line: 7,
+            oracle: Some("ok(discount(...))".to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Weak,
+        }];
+        finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
+        finding.language = Some(LanguageId::Perl);
+        finding.language_status = Some(LanguageStatus::Preview);
     }
 
     fn sample_output() -> CheckOutput {

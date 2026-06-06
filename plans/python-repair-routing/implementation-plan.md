@@ -589,6 +589,11 @@ Ship the first high-confidence Python repair classes.
   first repair classes while preserving Python's preview/support-tier boundary.
 - `python_dict_field_repair_gap` pins returned-dict field discriminator
   extraction without requiring runtime dataclass or serializer semantics.
+- `python_model_field_repair_gap` pins syntax-only returned constructor
+  keyword field routing for model-like objects, recommends an object-field
+  assertion such as `assert result.active == True`, and adds a stop condition
+  for cases where the returned object does not expose the keyword as a public
+  field or attribute.
 
 ### Work item: output/python-ranking-noise-control
 
@@ -813,13 +818,31 @@ Project Python repair cards consistently across output surfaces.
 
 - Eligible `python_repair_card` findings now project into diff-scoped SARIF
   properties with the same advisory card fields as check JSON.
+- Python preview static-limit findings now project explicit diff-scoped SARIF
+  `python_no_action` properties with `repairability = "analyzer_limitation"`,
+  no verify command, no receipt command, no repair card, and no packet-ready
+  authority.
+- Python preview ordinary no-action findings now project explicit diff-scoped
+  SARIF `python_no_action` properties for `already_observed`,
+  `no_related_test`, and `heuristic_only` states with
+  `repairability = "no_action"`, no verify command, no receipt command, no
+  repair card, and no packet-ready authority.
 - GitHub annotation output now includes a concise Python repair-card sentence
   with the missing discriminator, suggested test target, verify command, and
   preview/advisory boundary.
+- GitHub annotation output now also names Python preview ordinary no-action and
+  static-limit states, explicitly preserving the no repair card / no agent
+  packet boundary for already-observed, no-related-test, heuristic-only, and
+  static-limit findings.
 - `cargo xtask pr-summary` now highlights the top Python preview repair card
   from `actionable-gaps.json` with the canonical gap, changed owner, missing
   discriminator, suggested test target, verify command, receipt command, and
   stop conditions while preserving the static/advisory boundary.
+- Check-output-derived Python `already_observed`, `no_related_test`, and
+  `heuristic_only` findings now materialize as report-only gap-ledger records,
+  and the PR review front panel surfaces the top typed Python no-action or
+  static-limitation record with a `no_repair_packet` route instead of silently
+  falling back to a generic clean state.
 
 ### Work item: ci/python-advisory-mode
 
@@ -1252,10 +1275,25 @@ Prove usefulness outside fixtures.
   a `free_shipping_offer` threshold-boundary change routes to a
   strengthen-existing-test repair card, the focused pytest verify command
   passes, and `ripr outcome` closes the canonical Python gap.
+- The same corpus now records a native pytest parametrized-boundary eval where
+  a changed `amount >= threshold` predicate routes to a
+  strengthen-existing-test card with optional below/equal/above row guidance,
+  the bounded packet edits only `tests/test_tax.py`, the focused pytest verify
+  command passes, and `ripr outcome` closes the canonical Python gap.
 - The same corpus now records a CLI/output-style pytest eval where a changed
   `print(...)` side effect routes to a strengthen-existing-test repair card,
   the focused `capsys` pytest verify command passes, and `ripr outcome` closes
   the canonical Python output/call-effect gap.
+- The same corpus now records a Click-shaped CLI output pytest eval where a
+  changed `click.echo(...)` side effect routes to a
+  strengthen-existing-test repair card, exports a bounded test-only packet,
+  verifies with focused pytest against a local Click-shaped stub, and
+  `ripr outcome` closes the canonical Python output/call-effect gap.
+- The same corpus now records a Typer-shaped CLI output pytest eval where a
+  changed `typer.echo(...)` side effect under `@app.command()` routes to a
+  strengthen-existing-test repair card, exports a bounded test-only packet,
+  verifies with focused pytest against a local Typer-shaped stub, and
+  `ripr outcome` closes the canonical Python output/call-effect gap.
 - The same corpus now records a lightweight API-handler pytest eval where a
   changed `response.status_code` assignment routes to a field/object repair
   card, the focused status-code pytest verify command passes, and
@@ -1268,6 +1306,11 @@ Prove usefulness outside fixtures.
   `@api.post(...)` route handler changes `response.status_code`, RIPR emits a
   field/object repair card with missing discriminator
   `response.status_code == 422`, the focused pytest verify command passes, and
+  `ripr outcome` closes the canonical Python gap.
+- The same corpus now records a dataclass/model-field pytest eval where a
+  changed returned constructor field routes to a strengthen-existing-test card
+  with missing discriminator `result.active == True`, the bounded packet edits
+  only `tests/test_users.py`, the focused pytest verify command passes, and
   `ripr outcome` closes the canonical Python gap.
 - `cargo xtask dogfood` projects the Python real-repo eval corpus into the
   dogfood report as receipt-backed eval evidence separate from analyzer
@@ -1290,9 +1333,10 @@ Measure Python quality by repair usefulness, not finding volume.
 #### Acceptance
 
 - Metrics include time to first useful finding, top-1/top-3 actionable
-  precision, verify-command validity, concrete-discriminator rate,
-  related-test-location rate, false-actionable rate, crash rate, unsupported
-  limitation distribution, and receipt closure rate.
+  precision, verify-command validity, agent-packet boundary validity,
+  concrete-discriminator rate, related-test-location rate, false-actionable
+  rate, crash rate, unsupported limitation distribution, and receipt closure
+  rate.
 - Noisy changes fail quality gates.
 
 #### Progress
@@ -1300,9 +1344,10 @@ Measure Python quality by repair usefulness, not finding volume.
 - `cargo xtask dogfood` now derives Python repair-routing quality metrics from
   `fixtures/python-real-repo-evals/corpus.json`: top-1 actionable usefulness,
   top-3 actionable precision over captured ranked repair-card findings,
-  verify-command validity, concrete-discriminator coverage, suggested
-  test-location coverage, false-actionable rate, crash rate, receipt closure
-  rate, and unsupported limitation distribution.
+  verify-command validity, agent-packet boundary validity,
+  concrete-discriminator coverage, suggested test-location coverage,
+  false-actionable rate, crash rate, receipt closure rate, and unsupported
+  limitation distribution.
 - The Python eval corpus now records structured unsupported limitation kinds,
   and the decorated-route eval contributes `dynamic_route_registration` to the
   limitation distribution while keeping the support-tier boundary explicit.
@@ -1353,3 +1398,225 @@ Promote Python only when the repair loop has receipt-backed evidence.
 - `docs/handoffs/2026-05-31-python-repair-routing-usable-alpha-closeout.md`
   records the proof commands, usable-alpha scope, remaining limits, policy
   non-claims, and next work.
+
+### Work item: dogfood/python-stability-evals-v1
+
+Status: in progress
+
+Blocked by:
+
+- `campaign/python-usable-alpha-promotion`
+
+#### Goal
+
+Extend Python repair-routing evidence after usable alpha before any broader
+support-tier consideration.
+
+#### Acceptance
+
+- Add or refresh real or external-repo-style Python repair-routing evals beyond
+  the promotion corpus.
+- Each eval records command, runtime, top finding, repair card, agent packet,
+  verify command, receipt or no-receipt reason, false-positive notes, and
+  limitation notes.
+- Route-quality metrics continue to emphasize top-1 usefulness, top-3
+  precision, verify-command validity, agent-packet boundary validity, concrete
+  discriminators, suggested test location, false-actionable rate, crash rate,
+  receipt closure, and limitation distribution.
+- No support-tier promotion, gate eligibility, badge authority, baseline/RIPR
+  Zero inclusion, provider calls, generated tests, arbitrary imports, mutation
+  execution, or production-code edit authority changes.
+
+#### Proof commands
+
+```bash
+cargo xtask dogfood
+cargo xtask metrics
+cargo xtask check-capabilities
+cargo xtask check-traceability
+cargo xtask check-output-contracts
+cargo xtask check-pr
+git diff --check
+```
+
+#### Rollback
+
+- Revert the added eval entries, generated dogfood/metric expectations, and
+  any docs or capability links. The scoped usable-alpha support claim remains
+  unchanged.
+
+#### Progress
+
+- `fixtures/python-real-repo-evals/corpus.json` now records bounded agent
+  packet fields for every checked Python dogfood eval: packet command, allowed
+  test files, forbidden production files, and stop conditions.
+- The dogfood checker now requires at least one full top-3 Python repair-card
+  capture, and the corpus records `multi_card_pytest_top3_receipt` where three
+  usable repair cards are ranked while only the top packet is delegated and
+  receipted.
+- The corpus now adds `unittest_return_value_receipt` as a post-promotion
+  stability eval where a unittest return-value repair routes to one existing
+  test method, verifies with `python -m unittest`, exports a bounded test-only
+  packet, and closes the canonical Python gap through `ripr outcome`.
+- Returned Python dict field discriminators now prefer a literal-valued field
+  over a pass-through field in multi-field return literals, so
+  `{"name": name, "status": "active"}` routes to the missing discriminator
+  `status == "active"` instead of the non-discriminating `name == name`.
+- The corpus now adds `unittest_dict_field_receipt` as a post-promotion
+  stability eval where a unittest returned-dict field repair routes to one
+  existing test method, verifies with `python -m unittest`, exports a bounded
+  test-only packet, and closes the canonical Python field/object gap through
+  `ripr outcome`.
+- The corpus now adds `src_layout_pytest_boundary_receipt` as a
+  post-promotion external-repo-style stability eval where a `src/` package
+  pytest app routes a boundary repair to one existing test file, exports a
+  bounded packet that forbids the package production module, verifies with a
+  focused `pytest` command, and closes the canonical Python gap through
+  `ripr outcome`.
+- The corpus now adds `no_config_pyproject_boundary_receipt` as a
+  post-promotion project-detection stability eval where a pyproject-based
+  Python repo without `ripr.toml` still routes a boundary repair to one
+  existing pytest file, exports a bounded packet that forbids the production
+  module, verifies with a focused `pytest` command, and closes the canonical
+  Python gap through `ripr outcome`.
+- The corpus now adds `api_json_detail_pytest_receipt` as a post-promotion
+  stability eval where an API response JSON detail repair routes to one
+  existing pytest method, verifies with a focused `pytest` command, exports a
+  bounded test-only packet, and closes the canonical Python gap through
+  `ripr outcome`.
+- The corpus now adds `flask_route_json_detail_pytest_receipt` as a
+  post-promotion stability eval where a Flask-style
+  `@app.route("/checkout", methods=["POST"])` response JSON detail repair
+  routes to one existing pytest method, verifies with focused `pytest` against
+  a local Flask-shaped stub, exports a bounded test-only packet, and closes the
+  canonical Python gap through `ripr outcome`.
+- The corpus now adds `fastapi_route_json_detail_pytest_receipt` as a
+  post-promotion stability eval where a FastAPI-style `@app.post("/checkout")`
+  response JSON detail repair routes to one existing pytest method, verifies
+  with focused `pytest` against a local FastAPI-shaped stub, exports a bounded
+  test-only packet, and closes the canonical Python gap through `ripr outcome`.
+- The corpus now adds `async_return_pytest_receipt` as a post-promotion
+  stability eval where an `async def` return-value repair routes to one
+  existing pytest method that calls the owner through `asyncio.run`, verifies
+  with focused `pytest` without requiring pytest-asyncio, exports a bounded
+  test-only packet, and closes the canonical Python gap through `ripr outcome`.
+- The corpus now adds `exception_path_pytest_receipt` as a post-promotion
+  stability eval where a broad `pytest.raises(ValueError)` observer
+  strengthens to exact `pytest.raises(..., match=...)` evidence, verifies with
+  a focused `pytest` command, exports a bounded test-only packet, and closes
+  the canonical Python exception gap through `ripr outcome`.
+- The corpus now adds `custom_exception_pytest_receipt` as a post-promotion
+  stability eval where a broad `pytest.raises(ExpiredCouponError)` observer
+  strengthens to exact `pytest.raises(..., match=...)` evidence for a custom
+  exception type, verifies with a focused `pytest` command, exports a bounded
+  test-only packet, and closes the canonical Python exception gap through
+  `ripr outcome`.
+- The corpus now adds `unittest_exception_path_receipt` as a post-promotion
+  stability eval where a broad `self.assertRaises(ValueError)` observer
+  strengthens to exact `self.assertRaisesRegex(...)` evidence, verifies with
+  `python -m unittest`, exports a bounded test-only packet, and closes the
+  canonical Python exception gap through `ripr outcome`.
+- Route response-constructor assignments such as `response =
+  Response(status_code=422, detail="coupon expired")` now route through the
+  field/object repair path for statically recognized Python route owners. The
+  corpus records `api_exception_response_pytest_receipt`, where a route catches
+  an application exception, constructs a response object, recommends
+  `assert response.status_code == 422`, verifies with focused `pytest`, exports
+  a bounded test-only packet, and closes the canonical Python gap through
+  `ripr outcome`.
+- The corpus now records `decorator_indirection_no_packet_eval` as a
+  post-promotion fail-closed stability eval where RIPR sees a related pytest
+  exact oracle but refuses to emit a repair card, agent packet, verify success,
+  or receipt movement because the changed owner is wrapped by a runtime
+  decorator.
+- The corpus now records `missing_import_graph_no_packet_eval` as a
+  post-promotion fail-closed stability eval where RIPR sees a related pytest
+  exact oracle but refuses to emit a repair card, agent packet, verify success,
+  or receipt movement because the changed behavior depends on an imported
+  implementation outside the static preview import graph.
+- The corpus now records `metaprogramming_no_packet_eval` as a post-promotion
+  fail-closed stability eval where RIPR sees a related pytest exact oracle but
+  refuses to emit a repair card, agent packet, verify success, or receipt
+  movement because the changed behavior depends on runtime-created class
+  semantics.
+- The corpus now records `mocked_module_no_packet_eval` as a post-promotion
+  fail-closed stability eval where RIPR sees a related pytest exact oracle but
+  refuses to emit a repair card, agent packet, verify success, or receipt
+  movement because the related test depends on `unittest.mock.patch` runtime
+  substitution.
+- The corpus now records `opaque_custom_helper_no_packet_eval` as a
+  post-promotion fail-closed stability eval where RIPR sees a related pytest
+  method and custom `assert_*` helper oracle but refuses to emit a repair card,
+  agent packet, verify success, or receipt movement because the helper body is
+  opaque to the preview adapter.
+- The corpus now records `property_based_no_packet_eval` as a post-promotion
+  fail-closed stability eval where RIPR sees a related Hypothesis-style pytest
+  method and weak relational oracle but refuses to emit a repair card, agent
+  packet, verify success, or receipt movement because generated inputs do not
+  prove that the changed discriminator is covered.
+- The corpus now records `unsupported_syntax_no_packet_eval` as a
+  post-promotion fail-closed stability eval where RIPR sees a related pytest
+  exact oracle but refuses to emit a repair card, agent packet, verify success,
+  or receipt movement because the changed lambda-return expression is outside
+  the preview adapter's precise syntax model.
+- The corpus now records `generated_file_no_packet_eval` as a post-promotion
+  fail-closed stability eval where a detectable generated Python diff such as
+  `src/schema_pb2.py` is excluded before probe generation, so RIPR records no
+  repair card, agent packet, verify success, or receipt movement even when a
+  related pytest import exists.
+- The corpus now records `no_related_test_no_packet_eval` under
+  `no_action_cases` as an ordinary fail-closed no-action eval: RIPR reports
+  `no_static_path` for a changed Python owner with only unrelated pytest text
+  mention evidence, and the dogfood report records no repair card, no agent
+  packet, not-applicable verify/receipt results, and no receipt movement.
+- The corpus now records `already_observed_no_packet_eval` under
+  `no_action_cases` as an ordinary fail-closed no-action eval: RIPR reports
+  `exposed` for a changed Python owner with a related exact-value pytest oracle,
+  and the dogfood report records no repair card, no agent packet,
+  not-applicable verify/receipt results, and no receipt movement because there
+  is no missing proof to route.
+- The corpus now records `heuristic_only_no_packet_eval` under
+  `no_action_cases` as an ordinary fail-closed no-action eval: RIPR reports
+  `weakly_exposed` for a changed Python owner with only heuristic pytest
+  test-name similarity, and the dogfood report records no repair card, no agent
+  packet, not-applicable verify/receipt results, and no receipt movement
+  because uncertain related-test proximity is not safe repair-routing evidence.
+- Dogfood quality metrics now include agent-packet boundary validity so a
+  future eval that lacks packet scope, stop conditions, or forbidden-file
+  protection fails the checked quality gate instead of counting as usable.
+- `cargo xtask dogfood` now requires the receipt-backed no-config pyproject
+  boundary, async return-value,
+  pytest exception, custom exception, unittest exception, API JSON detail,
+  log output, argparse CLI output, Click CLI output, Typer CLI output,
+  CLI exit-code, Flask route JSON detail, FastAPI route JSON detail, API
+  exception-response, `src/` package-layout boundary, unittest return-value,
+  and unittest dict-field eval rows in addition to the original
+  boundary/API/CLI/mixed cases, so those Python closure proofs cannot disappear
+  from the corpus without failing the checked dogfood gate.
+- The corpus now adds `log_output_pytest_receipt` as a post-promotion
+  stability eval where a changed `logger.warning(...)` side effect routes to a
+  log-output repair card, exports a bounded test-only packet, verifies with a
+  focused pytest/caplog command, and closes the canonical Python
+  call/output-effect gap through `ripr outcome`.
+- The corpus now adds `cli_exit_code_pytest_receipt` as a post-promotion
+  stability eval where a changed literal `sys.exit(2)` side effect routes to a
+  CLI exit-code repair card, exports a bounded test-only packet, verifies with
+  focused pytest, and closes the canonical Python call/output-effect gap
+  through `ripr outcome`.
+- The corpus now adds `argparse_cli_output_pytest_receipt` as a
+  post-promotion stability eval where a changed static `print(...)` side
+  effect inside an argparse-shaped command routes to a CLI output repair card,
+  exports a bounded test-only packet, verifies with focused pytest, and closes
+  the canonical Python call/output-effect gap through `ripr outcome` without
+  RIPR importing argparse or executing parser setup.
+- The corpus now adds `click_cli_output_pytest_receipt` as a post-promotion
+  stability eval where a changed `click.echo("shipment queued")` side effect
+  routes to a CLI output repair card, exports a bounded test-only packet,
+  verifies with focused pytest against a local Click-shaped stub, and closes
+  the canonical Python call/output-effect gap through `ripr outcome`.
+- The corpus now adds `typer_cli_output_pytest_receipt` as a post-promotion
+  stability eval where a changed `typer.echo("shipment queued")` side effect
+  under a static Typer `@app.command()` owner routes to a CLI output repair
+  card, exports a bounded test-only packet, verifies with focused pytest
+  against a local Typer-shaped stub, and closes the canonical Python
+  call/output-effect gap through `ripr outcome`.
