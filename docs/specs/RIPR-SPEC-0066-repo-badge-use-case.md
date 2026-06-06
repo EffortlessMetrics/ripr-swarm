@@ -93,6 +93,17 @@ The public badge message renders exactly one of:
 No other message is permitted on the public badge surface. New states
 require a spec revision.
 
+This closed vocabulary and the state mapping table below are scoped
+to `BadgeKind::Ripr` (label `ripr`). The `ripr+` endpoint
+(`badges/ripr-plus.json`, `BadgeKind::RiprPlus`) inherits the
+identical state mapping with the `ripr+` label and its
+test-efficiency-inclusive count semantics.
+
+The committed endpoints today render the bare count (message `191`
+with label `ripr`); the `N actionable` message format is part of the
+badge projection implementation slice (see Implementation Mapping),
+not a description of the current endpoints.
+
 ### Source of truth
 
 The badge is a projection of canonical actionability plus runtime
@@ -115,7 +126,8 @@ completeness. Concretely:
 ### Required fields
 
 The badge artifact (the machine-readable sidecar behind the Shields
-endpoint, versioned under `BADGE_SCHEMA_VERSION`) carries:
+endpoint, versioned under `BADGE_SCHEMA_VERSION`) must carry (planned
+sidecar contract; see Implementation Mapping):
 
 | Field | Meaning |
 | --- | --- |
@@ -126,8 +138,12 @@ endpoint, versioned under `BADGE_SCHEMA_VERSION`) carries:
 | `stale_age` | Age of the artifact relative to its source at evaluation time, used against the configured maximum. |
 | `source_report` | Repo-relative path of the report the badge was projected from (gap decision ledger or canonical actionable gap report). |
 
-Field additions or semantic changes bump `BADGE_SCHEMA_VERSION` and
-are public contract changes.
+None of these six fields exist in the v0.5 native badge JSON emitted
+by `crates/ripr/src/output/badge/render.rs` today; this table is the
+implementation slice's target contract. Emitting these fields is a
+public contract change that bumps `BADGE_SCHEMA_VERSION` past `0.5`.
+Field additions or semantic changes thereafter likewise bump
+`BADGE_SCHEMA_VERSION` and are public contract changes.
 
 ### State mapping rules (fail closed)
 
@@ -143,6 +159,11 @@ are public contract changes.
 Precedence when multiple conditions hold: `unknown` over `stale` over
 `limited` over any count. A degraded input never resolves toward the
 cleaner-looking state.
+
+No maximum-age configuration exists in the repo today: the max-age
+knob, age-based staleness evaluation, and the `ripr: stale` rendering
+are new contract delivered by the badge projection slice. References
+to "the configured maximum age" in this spec name that planned knob.
 
 ### Required versus forbidden wording for the clean state
 
@@ -194,9 +215,11 @@ Explicit non-claims — the badge does not and must not claim:
   Mapping) cites this spec and lands with fixtures pinning every row
   of the state mapping table.
 - `cargo xtask badges --check` (the committed-endpoint drift check)
-  continues to fail when `badges/*.json` is stale relative to its
-  source, and gains coverage for the `limited`/`stale`/`unknown`
-  renderings once those states are emitted.
+  continues to fail on content drift — when `badges/*.json` no longer
+  matches what regeneration from its source produces — and gains
+  coverage for the `limited`/`stale`/`unknown` renderings once those
+  states are emitted. It does not evaluate endpoint age today;
+  age-based staleness arrives with the badge projection slice.
 - Proof commands that exist today: `cargo xtask badges`,
   `cargo xtask badges --check`, `cargo xtask badge-basis`,
   `cargo xtask repo-badge-artifacts`, plus the docs-only gates
@@ -249,10 +272,16 @@ artifact — never a silent green.
 ### Stale endpoint
 
 - Source: committed `badges/ripr.json` older than the configured
-  maximum relative to its source report.
-- Badge: `ripr: stale`. The previous count is not re-claimed.
-- `cargo xtask badges --check` fails with the existing stale-endpoint
-  message directing to a refresh.
+  maximum age (the planned max-age knob) relative to its source
+  report.
+- Badge: `ripr: stale`. The previous count is not re-claimed. This
+  rendering is new contract from the badge projection slice.
+- Existing behavior, preserved as-is: `cargo xtask badges --check`
+  fails on content drift (the committed endpoint no longer matches
+  regeneration from its source) with the existing stale-endpoint
+  message directing to a refresh. An aged endpoint whose content is
+  unchanged passes `badges --check` today; age-based failure is part
+  of the planned slice.
 
 ### Missing report
 
@@ -278,9 +307,13 @@ artifact — never a silent green.
 - docs/specs/RIPR-SPEC-0066-repo-badge-use-case.md — this document.
 - plans/use-case-specs/implementation-plan.md (planned) — the "badge
   projection" slice: emit the `limited` / `stale` / `unknown` public
-  states and the required sidecar fields from the existing
-  `cargo xtask badges` / `repo-badge-artifacts` pipeline, with
-  fixtures for every state-mapping row and reject-list entry.
+  states, the `N actionable` count-message format (replacing today's
+  bare-count message), and the required sidecar fields (bumping
+  `BADGE_SCHEMA_VERSION` past `0.5`) from the existing
+  `cargo xtask badges` / `repo-badge-artifacts` pipeline; introduce
+  the maximum-age configuration knob and age-based staleness
+  evaluation; with fixtures for every state-mapping row and
+  reject-list entry.
 - Existing surfaces this contract binds:
   `crates/ripr/src/output/badge/model.rs`, `cargo xtask badges`,
   `cargo xtask badge-basis`, `cargo xtask repo-badge-artifacts`,
@@ -303,8 +336,10 @@ artifact — never a silent green.
 
 ## Failure Modes
 
-- Stale committed endpoint — caught by `cargo xtask badges --check`;
-  the public badge must move to `ripr: stale`, not keep the old count.
+- Stale committed endpoint — content drift is caught by
+  `cargo xtask badges --check` today; age-based staleness is
+  evaluated against the planned max-age knob. In either case the
+  public badge must move to `ripr: stale`, not keep the old count.
 - Limited run projected as a count — reject-list violation; named
   defect against this spec, caught by state-mapping fixtures.
 - Raw-finding basis reaching the public badge — reject-list
