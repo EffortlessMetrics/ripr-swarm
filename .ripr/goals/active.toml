@@ -29,7 +29,7 @@ end_state = [
 
 [[work_item]]
 id = "docs/use-case-spec-spine"
-status = "active"
+status = "done"
 branch = "docs/spec-use-case-roadmap"
 stackable = true
 acceptance = "Specs RIPR-SPEC-0065 (roadmap) through RIPR-SPEC-0073 (receipts/outcomes/route quality) merge via the stacked PR sequence with registry entries in docs/specs/README.md and policy/doc-artifacts.toml, adversarial-review fixes applied, and all spec gates green. Docs-only; no analyzer behavior changes."
@@ -49,7 +49,7 @@ commands = [
 
 [[work_item]]
 id = "goals/route-through-use-case-plan"
-status = "blocked"
+status = "done"
 branch = "goals/route-use-case-plan"
 stackable = true
 blocked_by = [

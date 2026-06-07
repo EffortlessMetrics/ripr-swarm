@@ -5021,8 +5021,17 @@ Work items:
 
 | Work item | Status | Summary |
 | --- | --- | --- |
-| `docs/use-case-spec-spine` | active | Specs RIPR-SPEC-0065 through RIPR-SPEC-0073 merge via the stacked PR sequence with registry entries, adversarial-review fixes, and green spec gates. Docs-only; no analyzer behavior changes. |
-| `goals/route-through-use-case-plan` | blocked | Active goals route through [the use-case implementation plan](../plans/use-case-specs/implementation-plan.md); no implementation slice activates until a deliberate post-release decision. Blocked by `docs/use-case-spec-spine`. |
+| `docs/use-case-spec-spine` | done | Specs RIPR-SPEC-0065 through RIPR-SPEC-0073 merged via the stacked PR sequence with registry entries, adversarial-review fixes, and green spec gates. Docs-only; no analyzer behavior changes. |
+| `goals/route-through-use-case-plan` | done | Active goals route through [the use-case implementation plan](../plans/use-case-specs/implementation-plan.md); no implementation slice activates until a deliberate post-release decision. Was blocked by `docs/use-case-spec-spine`; both items completed in the spine merge wave. |
+
+Parallel-manifest boundary: `.ripr/goals/modularization.toml` and the lane
+tracker manifests remain beside `active.toml` as repo-operations queues
+(mechanical SRP refactors and lane bookkeeping), not product boards. The
+"no parallel product board" end state applies to product sequencing only:
+product implementation slices route exclusively through
+[the use-case implementation plan](../plans/use-case-specs/implementation-plan.md),
+while ops manifests keep feeding refactor-only PRs that change no behavior
+contract.
 
 Commands:
 
