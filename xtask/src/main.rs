@@ -63874,95 +63874,55 @@ fn proof_pack_violations(manifest: &CiLedgerDocument, lane_ids: &BTreeSet<String
         &mut violations,
     );
 
-    let packs = ci_tables(manifest, "pack");
-    if packs.is_empty() {
+    if ci_tables(manifest, "pack").is_empty() {
         violations.push(format!("{path} has no [[pack]] entries"));
     }
 
+    let packs = policy::proof_packs::parse_proof_packs(manifest, &mut violations);
+
     let mut seen_ids = BTreeSet::new();
     let mut release_pack_seen = false;
-    for pack in packs {
-        let Some(id) = ci_required_table_id(path, pack, "id", "proof pack", &mut violations) else {
-            continue;
-        };
-        if !seen_ids.insert(id.clone()) {
+    for pack in &packs {
+        if !seen_ids.insert(pack.id.clone()) {
             violations.push(format!(
-                "{path}:{} duplicate proof pack id `{id}`",
-                pack.line
+                "{path}:{} duplicate proof pack id `{}`",
+                pack.line, pack.id
             ));
         }
 
-        if let Some(paths) = ci_required_table_array(path, pack, "paths", &mut violations)
-            && paths.is_empty()
+        for command in &pack.required_commands {
+            proof_pack_command_violation(
+                path,
+                pack.line,
+                &pack.id,
+                "required_commands",
+                command,
+                &mut violations,
+            );
+        }
+        for command in &pack.advisory_commands {
+            proof_pack_command_violation(
+                path,
+                pack.line,
+                &pack.id,
+                "advisory_commands",
+                command,
+                &mut violations,
+            );
+        }
+
+        if let Some(ci_lane) = &pack.ci_lane
+            && !lane_ids.contains(ci_lane)
         {
             violations.push(format!(
-                "{path}:{} proof pack `{id}` must cover at least one path",
-                pack.line
+                "{path}:{} proof pack `{}` references unknown ci_lane `{ci_lane}`\n  rule: ci_lane must be a lane id declared in {PROOF_PACK_LANE_WHITELIST_PATH}",
+                pack.line, pack.id
             ));
         }
 
-        if let Some(required) =
-            ci_required_table_array(path, pack, "required_commands", &mut violations)
-        {
-            if required.is_empty() {
-                violations.push(format!(
-                    "{path}:{} proof pack `{id}` must name at least one required command",
-                    pack.line
-                ));
-            }
-            for command in &required {
-                proof_pack_command_violation(
-                    path,
-                    pack.line,
-                    &id,
-                    "required_commands",
-                    command,
-                    &mut violations,
-                );
-            }
-        }
-
-        if let Some(advisory) =
-            ci_required_table_array(path, pack, "advisory_commands", &mut violations)
-        {
-            for command in &advisory {
-                proof_pack_command_violation(
-                    path,
-                    pack.line,
-                    &id,
-                    "advisory_commands",
-                    command,
-                    &mut violations,
-                );
-            }
-        }
-
-        if let Some(ci_lane) =
-            ci_required_non_empty_table_string(path, pack, "ci_lane", &mut violations)
-            && !lane_ids.contains(&ci_lane)
-        {
-            violations.push(format!(
-                "{path}:{} proof pack `{id}` references unknown ci_lane `{ci_lane}`\n  rule: ci_lane must be a lane id declared in {PROOF_PACK_LANE_WHITELIST_PATH}",
-                pack.line
-            ));
-        }
-
-        ci_required_non_empty_table_string(path, pack, "proves", &mut violations);
-        ci_required_non_empty_table_string(path, pack, "does_not_prove", &mut violations);
-
-        let never_routed = pack.values.get("never_routed");
-        if let Some(value) = never_routed
-            && value.raw != "true"
-            && value.raw != "false"
-        {
-            violations.push(format!(
-                "{path}:{} proof pack `{id}` field `never_routed` must be a bare `true` or `false`",
-                value.line
-            ));
-        }
-        if id == PROOF_PACK_RELEASE_PACK_ID {
+        if pack.id == PROOF_PACK_RELEASE_PACK_ID {
             release_pack_seen = true;
-            if never_routed.map(|value| value.raw.as_str()) != Some("true") {
+            if !pack.never_routed {
                 violations.push(format!(
                     "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must set `never_routed = true`\n  rule: release proof is never routed away (docs/PROOF_ROUTING.md)",
                     pack.line
