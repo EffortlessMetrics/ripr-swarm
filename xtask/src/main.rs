@@ -36,7 +36,7 @@ use policy::{
     check_allow_attributes, check_ci_lane_whitelist, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_positioning_language, check_process_policy, check_product_copy,
-    check_static_language, check_workflows,
+    check_proof_packs, check_static_language, check_workflows,
 };
 #[cfg(test)]
 use repo_readiness::{PrReadyStep, pr_ready_next_action, pr_ready_status_from_report_status};
@@ -1937,6 +1937,7 @@ fn precommit() -> Result<(), String> {
     check_generated()?;
     check_badge_diff_policy()?;
     check_generated_clean()?;
+    check_proof_packs()?;
     check_lint_policy()?;
     let body = precommit_report_body();
     write_report("precommit.md", &body)
@@ -2024,6 +2025,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_generated()?;
     check_badge_diff_policy()?;
     check_generated_clean()?;
+    check_proof_packs()?;
     check_dependencies()?;
     check_process_policy()?;
     check_network_policy()?;
@@ -5224,7 +5226,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-campaign`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-campaign`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 fn check_pr_report_body() -> String {
@@ -63793,6 +63795,219 @@ fn ci_tables<'a>(document: &'a CiLedgerDocument, header: &str) -> Vec<&'a CiLedg
         .collect()
 }
 
+const PROOF_PACK_MANIFEST_PATH: &str = "policy/proof-packs.toml";
+const PROOF_PACK_LANE_WHITELIST_PATH: &str = "policy/ci-lane-whitelist.toml";
+const PROOF_PACK_RELEASE_PACK_ID: &str = "release-package";
+
+/// Non-xtask repo commands a proof pack may reference. `cargo xtask <command>`
+/// entries are validated against the known xtask command roots instead.
+const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
+    "cargo fmt --check",
+    "cargo check --workspace --all-targets",
+    "cargo test --workspace",
+    "cargo test -p ripr",
+    "cargo test -p xtask",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo doc --workspace --no-deps",
+    "cargo package -p ripr --list",
+    "cargo publish -p ripr --dry-run",
+];
+
+fn check_proof_packs_impl() -> Result<(), String> {
+    let mut violations = Vec::new();
+
+    let manifest = read_ci_ledger_document(PROOF_PACK_MANIFEST_PATH, &mut violations);
+    let lanes = read_ci_ledger_document(PROOF_PACK_LANE_WHITELIST_PATH, &mut violations);
+
+    if let (Some(manifest), Some(lanes)) = (&manifest, &lanes) {
+        let lane_ids = proof_pack_lane_ids(lanes);
+        violations.extend(proof_pack_violations(manifest, &lane_ids));
+    }
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "proof-packs.md",
+            check: "check-proof-packs",
+            why_it_matters: "policy/proof-packs.toml is the routing unit for proof-aware validation (docs/PROOF_ROUTING.md). While state is manifest-only, nothing routes on it yet, but the manifest must stay parseable, name only real repo commands and CI lanes, and keep the release-package pack pinned to full proof before any routing behavior consumes it.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Keep `policy/proof-packs.toml` on version 0.1 with `state = \"manifest-only\"` and `unknown_surface_policy = \"full-proof\"`.",
+                "Give every pack a unique kebab-case id, at least one path, and at least one required command.",
+                "Reference only known `cargo xtask` commands or known repo commands, and a `ci_lane` declared in `policy/ci-lane-whitelist.toml`.",
+                "Keep `never_routed = true` on the release-package pack; release proof is never routed away.",
+            ],
+            rerun_command: "cargo xtask check-proof-packs",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+fn proof_pack_lane_ids(lanes: &CiLedgerDocument) -> BTreeSet<String> {
+    let mut ignored = Vec::new();
+    ci_tables(lanes, "lane")
+        .into_iter()
+        .filter_map(|table| {
+            let value = table.values.get("id")?;
+            ci_string_value(
+                PROOF_PACK_LANE_WHITELIST_PATH,
+                "table `[[lane]]`",
+                "id",
+                value,
+                &mut ignored,
+            )
+        })
+        .collect()
+}
+
+fn proof_pack_violations(manifest: &CiLedgerDocument, lane_ids: &BTreeSet<String>) -> Vec<String> {
+    let path = PROOF_PACK_MANIFEST_PATH;
+    let mut violations = Vec::new();
+
+    ci_expect_top_string(path, manifest, "version", "0.1", &mut violations);
+    ci_expect_top_string(path, manifest, "state", "manifest-only", &mut violations);
+    ci_expect_top_string(
+        path,
+        manifest,
+        "unknown_surface_policy",
+        "full-proof",
+        &mut violations,
+    );
+
+    let packs = ci_tables(manifest, "pack");
+    if packs.is_empty() {
+        violations.push(format!("{path} has no [[pack]] entries"));
+    }
+
+    let mut seen_ids = BTreeSet::new();
+    let mut release_pack_seen = false;
+    for pack in packs {
+        let Some(id) = ci_required_table_id(path, pack, "id", "proof pack", &mut violations) else {
+            continue;
+        };
+        if !seen_ids.insert(id.clone()) {
+            violations.push(format!(
+                "{path}:{} duplicate proof pack id `{id}`",
+                pack.line
+            ));
+        }
+
+        if let Some(paths) = ci_required_table_array(path, pack, "paths", &mut violations)
+            && paths.is_empty()
+        {
+            violations.push(format!(
+                "{path}:{} proof pack `{id}` must cover at least one path",
+                pack.line
+            ));
+        }
+
+        if let Some(required) =
+            ci_required_table_array(path, pack, "required_commands", &mut violations)
+        {
+            if required.is_empty() {
+                violations.push(format!(
+                    "{path}:{} proof pack `{id}` must name at least one required command",
+                    pack.line
+                ));
+            }
+            for command in &required {
+                proof_pack_command_violation(
+                    path,
+                    pack.line,
+                    &id,
+                    "required_commands",
+                    command,
+                    &mut violations,
+                );
+            }
+        }
+
+        if let Some(advisory) =
+            ci_required_table_array(path, pack, "advisory_commands", &mut violations)
+        {
+            for command in &advisory {
+                proof_pack_command_violation(
+                    path,
+                    pack.line,
+                    &id,
+                    "advisory_commands",
+                    command,
+                    &mut violations,
+                );
+            }
+        }
+
+        if let Some(ci_lane) =
+            ci_required_non_empty_table_string(path, pack, "ci_lane", &mut violations)
+            && !lane_ids.contains(&ci_lane)
+        {
+            violations.push(format!(
+                "{path}:{} proof pack `{id}` references unknown ci_lane `{ci_lane}`\n  rule: ci_lane must be a lane id declared in {PROOF_PACK_LANE_WHITELIST_PATH}",
+                pack.line
+            ));
+        }
+
+        ci_required_non_empty_table_string(path, pack, "proves", &mut violations);
+        ci_required_non_empty_table_string(path, pack, "does_not_prove", &mut violations);
+
+        let never_routed = pack.values.get("never_routed");
+        if let Some(value) = never_routed
+            && value.raw != "true"
+            && value.raw != "false"
+        {
+            violations.push(format!(
+                "{path}:{} proof pack `{id}` field `never_routed` must be a bare `true` or `false`",
+                value.line
+            ));
+        }
+        if id == PROOF_PACK_RELEASE_PACK_ID {
+            release_pack_seen = true;
+            if never_routed.map(|value| value.raw.as_str()) != Some("true") {
+                violations.push(format!(
+                    "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must set `never_routed = true`\n  rule: release proof is never routed away (docs/PROOF_ROUTING.md)",
+                    pack.line
+                ));
+            }
+        }
+    }
+
+    if !release_pack_seen {
+        violations.push(format!(
+            "{path} must define a `{PROOF_PACK_RELEASE_PACK_ID}` pack with `never_routed = true`"
+        ));
+    }
+
+    violations
+}
+
+fn proof_pack_command_violation(
+    path: &str,
+    line: usize,
+    pack_id: &str,
+    field: &str,
+    command: &str,
+    violations: &mut Vec<String>,
+) {
+    if proof_pack_command_is_known(command) {
+        return;
+    }
+    violations.push(format!(
+        "{path}:{line} proof pack `{pack_id}` field `{field}` names unknown repo command `{command}`\n  rule: use a `cargo xtask <command>` from `cargo xtask help` or a known repo proof command"
+    ));
+}
+
+fn proof_pack_command_is_known(command: &str) -> bool {
+    let trimmed = command.trim();
+    if let Some(rest) = trimmed.strip_prefix("cargo xtask ") {
+        let root = known_command_root(rest.trim());
+        return !root.is_empty()
+            && known_commands()
+                .into_iter()
+                .any(|known| known_command_root(known) == root);
+    }
+    PROOF_PACK_KNOWN_REPO_COMMANDS.contains(&trimmed)
+}
+
 fn check_dependencies() -> Result<(), String> {
     let allowlist = read_glob_allowlist("policy/dependency_allowlist.txt")?;
     let mut violations = Vec::new();
@@ -94329,6 +94544,10 @@ jobs:
             XtaskCommand::CheckBadgeDiffPolicy
         );
         assert_eq!(
+            XtaskCommand::parse(["check-proof-packs".to_string()]),
+            XtaskCommand::CheckProofPacks
+        );
+        assert_eq!(
             XtaskCommand::parse(["check-doc-artifacts".to_string()]),
             XtaskCommand::CheckDocArtifacts
         );
@@ -95195,6 +95414,7 @@ covered_by = ["cargo xtask check-file-policy"]
         assert!(commands.contains(&"worktree doctor"));
         assert!(commands.contains(&"check-droid-review-config"));
         assert!(commands.contains(&"check-ci-lane-whitelist"));
+        assert!(commands.contains(&"check-proof-packs"));
         assert!(commands.contains(&"vscode-compile"));
         assert!(commands.contains(&"vscode-package"));
         assert!(commands.contains(&"vscode-test"));
@@ -114266,6 +114486,190 @@ review_note = "review"
             ));
         }
         Ok(())
+    }
+
+    fn proof_packs_fixture() -> &'static str {
+        r#"
+version = "0.1"
+state = "manifest-only"
+unknown_surface_policy = "full-proof"
+
+[[pack]]
+id = "docs-spec"
+paths = ["docs/specs/**"]
+required_commands = ["cargo xtask check-spec-format"]
+advisory_commands = ["cargo xtask markdown-links"]
+ci_lane = "docs"
+proves = "Spec documents keep their required shape."
+does_not_prove = "It does not demonstrate compiled analyzer behavior."
+
+[[pack]]
+id = "release-package"
+paths = ["Cargo.toml"]
+required_commands = ["cargo publish -p ripr --dry-run"]
+advisory_commands = []
+ci_lane = "release-readiness-proof"
+proves = "Release surfaces pay the full release proof."
+does_not_prove = "It does not demonstrate marketplace publish success."
+never_routed = true
+"#
+    }
+
+    fn proof_pack_fixture_violations(text: &str) -> Result<Vec<String>, String> {
+        let manifest = ci_document("policy/proof-packs.toml", text)?;
+        let lane_ids: std::collections::BTreeSet<String> = ["docs", "release-readiness-proof"]
+            .iter()
+            .map(|lane| (*lane).to_string())
+            .collect();
+        Ok(super::proof_pack_violations(&manifest, &lane_ids))
+    }
+
+    fn require_proof_pack_violation(violations: &[String], needle: &str) -> Result<(), String> {
+        if violations
+            .iter()
+            .any(|violation| violation.contains(needle))
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "expected violation containing `{needle}`, got {violations:?}"
+            ))
+        }
+    }
+
+    #[test]
+    fn check_proof_packs_accepts_current_manifest() -> Result<(), String> {
+        with_repo_cwd(super::check_proof_packs_impl)
+    }
+
+    #[test]
+    fn check_proof_packs_accepts_well_formed_fixture() -> Result<(), String> {
+        let violations = proof_pack_fixture_violations(proof_packs_fixture())?;
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "expected no violations for well-formed fixture, got {violations:?}"
+            ))
+        }
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_duplicate_pack_id() -> Result<(), String> {
+        let manifest =
+            proof_packs_fixture().replace(r#"id = "docs-spec""#, r#"id = "release-package""#);
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(&violations, "duplicate proof pack id `release-package`")
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_empty_paths() -> Result<(), String> {
+        let manifest =
+            proof_packs_fixture().replace(r#"paths = ["docs/specs/**"]"#, r#"paths = []"#);
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "proof pack `docs-spec` must cover at least one path",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_empty_required_commands() -> Result<(), String> {
+        let manifest = proof_packs_fixture().replace(
+            r#"required_commands = ["cargo xtask check-spec-format"]"#,
+            r#"required_commands = []"#,
+        );
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "proof pack `docs-spec` must name at least one required command",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_unknown_command() -> Result<(), String> {
+        let manifest = proof_packs_fixture().replace(
+            r#"required_commands = ["cargo xtask check-spec-format"]"#,
+            r#"required_commands = ["cargo xtask not-a-real-command"]"#,
+        );
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "unknown repo command `cargo xtask not-a-real-command`",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_unknown_non_xtask_command() -> Result<(), String> {
+        let manifest = proof_packs_fixture().replace(
+            r#"advisory_commands = ["cargo xtask markdown-links"]"#,
+            r#"advisory_commands = ["make proof"]"#,
+        );
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(&violations, "unknown repo command `make proof`")
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_unknown_ci_lane() -> Result<(), String> {
+        let manifest =
+            proof_packs_fixture().replace(r#"ci_lane = "docs""#, r#"ci_lane = "missing-lane""#);
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(&violations, "references unknown ci_lane `missing-lane`")
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_release_pack_without_never_routed() -> Result<(), String> {
+        let manifest = proof_packs_fixture().replace("never_routed = true", "never_routed = false");
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "proof pack `release-package` must set `never_routed = true`",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_missing_release_pack() -> Result<(), String> {
+        let manifest =
+            proof_packs_fixture().replace(r#"id = "release-package""#, r#"id = "other-pack""#);
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "must define a `release-package` pack with `never_routed = true`",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_unexpected_unknown_surface_policy() -> Result<(), String> {
+        let manifest = proof_packs_fixture().replace(
+            r#"unknown_surface_policy = "full-proof""#,
+            r#"unknown_surface_policy = "cheapest-lane""#,
+        );
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "`unknown_surface_policy` should be `full-proof`, got `cheapest-lane`",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_non_manifest_only_state_drift() -> Result<(), String> {
+        let manifest =
+            proof_packs_fixture().replace(r#"state = "manifest-only""#, r#"state = "routing""#);
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "`state` should be `manifest-only`, got `routing`",
+        )
+    }
+
+    #[test]
+    fn proof_pack_command_known_set_accepts_xtask_roots_and_repo_commands() {
+        assert!(super::proof_pack_command_is_known(
+            "cargo xtask goldens check"
+        ));
+        assert!(super::proof_pack_command_is_known("cargo test --workspace"));
+        assert!(!super::proof_pack_command_is_known("cargo xtask "));
+        assert!(!super::proof_pack_command_is_known("rm -rf /"));
     }
 
     #[test]
