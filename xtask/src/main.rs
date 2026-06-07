@@ -7356,7 +7356,7 @@ fn routed_rust_workflow_contract_violations(
         ),
         (
             "CX43 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 90",
+            "ci-disk-guard /mnt/ci-scratch 80",
         ),
         (
             "CPX42 scratch free-space floor",
@@ -76460,7 +76460,7 @@ jobs:
       - name: Prepare toolchain temp
         run: mkdir -p "$TMPDIR"
       - name: Prepare scratch
-        run: ci-disk-guard /mnt/ci-scratch 90
+        run: ci-disk-guard /mnt/ci-scratch 80
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
