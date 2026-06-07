@@ -270,6 +270,11 @@ can show:
 - outcome fixtures proving Python canonical gaps can close, remain unchanged,
   reopen, strengthen without closing, and weaken across check-output snapshots
   while preserving static/advisory receipt language
+- a field/object fixture proving a returned constructor keyword such as
+  `return User(active=True)` can route to a syntax-only object-field repair
+  card with a discriminator such as `result.active == True`, a direct
+  object-field assertion shape, and a stop condition when the returned object
+  does not expose that keyword as a public field or attribute
 - a non-boundary return-value outcome fixture proving a weak broad assertion can
   become an exact return assertion and close the canonical Python gap
 - a non-boundary exception-path outcome fixture proving a weak broad exception
@@ -284,8 +289,9 @@ can show:
 - fixtures proving direct weak related pytest and unittest tests are preferred
   as `strengthen_existing_test` repair targets instead of redundant new tests
 - output tests proving eligible Python repair cards are projected into GitHub
-  annotations and diff-scoped SARIF as advisory repair context, not gate or
-  receipt authority
+  annotations and diff-scoped SARIF as advisory repair context, and proving
+  no-action/static-limit Python findings project explicit no-repair-card and
+  no-agent-packet annotation context, not gate or receipt authority
 - a fixture proving `mock.assert_called*` is recognised as a
   side-effect oracle
 - a fixture covering parametrized `pytest` cases

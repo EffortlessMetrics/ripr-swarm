@@ -445,6 +445,12 @@ cargo check --workspace --all-targets
 The main Rust job stays on `stable` so routine CI also proves the current stable
 toolchain, while the MSRV job proves the declared workspace baseline.
 
+The legacy Rust workflow's `rust` and `msrv` jobs run on `ubuntu-latest`. These
+jobs are release-surface proof on main and manual dispatches; they must not
+depend on self-hosted runner capacity when preparing a source release. The
+routed Rust-small workflow remains the swarm development lane that selects
+self-hosted runners when available and falls back to hosted capacity.
+
 Local shaping commands are intentionally separate from CI because they mutate
 the worktree:
 
@@ -644,6 +650,49 @@ It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
 the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
+
+### Self-Hosted Runner Placement
+
+The everyday required Rust gate routes through `routed-rust.yml`
+(`CX53 -> CX43 -> GitHub-hosted` fallback, shared `/mnt/ci-cache`, disk guards,
+and scratch cleanup) and exposes the single branch-protection check
+`Ripr Rust Small Result`. That lane is the migrated reference and is not changed
+by routine runner-placement edits.
+
+The remaining (non-required) self-hosted lanes route to the smallest safe EM
+shared self-hosted tier by actual workload, each with explicit
+`group` + `labels` and a per-job `timeout-minutes` hang guard. Queueing on
+these groups is acceptable backpressure and these lanes are advisory or
+label/push gated, so they do not block merge. The VS Code e2e lane is the
+exception: it runs on GitHub-hosted Ubuntu because it installs `xvfb` for
+headless extension tests and must not depend on privileged package installs on
+EM self-hosted runners.
+
+| Workflow / job | Group | Tier label |
+| --- | --- | --- |
+| `ci.yml` `rust` | `em-ci-small` | `rust-medium` |
+| `ci.yml` `msrv` | `em-ci-small` | `rust-small` |
+| `ci.yml` `vscode` | GitHub-hosted | `ubuntu-latest` |
+| `coverage.yml` | `em-ci-small` | `rust-heavy-medium` |
+| `test-analytics.yml` | `em-ci-small` | `rust-medium` |
+| `future-clippy.yml` | `em-ci-small` | `rust-medium` |
+| `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
+| `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
+| `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
+| `pr-plan.yml` | `em-ci-nano` | `workflow-nano` |
+| `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+
+All self-hosted lanes carry the `trusted-pr` label and keep their existing
+fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted
+runners. `rust-large` is intentionally not used here; it is reserved org-wide
+for the single heaviest lane. Build-heavy lanes still use `Swatinem/rust-cache`;
+moving them onto the shared `sccache`/`/mnt/ci-cache` path used by
+`routed-rust.yml` is a tracked follow-up rather than part of this placement
+change.
+
+Release and publish workflows (`publish-extension.yml`,
+`release-server-binaries.yml`) and branch protection (`.github/settings.yml`)
+are intentionally out of scope for this placement change.
 
 ## SARIF and Policy Contract
 
@@ -2214,12 +2263,27 @@ blocking. Default generated CI still stays non-blocking unless
 The security workflow currently runs:
 
 ```bash
-cargo deny check advisories licenses bans sources
+cargo-deny check advisories licenses bans sources
 ```
 
-It uses `deny.toml` to enforce RustSec advisories, license policy, banned
-crates, and approved dependency sources. Duplicate dependency findings are
-warnings while the `ra_ap_syntax` dependency graph is being baselined.
+The coverage and Test Analytics workflows run on `ubuntu-latest`. Both lanes
+remain advisory, but release candidates need an observable green boundary; these
+lanes must not depend on self-hosted runner availability just to prove that the
+current workspace can produce coverage and JUnit artifacts. The jobs still run
+only on pull requests, pushes to `main`/`master`, and manual dispatches, and
+Codecov upload remains non-blocking.
+
+Future Clippy also runs on `ubuntu-latest`. It remains advisory and never fails
+the branch; the hosted runner keeps deferred-lint readiness visible without
+blocking release proof on self-hosted runner availability.
+
+It installs `cargo-deny` as a normal command-line binary before running the
+check, so self-hosted runners do not need Docker just to execute the security
+workflow. The job also installs the Rust toolchain because `cargo-deny` shells
+out to `cargo metadata` while evaluating the workspace. It uses `deny.toml` to
+enforce RustSec advisories, license policy, banned crates, and approved
+dependency sources. Duplicate dependency findings are warnings while the
+`ra_ap_syntax` dependency graph is being baselined.
 
 Pull requests also run GitHub Dependency Review for high-severity vulnerability
 alerts and denied license families. Dependency Graph is enabled for the

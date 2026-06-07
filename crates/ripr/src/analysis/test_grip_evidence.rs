@@ -45,7 +45,7 @@ pub(crate) struct TestGripEvidence {
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
 const LATENCY_TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const EVIDENCE_PROGRESS_CHUNK: usize = 500;
-const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 2;
+const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 
 /// Per-related-test grip facts attached to a `TestGripEvidence`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,7 +102,8 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        let helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        let same_file_helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        let helper_owner_calls_by_file = strict_helper_owner_calls_by_file(index);
         let unambiguous_test_helper_owner_calls_by_name =
             unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
         let helper_owner_calls_by_module_path =
@@ -149,12 +150,17 @@ impl<'a> CompactGripContext<'a> {
                     .map(strip_comments_and_strings)
                     .collect::<Vec<_>>();
                 let module_import_aliases = module_import_aliases_by_file.get(&test.file);
-                let helper_owner_call_names = helper_owner_call_names_for_test(
+                let mut helper_owner_call_names = helper_owner_call_names_for_test(
                     test,
                     &call_names,
                     &helper_owner_lookup,
                     module_import_aliases,
                 );
+                helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
+                    test,
+                    &call_names,
+                    &same_file_helper_owner_calls_by_file,
+                ));
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
                         &test.calls,
@@ -303,16 +309,49 @@ struct HelperOwnerCallLookup<'a> {
     direct_helper_import_aliases_by_file: &'a DirectFunctionImportAliasesByFile,
 }
 
+fn same_file_helper_owner_call_names_for_test(
+    test: &TestSummary,
+    call_names: &BTreeSet<String>,
+    helpers: &HelperOwnerCallsByFile,
+) -> BTreeSet<String> {
+    if rust_index::is_test_file(&test.file) {
+        return BTreeSet::new();
+    }
+    let Some(file_helpers) = helpers.get(&test.file) else {
+        return BTreeSet::new();
+    };
+    call_names
+        .iter()
+        .filter_map(|call_name| file_helpers.get(call_name))
+        .flat_map(|owner_calls| owner_calls.iter().cloned())
+        .collect()
+}
+
 fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
+    helper_owner_calls_by_file_with_fanout(index, true)
+}
+
+fn strict_helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
+    helper_owner_calls_by_file_with_fanout(index, false)
+}
+
+fn helper_owner_calls_by_file_with_fanout(
+    index: &RustIndex,
+    allow_fanout_wrappers: bool,
+) -> HelperOwnerCallsByFile {
     let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
     let function_names_by_file = local_function_names_by_file(index);
+    let direct_function_import_aliases_by_file = direct_function_import_aliases_by_file(index);
+    let unambiguous_production_owner_names_by_package =
+        unambiguous_production_owner_names_by_package(index);
+    let owner_names_by_module_path = production_owner_names_by_module_path(index);
     let production_owner_names = production_owner_names(index);
     for function in index.functions.iter().filter(|function| !function.is_test) {
         let helper_name_lower = function.name.to_ascii_lowercase();
         let local_function_names = function_names_by_file.get(&function.file);
         let external_owner_names =
             rust_index::is_test_file(&function.file).then_some(&production_owner_names);
-        let owner_calls = function
+        let mut owner_calls = function
             .calls
             .iter()
             .filter(|call| {
@@ -322,11 +361,20 @@ fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
                         call,
                         local_function_names,
                         external_owner_names,
+                        allow_fanout_wrappers,
                     ))
                     && call_text_contains_named_call(&call.text, &call.name)
             })
             .map(|call| call.name.clone())
             .collect::<BTreeSet<_>>();
+        if let Some(package) = package_scope(&function.file) {
+            owner_calls.extend(strict_direct_imported_owner_calls_for_helper(
+                function,
+                direct_function_import_aliases_by_file.get(&function.file),
+                unambiguous_production_owner_names_by_package.get(&package),
+                &owner_names_by_module_path,
+            ));
+        }
         if owner_calls.is_empty() {
             continue;
         }
@@ -337,6 +385,25 @@ fn helper_owner_calls_by_file(index: &RustIndex) -> HelperOwnerCallsByFile {
     }
     extend_helper_owner_calls_through_bounded_graph(&mut helpers);
     helpers
+}
+
+fn strict_direct_imported_owner_calls_for_helper(
+    function: &FunctionSummary,
+    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    unambiguous_production_owner_names: Option<&BTreeSet<String>>,
+    owner_names_by_module_path: &OwnerNamesByModulePath,
+) -> BTreeSet<String> {
+    let owner_calls = direct_imported_owner_calls_for_function(
+        function,
+        direct_function_import_aliases,
+        unambiguous_production_owner_names,
+        owner_names_by_module_path,
+    );
+    if owner_calls.len() == 1 {
+        owner_calls
+    } else {
+        BTreeSet::new()
+    }
 }
 
 fn extend_helper_owner_calls_through_bounded_graph(helpers: &mut HelperOwnerCallsByFile) {
@@ -366,6 +433,35 @@ fn extend_helper_owner_calls_through_bounded_graph(helpers: &mut HelperOwnerCall
                 }
                 file_helpers.insert(helper_name, expanded_owner_calls);
             }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn extend_helper_owner_calls_through_bounded_name_graph(helpers: &mut HelperOwnerCallsByName) {
+    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
+        let snapshot = helpers.clone();
+        let mut changed = false;
+        for helper_name in helpers.keys().cloned().collect::<Vec<_>>() {
+            let Some(owner_calls) = helpers.get(&helper_name).cloned() else {
+                continue;
+            };
+            let mut expanded_owner_calls = owner_calls.clone();
+            for owner_call in owner_calls {
+                let Some(transitive_owner_calls) = snapshot.get(&owner_call) else {
+                    continue;
+                };
+                for transitive_owner_call in transitive_owner_calls {
+                    if transitive_owner_call != &helper_name
+                        && expanded_owner_calls.insert(transitive_owner_call.clone())
+                    {
+                        changed = true;
+                    }
+                }
+            }
+            helpers.insert(helper_name, expanded_owner_calls);
         }
         if !changed {
             break;
@@ -432,12 +528,13 @@ fn production_helper_owner_calls_by_package(
     by_package
         .into_iter()
         .filter_map(|(package, helper_sets)| {
-            let helpers = helper_sets
+            let mut helpers = helper_sets
                 .into_iter()
                 .filter_map(|(helper_name, owner_sets)| {
                     common_helper_owner_calls(helper_name, owner_sets)
                 })
                 .collect::<HelperOwnerCallsByName>();
+            extend_helper_owner_calls_through_bounded_name_graph(&mut helpers);
             (!helpers.is_empty()).then_some((package, helpers))
         })
         .collect()
@@ -1100,6 +1197,7 @@ fn helper_directly_delegates_to_specific_owner(
     call: &CallFact,
     local_function_names: Option<&BTreeSet<String>>,
     external_owner_names: Option<&BTreeSet<String>>,
+    allow_fanout_wrappers: bool,
 ) -> bool {
     if call.name == function.name {
         return false;
@@ -1134,16 +1232,20 @@ fn helper_directly_delegates_to_specific_owner(
                 && candidate.line == call.line
                 && candidate.text == call.text;
         } else if candidate.line == call.line
-            && !direct_delegate_extra_call_is_inert(&candidate.name)
+            && !direct_delegate_extra_call_is_allowed(candidate, call)
         {
             has_disallowed_extra_call = true;
         }
     }
 
-    direct_local_owner_call_names.len() == 1
-        && direct_local_owner_call_names.contains(&call.name)
-        && delegates_to_call
-        && !has_disallowed_extra_call
+    let owner_call_is_unique_or_same_file_fanout = if allow_fanout_wrappers {
+        direct_local_owner_call_names.contains(&call.name)
+    } else {
+        direct_local_owner_call_names.len() == 1
+            && direct_local_owner_call_names.contains(&call.name)
+    };
+
+    owner_call_is_unique_or_same_file_fanout && delegates_to_call && !has_disallowed_extra_call
 }
 
 fn call_text_routes_directly_to_named_call(text: &str, name: &str) -> bool {
@@ -1163,28 +1265,189 @@ fn direct_call_prefix_is_allowed(prefix: &str) -> bool {
     if prefix.is_empty() || prefix == "return" || prefix.ends_with('=') || prefix.ends_with("=>") {
         return true;
     }
+    if direct_delegate_condition_prefix_is_allowed(prefix) {
+        return true;
+    }
     if direct_receiver_method_prefix_is_allowed(prefix) {
         return true;
     }
+    if let Some(macro_name) = direct_delegate_parenthesized_macro_name_before_argument(prefix) {
+        return direct_delegate_parenthesized_macro_is_allowed(&macro_name);
+    }
+    if direct_delegate_block_prefix_is_allowed(prefix) {
+        return true;
+    }
+    if direct_delegate_std_identity_prefix_is_allowed(prefix) {
+        return true;
+    }
+    if direct_delegate_field_initializer_prefix_is_allowed(prefix) {
+        return true;
+    }
+    let Some(open) = prefix.strip_suffix('(') else {
+        let Some(open) = prefix.strip_suffix('[') else {
+            return false;
+        };
+        let open = open.trim_end();
+        if open.is_empty() || open == "return" || open.ends_with('=') || open.ends_with("=>") {
+            return true;
+        }
+        if let Some(macro_prefix) = open.strip_suffix('!') {
+            let macro_name = trailing_rust_identifier(macro_prefix);
+            return direct_delegate_container_macro_is_allowed(&macro_name);
+        }
+        return false;
+    };
+    let open = open.trim_end();
+    if open.is_empty() || open == "return" || open.ends_with('=') || open.ends_with("=>") {
+        return true;
+    }
+    if let Some(macro_prefix) = open.strip_suffix('!') {
+        let macro_name = trailing_rust_identifier(macro_prefix);
+        return direct_delegate_parenthesized_macro_is_allowed(&macro_name);
+    }
+    let wrapper_name = direct_delegate_wrapper_name(open);
+    direct_delegate_extra_call_is_inert(&wrapper_name)
+}
+
+fn direct_delegate_condition_prefix_is_allowed(prefix: &str) -> bool {
+    matches!(prefix.trim(), "if" | "if !")
+}
+
+fn direct_delegate_parenthesized_macro_name_before_argument(prefix: &str) -> Option<String> {
+    let (macro_prefix, argument_prefix) = prefix.rsplit_once("!(")?;
+    let macro_name = trailing_rust_identifier(macro_prefix);
+    if macro_name.is_empty()
+        || !direct_delegate_macro_argument_prefix_is_allowed(&macro_name, argument_prefix)
+    {
+        return None;
+    }
+    Some(macro_name)
+}
+
+fn direct_delegate_macro_argument_prefix_is_allowed(
+    macro_name: &str,
+    argument_prefix: &str,
+) -> bool {
+    if argument_prefix
+        .chars()
+        .all(|ch| ch.is_whitespace() || ch == ',')
+    {
+        return true;
+    }
+    direct_delegate_eager_later_argument_macro_is_allowed(macro_name)
+        && argument_prefix_has_trailing_top_level_comma(argument_prefix)
+}
+
+fn direct_delegate_eager_later_argument_macro_is_allowed(macro_name: &str) -> bool {
+    matches!(
+        macro_name,
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne"
+    )
+}
+
+fn argument_prefix_has_trailing_top_level_comma(prefix: &str) -> bool {
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut saw_top_level_comma = false;
+    let mut only_ws_after_last_comma = true;
+
+    for ch in prefix.chars() {
+        match ch {
+            '(' => {
+                paren_depth = paren_depth.saturating_add(1);
+                only_ws_after_last_comma = false;
+            }
+            ')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                only_ws_after_last_comma = false;
+            }
+            '[' => {
+                bracket_depth = bracket_depth.saturating_add(1);
+                only_ws_after_last_comma = false;
+            }
+            ']' => {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                only_ws_after_last_comma = false;
+            }
+            '{' => {
+                brace_depth = brace_depth.saturating_add(1);
+                only_ws_after_last_comma = false;
+            }
+            '}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                only_ws_after_last_comma = false;
+            }
+            ',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                saw_top_level_comma = true;
+                only_ws_after_last_comma = true;
+            }
+            _ => {
+                if !ch.is_whitespace() {
+                    only_ws_after_last_comma = false;
+                }
+            }
+        }
+    }
+
+    saw_top_level_comma && only_ws_after_last_comma
+}
+
+fn direct_delegate_wrapper_name(open: &str) -> String {
+    let open = open.trim_end();
+    if let Some((before_turbofish, generic_tail)) = open.rsplit_once("::<")
+        && generic_tail.trim_end().ends_with('>')
+    {
+        return trailing_rust_identifier(before_turbofish);
+    }
+    trailing_rust_identifier(open)
+}
+
+fn direct_delegate_block_prefix_is_allowed(prefix: &str) -> bool {
+    let Some(open) = prefix.strip_suffix('{') else {
+        return false;
+    };
+    let open = open.trim_end();
+    open.is_empty() || open == "return" || open.ends_with('=') || open.ends_with("=>")
+}
+
+fn direct_delegate_std_identity_prefix_is_allowed(prefix: &str) -> bool {
     let Some(open) = prefix.strip_suffix('(') else {
         return false;
     };
-    let wrapper_name = open
-        .chars()
-        .rev()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>();
-    direct_delegate_extra_call_is_inert(&wrapper_name)
+    let open = open.trim_end();
+    let open = open.strip_prefix("return ").unwrap_or(open).trim_start();
+    direct_delegate_std_identity_path_is_allowed(open)
+}
+
+fn direct_delegate_std_identity_path_is_allowed(path: &str) -> bool {
+    matches!(
+        path.trim(),
+        "std::convert::identity"
+            | "::std::convert::identity"
+            | "core::convert::identity"
+            | "::core::convert::identity"
+    )
+}
+
+fn direct_delegate_field_initializer_prefix_is_allowed(prefix: &str) -> bool {
+    let Some(before_colon) = prefix.trim_end().strip_suffix(':') else {
+        return false;
+    };
+    let before_colon = before_colon.trim_end();
+    let field_name = trailing_rust_identifier(before_colon);
+    if field_name.is_empty() {
+        return false;
+    }
+    let before_field = before_colon[..before_colon.len() - field_name.len()].trim_end();
+    before_field.is_empty() || before_field.ends_with('{') || before_field.ends_with(',')
 }
 
 fn direct_receiver_method_prefix_is_allowed(prefix: &str) -> bool {
     let Some(receiver_prefix) = prefix.strip_suffix('.') else {
         return false;
     };
-    let receiver = receiver_prefix.trim();
+    let receiver = direct_receiver_method_condition_receiver(receiver_prefix);
     !receiver.is_empty()
         && receiver
             .chars()
@@ -1193,6 +1456,27 @@ fn direct_receiver_method_prefix_is_allowed(prefix: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+}
+
+fn direct_receiver_method_condition_receiver(prefix: &str) -> &str {
+    let receiver = prefix.trim();
+    if let Some(after_if) = receiver.strip_prefix("if !") {
+        return after_if.trim_start();
+    }
+    if let Some(after_if) = receiver.strip_prefix("if ") {
+        return after_if.trim_start();
+    }
+    receiver
+}
+
+fn trailing_rust_identifier(text: &str) -> String {
+    text.chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>()
 }
 
 fn call_text_contains_named_call(text: &str, name: &str) -> bool {
@@ -1215,22 +1499,130 @@ fn supported_helper_owner_call_name(
         || external_owner_names.is_some_and(|owner_names| owner_names.contains(call_name))
 }
 
+fn direct_delegate_parenthesized_macro_is_allowed(call_name: &str) -> bool {
+    matches!(
+        call_name,
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "assert_matches"
+            | "dbg"
+            | "format"
+            | "format_args"
+            | "matches"
+    )
+}
+
+fn direct_delegate_container_macro_is_allowed(call_name: &str) -> bool {
+    matches!(call_name, "vec")
+}
+
 fn direct_delegate_extra_call_is_inert(call_name: &str) -> bool {
     matches!(
         call_name,
         "clone"
             | "default"
             | "expect"
+            | "extend"
             | "format"
             | "from"
             | "into"
             | "new"
             | "to_string"
+            | "trim"
             | "unwrap"
+            | "unwrap_or_default"
             | "Err"
             | "Ok"
             | "Some"
     )
+}
+
+fn direct_delegate_extra_call_is_allowed(candidate: &CallFact, owner_call: &CallFact) -> bool {
+    direct_delegate_extra_call_is_inert(&candidate.name)
+        || direct_delegate_parenthesized_macro_is_allowed(&candidate.name)
+        || direct_delegate_container_macro_is_allowed(&candidate.name)
+        || direct_delegate_post_owner_method_is_allowed(
+            &candidate.name,
+            &candidate.text,
+            &owner_call.name,
+        )
+        || direct_delegate_std_identity_call_is_allowed(
+            &candidate.name,
+            &candidate.text,
+            &owner_call.name,
+        )
+}
+
+fn direct_delegate_post_owner_method_is_allowed(
+    method_name: &str,
+    text: &str,
+    owner_name: &str,
+) -> bool {
+    if !matches!(method_name, "as_ref" | "cloned") {
+        return false;
+    }
+    let cleaned = strip_comments_and_strings(text);
+    cleaned.match_indices(owner_name).any(|(start, _)| {
+        let before = cleaned[..start].chars().next_back();
+        if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return false;
+        }
+        let after_name = &cleaned[start + owner_name.len()..];
+        let after_name = after_name.trim_start();
+        if !after_name.starts_with('(') {
+            return false;
+        }
+        let Some(close_index) = matching_close_paren(after_name) else {
+            return false;
+        };
+        after_name[close_index + 1..]
+            .trim_start()
+            .starts_with(&format!(".{method_name}("))
+    })
+}
+
+fn direct_delegate_std_identity_call_is_allowed(
+    call_name: &str,
+    text: &str,
+    owner_name: &str,
+) -> bool {
+    if call_name != "identity" {
+        return false;
+    }
+    let cleaned = strip_comments_and_strings(text);
+    cleaned.match_indices(owner_name).any(|(start, _)| {
+        let before = cleaned[..start].trim_end();
+        if !direct_delegate_std_identity_prefix_is_allowed(before) {
+            return false;
+        }
+        let before_owner = cleaned[..start].chars().next_back();
+        if before_owner.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return false;
+        }
+        cleaned[start + owner_name.len()..]
+            .trim_start()
+            .starts_with('(')
+    })
+}
+
+fn matching_close_paren(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn helper_name_carries_owner_token(helper_name_lower: &str, owner_name: &str) -> bool {
@@ -1794,12 +2186,20 @@ impl OwnerContext {
 /// through `extract_identifier_tokens`, so stop-words and short tokens
 /// are excluded.
 fn assertion_target_tokens(seam: &RepoSeam) -> BTreeSet<String> {
-    let discriminator_tokens = if seam.kind() == SeamKind::CallPresence {
-        call_presence_callee_target_tokens(required_discriminator_text(seam))
-    } else {
-        required_discriminator_tokens(seam)
+    let discriminator_tokens = match seam.required_discriminator() {
+        super::seams::RequiredDiscriminator::MatchArmTaken { arm } => {
+            match_arm_assertion_target_tokens(arm)
+        }
+        _ if seam.kind() == SeamKind::CallPresence => {
+            call_presence_callee_target_tokens(required_discriminator_text(seam))
+        }
+        _ => required_discriminator_tokens(seam),
     };
-    let sink_tokens = extract_identifier_tokens(seam.expected_sink().as_str());
+    let sink_tokens = if seam.kind() == SeamKind::MatchArm {
+        Vec::new()
+    } else {
+        extract_identifier_tokens(seam.expected_sink().as_str())
+    };
     let filters_generic_call_tokens = seam.kind() == SeamKind::CallPresence;
     discriminator_tokens
         .into_iter()
@@ -1809,6 +2209,17 @@ fn assertion_target_tokens(seam: &RepoSeam) -> BTreeSet<String> {
                 || call_presence_assertion_affinity_token_is_specific_enough(token)
         })
         .collect()
+}
+
+fn match_arm_assertion_target_tokens(arm: &str) -> Vec<String> {
+    extract_identifier_tokens(arm)
+        .into_iter()
+        .filter(|token| match_arm_assertion_target_token_is_specific_enough(token))
+        .collect()
+}
+
+fn match_arm_assertion_target_token_is_specific_enough(token: &str) -> bool {
+    token.chars().next().is_some_and(|ch| ch.is_uppercase())
 }
 
 fn call_presence_callee_target_tokens(expression: &str) -> Vec<String> {
@@ -2490,8 +2901,8 @@ fn activate_evidence(
 ) -> (StageEvidence, Vec<ValueFact>, Vec<MissingDiscriminatorFact>) {
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let mut observed: Vec<ValueFact> = Vec::new();
-    let boundary_activation_operands_unresolved =
-        !owner_name.is_empty() && boundary_activation_operands_unresolved(seam, index, owner_name);
+    let observed_argument_selection =
+        (!owner_name.is_empty()).then(|| observed_argument_selection(seam, index, owner_name));
 
     if !owner_name.is_empty() {
         for indexed in related {
@@ -2508,6 +2919,17 @@ fn activate_evidence(
                 .iter()
                 .any(|indexed| boundary_equality_overlap_score(seam, indexed, index, owner_fn) > 0)
     });
+    let boundary_activation_operands_unresolved =
+        observed_argument_selection
+            .as_ref()
+            .is_some_and(|selection| {
+                matches!(
+                    selection,
+                    ObservedArgumentSelection::UnresolvedBoundaryOperands
+                ) || (selection.requires_projection()
+                    && observed.is_empty()
+                    && !boundary_equality_observed)
+            });
     let missing = missing_discriminators_for(
         seam,
         &observed,
@@ -2603,13 +3025,31 @@ fn activate_evidence(
 }
 
 fn requires_concrete_activation_values(seam: &RepoSeam) -> bool {
-    matches!(seam.kind(), SeamKind::PredicateBoundary)
+    seam.kind() == SeamKind::PredicateBoundary && comparison_operands(seam.expression()).is_some()
 }
 
 enum ObservedArgumentSelection {
     AllArguments,
-    ArgumentIndices(Vec<usize>),
+    ArgumentOperands(Vec<ObservedArgumentOperand>),
     UnresolvedBoundaryOperands,
+}
+
+impl ObservedArgumentSelection {
+    fn requires_projection(&self) -> bool {
+        matches!(
+            self,
+            ObservedArgumentSelection::ArgumentOperands(operands)
+                if operands
+                    .iter()
+                    .any(|operand| operand.projection.is_some())
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedArgumentOperand {
+    index: usize,
+    projection: Option<String>,
 }
 
 fn observed_value_facts_for_test(
@@ -2641,16 +3081,21 @@ fn observed_value_facts_for_test(
             continue;
         };
         for (arg_index, arg) in args.into_iter().enumerate() {
-            match &observed_argument_selection {
-                ObservedArgumentSelection::ArgumentIndices(indices)
-                    if !indices.contains(&arg_index) =>
-                {
-                    continue;
-                }
-                ObservedArgumentSelection::AllArguments
-                | ObservedArgumentSelection::ArgumentIndices(_) => {}
+            let argument_operand = match &observed_argument_selection {
+                ObservedArgumentSelection::ArgumentOperands(operands) => operands
+                    .iter()
+                    .find(|operand| operand.index == arg_index)
+                    .cloned(),
+                ObservedArgumentSelection::AllArguments => Some(ObservedArgumentOperand {
+                    index: arg_index,
+                    projection: None,
+                }),
                 ObservedArgumentSelection::UnresolvedBoundaryOperands => continue,
-            }
+            };
+            let Some(argument_operand) = argument_operand else {
+                continue;
+            };
+            let arg = projected_argument_expression(&arg, argument_operand.projection.as_deref());
             let mut emitted = false;
             // Direct literal first (matches pre-v2 behavior).
             for value in scalar_values(&arg) {
@@ -2727,31 +3172,20 @@ fn observed_argument_selection(
         return ObservedArgumentSelection::AllArguments;
     };
     let parameters = function_parameters(owner_fn);
-    if let Some(left_index) = boundary_operand_parameter_index(owner_fn, &parameters, &left) {
-        return ObservedArgumentSelection::ArgumentIndices(vec![left_index]);
+    if let Some(left_operand) = boundary_operand_argument(owner_fn, &parameters, &left) {
+        return ObservedArgumentSelection::ArgumentOperands(vec![left_operand]);
     }
-    if let Some(right_index) = parameters.iter().position(|param| param == &right)
+    if let Some(right_operand) = boundary_operand_argument(owner_fn, &parameters, &right)
         && !scalar_values(&left).is_empty()
     {
-        return ObservedArgumentSelection::ArgumentIndices(vec![right_index]);
+        return ObservedArgumentSelection::ArgumentOperands(vec![right_operand]);
     }
     if !scalar_values(&left).is_empty()
-        && let Some(right_index) = boundary_operand_parameter_index(owner_fn, &parameters, &right)
+        && let Some(right_operand) = boundary_operand_argument(owner_fn, &parameters, &right)
     {
-        return ObservedArgumentSelection::ArgumentIndices(vec![right_index]);
+        return ObservedArgumentSelection::ArgumentOperands(vec![right_operand]);
     }
     ObservedArgumentSelection::UnresolvedBoundaryOperands
-}
-
-fn boundary_activation_operands_unresolved(
-    seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
-) -> bool {
-    matches!(
-        observed_argument_selection(seam, index, owner_name),
-        ObservedArgumentSelection::UnresolvedBoundaryOperands
-    )
 }
 
 fn boundary_activation_operands_unresolved_summary(
@@ -2767,6 +3201,10 @@ fn boundary_activation_operands_unresolved_summary(
     if boundary_activation_operands_are_iterator_derived(seam, index, owner_name) {
         format!(
             "Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
+        )
+    } else if boundary_activation_operands_are_closure_derived(seam, index, owner_name) {
+        format!(
+            "Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
         )
     } else {
         format!(
@@ -2796,6 +3234,27 @@ fn boundary_activation_operands_are_iterator_derived(
         || boundary_operand_is_iterator_derived(owner_fn, &right)
 }
 
+fn boundary_activation_operands_are_closure_derived(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_name: &str,
+) -> bool {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return false;
+    }
+    let Some(owner_fn) = find_owner_function(seam, index) else {
+        return false;
+    };
+    if owner_fn.name != owner_name {
+        return false;
+    }
+    let Some((left, right)) = comparison_operands(seam.expression()) else {
+        return false;
+    };
+    boundary_operand_is_closure_derived(owner_fn, &left)
+        || boundary_operand_is_closure_derived(owner_fn, &right)
+}
+
 fn boundary_operand_is_iterator_derived(owner_fn: &FunctionSummary, operand: &str) -> bool {
     let operand = operand.trim();
     if !is_boundary_operand_identifier(operand) {
@@ -2805,6 +3264,56 @@ fn boundary_operand_is_iterator_derived(owner_fn: &FunctionSummary, operand: &st
         .body
         .lines()
         .any(|line| loop_binds_operand_from_iterator(line, operand))
+}
+
+fn boundary_operand_is_closure_derived(owner_fn: &FunctionSummary, operand: &str) -> bool {
+    let operand_root = boundary_operand_root_identifier(operand);
+    if operand_root.is_empty() {
+        return false;
+    }
+    owner_fn
+        .body
+        .lines()
+        .any(|line| closure_binds_operand_root(line, &operand_root))
+}
+
+fn boundary_operand_root_identifier(operand: &str) -> String {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    operand
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect()
+}
+
+fn closure_binds_operand_root(line: &str, operand_root: &str) -> bool {
+    let code = strip_comments_and_strings(line);
+    let mut rest = code.as_str();
+    while let Some(start) = rest.find('|') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('|') else {
+            return false;
+        };
+        let params = &after_start[..end];
+        if closure_params_contain_operand(params, operand_root) {
+            return true;
+        }
+        rest = &after_start[end + 1..];
+    }
+    false
+}
+
+fn closure_params_contain_operand(params: &str, operand_root: &str) -> bool {
+    params
+        .split(',')
+        .filter_map(|param| {
+            param
+                .trim()
+                .trim_start_matches("mut ")
+                .split_once(':')
+                .map(|(name, _)| name.trim())
+                .or_else(|| Some(param.trim().trim_start_matches("mut ").trim()))
+        })
+        .any(|param| param == operand_root)
 }
 
 fn loop_binds_operand_from_iterator(line: &str, operand: &str) -> bool {
@@ -2844,15 +3353,61 @@ fn is_boundary_operand_identifier(operand: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn boundary_operand_parameter_index(
+fn boundary_operand_argument(
     owner_fn: &FunctionSummary,
     parameters: &[String],
     operand: &str,
-) -> Option<usize> {
+) -> Option<ObservedArgumentOperand> {
     parameters
         .iter()
         .position(|parameter| parameter == operand)
-        .or_else(|| boundary_local_operand_parameter_index(owner_fn, parameters, operand))
+        .map(|index| ObservedArgumentOperand {
+            index,
+            projection: None,
+        })
+        .or_else(|| {
+            boundary_local_operand_parameter_index(owner_fn, parameters, operand).map(|index| {
+                ObservedArgumentOperand {
+                    index,
+                    projection: None,
+                }
+            })
+        })
+        .or_else(|| boundary_parameter_field_projection(parameters, operand))
+}
+
+fn boundary_parameter_field_projection(
+    parameters: &[String],
+    operand: &str,
+) -> Option<ObservedArgumentOperand> {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    for (index, parameter) in parameters.iter().enumerate() {
+        let Some(rest) = operand.strip_prefix(parameter) else {
+            continue;
+        };
+        let Some(field) = rest.strip_prefix('.') else {
+            continue;
+        };
+        if is_boundary_operand_identifier(field) {
+            return Some(ObservedArgumentOperand {
+                index,
+                projection: Some(field.to_string()),
+            });
+        }
+    }
+    None
+}
+
+fn projected_argument_expression(arg: &str, projection: Option<&str>) -> String {
+    let arg = arg.trim();
+    let Some(field) = projection else {
+        return arg.to_string();
+    };
+    if is_boundary_operand_identifier(arg) {
+        format!("{arg}.{field}")
+    } else {
+        arg.to_string()
+    }
 }
 
 fn boundary_local_operand_parameter_index(
@@ -2988,10 +3543,10 @@ fn boundary_equality_overlap_score(
         return 0;
     };
     let parameters = function_parameters(owner_fn);
-    let Some(left_index) = boundary_operand_parameter_index(owner_fn, &parameters, &left) else {
+    let Some(left_operand) = boundary_operand_argument(owner_fn, &parameters, &left) else {
         return 0;
     };
-    let Some(right_index) = boundary_operand_parameter_index(owner_fn, &parameters, &right) else {
+    let Some(right_operand) = boundary_operand_argument(owner_fn, &parameters, &right) else {
         return 0;
     };
 
@@ -3003,12 +3558,15 @@ fn boundary_equality_overlap_score(
         let Some(args) = call_arguments(&call.text, &owner_fn.name) else {
             continue;
         };
-        let Some(left_arg) = args.get(left_index) else {
+        let Some(left_arg) = args.get(left_operand.index) else {
             continue;
         };
-        let Some(right_arg) = args.get(right_index) else {
+        let Some(right_arg) = args.get(right_operand.index) else {
             continue;
         };
+        let left_arg = projected_argument_expression(left_arg, left_operand.projection.as_deref());
+        let right_arg =
+            projected_argument_expression(right_arg, right_operand.projection.as_deref());
         if arguments_overlap_at_boundary(seam, indexed, index, left_arg, right_arg, call) {
             score += 1;
         }
@@ -3020,15 +3578,15 @@ fn arguments_overlap_at_boundary(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
     index: &RustIndex,
-    left_arg: &str,
-    right_arg: &str,
+    left_arg: String,
+    right_arg: String,
     call: &CallFact,
 ) -> bool {
     if left_arg.trim() == right_arg.trim() && !left_arg.trim().is_empty() {
         return true;
     }
-    let left_values = resolved_argument_values(seam, indexed, index, left_arg, call);
-    let right_values = resolved_argument_values(seam, indexed, index, right_arg, call);
+    let left_values = resolved_argument_values(seam, indexed, index, &left_arg, call);
+    let right_values = resolved_argument_values(seam, indexed, index, &right_arg, call);
     left_values.iter().any(|left| {
         let left = comparable_value(left);
         right_values
@@ -3531,10 +4089,21 @@ fn best_oracle(test: &TestSummary, seam: &RepoSeam) -> (OracleKind, OracleStreng
 // from getting tangled in `Probe`-flavored helpers.
 
 fn call_arguments(text: &str, callee: &str) -> Option<Vec<String>> {
-    let needle = format!("{callee}(");
-    let start = text.find(&needle)? + callee.len();
+    let start = named_call_open_paren_index(text, callee)?;
     let inside = delimited_contents_at(text, start)?;
     Some(split_top_level_commas(&inside))
+}
+
+fn named_call_open_paren_index(text: &str, callee: &str) -> Option<usize> {
+    text.match_indices(callee).find_map(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return None;
+        }
+        let after_start = start + callee.len();
+        let after = &text[after_start..];
+        after.starts_with('(').then_some(after_start)
+    })
 }
 
 fn delimited_contents_at(text: &str, start: usize) -> Option<String> {
@@ -3680,6 +4249,16 @@ mod tests {
             index.files.insert(path.clone(), facts);
         }
         Ok(index)
+    }
+
+    #[test]
+    fn call_arguments_uses_identifier_boundary_for_callee_name() {
+        let text = "fn borrowed_amount_matches() { let amount = 100; let actual = amount_matches(&amount); }";
+
+        assert_eq!(
+            call_arguments(text, "amount_matches"),
+            Some(vec!["&amount".to_string()])
+        );
     }
 
     #[test]
@@ -6507,6 +7086,73 @@ fn multi_owner_wrapper_observes_report_call_target() {
     }
 
     #[test]
+    fn given_call_presence_when_test_local_fanout_helper_asserts_other_target_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::{render_pipeline, render_report};
+
+fn exercise_both(input: &str) -> String {
+    let pipeline = render_pipeline(input);
+    let report = render_report(input);
+    format!("format_output={pipeline};format_report={report}")
+}
+
+#[test]
+fn test_local_fanout_observes_report_call_target() {
+    let rendered = exercise_both("alpha");
+    assert!(rendered.contains("format_report"));
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "test-local fanout helper must not bypass target affinity: {:?}",
+            evidence.related_tests
+        );
+        assert_ne!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence.observed_values.is_empty(),
+            "test-local fanout helper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_call_presence_when_production_wrapper_name_is_ambiguous_then_activation_stays_unknown()
     -> Result<(), String> {
         let pipeline = PathBuf::from("src/pipeline.rs");
@@ -8744,6 +9390,47 @@ mod nested {
     }
 
     #[test]
+    fn direct_delegate_wrapper_name_preserves_turbofish_constructor() {
+        assert_eq!(direct_delegate_wrapper_name("Ok::<String, ()>"), "Ok");
+        assert_eq!(
+            direct_delegate_wrapper_name("decorate::<String>"),
+            "decorate"
+        );
+        assert_eq!(direct_delegate_wrapper_name("Box::<String>::new"), "new");
+    }
+
+    #[test]
+    fn direct_delegate_condition_prefix_accepts_only_leading_condition_owner_call() {
+        assert!(direct_delegate_condition_prefix_is_allowed("if"));
+        assert!(direct_delegate_condition_prefix_is_allowed("if !"));
+        assert!(!direct_delegate_condition_prefix_is_allowed("} else if"));
+        assert!(!direct_delegate_condition_prefix_is_allowed(
+            "    } else if"
+        ));
+        assert!(!direct_delegate_condition_prefix_is_allowed("} else if !"));
+        assert!(!direct_delegate_condition_prefix_is_allowed("if ready &&"));
+        assert!(!direct_delegate_condition_prefix_is_allowed("while"));
+        assert!(!direct_delegate_condition_prefix_is_allowed("match"));
+    }
+
+    #[test]
+    fn direct_receiver_method_prefix_accepts_only_leading_condition_receiver_call() {
+        assert!(direct_receiver_method_prefix_is_allowed("pipeline."));
+        assert!(direct_receiver_method_prefix_is_allowed("if pipeline."));
+        assert!(direct_receiver_method_prefix_is_allowed("if !pipeline."));
+        assert!(direct_receiver_method_prefix_is_allowed("if ! pipeline."));
+        assert!(!direct_receiver_method_prefix_is_allowed(
+            "} else if pipeline."
+        ));
+        assert!(!direct_receiver_method_prefix_is_allowed(
+            "if pipeline.ready && other."
+        ));
+        assert!(!direct_receiver_method_prefix_is_allowed(
+            "pipeline_factory()."
+        ));
+    }
+
+    #[test]
     fn given_call_presence_when_test_local_helper_wraps_owner_call_in_option_then_activation_is_yes()
     -> Result<(), String> {
         let prod = PathBuf::from("src/pipeline.rs");
@@ -8863,6 +9550,68 @@ fn helper_exercises_pipeline() {
         assert!(
             evidence.missing_discriminators.is_empty(),
             "result-wrapped call_presence helper activation must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_turbofish_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> Result<String, ()> {
+    Ok::<String, ()>(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline().unwrap();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected result turbofish helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "result turbofish helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "result turbofish helper activation must not create boundary debt"
         );
         Ok(())
     }
@@ -9054,6 +9803,1238 @@ fn helper_exercises_pipeline() {
     }
 
     #[test]
+    fn given_call_presence_when_test_local_helper_borrows_owner_call_result_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> Result<String, ()> {
+    Ok(format_output(input))
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    render_pipeline("alpha").as_ref().unwrap().clone()
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected as_ref borrow-chain helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "as_ref borrow-chain helper activation must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "as_ref borrow-chain helper activation must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_trims_owner_call_result_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    render_pipeline(" alpha ").trim().to_string()
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected trim-chain helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "trim-chain helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_uses_unknown_owner_call_chain_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    render_pipeline("alpha").normalize()
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "unknown post-owner method chain must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "unknown post-owner method-chain activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_assertion_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn assert_pipeline_output() {
+    assert_eq!(render_pipeline("alpha"), "alpha");
+}
+
+#[test]
+fn helper_asserts_pipeline_output() {
+    assert_pipeline_output();
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected assertion helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "assertion helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "assertion helper activation must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_equality_helper_calls_owner_as_later_arg_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn assert_pipeline_output(expected: &str) {
+    assert_eq!(expected, render_pipeline("alpha"));
+}
+
+#[test]
+fn helper_asserts_pipeline_output() {
+    assert_pipeline_output("alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected equality helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "equality helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "equality helper activation must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_assert_message_arg_calls_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn assert_pipeline_output() {
+    assert!(true, "{}", render_pipeline("alpha"));
+}
+
+#[test]
+fn helper_asserts_pipeline_output() {
+    assert_pipeline_output();
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "assert message argument must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "assert message argument must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_assert_macro_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn assert_pipeline_output() {
+    assert!(render_pipeline("alpha") == "alpha");
+}
+
+#[test]
+fn helper_asserts_pipeline_output() {
+    assert_pipeline_output();
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected assert macro helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "assert macro helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "assert macro helper activation must not create boundary debt"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_assert_macro_short_circuits_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn assert_pipeline_output(enabled: bool) {
+    assert!(enabled && render_pipeline("alpha") == "alpha");
+}
+
+#[test]
+fn helper_asserts_pipeline_output() {
+    assert_pipeline_output(true);
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "short-circuiting assert macro must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "short-circuiting assert macro activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_matches_macro_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> bool {
+    is_alpha(input)
+}
+
+fn is_alpha(input: &str) -> bool {
+    input == "alpha"
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> bool {
+    matches!(render_pipeline("alpha"), true)
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    assert!(exercise_pipeline());
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("is_alpha")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected matches macro helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "matches macro helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_matches_macro_short_circuits_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> bool {
+    is_alpha(input)
+}
+
+fn is_alpha(input: &str) -> bool {
+    input == "alpha"
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline(enabled: bool) -> bool {
+    matches!(enabled && render_pipeline("alpha"), true)
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    assert!(exercise_pipeline(true));
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("is_alpha")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "short-circuiting matches macro must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "short-circuiting matches macro activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_dbg_macro_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    dbg!(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected dbg macro helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "dbg macro helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_dbg_macro_short_circuits_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> bool {
+    is_alpha(input)
+}
+
+fn is_alpha(input: &str) -> bool {
+    input == "alpha"
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline(enabled: bool) -> bool {
+    dbg!(enabled && render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    assert!(exercise_pipeline(true));
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("is_alpha")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "short-circuiting dbg macro must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "short-circuiting dbg macro activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_macro_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    format!("pipeline={}", render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "pipeline=alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected format macro helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "format macro helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_args_macro_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    std::fmt::format(format_args!("pipeline={}", render_pipeline("alpha")))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "pipeline=alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected format_args macro helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "format_args macro helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_format_args_macro_short_circuits_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline(enabled: bool) -> String {
+    std::fmt::format(format_args!("pipeline={}", enabled && render_pipeline("alpha").is_empty()))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline(true);
+    assert_eq!(output, "pipeline=false");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "short-circuiting format_args macro must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "short-circuiting format_args macro activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_block_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    { render_pipeline("alpha") }
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected block helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "block helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_conditionally_calls_owner_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline(enabled: bool) -> String {
+    if enabled { render_pipeline("alpha") } else { "beta".to_string() }
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline(true);
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "conditional block helper must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "conditional helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_vec_macro_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> Vec<String> {
+    vec![render_pipeline("alpha")]
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output[0], "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected vec macro helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "vec macro helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_array_literal_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> [String; 1] {
+    [render_pipeline("alpha")]
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output[0], "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected array literal helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "array literal helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_tuple_literal_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> (String, bool) {
+    (render_pipeline("alpha"), true)
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output.0, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected tuple literal helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "tuple literal helper activation must not invent values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_unknown_macro_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+macro_rules! trace_value {
+    ($value:expr) => {
+        $value
+    };
+}
+
+fn exercise_pipeline() -> String {
+    trace_value!(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "unknown macro wrapper must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence.observed_values.is_empty(),
+            "unknown macro wrapper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_call_presence_when_helper_wraps_owner_call_with_non_container_call_then_activation_stays_unknown()
     -> Result<(), String> {
         let prod = PathBuf::from("src/pipeline.rs");
@@ -9110,6 +11091,136 @@ fn helper_exercises_pipeline() {
         assert!(
             evidence.observed_values.is_empty(),
             "non-container wrapper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_std_identity_then_activation_is_yes()
+    -> Result<(), String> {
+        for identity_path in [
+            "std::convert::identity",
+            "::std::convert::identity",
+            "core::convert::identity",
+            "::core::convert::identity",
+        ] {
+            let prod = PathBuf::from("src/pipeline.rs");
+            let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+            let tests = PathBuf::from("tests/pipeline_tests.rs");
+            let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn exercise_pipeline() -> String {
+    IDENTITY_PATH(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#
+            .replace("IDENTITY_PATH", identity_path);
+            let index = index_from_files(&[(prod, prod_src), (tests, tests_src.as_str())])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+            let call_presence = seams
+                .iter()
+                .find(|s| {
+                    s.kind() == SeamKind::CallPresence
+                        && s.owner().ends_with("::render_pipeline")
+                        && s.expression().contains("format_output")
+                })
+                .ok_or_else(|| {
+                    format!("expected render_pipeline call_presence seam for {identity_path}")
+                })?;
+
+            let evidence = evidence_for_seam(call_presence, &index);
+
+            assert_eq!(evidence.reach.state, StageState::Yes);
+            assert_eq!(evidence.activate.state, StageState::Yes);
+            assert!(
+                evidence
+                    .related_tests
+                    .iter()
+                    .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+                "expected {identity_path} helper owner-call relation, got {:?}",
+                evidence.related_tests
+            );
+            assert!(
+                evidence.observed_values.is_empty(),
+                "{identity_path} helper activation must not invent observed values: {:?}",
+                evidence.observed_values
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_local_helper_wraps_owner_call_in_local_identity_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pipeline.rs");
+        let prod_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+        let tests = PathBuf::from("tests/pipeline_tests.rs");
+        let tests_src = r#"
+use pipeline::render_pipeline;
+
+fn identity(input: String) -> String {
+    input
+}
+
+fn exercise_pipeline() -> String {
+    identity(render_pipeline("alpha"))
+}
+
+#[test]
+fn helper_exercises_pipeline() {
+    let output = exercise_pipeline();
+    assert_eq!(output, "alpha");
+}
+"#;
+        let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "local identity wrapper must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "local identity wrapper must not invent observed values: {:?}",
             evidence.observed_values
         );
         Ok(())
@@ -9186,6 +11297,512 @@ fn outer_helper_reaches_pipeline_indirectly() {
     }
 
     #[test]
+    fn given_call_presence_when_same_file_three_hop_helper_reaches_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/activation.rs");
+        let source_src = r#"
+pub fn activation_evidence(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
+    missing_discriminator_facts(rows, parameter)
+}
+
+fn missing_discriminator_facts(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
+    missing_boundary_discriminator(rows, parameter)
+}
+
+fn missing_boundary_discriminator(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
+    parameter_value_set(rows, parameter)
+}
+
+fn parameter_value_set(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
+    let values = observed_parameter_values(rows, parameter);
+    if values.is_empty() { None } else { Some(values) }
+}
+
+fn observed_parameter_values(rows: &[Vec<String>], parameter: &str) -> Vec<String> {
+    rows.iter()
+        .flatten()
+        .filter(|value| value.as_str() == parameter)
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_evidence_reports_parameter_value_set() {
+        let rows = vec![vec!["amount".to_string()]];
+        let values = activation_evidence(&rows, "amount");
+        assert_eq!(values, Some(vec!["amount".to_string()]));
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/activation.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::parameter_value_set")
+                    && s.expression()
+                        .contains("observed_parameter_values(rows, parameter)")
+            })
+            .ok_or_else(|| "expected parameter_value_set call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected bounded three-hop same-file helper owner-call relation; got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "three-hop same-file helper activation must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_method_chain_owner_through_helpers_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/canonical_gap.rs");
+        let source_src = r#"
+enum RequiredDiscriminator {
+    BoundaryValue { description: String },
+    ErrorVariant { variant: String },
+}
+
+struct RepoSeam {
+    discriminator: RequiredDiscriminator,
+}
+
+impl RepoSeam {
+    fn required_discriminator(&self) -> &RequiredDiscriminator {
+        &self.discriminator
+    }
+}
+
+struct ClassifiedSeam {
+    seam: RepoSeam,
+}
+
+fn canonical_gap_identity(entry: &ClassifiedSeam) -> String {
+    missing_discriminator_key(entry)
+}
+
+fn missing_discriminator_key(entry: &ClassifiedSeam) -> String {
+    required_discriminator_text(entry.seam.required_discriminator())
+}
+
+fn required_discriminator_text(discriminator: &RequiredDiscriminator) -> String {
+    match discriminator {
+        RequiredDiscriminator::BoundaryValue { description } => description.clone(),
+        RequiredDiscriminator::ErrorVariant { variant } => variant.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_gap_uses_required_discriminator_text() {
+        let entry = ClassifiedSeam {
+            seam: RepoSeam {
+                discriminator: RequiredDiscriminator::BoundaryValue {
+                    description: "threshold".to_string(),
+                },
+            },
+        };
+        assert_eq!(canonical_gap_identity(&entry), "threshold");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/canonical_gap.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::required_discriminator_text")
+                    && s.expression().contains("description.clone()")
+            })
+            .ok_or_else(|| "expected required_discriminator_text call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected same-file method-chain helper owner-call relation; got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "method-chain helper activation must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_condition_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/flow.rs");
+        let source_src = r#"
+fn effect_sink_kind(text: &str) -> &'static str {
+    if looks_like_event_call_effect(text) {
+        "event"
+    } else if looks_like_log_effect(text) {
+        "log"
+    } else {
+        "call"
+    }
+}
+
+fn looks_like_log_effect(text: &str) -> bool {
+    text.contains("log")
+}
+
+fn looks_like_event_call_effect(text: &str) -> bool {
+    [".publish(", ".emit("]
+        .iter()
+        .any(|needle| text.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_sink_detects_event_call() {
+        assert_eq!(effect_sink_kind("bus.emit(value)"), "event");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/flow.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::looks_like_event_call_effect")
+                    && s.expression().contains(".iter()")
+            })
+            .ok_or_else(|| {
+                "expected looks_like_event_call_effect call_presence seam".to_string()
+            })?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "same-file condition helper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "condition helper activation must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "condition helper activation must not create boundary debt: {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_condition_helper_calls_owner_method_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+struct Pipeline;
+
+impl Pipeline {
+    fn render_pipeline(&self, input: &str) -> String {
+        input.trim().to_string()
+    }
+}
+
+fn should_render_pipeline(input: &str) -> bool {
+    let pipeline = Pipeline;
+    if pipeline.render_pipeline(input) == "alpha" {
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn condition_wrapper_exercises_pipeline_method() {
+        assert!(should_render_pipeline(" alpha "));
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::impl Pipeline::render_pipeline")
+                    && s.expression().contains("trim")
+            })
+            .ok_or_else(|| "expected render_pipeline method call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "expected conditional receiver-method helper owner-call relation, got {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "conditional receiver-method route must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_negated_condition_helper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn should_skip_pipeline(input: &str) -> bool {
+    if !render_pipeline(input) {
+        return true;
+    }
+    false
+}
+
+fn render_pipeline(input: &str) -> bool {
+    format_output(input).is_empty()
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skip_helper_reaches_pipeline_owner() {
+        assert!(!should_skip_pipeline("alpha"));
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "negated condition helper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "negated condition helper route must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_else_if_condition_helper_is_skipped_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/flow.rs");
+        let source_src = r#"
+fn effect_sink_kind(text: &str) -> &'static str {
+    if looks_like_log_effect(text) {
+        "log"
+    } else if looks_like_event_call_effect(text) {
+        "event"
+    } else {
+        "call"
+    }
+}
+
+fn looks_like_log_effect(text: &str) -> bool {
+    text.contains("log")
+}
+
+fn looks_like_event_call_effect(text: &str) -> bool {
+    [".publish(", ".emit("]
+        .iter()
+        .any(|needle| text.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_sink_detects_log_call() {
+        assert_eq!(effect_sink_kind("write log line"), "log");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/flow.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::looks_like_event_call_effect")
+                    && s.expression().contains(".iter()")
+            })
+            .ok_or_else(|| {
+                "expected looks_like_event_call_effect call_presence seam".to_string()
+            })?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "skipped else-if helper must not get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "skipped else-if helper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_helper_clones_owner_result_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/activation.rs");
+        let source_src = r#"
+#[derive(Clone)]
+struct FlowSinkFact {
+    kind: FlowSinkKind,
+}
+
+#[derive(PartialEq)]
+enum FlowSinkKind {
+    Unknown,
+    Return,
+}
+
+struct MissingDiscriminatorFact {
+    flow_sink: Option<FlowSinkFact>,
+}
+
+fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
+    missing_boundary_discriminator(flow_sinks)
+}
+
+fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
+    Some(MissingDiscriminatorFact {
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    })
+}
+
+fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact> {
+    flow_sinks
+        .iter()
+        .find(|sink| sink.kind != FlowSinkKind::Unknown)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_evidence_reports_visible_flow_sink() {
+        let sinks = vec![FlowSinkFact { kind: FlowSinkKind::Return }];
+        let missing = activation_evidence(&sinks);
+        assert!(missing.and_then(|fact| fact.flow_sink).is_some());
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/activation.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::first_visible_flow_sink")
+                    && s.expression().contains("flow_sinks")
+                    && s.expression().contains(".iter()")
+            })
+            .ok_or_else(|| "expected first_visible_flow_sink call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "same-file helper with cloned owner result should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "cloned owner-result helper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_call_presence_when_same_file_wrapper_skips_owner_then_activation_stays_unknown()
     -> Result<(), String> {
         let source = PathBuf::from("src/pipeline.rs");
@@ -9248,6 +11865,140 @@ mod tests {
     }
 
     #[test]
+    fn given_call_presence_when_same_file_unit_parent_qualified_wrapper_calls_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parent_qualified_wrapper_reaches_pipeline() {
+        let output = super::exercise_pipeline();
+        assert_eq!(output, "alpha");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "parent-qualified same-file unit helper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("helper owner call for value-insensitive seam"),
+            "activation summary should explain the parent-qualified helper route: {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "parent-qualified same-file unit helper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_unit_shadow_calls_wrapper_name_then_activation_stays_unknown()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    fn exercise_pipeline() -> String {
+        "shadow".to_string()
+    }
+
+    #[test]
+    fn bare_shadowed_wrapper_name_does_not_reach_pipeline() {
+        let output = exercise_pipeline();
+        assert_eq!(output, "shadow");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            !evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "test-local shadow must not inherit production wrapper owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("No direct owner call observed for value-insensitive seam"),
+            "activation summary should keep owner-call limitation, got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "test-local shadow must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
     fn given_call_presence_when_test_calls_two_hop_production_wrapper_then_activation_is_yes()
     -> Result<(), String> {
         let source = PathBuf::from("src/pipeline.rs");
@@ -9305,6 +12056,290 @@ mod tests {
         assert!(
             evidence.observed_values.is_empty(),
             "two-hop wrapper must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_production_wrapper_imports_owner_helper_then_activation_is_yes()
+    -> Result<(), String> {
+        let path_file = PathBuf::from("src/parser/path.rs");
+        let path_src = r#"
+use std::path::PathBuf;
+
+pub fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
+    let path = parse_diff_path_token(raw)?;
+    Some(PathBuf::from(path))
+}
+
+fn parse_diff_path_token(raw: &str) -> Option<String> {
+    let quoted = raw.strip_prefix('"')?;
+    parse_c_quoted_path(quoted)
+}
+
+fn parse_c_quoted_path(raw: &str) -> Option<String> {
+    let mut chars = raw.chars().peekable();
+    let ch = chars.next()?;
+    match ch {
+        '"' => Some(String::new()),
+        '\\' => Some(parse_c_escape(&mut chars).to_string()),
+        _ => Some(ch.to_string()),
+    }
+}
+
+fn parse_c_escape<I>(chars: &mut std::iter::Peekable<I>) -> char
+where
+    I: Iterator<Item = char>,
+{
+    chars.next().unwrap_or('\\')
+}
+"#;
+        let parse_file = PathBuf::from("src/parser/parse.rs");
+        let parse_src = r#"
+use std::path::PathBuf;
+use crate::parser::path::parse_new_path_marker;
+
+pub fn parse_unified_diff(raw: &str) -> Option<PathBuf> {
+    parse_line(raw)
+}
+
+fn parse_line(raw: &str) -> Option<PathBuf> {
+    parse_new_path_marker(raw)
+}
+"#;
+        let tests = PathBuf::from("tests/parser_tests.rs");
+        let tests_src = r#"
+use parser::parse::parse_unified_diff;
+
+#[test]
+fn quoted_path_reaches_path_parser() {
+    assert_eq!(parse_unified_diff("\"src/lib.rs\"").unwrap(), std::path::PathBuf::from("src/lib.rs"));
+}
+"#;
+        let index = index_from_files(&[
+            (path_file, path_src),
+            (parse_file, parse_src),
+            (tests, tests_src),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/parser/path.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::parse_c_quoted_path")
+                    && s.expression().contains("parse_c_escape")
+            })
+            .ok_or_else(|| "expected parse_c_quoted_path call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "imported production helper chain should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "imported production helper activation must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_test_calls_same_file_fanout_wrapper_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+fn collect_pipeline_context() -> String {
+    "context".to_string()
+}
+
+fn build_pipeline_report() -> String {
+    let context = collect_pipeline_context();
+    let output = render_pipeline("alpha");
+    format!("{context}:{output}")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fanout_wrapper_reaches_pipeline_indirectly() {
+        let output = build_pipeline_report();
+        assert!(output.ends_with(":alpha"));
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "fanout production wrapper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("helper owner call for value-insensitive seam"),
+            "activation summary should explain the fanout helper owner-call route: {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "fanout helper route must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_wrapper_extends_owner_call_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn render_pipeline(input: &str) -> Option<String> {
+    Some(format_output(input))
+}
+
+fn collect_pipeline_outputs(input: &str) -> Vec<String> {
+    let mut outputs = Vec::new();
+    outputs.extend(render_pipeline(input));
+    outputs
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extend_wrapper_reaches_pipeline_owner() {
+        let outputs = collect_pipeline_outputs("alpha");
+        assert_eq!(outputs, vec!["alpha".to_string()]);
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "extend wrapper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "extend wrapper route must not invent observed values: {:?}",
+            evidence.observed_values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_call_presence_when_same_file_wrapper_unwraps_or_defaults_owner_then_activation_is_yes()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/pipeline.rs");
+        let source_src = r#"
+fn render_pipeline(input: &str) -> Option<String> {
+    Some(format_output(input))
+}
+
+fn collect_pipeline_output(input: &str) -> String {
+    render_pipeline(input).unwrap_or_default()
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unwrap_or_default_wrapper_reaches_pipeline_owner() {
+        let output = collect_pipeline_output("alpha");
+        assert_eq!(output, "alpha");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+        let call_presence = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::CallPresence
+                    && s.owner().ends_with("::render_pipeline")
+                    && s.expression().contains("format_output")
+            })
+            .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+        let evidence = evidence_for_seam(call_presence, &index);
+
+        assert_eq!(evidence.reach.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            "unwrap_or_default wrapper should get helper-owner relation: {:?}",
+            evidence.related_tests
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "unwrap_or_default wrapper route must not invent observed values: {:?}",
             evidence.observed_values
         );
         Ok(())
@@ -9868,6 +12903,144 @@ mod tests {
     }
 
     #[test]
+    fn given_generic_option_match_arm_binding_when_related_tests_are_ranked_then_assertion_target_affinity_does_not_fire()
+    -> Result<(), String> {
+        let prod_src = r#"
+pub fn outcome_command(out_path: Option<&str>) -> &'static str {
+    match out_path {
+        Some(path) => path,
+        None => "missing",
+    }
+}
+"#;
+        let test = (
+            "tests/status_contract.rs",
+            r#"
+#[test]
+fn path_word_is_not_owner_evidence() {
+    let path = "target/ripr/outcome.json";
+    assert_eq!(path, "target/ripr/outcome.json");
+}
+"#,
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/commands.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/commands.rs")], &index);
+        let some_arm = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Some(path)"))
+            .ok_or_else(|| "expected Some(path) match-arm seam".to_string())?;
+        let evidence = evidence_for_seam(some_arm, &index);
+
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .all(|test| { test.relation_reason != RelationReason::AssertionTargetAffinity }),
+            "generic match-arm binding token should not create assertion-target affinity: {:?}",
+            evidence.related_tests
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_specific_match_arm_variant_when_related_tests_are_ranked_then_assertion_target_affinity_still_fires()
+    -> Result<(), String> {
+        let prod_src = r#"
+pub enum Mode {
+    Json,
+    Text,
+}
+
+pub fn render_mode(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Json => "json",
+        Mode::Text => "text",
+    }
+}
+"#;
+        let test = (
+            "tests/render_contract.rs",
+            r#"
+#[test]
+fn mentions_json_variant() {
+    let rendered = "Json";
+    assert_eq!(rendered, "Json");
+}
+"#,
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/render.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/render.rs")], &index);
+        let json_arm = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Mode::Json"))
+            .ok_or_else(|| "expected Mode::Json match-arm seam".to_string())?;
+        let evidence = evidence_for_seam(json_arm, &index);
+
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::AssertionTargetAffinity),
+            "specific enum variant should still support assertion-target affinity: {:?}",
+            evidence.related_tests
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_match_arm_expected_sink_token_when_related_tests_are_ranked_then_assertion_target_affinity_does_not_fire()
+    -> Result<(), String> {
+        let prod_src = r#"
+pub fn parse_c_escape(ch: char) -> char {
+    match ch {
+        '"' => '"',
+        '\\' => '\\',
+        _ => ch,
+    }
+}
+"#;
+        let test = (
+            "tests/path_contract.rs",
+            r#"
+#[test]
+fn return_value_word_is_not_match_arm_evidence() {
+    let return_value = '"';
+    assert_eq!(return_value, '"');
+}
+"#,
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/diff_path.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/diff_path.rs")], &index);
+        let quote_arm = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("'\"'"))
+            .ok_or_else(|| "expected quote match-arm seam".to_string())?;
+        let evidence = evidence_for_seam(quote_arm, &index);
+
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .all(|test| { test.relation_reason != RelationReason::AssertionTargetAffinity }),
+            "generic expected-sink token should not create match-arm assertion-target affinity: {:?}",
+            evidence.related_tests
+        );
+        Ok(())
+    }
+
+    #[test]
     fn assertion_targets_seam_returns_false_for_empty_token_list() {
         // The `tokens.is_empty()` early-return is the cheap escape
         // hatch when a seam's `RequiredDiscriminator` carries no
@@ -10011,6 +13184,61 @@ mod tests {
     }
 
     #[test]
+    fn given_boundary_owner_call_when_argument_is_path_constructor_then_observed_values_are_resolved()
+    -> Result<(), String> {
+        let source = PathBuf::from("src/agent/loop_commands.rs");
+        let source_src = r#"
+use std::path::Path;
+
+pub fn workflow_artifact_path(out_dir: &Path, file_name: &str) -> String {
+    let out_dir = display_path(out_dir);
+    if out_dir == "." {
+        file_name.to_string()
+    } else {
+        format!("{}/{}", out_dir.trim_end_matches('/'), file_name)
+    }
+}
+
+pub fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_artifact_path_uses_output_directory() {
+        let path = workflow_artifact_path(Path::new("target/ripr/workflow"), "workflow.json");
+        assert_eq!(path, "target/ripr/workflow/workflow.json");
+    }
+}
+"#;
+        let index = index_from_files(&[(source, source_src)])?;
+        let seams =
+            inventory_seams_from_index(&[PathBuf::from("src/agent/loop_commands.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary && s.expression().contains("=="))
+            .ok_or_else(|| "out_dir predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+        let values: Vec<String> = evidence
+            .observed_values
+            .iter()
+            .map(|value| value.value.clone())
+            .collect();
+
+        assert!(
+            values
+                .iter()
+                .any(|value| value == "\"target/ripr/workflow\""),
+            "Path::new literal should become a concrete observed activation value; got {values:?}"
+        );
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        Ok(())
+    }
+
+    #[test]
     fn given_let_binding_values_when_owner_call_uses_identifiers_then_observed_values_are_resolved()
     -> Result<(), String> {
         let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 \
@@ -10024,6 +13252,43 @@ mod tests {
         assert!(
             values.iter().any(|v| v == "100"),
             "let-resolved 100 must appear in observed values; got {values:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_shared_borrowed_let_binding_when_owner_call_uses_reference_then_observed_value_is_resolved()
+    -> Result<(), String> {
+        let prod_src = "pub fn amount_matches(amount: &i32) -> bool { amount == &100 }\n";
+        let test = (
+            "tests/pricing_tests.rs",
+            "#[test] fn borrowed_amount_reference() { \
+                 let amount = 100; \
+                 let actual = amount_matches(&amount); \
+                 assert!(actual); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/pricing.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+        let values: Vec<String> = evidence
+            .observed_values
+            .iter()
+            .map(|value| value.value.clone())
+            .collect();
+        assert!(
+            values.iter().any(|value| value == "100"),
+            "borrowed let binding literal must appear in observed values; got {values:?}; activation: {}; related: {:?}",
+            evidence.activate.summary,
+            evidence.related_tests
         );
         Ok(())
     }
@@ -10371,6 +13636,225 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
         assert!(
             evidence.missing_discriminators.is_empty(),
             "computed local boundary operands must not emit exact candidate discriminator; got {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_non_comparison_predicate_when_direct_owner_call_exists_then_activation_is_value_insensitive()
+    -> Result<(), String> {
+        let prod_src = "pub fn has_missing(missing: &[String]) -> bool { \
+                            if missing.is_empty() { true } else { false } \
+                        }\n";
+        let test = (
+            "tests/missing_tests.rs",
+            "#[test] fn empty_missing_is_true() { \
+                 assert!(has_missing(&[])); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/missing.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/missing.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary
+                    && s.expression().contains("missing.is_empty()")
+            })
+            .ok_or_else(|| "non-comparison predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("direct owner call for value-insensitive seam"),
+            "non-comparison predicates should not require scalar activation values; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "non-comparison predicate activation must not invent collection literal values; got {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "non-comparison predicates must not emit exact boundary candidates; got {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_boundary_owner_call_when_input_operand_is_closure_local_then_activation_is_static_limitation()
+    -> Result<(), String> {
+        let prod_src = "pub struct FunctionSummary { pub id: &'static str } \
+                        pub fn has_owner(functions: &[FunctionSummary], owner: &str) -> bool { \
+                            functions.iter().any(|function| function.id == owner) \
+                        }\n";
+        let test = (
+            "tests/owner_tests.rs",
+            "#[test] fn finds_owner() { \
+                 let functions = [FunctionSummary { id: \"score\" }]; \
+                 assert!(has_owner(&functions, \"score\")); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/owner.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/owner.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary
+                    && s.expression().contains("function.id == owner")
+            })
+            .ok_or_else(|| "closure predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence.activate.summary.contains("closure-derived"),
+            "closure boundary operands must be routed precisely; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            !evidence.activate.summary.contains("iterator-derived"),
+            "closure boundary operands must not be routed as iterator-derived; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "closure-local activation values must not be invented from owner-call args; got {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "closure-local boundary operands must not emit exact candidate discriminator; got {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
+        let owner = FunctionSummary {
+            id: crate::domain::SymbolId("src/lib.rs::score".to_string()),
+            name: "score".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 5,
+            body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".to_string(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            is_test: false,
+            attrs: Vec::new(),
+        };
+
+        assert!(!boundary_operand_is_closure_derived(&owner, "amount"));
+    }
+
+    #[test]
+    fn given_boundary_owner_call_when_parameter_field_operands_resolve_then_activation_is_yes()
+    -> Result<(), String> {
+        let prod_src = "pub struct BoundarySide { pub value: i32 } \
+                        pub fn equal_boundary(left: BoundarySide, right: BoundarySide) -> bool { \
+                            left.value == right.value \
+                        }\n";
+        let test = (
+            "tests/boundary_tests.rs",
+            "#[test] fn equal_field_boundary() { \
+                 let left = BoundarySide { value: 10 }; \
+                 let right = BoundarySide { value: 10 }; \
+                 assert!(equal_boundary(left, right)); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/boundary.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/boundary.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+
+        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert!(
+            evidence
+                .activate
+                .summary
+                .contains("Observed 1 concrete activation value(s)"),
+            "parameter field operands must resolve through same-test struct field bindings; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "10" && fact.context == ValueContext::FunctionArgument),
+            "expected resolved struct-field activation value; got {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "field operands with equal observed values must not emit boundary repair debt; got {:?}",
+            evidence.missing_discriminators
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_boundary_owner_call_when_parameter_field_operands_are_opaque_then_activation_stays_static_limitation()
+    -> Result<(), String> {
+        let prod_src = "pub struct BoundarySide { pub value: i32 } \
+                        pub fn equal_boundary(left: BoundarySide, right: BoundarySide) -> bool { \
+                            left.value == right.value \
+                        }\n";
+        let test = (
+            "tests/boundary_tests.rs",
+            "#[test] fn equal_field_boundary() { \
+                 let left = make_side(10); \
+                 let right = make_side(10); \
+                 assert!(equal_boundary(left, right)); \
+             }\n",
+        );
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/boundary.rs"), prod_src),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/boundary.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+        assert!(
+            evidence.activate.summary.contains("local or computed"),
+            "opaque parameter field operands must remain a named limitation; got {}",
+            evidence.activate.summary
+        );
+        assert!(
+            evidence.observed_values.is_empty(),
+            "opaque parameter field operands must not invent activation values; got {:?}",
+            evidence.observed_values
+        );
+        assert!(
+            evidence.missing_discriminators.is_empty(),
+            "opaque parameter field operands must not emit exact candidate discriminator; got {:?}",
             evidence.missing_discriminators
         );
         Ok(())
@@ -10944,5 +14428,80 @@ pub fn discounted_total(raw_amount: Option<i32>, threshold: i32) -> i32 {
             "opaque args must not produce a fake observed value; got {values:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn same_file_test_helper_call_counts_as_owner_call_evidence() {
+        let file = PathBuf::from("src/pricing.rs");
+        let index = RustIndex {
+            functions: vec![FunctionSummary {
+                id: crate::domain::SymbolId("src/pricing.rs::discounted_total".to_string()),
+                name: "discounted_total".to_string(),
+                file: file.clone(),
+                start_line: 1,
+                end_line: 5,
+                body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".to_string(),
+                calls: Vec::new(),
+                returns: Vec::new(),
+                literals: Vec::new(),
+                is_test: false,
+                attrs: Vec::new(),
+            }, FunctionSummary {
+                id: crate::domain::SymbolId("src/pricing.rs::case_at_threshold".to_string()),
+                name: "case_at_threshold".to_string(),
+                file: file.clone(),
+                start_line: 10,
+                end_line: 12,
+                body: "fn case_at_threshold() -> i32 { discounted_total(100, 100) }".to_string(),
+                calls: vec![CallFact {
+                    line: 11,
+                    name: "discounted_total".to_string(),
+                    text: "discounted_total(100, 100)".to_string(),
+                }],
+                returns: Vec::new(),
+                literals: Vec::new(),
+                is_test: false,
+                attrs: Vec::new(),
+            }],
+            tests: vec![TestSummary {
+                name: "unit_test_uses_same_file_helper".to_string(),
+                file: file.clone(),
+                start_line: 20,
+                end_line: 23,
+                body: "#[test] fn unit_test_uses_same_file_helper() { assert_eq!(case_at_threshold(), 90); }".to_string(),
+                calls: vec![CallFact {
+                    line: 21,
+                    name: "case_at_threshold".to_string(),
+                    text: "case_at_threshold()".to_string(),
+                }],
+                assertions: vec![OracleFact {
+                    line: 21,
+                    kind: OracleKind::ExactValue,
+                    strength: OracleStrength::Strong,
+                    text: "assert_eq!(case_at_threshold(), 90)".to_string(),
+                    observed_tokens: Vec::new(),
+                }],
+                literals: Vec::new(),
+                attrs: Vec::new(),
+            }],
+            ..RustIndex::default()
+        };
+
+        let context = CompactGripContext::new(&index);
+
+        assert!(
+            context.tests[0]
+                .helper_owner_call_names
+                .contains("discounted_total"),
+            "same-file helper call must prove the production owner call"
+        );
+        assert_eq!(
+            context
+                .tests_by_helper_owner_call_name
+                .get("discounted_total")
+                .cloned()
+                .unwrap_or_default(),
+            vec![0]
+        );
     }
 }
