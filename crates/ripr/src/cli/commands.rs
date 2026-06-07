@@ -33,10 +33,10 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 #[path = "commands/agent_dispatch.rs"]
 mod agent_dispatch;
-#[path = "commands/swarm/mod.rs"]
-mod swarm_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
+#[path = "commands/swarm/mod.rs"]
+mod swarm_command;
 
 #[cfg(test)]
 use policy_commands::{
