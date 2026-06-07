@@ -383,12 +383,13 @@ missing-evidence-field counts remain latest-attempt projections. Stored
 `summary`, `repair_route_quality[]`, and `top_missing_evidence_fields[]` rows are
 summary output; they must not override recomputed latest-attempt state if the
 two disagree.
-Repair-route quality rows should carry sample packet IDs and canonical gap IDs
-for failing latest attempts when available, and readiness should point
-`improve_repair_route_quality` at the derived route-quality backlog packet while
-preserving the first failed-attempt sample in the reason text. Route-quality
-work should start from a concrete failed attempt without re-queuing that failed
-repair packet as swarm-ready work.
+Repair-route quality rows should carry sample packet IDs, sample attempt IDs,
+and canonical gap IDs for failing latest attempts when available, and readiness
+should point `improve_repair_route_quality` at the derived route-quality
+backlog packet while preserving the first failed-attempt sample in
+`next_actions[].attempt_id` and the reason text. Route-quality work should
+start from a concrete failed attempt without re-queuing that failed repair
+packet as swarm-ready work.
 Attempt-ledger reports should also project `historical_repair_route_quality[]`,
 `historical_language_repair_route_quality[]`, and
 `top_historical_failing_repair_routes[]` from durable full attempt history. These
@@ -400,8 +401,8 @@ missing-evidence rows.
 Attempt-ledger and readiness reports should also project
 `repair_route_quality_backlog[]` from the top failing repair routes. Each row is
 an analyzer/report improvement packet with a stable `packet_id`,
-`improvement_route`, failure counts, dominant failure reason, sample packet and
-canonical gap IDs, an unlock condition, and non-claims. These rows are not
+`improvement_route`, failure counts, dominant failure reason, sample packet IDs,
+sample attempt IDs, canonical gap IDs, an unlock condition, and non-claims. These rows are not
 public repair packets, are not swarm-ready work, and must not change badge, PR,
 LSP, or CI authority.
 The explicit `missing_verify_result` summary count is the closeout counter for
@@ -646,7 +647,7 @@ Current implementation coverage:
 - `xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states`
   validates `fixtures/actionable-gap-outcomes-corpus/corpus.json` against the
   same outcome joiner used by the report command;
-- `crates/ripr/src/output/outcome.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts`
+- `crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts`
   validates the Python first-PR before/after check-output fixture and expected
   `ripr outcome` JSON/Markdown receipts for closed, unchanged, and opened
   canonical gap movement;
