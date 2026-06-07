@@ -83,7 +83,7 @@ Did the attempted repair actually improve evidence?
   the states `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,
   `receipt_movement_unchanged`, and `receipt_not_applicable`.
-- Targeted test outcome (`crates/ripr/src/output/outcome.rs`,
+- Targeted test outcome (`crates/ripr/src/output/outcome/`,
   `TARGETED_TEST_OUTCOME_SCHEMA_VERSION = "0.1"`): seams bucketed
   into `moved[]`, `unchanged[]`, `regressed[]`, `new[]`, and
   `removed[]`, each movement carrying stage deltas across `reach`,
@@ -238,7 +238,7 @@ Existing evidence this contract builds on:
 - Receipt lifecycle normalization tests in
   `crates/ripr/src/output/receipt_lifecycle.rs`.
 - Outcome bucketing and stage-delta tests in
-  `crates/ripr/src/output/outcome.rs`.
+  `crates/ripr/src/output/outcome/`.
 - Swarm ingest classification tests in
   `crates/ripr/src/output/swarm_ingest.rs`, including the
   forbidden-edit and `trusted_success = false` assertions.
