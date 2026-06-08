@@ -102,7 +102,7 @@ jobs:
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
           du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
           df -h / /mnt/ci-scratch 2>/dev/null || true
-          ci-disk-guard /mnt/ci-scratch 80
+          ci-disk-guard /mnt/ci-scratch 35
           ci-disk-guard /mnt/ci-cache 20
           mkdir -p "$CARGO_HOME" "$SCCACHE_DIR" "$CARGO_TARGET_DIR" "$TMPDIR"
           df -h /mnt/ci-scratch /mnt/ci-cache || true
@@ -207,7 +207,7 @@ jobs:
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
           du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
           df -h / /mnt/ci-scratch 2>/dev/null || true
-          ci-disk-guard /mnt/ci-scratch 80
+          ci-disk-guard /mnt/ci-scratch 35
           ci-disk-guard /mnt/ci-cache 20
           mkdir -p "$CARGO_HOME" "$SCCACHE_DIR" "$CARGO_TARGET_DIR" "$TMPDIR"
           df -h /mnt/ci-scratch /mnt/ci-cache || true
@@ -313,7 +313,7 @@ jobs:
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
           du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
           df -h / /mnt/ci-scratch 2>/dev/null || true
-          ci-disk-guard /mnt/ci-scratch 100
+          ci-disk-guard /mnt/ci-scratch 50
           ci-disk-guard /mnt/ci-cache 20
           mkdir -p "$CARGO_HOME" "$SCCACHE_DIR" "$CARGO_TARGET_DIR" "$TMPDIR"
           df -h /mnt/ci-scratch /mnt/ci-cache || true
