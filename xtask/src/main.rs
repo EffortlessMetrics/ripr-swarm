@@ -3478,7 +3478,10 @@ fn suggested_fixes_report_body(files: &[String], patch_empty: bool) -> String {
 
 pub(crate) fn pr_summary_impl() -> Result<(), String> {
     let changes = collect_pr_changes()?;
-    let body = pr_summary_body(&changes);
+    let mut body = pr_summary_body(&changes);
+    // Advisory proof-route section; computation failure degrades to an
+    // in-section note and never fails pr-summary.
+    body.push_str(&reports::pr_summary_proof_route_section());
     write_report("pr-summary.md", &body)
 }
 
