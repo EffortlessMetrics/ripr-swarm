@@ -100,7 +100,8 @@ jobs:
         run: |
           find /mnt/ci-scratch/cargo-home /mnt/ci-scratch/target /mnt/ci-scratch/tmp -mindepth 1 -maxdepth 1 -mmin +45 -exec rm -rf {} + 2>/dev/null || true
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
-          du -sh /mnt/ci-scratch/* /mnt/ci-cache/* 2>/dev/null || true
+          du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
+          df -h / /mnt/ci-scratch 2>/dev/null || true
           ci-disk-guard /mnt/ci-scratch 80
           ci-disk-guard /mnt/ci-cache 20
           mkdir -p "$CARGO_HOME" "$SCCACHE_DIR" "$CARGO_TARGET_DIR" "$TMPDIR"
@@ -204,7 +205,8 @@ jobs:
         run: |
           find /mnt/ci-scratch/cargo-home /mnt/ci-scratch/target /mnt/ci-scratch/tmp -mindepth 1 -maxdepth 1 -mmin +45 -exec rm -rf {} + 2>/dev/null || true
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
-          du -sh /mnt/ci-scratch/* /mnt/ci-cache/* 2>/dev/null || true
+          du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
+          df -h / /mnt/ci-scratch 2>/dev/null || true
           ci-disk-guard /mnt/ci-scratch 80
           ci-disk-guard /mnt/ci-cache 20
           mkdir -p "$CARGO_HOME" "$SCCACHE_DIR" "$CARGO_TARGET_DIR" "$TMPDIR"
@@ -309,7 +311,8 @@ jobs:
         run: |
           find /mnt/ci-scratch/cargo-home /mnt/ci-scratch/target /mnt/ci-scratch/tmp -mindepth 1 -maxdepth 1 -mmin +45 -exec rm -rf {} + 2>/dev/null || true
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
-          du -sh /mnt/ci-scratch/* /mnt/ci-cache/* 2>/dev/null || true
+          du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
+          df -h / /mnt/ci-scratch 2>/dev/null || true
           ci-disk-guard /mnt/ci-scratch 100
           ci-disk-guard /mnt/ci-cache 20
           mkdir -p "$CARGO_HOME" "$SCCACHE_DIR" "$CARGO_TARGET_DIR" "$TMPDIR"
