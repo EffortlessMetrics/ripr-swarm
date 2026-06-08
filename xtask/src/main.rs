@@ -7401,6 +7401,20 @@ fn routed_rust_workflow_contract_violations(
         ));
     }
 
+    // Proof-routing slice 6 (docs/PROOF_ROUTING.md): every PR-evidence path must
+    // emit the proof route as an advisory dry-run artifact. The command is
+    // appended with `|| true` so a route-computation failure never fails the
+    // lane, and it runs on all three self-hosted jobs and the hosted fallback so
+    // the artifact cannot silently regress. No lane is skipped or gated by it.
+    let proof_route_dry_runs = workflow
+        .matches("cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true")
+        .count();
+    if proof_route_dry_runs < 4 {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must emit the advisory proof-route dry-run artifact (`cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true`) on the PR-evidence path of all three self-hosted jobs and the hosted fallback; found {proof_route_dry_runs} occurrence(s)"
+        ));
+    }
+
     if workflow.contains("repos/${REPOSITORY}/actions/runners")
         || workflow.contains("repos/$REPOSITORY/actions/runners")
         || workflow.contains("repos/EffortlessMetrics/ripr-swarm/actions/runners")
@@ -76639,6 +76653,8 @@ jobs:
         run: mkdir -p "$TMPDIR"
       - name: Prepare scratch
         run: ci-disk-guard /mnt/ci-scratch 35
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
@@ -76650,6 +76666,8 @@ jobs:
         run: mkdir -p "$TMPDIR"
       - name: Prepare CPX42 scratch
         run: ci-disk-guard /mnt/ci-scratch 35
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
@@ -76661,10 +76679,15 @@ jobs:
         run: mkdir -p "$TMPDIR"
       - name: Prepare scratch
         run: ci-disk-guard /mnt/ci-scratch 50
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-github:
     if: needs.route.outputs.router_target == 'github'
+    steps:
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
   result:
     name: Ripr Rust Small Result
 "#;
