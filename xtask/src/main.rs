@@ -63816,6 +63816,36 @@ const PROOF_PACK_MANIFEST_PATH: &str = "policy/proof-packs.toml";
 const PROOF_PACK_LANE_WHITELIST_PATH: &str = "policy/ci-lane-whitelist.toml";
 const PROOF_PACK_RELEASE_PACK_ID: &str = "release-package";
 
+/// Release surfaces the `release-package` pack MUST cover so that any change to
+/// a version file, the changelog, or a release workflow trips
+/// `release_proof_required`. Asserted by `check-proof-packs` (the release-proof
+/// protection slice of docs/PROOF_ROUTING.md) so a future routing slice cannot
+/// weaken release detection by dropping a surface from the pack.
+const PROOF_PACK_RELEASE_REQUIRED_PATHS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/ripr/Cargo.toml",
+    "CHANGELOG.md",
+    "editors/vscode/package.json",
+    "editors/vscode/package-lock.json",
+    ".github/workflows/publish-extension.yml",
+    ".github/workflows/release-server-binaries.yml",
+];
+
+/// The full release proof the `release-package` pack MUST require: workspace
+/// tests, clippy, check-pr, package contents, publish dry-run, and the
+/// release-readiness gate (release-notes and known-limits docs validation).
+/// Asserted by `check-proof-packs` so a future routing slice cannot weaken
+/// release validation by dropping a gate from the pack.
+const PROOF_PACK_RELEASE_REQUIRED_COMMANDS: &[&str] = &[
+    "cargo test --workspace",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo xtask check-pr",
+    "cargo package -p ripr --list",
+    "cargo publish -p ripr --dry-run",
+    "cargo xtask release-readiness",
+];
+
 /// Non-xtask repo commands a proof pack may reference. `cargo xtask <command>`
 /// entries are validated against the known xtask command roots instead.
 const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
@@ -63852,6 +63882,7 @@ fn check_proof_packs_impl() -> Result<(), String> {
                 "Give every pack a unique kebab-case id, at least one path, and at least one required command.",
                 "Reference only known `cargo xtask` commands or known repo commands, and a `ci_lane` declared in `policy/ci-lane-whitelist.toml`.",
                 "Keep `never_routed = true` on the release-package pack; release proof is never routed away.",
+                "Keep the release-package pack covering every release surface (version files, changelog, release workflows) and requiring the full release proof (workspace tests, clippy, check-pr, package, publish dry-run, release-readiness).",
             ],
             rerun_command: "cargo xtask check-proof-packs",
             exception_template: None,
@@ -63944,6 +63975,22 @@ fn proof_pack_violations(manifest: &CiLedgerDocument, lane_ids: &BTreeSet<String
                     "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must set `never_routed = true`\n  rule: release proof is never routed away (docs/PROOF_ROUTING.md)",
                     pack.line
                 ));
+            }
+            for surface in PROOF_PACK_RELEASE_REQUIRED_PATHS {
+                if !pack.paths.iter().any(|covered| covered == surface) {
+                    violations.push(format!(
+                        "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must cover release surface `{surface}`\n  rule: every release surface (version files, changelog, release workflows) must trip release_proof_required (docs/PROOF_ROUTING.md, release-proof protection slice)",
+                        pack.line
+                    ));
+                }
+            }
+            for required in PROOF_PACK_RELEASE_REQUIRED_COMMANDS {
+                if !pack.required_commands.iter().any(|cmd| cmd == required) {
+                    violations.push(format!(
+                        "{path}:{} proof pack `{PROOF_PACK_RELEASE_PACK_ID}` must require `{required}`\n  rule: the release-package pack must name the full release proof (docs/PROOF_ROUTING.md, release-proof protection slice)",
+                        pack.line
+                    ));
+                }
             }
         }
     }
@@ -114491,8 +114538,8 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml"]
-required_commands = ["cargo publish -p ripr --dry-run"]
+paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
+required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo publish -p ripr --dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
 proves = "Release surfaces pay the full release proof."
@@ -114610,6 +114657,32 @@ never_routed = true
         require_proof_pack_violation(
             &violations,
             "proof pack `release-package` must set `never_routed = true`",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_release_pack_missing_release_command() -> Result<(), String> {
+        // Dropping a release gate from the release-package pack must fail: the
+        // pack has to name the full release proof (release-proof protection
+        // slice, docs/PROOF_ROUTING.md).
+        let manifest = proof_packs_fixture().replace(r#""cargo test --workspace", "#, "");
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "proof pack `release-package` must require `cargo test --workspace`",
+        )
+    }
+
+    #[test]
+    fn check_proof_packs_rejects_release_pack_missing_release_surface() -> Result<(), String> {
+        // Dropping a release surface (here the changelog) from the
+        // release-package pack must fail: every release surface has to trip
+        // release_proof_required.
+        let manifest = proof_packs_fixture().replace(r#", "CHANGELOG.md""#, "");
+        let violations = proof_pack_fixture_violations(&manifest)?;
+        require_proof_pack_violation(
+            &violations,
+            "proof pack `release-package` must cover release surface `CHANGELOG.md`",
         )
     }
 
