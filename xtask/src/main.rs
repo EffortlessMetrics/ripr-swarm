@@ -41186,11 +41186,62 @@ pub(crate) fn ripr_plus_impl(args: &[String]) -> Result<(), String> {
     let options = parse_repo_badge_artifact_options(args, "ripr-plus")?;
     run_with_repo_root_cwd(|| {
         let head = git_value(&["rev-parse", "HEAD"]);
-        let receipt = ripr_plus_receipt_from_options(&options, &head)?;
+        let receipt = match ripr_plus_receipt_from_options(&options, &head) {
+            Ok(r) => r,
+            Err(err) => {
+                write_error_ripr_plus_receipt(&head, &err)?;
+                return Ok(());
+            }
+        };
         let json = serde_json::to_string_pretty(&receipt)
             .map_err(|err| format!("failed to serialize ripr-plus receipt: {err}"))?;
         write_report("ripr-plus.json", &format!("{json}\n"))?;
         write_report("ripr-plus.md", &ripr_plus_receipt_markdown(&receipt))
+    })
+}
+
+fn write_error_ripr_plus_receipt(head: &str, err: &str) -> Result<(), String> {
+    let receipt = error_ripr_plus_receipt(head, err);
+    let json = serde_json::to_string_pretty(&receipt)
+        .map_err(|e| format!("failed to serialize error ripr-plus receipt: {e}"))?;
+    write_report("ripr-plus.json", &format!("{json}\n"))?;
+    write_report("ripr-plus.md", &ripr_plus_receipt_markdown(&receipt))
+}
+
+fn error_ripr_plus_receipt(head: &str, err: &str) -> Value {
+    let machine_readable_cause = if err.contains("timed out") {
+        "evaluation_timeout"
+    } else {
+        "evaluation_error"
+    };
+    let first_warning = err.lines().next().unwrap_or(err).trim().to_string();
+    serde_json::json!({
+        "schema_version": "0.1",
+        "status": "indeterminate",
+        "basis": null,
+        "source_format": null,
+        "source_command": null,
+        "source_artifact": null,
+        "unresolved": null,
+        "top_files": [],
+        "suppressed": null,
+        "head": head,
+        "counts": {},
+        "reason_counts": {},
+        "machine_readable_cause": machine_readable_cause,
+        "raw_inventory": {
+            "raw_seams": null,
+            "debt_basis": false,
+            "note": "Raw seam inventory is supporting analyzer pressure only; it is not the RIPR+ unresolved debt counter."
+        },
+        "basis_note": "Evaluation did not complete; no basis or debt count is available.",
+        "warnings": [first_warning],
+        "non_claims": [
+            "not raw seam inventory",
+            "not runtime mutation confirmation",
+            "not coverage",
+            "not badge endpoint regeneration"
+        ]
     })
 }
 
@@ -41489,13 +41540,24 @@ fn ripr_plus_receipt_markdown(receipt: &Value) -> String {
         "| Source format | `{}` |\n",
         markdown_cell(&json_string_field_value(receipt, "source_format"))
     ));
-    body.push_str(&format!(
-        "| Unresolved | {} |\n",
-        receipt
-            .get("unresolved")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-    ));
+    let is_indeterminate = receipt
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s == "indeterminate");
+    let unresolved_is_null = receipt
+        .get("unresolved")
+        .is_some_and(serde_json::Value::is_null);
+    if is_indeterminate || unresolved_is_null {
+        body.push_str("| Unresolved | N/A — unknown (evaluation did not complete) |\n");
+    } else {
+        body.push_str(&format!(
+            "| Unresolved | {} |\n",
+            receipt
+                .get("unresolved")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        ));
+    }
     body.push_str(&format!(
         "| Suppressed | {} |\n",
         receipt
@@ -41507,6 +41569,25 @@ fn ripr_plus_receipt_markdown(receipt: &Value) -> String {
         "| Head | `{}` |\n",
         markdown_cell(&json_string_field_value(receipt, "head"))
     ));
+    if is_indeterminate || unresolved_is_null {
+        body.push_str("\n## Evaluation Status\n\n");
+        body.push_str("> **Indeterminate** — the evaluation did not complete. No gap count is available from this run. This receipt must not be treated as evidence of zero unresolved gaps.\n\n");
+        if let Some(warnings) = receipt
+            .get("warnings")
+            .and_then(Value::as_array)
+            .filter(|w| !w.is_empty())
+        {
+            body.push_str("### Warnings\n\n");
+            for w in warnings {
+                let msg = w.as_str().unwrap_or_default();
+                if !msg.is_empty() {
+                    body.push_str(&format!("- {}\n", msg.replace('|', "\\|")));
+                }
+            }
+            body.push('\n');
+        }
+        return body;
+    }
     body.push_str("\n## Reason Counts\n\n");
     let reason_counts = json_object_usize_map(receipt, "reason_counts");
     append_count_table(&mut body, &reason_counts);
@@ -70636,8 +70717,9 @@ mod tests {
         dogfood_report_packet_index_scenarios, dogfood_surface_projection_alignment_run,
         dogfood_surface_projection_alignment_scenarios, dogfood_typescript_preview_repair_loop_run,
         dogfood_typescript_preview_repair_loop_scenarios, dogfood_user_surface_projection_run,
-        dogfood_user_surface_projection_scenarios, evaluate_semantic_no_panic_policy,
-        evidence_health_args, evidence_quality_scorecard_audit_regeneration_failure_audit,
+        dogfood_user_surface_projection_scenarios, error_ripr_plus_receipt,
+        evaluate_semantic_no_panic_policy, evidence_health_args,
+        evidence_quality_scorecard_audit_regeneration_failure_audit,
         evidence_quality_scorecard_from_values, evidence_quality_scorecard_json,
         evidence_quality_scorecard_markdown, evidence_quality_trend_from_values,
         evidence_quality_trend_json, evidence_quality_trend_markdown,
@@ -92042,6 +92124,119 @@ acceptance = "RIPR-SPEC-0999 defines the focused contract."
         );
         assert_eq!(receipt["source_artifact"], normalize_path(&path));
         assert_eq!(receipt["unresolved"], 2);
+        Ok(())
+    }
+
+    #[test]
+    fn error_ripr_plus_receipt_timeout_has_indeterminate_status_and_null_unresolved()
+    -> Result<(), String> {
+        let receipt = error_ripr_plus_receipt(
+            "abc1234def5678abc1234def5678abc1234def5678",
+            "cargo run --format repo-exposure-summary-json timed out after 1 ms while generating repo-exposure-summary-json for ripr-plus; no RIPR+ receipt is claimed.",
+        );
+
+        assert_eq!(
+            receipt["status"], "indeterminate",
+            "timeout error must produce indeterminate status"
+        );
+        assert_eq!(
+            receipt["machine_readable_cause"], "evaluation_timeout",
+            "timeout error string must map to evaluation_timeout"
+        );
+        assert!(
+            receipt
+                .get("unresolved")
+                .is_some_and(serde_json::Value::is_null),
+            "unresolved must be null on an indeterminate receipt"
+        );
+        let warnings = receipt
+            .get("warnings")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        assert!(
+            warnings > 0,
+            "warnings must be non-empty on an error receipt"
+        );
+        let head = receipt.get("head").and_then(Value::as_str).unwrap_or("");
+        assert!(
+            !head.is_empty(),
+            "head must be non-empty on an error receipt"
+        );
+        assert_eq!(receipt["schema_version"], "0.1");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_plus_receipt_markdown_indeterminate_does_not_claim_zero_unresolved()
+    -> Result<(), String> {
+        let receipt = error_ripr_plus_receipt(
+            "abc1234def5678abc1234def5678abc1234def5678",
+            "cargo run --format repo-exposure-summary-json timed out after 1 ms while generating repo-exposure-summary-json for ripr-plus; no RIPR+ receipt is claimed.",
+        );
+        let markdown = ripr_plus_receipt_markdown(&receipt);
+
+        assert!(
+            !markdown.contains("| Unresolved | 0 |"),
+            "indeterminate markdown must not claim zero unresolved gaps"
+        );
+        assert!(
+            markdown.contains("N/A") || markdown.contains("unknown"),
+            "indeterminate markdown must contain an indeterminate/unknown marker"
+        );
+        assert!(
+            markdown.contains("indeterminate") || markdown.contains("Indeterminate"),
+            "indeterminate markdown must name the indeterminate state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
+        let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "tool": "ripr",
+            "ripr_version": "0.7.0",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metadata": {
+                "root": ".",
+                "base": "origin/main",
+                "head": "HEAD",
+                "mode": "draft"
+            },
+            "metrics": {
+                "raw_seams": 3,
+                "headline_eligible_seams": 2,
+                "canonical_gap_records": 0,
+                "raw_actionable_seam_records": 0,
+                "unsuppressed_exposure_gaps": 0,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_breakdown": {
+                "actionability": {}
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 0,
+                "top_files_truncated": false
+            },
+            "top_files": []
+        }"#;
+        let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "abc1234")?;
+
+        let status = receipt["status"].as_str().unwrap_or("");
+        assert!(
+            status == "pass" || status == "warn",
+            "happy-path receipt must have pass or warn status, got {status:?}"
+        );
+        let unresolved = receipt.get("unresolved").and_then(Value::as_u64);
+        assert!(
+            unresolved.is_some(),
+            "happy-path receipt must have a concrete unresolved count, not null"
+        );
+        assert_eq!(unresolved, Some(0));
         Ok(())
     }
 
