@@ -1616,8 +1616,8 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
 
     // Section 4: Recommended first command.
     assert!(
-        stdout.contains("Recommended first command: ripr check --diff origin/main...HEAD"),
-        "expected 'Recommended first command: ripr check --diff origin/main...HEAD' in stdout:\n{stdout}"
+        stdout.contains("Recommended first command: ripr check --base origin/main"),
+        "expected 'Recommended first command: ripr check --base origin/main' in stdout:\n{stdout}"
     );
 
     let _ = std::fs::remove_dir_all(&workspace);

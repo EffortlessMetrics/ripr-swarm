@@ -3821,7 +3821,7 @@ fn print_doctor_start_here_guidance(root: &Path) {
     println!(
         "- Proof rail: verify command, receipt command, and receipt path are advisory static movement evidence"
     );
-    println!("- Recommended first command: ripr check --diff origin/main...HEAD");
+    println!("- Recommended first command: ripr check --base origin/main");
 }
 
 /// Language-to-status mapping used by the doctor first-run diagnosis.

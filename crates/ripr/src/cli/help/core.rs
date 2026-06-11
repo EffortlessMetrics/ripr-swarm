@@ -151,7 +151,7 @@ First-run diagnosis (printed automatically):
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
-  - Recommended first command: ripr check --diff origin/main...HEAD
+  - Recommended first command: ripr check --base origin/main
 
 Start-here next step:
   - after setup is valid, run `ripr first-pr --root . --base origin/main --head HEAD`
