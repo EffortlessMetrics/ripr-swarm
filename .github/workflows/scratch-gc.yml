@@ -1,7 +1,7 @@
 name: Scratch GC
 
 # Scheduled reclamation of self-hosted CI scratch disk so recovery does not
-# depend on PR traffic (#1028). Mirrors the proven inline "Prepare scratch" step
+# depend on PR traffic (#1028). Mirrors the existing inline "Prepare scratch" step
 # in routed-rust.yml, but on a timer: idle build runners (exactly the ones that
 # would otherwise never get a PR-triggered cleanup) get swept regularly.
 
