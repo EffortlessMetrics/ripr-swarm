@@ -30,12 +30,18 @@ fn compute_fp8(
     owner_str: &str,
     normalized_expression: &str,
 ) -> String {
+    // Normalize path separators in the owner symbol so the fingerprint is
+    // platform-independent. The owner `SymbolId` embeds a file path walked
+    // from the filesystem, which uses `\` on Windows and `/` elsewhere;
+    // without this, the same code hashes to different ids per OS and goldens
+    // blessed on one platform fail CI on another (#1053).
+    let owner_normalized = owner_str.replace('\\', "/");
     let mut hasher = Sha256::new();
     hasher.update(sanitized_path.as_bytes());
     hasher.update(b"\0");
     hasher.update(family_str.as_bytes());
     hasher.update(b"\0");
-    hasher.update(owner_str.as_bytes());
+    hasher.update(owner_normalized.as_bytes());
     hasher.update(b"\0");
     hasher.update(normalized_expression.as_bytes());
     hasher.update(b"\0");

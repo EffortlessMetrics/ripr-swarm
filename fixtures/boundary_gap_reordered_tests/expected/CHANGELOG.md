@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+platform-stable content-addressed ids (#1053): normalize owner path separators in fp8
+
+Command:
+`cargo xtask goldens bless boundary_gap_reordered_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
