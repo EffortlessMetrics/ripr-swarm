@@ -1,0 +1,229 @@
+{
+  "file_fact_cache_schema_version": "0.1",
+  "analyzer_version": "0.9.0",
+  "file_path": "tests\\pricing.rs",
+  "content_hash": "c16a8ac9de4c88dd",
+  "file_facts": {
+    "path": "tests\\pricing.rs",
+    "functions": [
+      {
+        "id": "tests\\pricing.rs::premium_customer_gets_discount",
+        "name": "premium_customer_gets_discount",
+        "file": "tests\\pricing.rs",
+        "start_line": 2,
+        "end_line": 5,
+        "body": "fn premium_customer_gets_discount() {\n    let quote = ripr_sample::price(10_000, 100);\n    assert!(quote.total > 0);\n}",
+        "calls": [
+          {
+            "line": 2,
+            "name": "premium_customer_gets_discount",
+            "text": "fn premium_customer_gets_discount() {"
+          },
+          {
+            "line": 3,
+            "name": "price",
+            "text": "let quote = ripr_sample::price(10_000, 100);"
+          }
+        ],
+        "returns": [],
+        "literals": [
+          {
+            "line": 3,
+            "value": "100"
+          },
+          {
+            "line": 3,
+            "value": "10000"
+          },
+          {
+            "line": 4,
+            "value": "0"
+          }
+        ],
+        "is_test": true,
+        "attrs": [
+          "#[test]"
+        ]
+      },
+      {
+        "id": "tests\\pricing.rs::rejects_bad_currency",
+        "name": "rejects_bad_currency",
+        "file": "tests\\pricing.rs",
+        "start_line": 8,
+        "end_line": 11,
+        "body": "fn rejects_bad_currency() {\n    let result = ripr_sample::validate_currency(\"XYZ\");\n    assert!(result.is_err());\n}",
+        "calls": [
+          {
+            "line": 8,
+            "name": "rejects_bad_currency",
+            "text": "fn rejects_bad_currency() {"
+          },
+          {
+            "line": 9,
+            "name": "validate_currency",
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");"
+          },
+          {
+            "line": 10,
+            "name": "is_err",
+            "text": "assert!(result.is_err());"
+          }
+        ],
+        "returns": [],
+        "literals": [],
+        "is_test": true,
+        "attrs": [
+          "#[test]"
+        ]
+      }
+    ],
+    "tests": [
+      {
+        "name": "premium_customer_gets_discount",
+        "file": "tests\\pricing.rs",
+        "start_line": 2,
+        "end_line": 5,
+        "body": "fn premium_customer_gets_discount() {\n    let quote = ripr_sample::price(10_000, 100);\n    assert!(quote.total > 0);\n}",
+        "calls": [
+          {
+            "line": 2,
+            "name": "premium_customer_gets_discount",
+            "text": "fn premium_customer_gets_discount() {"
+          },
+          {
+            "line": 3,
+            "name": "price",
+            "text": "let quote = ripr_sample::price(10_000, 100);"
+          }
+        ],
+        "assertions": [
+          {
+            "line": 4,
+            "text": "assert!(quote.total > 0);",
+            "kind": "RelationalCheck",
+            "strength": "Weak",
+            "observed_tokens": [
+              "quote",
+              "total"
+            ]
+          }
+        ],
+        "literals": [
+          {
+            "line": 3,
+            "value": "100"
+          },
+          {
+            "line": 3,
+            "value": "10000"
+          },
+          {
+            "line": 4,
+            "value": "0"
+          }
+        ],
+        "attrs": [
+          "#[test]"
+        ]
+      },
+      {
+        "name": "rejects_bad_currency",
+        "file": "tests\\pricing.rs",
+        "start_line": 8,
+        "end_line": 11,
+        "body": "fn rejects_bad_currency() {\n    let result = ripr_sample::validate_currency(\"XYZ\");\n    assert!(result.is_err());\n}",
+        "calls": [
+          {
+            "line": 8,
+            "name": "rejects_bad_currency",
+            "text": "fn rejects_bad_currency() {"
+          },
+          {
+            "line": 9,
+            "name": "validate_currency",
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");"
+          },
+          {
+            "line": 10,
+            "name": "is_err",
+            "text": "assert!(result.is_err());"
+          }
+        ],
+        "assertions": [
+          {
+            "line": 10,
+            "text": "assert!(result.is_err());",
+            "kind": "BroadError",
+            "strength": "Weak",
+            "observed_tokens": [
+              "result"
+            ]
+          }
+        ],
+        "literals": [],
+        "attrs": [
+          "#[test]"
+        ]
+      }
+    ],
+    "calls": [
+      {
+        "line": 2,
+        "name": "premium_customer_gets_discount",
+        "text": "fn premium_customer_gets_discount() {"
+      },
+      {
+        "line": 3,
+        "name": "price",
+        "text": "let quote = ripr_sample::price(10_000, 100);"
+      },
+      {
+        "line": 8,
+        "name": "rejects_bad_currency",
+        "text": "fn rejects_bad_currency() {"
+      },
+      {
+        "line": 9,
+        "name": "validate_currency",
+        "text": "let result = ripr_sample::validate_currency(\"XYZ\");"
+      },
+      {
+        "line": 10,
+        "name": "is_err",
+        "text": "assert!(result.is_err());"
+      }
+    ],
+    "returns": [],
+    "literals": [
+      {
+        "line": 3,
+        "value": "100"
+      },
+      {
+        "line": 3,
+        "value": "10000"
+      },
+      {
+        "line": 4,
+        "value": "0"
+      }
+    ],
+    "probe_shapes": [
+      {
+        "start_line": 3,
+        "end_line": 3,
+        "start_byte": 62,
+        "kind": "call_deletion",
+        "text": "ripr_sample::price(10_000, 100)"
+      },
+      {
+        "start_line": 9,
+        "end_line": 9,
+        "start_byte": 181,
+        "kind": "call_deletion",
+        "text": "ripr_sample::validate_currency(\"XYZ\")"
+      }
+    ],
+    "source": "#[test]\nfn premium_customer_gets_discount() {\n    let quote = ripr_sample::price(10_000, 100);\n    assert!(quote.total > 0);\n}\n\n#[test]\nfn rejects_bad_currency() {\n    let result = ripr_sample::validate_currency(\"XYZ\");\n    assert!(result.is_err());\n}\n"
+  }
+}

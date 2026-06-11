@@ -1,0 +1,712 @@
+{
+  "schema_version": "0.2",
+  "analyzer_version": "0.9.0",
+  "workspace_root_hash": "956f833cd0a27414",
+  "files_content_hash": "9599ec2f83fbadfe",
+  "cfg_features_hash": "cbf29ce484222325",
+  "config_hash": "cbf29ce484222325",
+  "test_intent_hash": "cbf29ce484222325",
+  "suppressions_hash": "cbf29ce484222325",
+  "classified_seams": [
+    {
+      "seam": {
+        "id": "464085a77573c9e5",
+        "kind": "PredicateBoundary",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::price",
+        "byte_offset": 175,
+        "display_line": 8,
+        "expression": "amount >= discount_threshold",
+        "required_discriminator": {
+          "BoundaryValue": {
+            "description": "amount >= discount_threshold"
+          }
+        },
+        "expected_sink": "ReturnValue"
+      },
+      "evidence": {
+        "seam_id": "464085a77573c9e5",
+        "related_tests": [
+          {
+            "test_name": "premium_customer_gets_discount",
+            "file": "tests\\pricing.rs",
+            "line": 2,
+            "oracle_kind": "RelationalCheck",
+            "oracle_strength": "Weak",
+            "evidence_summary": "relational check",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::price`: premium_customer_gets_discount"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 1 concrete activation value(s) for seam `amount >= discount_threshold`"
+        },
+        "propagate": {
+          "state": "Yes",
+          "confidence": "Low",
+          "summary": "Static propagation to `return_value` sink is yes"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `predicate_boundary` is `weak` (kind-match true)"
+        },
+        "observed_values": [
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "10_000",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "discount_threshold (equality boundary)",
+            "reason": "observed values do not include the equality-boundary case for this predicate",
+            "flow_sink": null
+          }
+        ]
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "75895083d3486800",
+        "kind": "FieldConstruction",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::price",
+        "byte_offset": 222,
+        "display_line": 9,
+        "expression": "total: amount - 100",
+        "required_discriminator": {
+          "FieldValue": {
+            "field": "total: amount - 100"
+          }
+        },
+        "expected_sink": "OutputField"
+      },
+      "evidence": {
+        "seam_id": "75895083d3486800",
+        "related_tests": [
+          {
+            "test_name": "premium_customer_gets_discount",
+            "file": "tests\\pricing.rs",
+            "line": 2,
+            "oracle_kind": "RelationalCheck",
+            "oracle_strength": "Weak",
+            "evidence_summary": "relational check",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::price`: premium_customer_gets_discount"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 2 concrete activation value(s) for seam `total: amount - 100`"
+        },
+        "propagate": {
+          "state": "Yes",
+          "confidence": "Low",
+          "summary": "Static propagation to `output_field` sink is yes"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `field_construction` is `weak` (kind-match true)"
+        },
+        "observed_values": [
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "100",
+            "context": "FunctionArgument"
+          },
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "10_000",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "75755183d337c0a9",
+        "kind": "FieldConstruction",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::price",
+        "byte_offset": 243,
+        "display_line": 9,
+        "expression": "discount_applied: true",
+        "required_discriminator": {
+          "FieldValue": {
+            "field": "discount_applied: true"
+          }
+        },
+        "expected_sink": "OutputField"
+      },
+      "evidence": {
+        "seam_id": "75755183d337c0a9",
+        "related_tests": [
+          {
+            "test_name": "premium_customer_gets_discount",
+            "file": "tests\\pricing.rs",
+            "line": 2,
+            "oracle_kind": "RelationalCheck",
+            "oracle_strength": "Weak",
+            "evidence_summary": "relational check",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::price`: premium_customer_gets_discount"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 2 concrete activation value(s) for seam `discount_applied: true`"
+        },
+        "propagate": {
+          "state": "Yes",
+          "confidence": "Low",
+          "summary": "Static propagation to `output_field` sink is yes"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `field_construction` is `weak` (kind-match true)"
+        },
+        "observed_values": [
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "100",
+            "context": "FunctionArgument"
+          },
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "10_000",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "75a15583d35d0260",
+        "kind": "FieldConstruction",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::price",
+        "byte_offset": 297,
+        "display_line": 11,
+        "expression": "total: amount",
+        "required_discriminator": {
+          "FieldValue": {
+            "field": "total: amount"
+          }
+        },
+        "expected_sink": "OutputField"
+      },
+      "evidence": {
+        "seam_id": "75a15583d35d0260",
+        "related_tests": [
+          {
+            "test_name": "premium_customer_gets_discount",
+            "file": "tests\\pricing.rs",
+            "line": 2,
+            "oracle_kind": "RelationalCheck",
+            "oracle_strength": "Weak",
+            "evidence_summary": "relational check",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::price`: premium_customer_gets_discount"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 2 concrete activation value(s) for seam `total: amount`"
+        },
+        "propagate": {
+          "state": "Yes",
+          "confidence": "Low",
+          "summary": "Static propagation to `output_field` sink is yes"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `field_construction` is `weak` (kind-match true)"
+        },
+        "observed_values": [
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "100",
+            "context": "FunctionArgument"
+          },
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "10_000",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "7e957983d88458b0",
+        "kind": "FieldConstruction",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::price",
+        "byte_offset": 312,
+        "display_line": 11,
+        "expression": "discount_applied: false",
+        "required_discriminator": {
+          "FieldValue": {
+            "field": "discount_applied: false"
+          }
+        },
+        "expected_sink": "OutputField"
+      },
+      "evidence": {
+        "seam_id": "7e957983d88458b0",
+        "related_tests": [
+          {
+            "test_name": "premium_customer_gets_discount",
+            "file": "tests\\pricing.rs",
+            "line": 2,
+            "oracle_kind": "RelationalCheck",
+            "oracle_strength": "Weak",
+            "evidence_summary": "relational check",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::price`: premium_customer_gets_discount"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 2 concrete activation value(s) for seam `discount_applied: false`"
+        },
+        "propagate": {
+          "state": "Yes",
+          "confidence": "Low",
+          "summary": "Static propagation to `output_field` sink is yes"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `field_construction` is `weak` (kind-match true)"
+        },
+        "observed_values": [
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "100",
+            "context": "FunctionArgument"
+          },
+          {
+            "line": 3,
+            "text": "let quote = ripr_sample::price(10_000, 100);",
+            "value": "10_000",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "20155d2080835d39",
+        "kind": "PredicateBoundary",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::validate_currency",
+        "byte_offset": 523,
+        "display_line": 22,
+        "expression": "currency == \"USD\"",
+        "required_discriminator": {
+          "BoundaryValue": {
+            "description": "currency == \"USD\""
+          }
+        },
+        "expected_sink": "ReturnValue"
+      },
+      "evidence": {
+        "seam_id": "20155d2080835d39",
+        "related_tests": [
+          {
+            "test_name": "rejects_bad_currency",
+            "file": "tests\\pricing.rs",
+            "line": 8,
+            "oracle_kind": "BroadError",
+            "oracle_strength": "Weak",
+            "evidence_summary": "is_err / broad-error assertion",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::validate_currency`: rejects_bad_currency"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 1 concrete activation value(s) for seam `currency == \"USD\"`"
+        },
+        "propagate": {
+          "state": "Unknown",
+          "confidence": "Low",
+          "summary": "Static propagation to `return_value` sink is unknown"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `predicate_boundary` is `weak` (kind-match false)"
+        },
+        "observed_values": [
+          {
+            "line": 9,
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");",
+            "value": "\"XYZ\"",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "0db5af83ac9c0101",
+        "kind": "CallPresence",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::validate_currency",
+        "byte_offset": 543,
+        "display_line": 22,
+        "expression": "Ok(())",
+        "required_discriminator": {
+          "CallSite": {
+            "target": "Ok(())"
+          }
+        },
+        "expected_sink": "SideEffect"
+      },
+      "evidence": {
+        "seam_id": "0db5af83ac9c0101",
+        "related_tests": [
+          {
+            "test_name": "rejects_bad_currency",
+            "file": "tests\\pricing.rs",
+            "line": 8,
+            "oracle_kind": "BroadError",
+            "oracle_strength": "Weak",
+            "evidence_summary": "is_err / broad-error assertion",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::validate_currency`: rejects_bad_currency"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 1 concrete activation value(s) for seam `Ok(())`"
+        },
+        "propagate": {
+          "state": "Unknown",
+          "confidence": "Low",
+          "summary": "Static propagation to `side_effect` sink is unknown"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `call_presence` is `weak` (kind-match false)"
+        },
+        "observed_values": [
+          {
+            "line": 9,
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");",
+            "value": "\"XYZ\"",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "e0ee55e4215dfaef",
+        "kind": "ReturnValue",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::validate_currency",
+        "byte_offset": 543,
+        "display_line": 22,
+        "expression": "Ok(())",
+        "required_discriminator": {
+          "ReturnValue": {
+            "description": "Ok(())"
+          }
+        },
+        "expected_sink": "ReturnValue"
+      },
+      "evidence": {
+        "seam_id": "e0ee55e4215dfaef",
+        "related_tests": [
+          {
+            "test_name": "rejects_bad_currency",
+            "file": "tests\\pricing.rs",
+            "line": 8,
+            "oracle_kind": "BroadError",
+            "oracle_strength": "Weak",
+            "evidence_summary": "is_err / broad-error assertion",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::validate_currency`: rejects_bad_currency"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 1 concrete activation value(s) for seam `Ok(())`"
+        },
+        "propagate": {
+          "state": "Unknown",
+          "confidence": "Low",
+          "summary": "Static propagation to `return_value` sink is unknown"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `return_value` is `weak` (kind-match false)"
+        },
+        "observed_values": [
+          {
+            "line": 9,
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");",
+            "value": "\"XYZ\"",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "0db8a983ac9e2ca6",
+        "kind": "CallPresence",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::validate_currency",
+        "byte_offset": 559,
+        "display_line": 22,
+        "expression": "Err(InvoiceError::InvalidCurrency)",
+        "required_discriminator": {
+          "CallSite": {
+            "target": "Err(InvoiceError::InvalidCurrency)"
+          }
+        },
+        "expected_sink": "SideEffect"
+      },
+      "evidence": {
+        "seam_id": "0db8a983ac9e2ca6",
+        "related_tests": [
+          {
+            "test_name": "rejects_bad_currency",
+            "file": "tests\\pricing.rs",
+            "line": 8,
+            "oracle_kind": "BroadError",
+            "oracle_strength": "Weak",
+            "evidence_summary": "is_err / broad-error assertion",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::validate_currency`: rejects_bad_currency"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 1 concrete activation value(s) for seam `Err(InvoiceError::InvalidCurrency)`"
+        },
+        "propagate": {
+          "state": "Unknown",
+          "confidence": "Low",
+          "summary": "Static propagation to `side_effect` sink is unknown"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `call_presence` is `weak` (kind-match false)"
+        },
+        "observed_values": [
+          {
+            "line": 9,
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");",
+            "value": "\"XYZ\"",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    },
+    {
+      "seam": {
+        "id": "3a773b76040b04b2",
+        "kind": "ErrorVariant",
+        "file": "src/lib.rs",
+        "owner": "src/lib.rs::validate_currency",
+        "byte_offset": 559,
+        "display_line": 22,
+        "expression": "Err(InvoiceError::InvalidCurrency)",
+        "required_discriminator": {
+          "ErrorVariant": {
+            "variant": "Err(InvoiceError::InvalidCurrency)"
+          }
+        },
+        "expected_sink": "ErrorChannel"
+      },
+      "evidence": {
+        "seam_id": "3a773b76040b04b2",
+        "related_tests": [
+          {
+            "test_name": "rejects_bad_currency",
+            "file": "tests\\pricing.rs",
+            "line": 8,
+            "oracle_kind": "BroadError",
+            "oracle_strength": "Weak",
+            "evidence_summary": "is_err / broad-error assertion",
+            "relation_reason": "direct_owner_call",
+            "relation_confidence": "high"
+          }
+        ],
+        "reach": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Related tests appear to reach `src/lib.rs::validate_currency`: rejects_bad_currency"
+        },
+        "activate": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observed 1 concrete activation value(s) for seam `Err(InvoiceError::InvalidCurrency)`"
+        },
+        "propagate": {
+          "state": "Yes",
+          "confidence": "Low",
+          "summary": "Static propagation to `error_channel` sink is yes"
+        },
+        "observe": {
+          "state": "Yes",
+          "confidence": "Medium",
+          "summary": "Observation evidence is `yes`"
+        },
+        "discriminate": {
+          "state": "Weak",
+          "confidence": "Medium",
+          "summary": "Strongest oracle for seam kind `error_variant` is `weak` (kind-match false)"
+        },
+        "observed_values": [
+          {
+            "line": 9,
+            "text": "let result = ripr_sample::validate_currency(\"XYZ\");",
+            "value": "\"XYZ\"",
+            "context": "FunctionArgument"
+          }
+        ],
+        "missing_discriminators": []
+      },
+      "class": "WeaklyGripped"
+    }
+  ]
+}
