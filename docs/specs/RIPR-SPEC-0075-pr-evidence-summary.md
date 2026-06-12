@@ -128,9 +128,9 @@ Schema version `0.1`. Stable field order.
     "receipts_present": 1,
     "missing_receipts": 2,
     "orphan_receipts": "not_available",
-    "stale_receipts": 0,
+    "stale_receipts": "not_available",
     "gap_mismatch_receipts": "not_available",
-    "verify_failed_receipts": 0
+    "verify_failed_receipts": "not_available"
   },
   "top_repair": {
     "canonical_gap_id": "gap:src/lib.rs:error_path:c1a03250",
@@ -188,10 +188,10 @@ When there are no limitations, `top_limitation` is omitted entirely.
 | `receipt_status` | object | gap-decision-ledger summary | Six-count receipt status breakdown. See below. |
 | `receipt_status.receipts_present` | u64 or `"not_available"` | `receipt_improved_total + receipt_unchanged_after_attempt_total` | Records carrying any receipt evidence. |
 | `receipt_status.missing_receipts` | u64 or `"not_available"` | mirrors top-level `missing_receipts` | Convenience mirror. |
-| `receipt_status.orphan_receipts` | always `"not_available"` (deferred PR6 #1123) | no derivation | Requires receipts/ dir sweep vs. ledger records — no filesystem scan in summary derivation. |
-| `receipt_status.stale_receipts` | u64 or `"not_available"` | gap-ledger `summary.receipt_stale_total` | Per-record `receipt.state == "receipt_stale"` count; honest 0 when inspected and none found; `"not_available"` when ledger summary absent. |
-| `receipt_status.gap_mismatch_receipts` | always `"not_available"` (deferred PR6 #1123) | no derivation | Requires reading each receipt file to compare its own `canonical_gap_id`. |
-| `receipt_status.verify_failed_receipts` | u64 or `"not_available"` | gap-ledger `summary.receipt_verify_failed_total` | Per-record `receipt.state == "receipt_verify_failed"` count; honest 0 when inspected and none found; `"not_available"` when ledger summary absent. |
+| `receipt_status.orphan_receipts` | `"not_available"` | not yet derivable | Unlock: add receipts/ dir sweep to ledger. |
+| `receipt_status.stale_receipts` | `"not_available"` | not yet derivable | Unlock: wire the real staleness signal (`swarm_ingest.staleness_status`) into the gap-ledger build. Emitting 0 today would be a fake zero — no producer exists (#1130). |
+| `receipt_status.gap_mismatch_receipts` | `"not_available"` | not yet derivable | Unlock: read each receipt's own `canonical_gap_id` and compare. |
+| `receipt_status.verify_failed_receipts` | `"not_available"` | not yet derivable | Unlock: wire the real verify signal (`swarm_ingest.verify.passed/failed`) into the gap-ledger build. Emitting 0 today would be a fake zero — no producer exists (#1130). |
 | `top_repair` | object or null | start-here `selected` when `state == "top_gap"` | null when no actionable gap. |
 | `top_repair_state` | string or absent | start-here `selected.state` | Present only when `top_repair` is null. |
 | `top_limitation` | object or absent | first entry in `limitations[]` | Omitted when limitations empty. |
@@ -209,19 +209,9 @@ When there are no limitations, `top_limitation` is omitted entirely.
   - `receipt_status_receipts_present_derived_from_ledger`
   - `claimed_repair_with_no_receipt_shows_in_missing_receipts`
   - `receipt_status_json_derived_fields_are_integers`
-  - `verify_failed_receipt_state_counts_in_receipt_status` (PR6 #1123)
-  - `stale_receipt_state_counts_in_receipt_status` (PR6 #1123)
-  - `all_receipts_passing_yields_honest_zero_for_stale_and_verify_failed` (PR6 #1123)
-  - `verify_failed_receipt_json_shows_integer_while_deferred_stay_not_available` (PR6 #1123)
-- Unit tests in `crates/ripr/src/output/gap_decision_ledger.rs` (PR6 #1123):
-  - `summarize_records_counts_verify_failed_receipt_state`
-  - `summarize_records_counts_stale_receipt_state`
-  - `summarize_records_honest_zero_when_no_stale_or_verify_failed`
-  - `summarize_records_counts_legacy_stale_alias`
-  - `summarize_records_no_receipt_contributes_zero`
-  - `ledger_json_includes_receipt_state_counts`
-- Unit tests in `crates/ripr/src/output/receipt_lifecycle.rs` (PR6 #1123):
-  - `normalizes_verify_failed_labels`
+  - `receipt_status_deferred_fields_stay_not_available_even_with_ledger_summary` (#1130 honesty guard)
+- Unit test in `crates/ripr/src/output/gap_decision_ledger.rs` (#1130 honesty guard):
+  - `ledger_summary_does_not_emit_fabricated_receipt_state_counts`
 - Integration tests in `xtask/src/reports/pr_evidence_summary.rs`:
   - `parse_accepts_baseline_path`
   - `parse_rejects_baseline_without_path`

@@ -52,17 +52,27 @@ pub(super) struct PrEvidenceSummaryJson {
 
 /// Six-count receipt-status object surfaced in the PR evidence summary.
 ///
-/// Four fields are now real detected counts (PR6 #1123).
-/// Two remain `NotAvailable` with named limitations:
+/// Two fields are derivable from gap-ledger summary counts today.
+/// Four are `NotAvailable` because the gap-decision-ledger build path does not
+/// carry the per-record signals needed to classify them, and emitting `0` would
+/// be a fake zero — no real condition can produce a non-zero count, so a `0`
+/// would falsely claim "we checked and found none" (see #1130 adversarial review):
 ///
 /// - `orphan_receipts`: a receipt file exists but no matching gap record was found —
 ///   requires a `target/ripr/receipts/` dir sweep that is not performed during
-///   summary derivation.  Limitation: PR6 #1123 deferred.
+///   summary derivation.
+/// - `stale_receipts`: a receipt is stale — the genuine staleness signal lives in
+///   `swarm_ingest` (`staleness_status`), a separate artifact the gap-ledger build
+///   does not consume; the gap-ledger never writes `receipt.state == "receipt_stale"`
+///   in production.
 /// - `gap_mismatch_receipts`: a receipt references a different gap id than the
 ///   ledger record — requires reading each receipt file to compare its own
 ///   recorded `canonical_gap_id` against the attached gap; the ledger ingest
 ///   does not surface the receipt's own gap id field.
-///   Limitation: PR6 #1123 deferred.
+/// - `verify_failed_receipts`: a receipt's verify failed — the genuine verify
+///   pass/fail signal lives in `swarm_ingest` (`verify.passed`/`failed`), a
+///   separate artifact the gap-ledger build does not consume; the gap-ledger
+///   never writes `receipt.state == "receipt_verify_failed"` in production.
 pub(super) struct ReceiptStatusCounts {
     /// Gap-ledger records that carry receipt evidence:
     /// `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total`.
@@ -71,21 +81,15 @@ pub(super) struct ReceiptStatusCounts {
     /// mirrors the top-level `missing_receipts` field.
     pub(super) missing_receipts: U64OrNotAvailable,
     /// NOT DERIVABLE — requires a `target/ripr/receipts/` dir sweep vs. ledger records.
-    /// Limitation: PR6 #1123 deferred; no filesystem scan in summary derivation.
     pub(super) orphan_receipts: U64OrNotAvailable,
-    /// Real detected count: gap-ledger records with `receipt.state == "receipt_stale"`.
-    /// Derived from `summary.receipt_stale_total`; each record was inspected.
-    /// A 0 is honest because every record was examined.  `NotAvailable` only
-    /// when the ledger summary block is absent.
+    /// NOT DERIVABLE — real staleness signal lives in `swarm_ingest`, not the
+    /// gap-ledger build; emitting 0 would be a fake zero (#1130).
     pub(super) stale_receipts: U64OrNotAvailable,
     /// NOT DERIVABLE — requires reading each receipt file to compare its own
     /// `canonical_gap_id` against the attached gap record.
-    /// Limitation: PR6 #1123 deferred; ledger ingest does not surface receipt's gap id.
     pub(super) gap_mismatch_receipts: U64OrNotAvailable,
-    /// Real detected count: gap-ledger records with `receipt.state == "receipt_verify_failed"`.
-    /// Derived from `summary.receipt_verify_failed_total`; each record was inspected.
-    /// A 0 is honest because every record was examined.  `NotAvailable` only
-    /// when the ledger summary block is absent.
+    /// NOT DERIVABLE — real verify pass/fail signal lives in `swarm_ingest`, not
+    /// the gap-ledger build; emitting 0 would be a fake zero (#1130).
     pub(super) verify_failed_receipts: U64OrNotAvailable,
 }
 

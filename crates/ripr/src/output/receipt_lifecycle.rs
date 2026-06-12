@@ -10,7 +10,6 @@ pub const RECEIPT_MISSING: &str = "receipt_missing";
 pub const RECEIPT_FOUND: &str = "receipt_found";
 pub const RECEIPT_STALE: &str = "receipt_stale";
 pub const RECEIPT_GAP_MISMATCH: &str = "receipt_gap_mismatch";
-pub const RECEIPT_VERIFY_FAILED: &str = "receipt_verify_failed";
 pub const RECEIPT_MOVEMENT_IMPROVED: &str = "receipt_movement_improved";
 pub const RECEIPT_MOVEMENT_UNCHANGED: &str = "receipt_movement_unchanged";
 pub const RECEIPT_NOT_APPLICABLE: &str = "receipt_not_applicable";
@@ -21,9 +20,6 @@ pub fn normalize_receipt_lifecycle_state(raw: &str) -> String {
         "present" | "found" | RECEIPT_FOUND => RECEIPT_FOUND.to_string(),
         "stale" | "stale_receipt" | RECEIPT_STALE => RECEIPT_STALE.to_string(),
         "gap_mismatch" | "mismatch" | RECEIPT_GAP_MISMATCH => RECEIPT_GAP_MISMATCH.to_string(),
-        "verify_failed" | "verify_fail" | RECEIPT_VERIFY_FAILED => {
-            RECEIPT_VERIFY_FAILED.to_string()
-        }
         "improved" | "receipt_improved" | "movement_improved" | RECEIPT_MOVEMENT_IMPROVED => {
             RECEIPT_MOVEMENT_IMPROVED.to_string()
         }
@@ -130,29 +126,6 @@ mod tests {
         assert_eq!(
             normalize_receipt_lifecycle_state("not_attempted"),
             RECEIPT_NOT_APPLICABLE
-        );
-    }
-
-    #[test]
-    fn normalizes_verify_failed_labels() {
-        // Canonical constant.
-        assert_eq!(
-            normalize_receipt_lifecycle_state(RECEIPT_VERIFY_FAILED),
-            RECEIPT_VERIFY_FAILED
-        );
-        // Legacy aliases.
-        assert_eq!(
-            normalize_receipt_lifecycle_state("verify_failed"),
-            RECEIPT_VERIFY_FAILED
-        );
-        assert_eq!(
-            normalize_receipt_lifecycle_state("verify_fail"),
-            RECEIPT_VERIFY_FAILED
-        );
-        // Case-insensitive.
-        assert_eq!(
-            normalize_receipt_lifecycle_state("VERIFY_FAILED"),
-            RECEIPT_VERIFY_FAILED
         );
     }
 
