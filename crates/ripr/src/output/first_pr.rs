@@ -1,8 +1,7 @@
-use crate::agent::loop_commands::{
-    check_repo_exposure_command, display_path, receipt_write_command, shell_arg,
-};
+use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
 use crate::config::{CONFIG_FILE_NAME, detect_python_project};
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
+use crate::output::receipt_write::receipt_write_command;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };

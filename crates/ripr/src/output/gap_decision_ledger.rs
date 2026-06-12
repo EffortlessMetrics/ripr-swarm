@@ -1,4 +1,5 @@
-use crate::agent::loop_commands::{receipt_write_command, shell_arg};
+use crate::agent::loop_commands::shell_arg;
+use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
