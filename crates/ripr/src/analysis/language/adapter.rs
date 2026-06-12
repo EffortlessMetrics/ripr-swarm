@@ -22,13 +22,10 @@ pub(crate) struct LanguageDiffResult {
 ///
 /// `findings` are unsorted. `production_files` is the number of files
 /// the adapter classified as production code, used by the summary builder.
-/// `preview_sample_paths` contains up to three normalized (forward-slash)
-/// paths for the advisory disclosure; only populated by preview adapters.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LanguageRepoResult {
     pub(crate) findings: Vec<Finding>,
     pub(crate) production_files: usize,
-    pub(crate) preview_sample_paths: Vec<String>,
 }
 
 /// Boundary trait for per-language adapters.

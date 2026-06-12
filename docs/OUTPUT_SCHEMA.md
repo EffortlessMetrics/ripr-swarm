@@ -613,10 +613,13 @@ The evidence-first fields are additive in schema `0.2`:
 
 ### `preview_languages` (top-level additive advisory, RIPR-SPEC-0082)
 
-Added in schema `0.2` as an additive optional top-level array. Emitted only
-when at least one preview-language adapter (TypeScript, JavaScript, or Python)
-processed files in the diff. Absent for pure-Rust diffs. Does not bump
-`schema_version`.
+Added in schema `0.2` as an additive optional top-level array. Emitted whenever
+preview-language files (TypeScript, JavaScript, or Python) are present in the
+analyzed scope — **regardless of whether the preview adapter is enabled** in
+`ripr.toml`. Absent for pure-Rust scopes. Does not bump `schema_version`.
+
+Not-enabled (default) example — the #1111 case where a TypeScript change is run
+under the default Rust-only config and was therefore not analyzed:
 
 ```json
 "preview_languages": [
@@ -624,21 +627,31 @@ processed files in the diff. Absent for pure-Rust diffs. Does not bump
     "language": "typescript",
     "file_count": 1,
     "sample_paths": ["src/utils.ts"],
+    "enabled": false,
+    "analyzed": false,
     "category": "preview_language_advisory",
-    "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    "why": "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; enable in ripr.toml [languages]"
   }
 ]
 ```
 
-- `language` — stable wire string; one of `typescript`, `javascript`, `python`, `perl`
-- `file_count` — number of files in the diff routed to this adapter (real, never fabricated)
-- `sample_paths` — up to three normalized (forward-slash) file paths from the diff
+Enabled example carries `"enabled": true`, `"analyzed": true`, and a
+`"why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"`.
+
+- `language` — stable wire string; one of `typescript`, `javascript`, `python`
+- `file_count` — number of files in scope routed to this adapter (real, never fabricated)
+- `sample_paths` — up to three normalized (forward-slash) file paths
+- `enabled` — whether the preview adapter was enabled (ran) for this analysis
+- `analyzed` — whether the files were analyzed (mirrors `enabled`)
 - `category` — always `"preview_language_advisory"` for machine filtering
-- `why` — advisory rationale string
+- `why` — advisory rationale string (case-specific)
 
 An empty or absent `preview_languages` array means only stable (Rust) content
-was analyzed. A non-empty array is an honesty signal that the result may be
-incomplete for the listed languages.
+was in scope. A non-empty array is an honesty signal: either the listed
+preview-language files were not analyzed at all (`enabled == false`) or were
+analyzed under advisory preview support that may be incomplete
+(`enabled == true`). In neither case is an empty result a Rust-grade clean
+result.
 
 ## Enums
 

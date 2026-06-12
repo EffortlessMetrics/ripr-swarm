@@ -86,6 +86,10 @@ pub(crate) struct DiffPreviewLanguageAdvisory {
     pub(crate) file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub(crate) sample_paths: Vec<String>,
+    /// Whether the preview adapter was enabled (ran) for this analysis.
+    pub(crate) enabled: bool,
+    /// Whether the files were analyzed (mirrors `enabled`).
+    pub(crate) analyzed: bool,
     /// Advisory category tag.
     pub(crate) category: &'static str,
     /// Human-readable advisory note.
@@ -196,8 +200,14 @@ pub(crate) fn build_diff_report(
                 language: advisory.language.clone(),
                 file_count: advisory.file_count,
                 sample_paths: advisory.sample_paths.clone(),
+                enabled: advisory.enabled,
+                analyzed: advisory.enabled,
                 category: "preview_language_advisory",
-                why: "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean",
+                why: if advisory.enabled {
+                    "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+                } else {
+                    "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; enable in ripr.toml [languages]"
+                },
             })
             .collect(),
     }
@@ -400,6 +410,7 @@ mod tests {
                     language: "typescript".to_string(),
                     file_count: 2,
                     sample_paths: vec!["src/discount.ts".to_string()],
+                    enabled: true,
                 }],
             },
             "origin/main",

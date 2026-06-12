@@ -55,13 +55,23 @@ pub struct AnalysisOptions {
     pub include_unchanged_tests: bool,
 }
 
-/// Advisory record for one preview-language adapter that processed files in
-/// the analyzed scope.
+/// Advisory record for one compiled preview-language adapter whose files are
+/// present in the analyzed scope.
 ///
 /// Produced by the pipeline when TypeScript, JavaScript, or Python files are
-/// present in the diff or repo — regardless of whether any findings were
-/// emitted. The count and sample paths come from real adapter routing; they
-/// are never fabricated.
+/// present in the diff or repo — regardless of whether the adapter is
+/// `enabled` in `ripr.toml` and regardless of whether any findings were
+/// emitted. The count and sample paths come from real path routing
+/// (`analysis::language::route`); they are never fabricated.
+///
+/// The `enabled` flag distinguishes the two honesty cases per
+/// RIPR-SPEC-0082:
+///
+/// - `enabled == true` — the adapter ran; an empty result is advisory and may
+///   be incomplete, not a Rust-grade clean result.
+/// - `enabled == false` — the adapter is preview and NOT enabled, so these
+///   files were not analyzed at all; the empty result must not be read as
+///   clean.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreviewLanguageAdvisory {
     /// Stable language wire string (e.g. `"typescript"`, `"python"`).
@@ -70,6 +80,11 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
+    /// Whether this preview adapter was enabled (ran) for this analysis.
+    ///
+    /// `false` means the preview-language files were detected in scope but not
+    /// analyzed because the adapter is not enabled in `ripr.toml`.
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug)]

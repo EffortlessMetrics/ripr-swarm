@@ -119,3 +119,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0082 not-enabled disclosure + enabled/analyzed fields (#1111)
+
+Command:
+`cargo xtask goldens bless python_ranking_noise_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

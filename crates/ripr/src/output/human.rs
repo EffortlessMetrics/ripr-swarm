@@ -45,14 +45,28 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 ///
 /// Called unconditionally; emits nothing when `preview_language_advisories`
 /// is empty (pure-Rust scope). See RIPR-SPEC-0082.
+///
+/// Two wordings per the `enabled` flag:
+///
+/// - `enabled` — the preview adapter ran; the empty/partial result is advisory
+///   and may be incomplete, not Rust-grade clean.
+/// - not enabled — the files were detected but not analyzed because the
+///   preview adapter is not enabled in `ripr.toml`; the empty result must not
+///   be read as clean.
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     for advisory in &output.preview_language_advisories {
         let language = capitalize_first(&advisory.language);
-        out.push_str(&format!(
-            "\nNote: {} {}(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
-            advisory.file_count,
-            language,
-        ));
+        if advisory.enabled {
+            out.push_str(&format!(
+                "\nNote: {} {}(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
+                advisory.file_count, language,
+            ));
+        } else {
+            out.push_str(&format!(
+                "\nNote: this diff contains {} {}(s). The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n",
+                advisory.file_count, language, language,
+            ));
+        }
     }
 }
 
@@ -656,6 +670,7 @@ mod tests {
                 language: "typescript".to_string(),
                 file_count: 2,
                 sample_paths: vec!["src/discount.ts".to_string(), "src/pricing.ts".to_string()],
+                enabled: true,
             }],
         };
 
@@ -689,6 +704,7 @@ mod tests {
                 language: "python".to_string(),
                 file_count: 3,
                 sample_paths: vec!["app/main.py".to_string()],
+                enabled: true,
             }],
         };
 
@@ -744,6 +760,7 @@ mod tests {
                 language: "typescript".to_string(),
                 file_count: 7,
                 sample_paths: vec!["src/lib.ts".to_string()],
+                enabled: true,
             }],
         };
 
@@ -752,6 +769,52 @@ mod tests {
         assert!(
             rendered.contains("7 Typescript(s) analyzed under preview support"),
             "expected file_count=7 in disclosure; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_emits_not_enabled_disclosure_for_typescript_files_when_adapter_disabled() {
+        // The #1111 default case: TypeScript files in the diff but the adapter
+        // is NOT enabled. The empty result must be broken by a disclosure that
+        // says the files were not analyzed.
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: vec![PreviewLanguageAdvisory {
+                language: "typescript".to_string(),
+                file_count: 1,
+                sample_paths: vec!["src/utils.ts".to_string()],
+                enabled: false,
+            }],
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("this diff contains 1 Typescript(s)"),
+            "expected not-enabled disclosure; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("not enabled, so these files were not analyzed"),
+            "expected not-analyzed wording; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("NOT a clean Rust-grade result"),
+            "expected honesty note; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Enable it in ripr.toml"),
+            "expected enable hint; got:\n{rendered}"
+        );
+        // Must NOT use the enabled wording.
+        assert!(
+            !rendered.contains("analyzed under preview support"),
+            "not-enabled case must not claim analysis ran; got:\n{rendered}"
         );
     }
 }

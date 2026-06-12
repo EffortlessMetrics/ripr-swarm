@@ -62,14 +62,17 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             field(&mut out, 3, "language", &adv.language, true);
             number_field(&mut out, 3, "file_count", adv.file_count, true);
             array_field(&mut out, 3, "sample_paths", &adv.sample_paths, true);
+            out.push_str(&format!(
+                "      \"enabled\": {},\n      \"analyzed\": {},\n",
+                adv.enabled, adv.enabled
+            ));
             field(&mut out, 3, "category", "preview_language_advisory", true);
-            field(
-                &mut out,
-                3,
-                "why",
-                "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean",
-                false,
-            );
+            let why = if adv.enabled {
+                "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+            } else {
+                "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; enable in ripr.toml [languages]"
+            };
+            field(&mut out, 3, "why", why, false);
             out.push_str("    }");
             if idx + 1 != advisories.len() {
                 out.push(',');

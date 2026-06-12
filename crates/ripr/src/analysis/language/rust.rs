@@ -223,7 +223,6 @@ impl LanguageAdapter for RustAdapter {
         Ok(LanguageRepoResult {
             findings,
             production_files: production_files.len(),
-            ..LanguageRepoResult::default()
         })
     }
 }
