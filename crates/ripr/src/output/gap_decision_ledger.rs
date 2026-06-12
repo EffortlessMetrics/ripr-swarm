@@ -1,4 +1,7 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::output::receipt_lifecycle::{
+    RECEIPT_STALE, RECEIPT_VERIFY_FAILED, normalize_receipt_lifecycle_state,
+};
 use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -81,6 +84,17 @@ struct GapDecisionLedgerSummary {
     receipt_improved_total: usize,
     receipt_unchanged_after_attempt_total: usize,
     missing_output_contract_total: usize,
+    /// Number of gap records whose `receipt.state` normalises to `receipt_stale`.
+    /// This is a genuine per-record inspection: each record that carries a
+    /// receipt with `state == "receipt_stale"` (or legacy aliases "stale" /
+    /// "stale_receipt") increments this counter.  A zero is honest because
+    /// every record was examined.
+    receipt_stale_total: usize,
+    /// Number of gap records whose `receipt.state` normalises to
+    /// `receipt_verify_failed`.  A genuine per-record inspection: each record
+    /// that carries a receipt with `state == "receipt_verify_failed"` (or
+    /// legacy aliases "verify_failed" / "verify_fail") increments this counter.
+    receipt_verify_failed_total: usize,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1724,6 +1738,21 @@ fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
             == Some("unchanged_after_attempt")
         {
             summary.receipt_unchanged_after_attempt_total += 1;
+        }
+        // Per-record receipt.state inspection for stale and verify-failed counts.
+        // These are genuine inspections: every record is examined and the count is
+        // only non-zero when a record actually carries the corresponding state.
+        if let Some(state) = record
+            .receipt
+            .as_ref()
+            .and_then(|receipt| receipt.state.as_deref())
+        {
+            let normalized = normalize_receipt_lifecycle_state(state);
+            if normalized == RECEIPT_STALE {
+                summary.receipt_stale_total += 1;
+            } else if normalized == RECEIPT_VERIFY_FAILED {
+                summary.receipt_verify_failed_total += 1;
+            }
         }
     }
     summary
@@ -4214,6 +4243,219 @@ mod tests {
         assert!(
             msg.contains("invalid GapRecord"),
             "expected 'invalid GapRecord' in: {msg}"
+        );
+        Ok(())
+    }
+
+    // ── PR6 #1123: receipt.state detection in summarize_records ─────────────
+
+    /// A record with receipt.state == "receipt_verify_failed" increments
+    /// receipt_verify_failed_total; a record with only receipt.movement does not.
+    #[test]
+    fn summarize_records_counts_verify_failed_receipt_state() {
+        let records = vec![
+            // Normal improved receipt — movement only, no state.
+            GapRecord {
+                gap_id: "gap:improved".to_string(),
+                kind: "MissingValueAssertion".to_string(),
+                repairability: "no_action".to_string(),
+                receipt: Some(GapReceipt {
+                    movement: Some("improved".to_string()),
+                    ..GapReceipt::default()
+                }),
+                ..GapRecord::default()
+            },
+            // Receipt present but verify failed — state set explicitly.
+            GapRecord {
+                gap_id: "gap:verify-failed".to_string(),
+                kind: "MissingValueAssertion".to_string(),
+                repairability: "no_action".to_string(),
+                receipt: Some(GapReceipt {
+                    state: Some("receipt_verify_failed".to_string()),
+                    movement: Some("unchanged".to_string()),
+                    ..GapReceipt::default()
+                }),
+                ..GapRecord::default()
+            },
+        ];
+        let summary = summarize_records(&records);
+        assert_eq!(
+            summary.receipt_verify_failed_total, 1,
+            "exactly one verify-failed receipt"
+        );
+        // Improved receipt must NOT count as verify-failed.
+        assert_eq!(
+            summary.receipt_improved_total, 1,
+            "improved receipt still counted via movement"
+        );
+        // Stale count must be zero (we inspected, none were stale).
+        assert_eq!(summary.receipt_stale_total, 0, "no stale receipts");
+    }
+
+    /// A record with receipt.state == "receipt_stale" increments
+    /// receipt_stale_total; a record with only receipt.movement does not.
+    #[test]
+    fn summarize_records_counts_stale_receipt_state() {
+        let records = vec![
+            // Normal improved receipt.
+            GapRecord {
+                gap_id: "gap:improved".to_string(),
+                kind: "MissingValueAssertion".to_string(),
+                repairability: "no_action".to_string(),
+                receipt: Some(GapReceipt {
+                    movement: Some("improved".to_string()),
+                    ..GapReceipt::default()
+                }),
+                ..GapRecord::default()
+            },
+            // Stale receipt — state set to "receipt_stale".
+            GapRecord {
+                gap_id: "gap:stale".to_string(),
+                kind: "MissingValueAssertion".to_string(),
+                repairability: "no_action".to_string(),
+                receipt: Some(GapReceipt {
+                    state: Some("receipt_stale".to_string()),
+                    ..GapReceipt::default()
+                }),
+                ..GapRecord::default()
+            },
+        ];
+        let summary = summarize_records(&records);
+        assert_eq!(summary.receipt_stale_total, 1, "exactly one stale receipt");
+        // Improved receipt must NOT count as stale.
+        assert_eq!(summary.receipt_improved_total, 1, "improved still counted");
+        // Verify-failed count must be zero (inspected, none were verify-failed).
+        assert_eq!(
+            summary.receipt_verify_failed_total, 0,
+            "no verify-failed receipts"
+        );
+    }
+
+    /// Honest-zero: records with receipts but none stale or verify-failed yield
+    /// both counts as 0 — the 0 is honest because every record was inspected.
+    #[test]
+    fn summarize_records_honest_zero_when_no_stale_or_verify_failed() {
+        let records = vec![
+            GapRecord {
+                gap_id: "gap:a".to_string(),
+                kind: "MissingValueAssertion".to_string(),
+                repairability: "no_action".to_string(),
+                receipt: Some(GapReceipt {
+                    movement: Some("improved".to_string()),
+                    ..GapReceipt::default()
+                }),
+                ..GapRecord::default()
+            },
+            GapRecord {
+                gap_id: "gap:b".to_string(),
+                kind: "MissingValueAssertion".to_string(),
+                repairability: "no_action".to_string(),
+                receipt: Some(GapReceipt {
+                    movement: Some("unchanged_after_attempt".to_string()),
+                    ..GapReceipt::default()
+                }),
+                ..GapRecord::default()
+            },
+        ];
+        let summary = summarize_records(&records);
+        // Honest zeros: inspected all records, none were stale or verify-failed.
+        assert_eq!(summary.receipt_stale_total, 0, "honest zero stale");
+        assert_eq!(
+            summary.receipt_verify_failed_total, 0,
+            "honest zero verify-failed"
+        );
+    }
+
+    /// Legacy aliases: "stale" normalises to RECEIPT_STALE and is counted.
+    #[test]
+    fn summarize_records_counts_legacy_stale_alias() {
+        let records = vec![GapRecord {
+            gap_id: "gap:legacy-stale".to_string(),
+            kind: "MissingValueAssertion".to_string(),
+            repairability: "no_action".to_string(),
+            receipt: Some(GapReceipt {
+                // "stale" is the legacy alias for "receipt_stale".
+                state: Some("stale".to_string()),
+                ..GapReceipt::default()
+            }),
+            ..GapRecord::default()
+        }];
+        let summary = summarize_records(&records);
+        assert_eq!(
+            summary.receipt_stale_total, 1,
+            "legacy 'stale' alias must be counted"
+        );
+    }
+
+    /// A record without a receipt contributes 0 to both new counts.
+    #[test]
+    fn summarize_records_no_receipt_contributes_zero() {
+        let records = vec![GapRecord {
+            gap_id: "gap:no-receipt".to_string(),
+            kind: "MissingValueAssertion".to_string(),
+            repairability: "repairable".to_string(),
+            ..GapRecord::default()
+        }];
+        let summary = summarize_records(&records);
+        assert_eq!(
+            summary.receipt_stale_total, 0,
+            "no receipt → stale count is 0"
+        );
+        assert_eq!(
+            summary.receipt_verify_failed_total, 0,
+            "no receipt → verify-failed count is 0"
+        );
+    }
+
+    /// The ledger JSON emitted by render_gap_decision_ledger_json includes the
+    /// new receipt_stale_total and receipt_verify_failed_total fields.
+    #[test]
+    fn ledger_json_includes_receipt_state_counts() -> Result<(), String> {
+        let input = serde_json::json!([
+            {
+                "gap_id": "gap:stale-j",
+                "canonical_gap_id": "gap:stale-j",
+                "kind": "MissingValueAssertion",
+                "language": "rust",
+                "language_status": "stable",
+                "scope": "repo_scoped",
+                "evidence_class": "return_value",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "no_action",
+                "authority_boundary": "gate_decision_artifact_only",
+                "receipt": {
+                    "state": "receipt_stale",
+                    "movement": "unchanged"
+                }
+            },
+            {
+                "gap_id": "gap:vf-j",
+                "canonical_gap_id": "gap:vf-j",
+                "kind": "MissingValueAssertion",
+                "language": "rust",
+                "language_status": "stable",
+                "scope": "repo_scoped",
+                "evidence_class": "return_value",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "no_action",
+                "authority_boundary": "gate_decision_artifact_only",
+                "receipt": {
+                    "state": "receipt_verify_failed"
+                }
+            }
+        ]);
+        let report = report_from_json(input);
+        let json = render_gap_decision_ledger_json(&report)
+            .map_err(|err| format!("render failed: {err}"))?;
+        assert!(
+            json.contains("\"receipt_stale_total\": 1"),
+            "ledger JSON must include receipt_stale_total=1: {json}"
+        );
+        assert!(
+            json.contains("\"receipt_verify_failed_total\": 1"),
+            "ledger JSON must include receipt_verify_failed_total=1: {json}"
         );
         Ok(())
     }

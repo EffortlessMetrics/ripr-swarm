@@ -52,20 +52,17 @@ pub(super) struct PrEvidenceSummaryJson {
 
 /// Six-count receipt-status object surfaced in the PR evidence summary.
 ///
-/// Two fields are derivable from gap-ledger summary counts today.
-/// Four are `NotAvailable` because the ledger does not yet emit the
-/// per-record state signals needed to classify them:
+/// Four fields are now real detected counts (PR6 #1123).
+/// Two remain `NotAvailable` with named limitations:
 ///
 /// - `orphan_receipts`: a receipt file exists but no matching gap record was found —
-///   requires a receipts/ dir sweep that the ledger does not currently do.
-/// - `stale_receipts`: a receipt exists but predates the gap's verify command —
-///   ledger emits `receipt.movement` but does not classify individual records as stale;
-///   unlock when the ledger adds a `receipt.state == "receipt_stale"` count.
-/// - `gap_mismatch_receipts`: a receipt references a different gap id than the ledger
-///   record — same blocker as stale.
-/// - `verify_failed_receipts`: the verify command in the receipt exited non-0 —
-///   there is no verify pass/fail signal in the current ledger schema;
-///   unlock when the receipt writer records exit code.
+///   requires a `target/ripr/receipts/` dir sweep that is not performed during
+///   summary derivation.  Limitation: PR6 #1123 deferred.
+/// - `gap_mismatch_receipts`: a receipt references a different gap id than the
+///   ledger record — requires reading each receipt file to compare its own
+///   recorded `canonical_gap_id` against the attached gap; the ledger ingest
+///   does not surface the receipt's own gap id field.
+///   Limitation: PR6 #1123 deferred.
 pub(super) struct ReceiptStatusCounts {
     /// Gap-ledger records that carry receipt evidence:
     /// `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total`.
@@ -73,13 +70,22 @@ pub(super) struct ReceiptStatusCounts {
     /// Actionable gaps without a receipt:
     /// mirrors the top-level `missing_receipts` field.
     pub(super) missing_receipts: U64OrNotAvailable,
-    /// NOT DERIVABLE YET — requires a receipts/ sweep not in the current ledger.
+    /// NOT DERIVABLE — requires a `target/ripr/receipts/` dir sweep vs. ledger records.
+    /// Limitation: PR6 #1123 deferred; no filesystem scan in summary derivation.
     pub(super) orphan_receipts: U64OrNotAvailable,
-    /// NOT DERIVABLE YET — ledger lacks a per-record `receipt.state == "receipt_stale"` count.
+    /// Real detected count: gap-ledger records with `receipt.state == "receipt_stale"`.
+    /// Derived from `summary.receipt_stale_total`; each record was inspected.
+    /// A 0 is honest because every record was examined.  `NotAvailable` only
+    /// when the ledger summary block is absent.
     pub(super) stale_receipts: U64OrNotAvailable,
-    /// NOT DERIVABLE YET — ledger lacks a per-record `receipt.state == "receipt_gap_mismatch"` count.
+    /// NOT DERIVABLE — requires reading each receipt file to compare its own
+    /// `canonical_gap_id` against the attached gap record.
+    /// Limitation: PR6 #1123 deferred; ledger ingest does not surface receipt's gap id.
     pub(super) gap_mismatch_receipts: U64OrNotAvailable,
-    /// NOT DERIVABLE YET — no verify pass/fail signal in the current ledger schema.
+    /// Real detected count: gap-ledger records with `receipt.state == "receipt_verify_failed"`.
+    /// Derived from `summary.receipt_verify_failed_total`; each record was inspected.
+    /// A 0 is honest because every record was examined.  `NotAvailable` only
+    /// when the ledger summary block is absent.
     pub(super) verify_failed_receipts: U64OrNotAvailable,
 }
 

@@ -13357,9 +13357,9 @@ JSON shape (schema version `0.1`):
     "receipts_present": 1,
     "missing_receipts": 2,
     "orphan_receipts": "not_available",
-    "stale_receipts": "not_available",
+    "stale_receipts": 0,
     "gap_mismatch_receipts": "not_available",
-    "verify_failed_receipts": "not_available"
+    "verify_failed_receipts": 0
   },
   "top_repair": {
     "canonical_gap_id": "gap:src/lib.rs:error_path:c1a03250",
@@ -13401,10 +13401,10 @@ Field sources:
 | `missing_receipts` | gap-decision-ledger | `summary.repairable_total - receipt_improved_total` |
 | `receipt_status.receipts_present` | gap-decision-ledger | `summary.receipt_improved_total + summary.receipt_unchanged_after_attempt_total` |
 | `receipt_status.missing_receipts` | gap-decision-ledger | mirrors top-level `missing_receipts` |
-| `receipt_status.orphan_receipts` | not yet derivable | `"not_available"` until receipts/ dir sweep added to ledger |
-| `receipt_status.stale_receipts` | not yet derivable | `"not_available"` until per-record `receipt.state == "receipt_stale"` count added |
-| `receipt_status.gap_mismatch_receipts` | not yet derivable | `"not_available"` until per-record `receipt.state == "receipt_gap_mismatch"` count added |
-| `receipt_status.verify_failed_receipts` | not yet derivable | `"not_available"` until verify exit-code recorded in receipt schema |
+| `receipt_status.orphan_receipts` | not derivable (deferred PR6 #1123) | always `"not_available"` — requires receipts/ dir sweep vs. ledger records |
+| `receipt_status.stale_receipts` | gap-decision-ledger | `summary.receipt_stale_total` (per-record `receipt.state == "receipt_stale"` count); `"not_available"` only when ledger summary absent |
+| `receipt_status.gap_mismatch_receipts` | not derivable (deferred PR6 #1123) | always `"not_available"` — requires reading each receipt file to compare its own `canonical_gap_id` |
+| `receipt_status.verify_failed_receipts` | gap-decision-ledger | `summary.receipt_verify_failed_total` (per-record `receipt.state == "receipt_verify_failed"` count); `"not_available"` only when ledger summary absent |
 | `top_repair` | start-here | `selected` (when `state == "top_gap"`) |
 | `top_repair_state` | start-here | `selected.state` (when not `"top_gap"`) |
 | `top_limitation` | first entry in `limitations[]` | derived |
@@ -13412,9 +13412,19 @@ Field sources:
 
 The `receipt_status` object is additive — existing consumers reading `missing_receipts`
 at the top level continue to work unchanged (`schema_version` stays `"0.1"`; additive
-fields do not require a version bump per the stability rules above). The four
-`"not_available"` fields honestly signal "this signal is not yet computed" rather
-than claiming zero: emitting `0` would falsely assert that we checked and found none.
+fields do not require a version bump per the stability rules above).
+
+As of PR6 #1123, `stale_receipts` and `verify_failed_receipts` are real detected
+counts derived from `GapDecisionLedgerSummary.receipt_stale_total` and
+`receipt_verify_failed_total` respectively.  Each gap-decision-ledger record is
+inspected for `receipt.state` matching the corresponding lifecycle constant
+(`receipt_stale` / `receipt_verify_failed`), so a `0` is an honest inspected zero.
+Both fields emit `"not_available"` only when the ledger summary block is entirely absent.
+
+`orphan_receipts` and `gap_mismatch_receipts` remain `"not_available"` — they require
+data that is not available during summary derivation (see the table above for the
+named limitation per field).  `"not_available"` honestly signals "this signal is not
+yet computed" rather than claiming zero.
 
 Spec: `docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md`.
 

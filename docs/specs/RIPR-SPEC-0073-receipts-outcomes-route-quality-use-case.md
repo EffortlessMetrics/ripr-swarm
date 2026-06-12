@@ -81,8 +81,9 @@ Did the attempted repair actually improve evidence?
   `next_action {kind, summary, recommended_action, safe_to_merge}`.
 - Receipt lifecycle (`crates/ripr/src/output/receipt_lifecycle.rs`):
   the states `receipt_missing`, `receipt_found`, `receipt_stale`,
-  `receipt_gap_mismatch`, `receipt_movement_improved`,
-  `receipt_movement_unchanged`, and `receipt_not_applicable`.
+  `receipt_gap_mismatch`, `receipt_verify_failed` (added PR6 #1123),
+  `receipt_movement_improved`, `receipt_movement_unchanged`, and
+  `receipt_not_applicable`.
 - Targeted test outcome (`crates/ripr/src/output/outcome/`,
   `TARGETED_TEST_OUTCOME_SCHEMA_VERSION = "0.1"`): seams bucketed
   into `moved[]`, `unchanged[]`, `regressed[]`, `new[]`, and
@@ -98,8 +99,10 @@ Did the attempted repair actually improve evidence?
 - Gap decision ledger
   (`crates/ripr/src/output/gap_decision_ledger.rs`): `GapRecord`
   receipt fields (`receipt_command`, `receipt {state, movement,
-  path}`) and the summary counts `receipt_improved_total` and
-  `receipt_unchanged_after_attempt_total`.
+  path}`) and the summary counts `receipt_improved_total`,
+  `receipt_unchanged_after_attempt_total`,
+  `receipt_stale_total`, and `receipt_verify_failed_total`
+  (last two added PR6 #1123 — per-record `receipt.state` inspection).
 - Evidence quality roll-ups: `cargo xtask
   evidence-quality-scorecard` and `cargo xtask
   evidence-quality-trend`, writing
