@@ -611,6 +611,35 @@ The evidence-first fields are additive in schema `0.2`:
   `opaque_custom_assertion_helper`, `property_based_test`,
   `unresolved_pytest_fixture`, or `unsupported_syntax`.
 
+### `preview_languages` (top-level additive advisory, RIPR-SPEC-0082)
+
+Added in schema `0.2` as an additive optional top-level array. Emitted only
+when at least one preview-language adapter (TypeScript, JavaScript, or Python)
+processed files in the diff. Absent for pure-Rust diffs. Does not bump
+`schema_version`.
+
+```json
+"preview_languages": [
+  {
+    "language": "typescript",
+    "file_count": 1,
+    "sample_paths": ["src/utils.ts"],
+    "category": "preview_language_advisory",
+    "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+  }
+]
+```
+
+- `language` — stable wire string; one of `typescript`, `javascript`, `python`, `perl`
+- `file_count` — number of files in the diff routed to this adapter (real, never fabricated)
+- `sample_paths` — up to three normalized (forward-slash) file paths from the diff
+- `category` — always `"preview_language_advisory"` for machine filtering
+- `why` — advisory rationale string
+
+An empty or absent `preview_languages` array means only stable (Rust) content
+was analyzed. A non-empty array is an honesty signal that the result may be
+incomplete for the listed languages.
+
 ## Enums
 
 `classification` values:

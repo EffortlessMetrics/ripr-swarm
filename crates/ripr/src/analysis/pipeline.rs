@@ -5,9 +5,20 @@ use super::language::TypeScriptAdapter;
 use super::language::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RustAdapter,
 };
-use super::{AnalysisOptions, AnalysisResult, diff, sort, summary};
+use super::{AnalysisOptions, AnalysisResult, PreviewLanguageAdvisory, diff, sort, summary};
 use crate::config::OraclePolicy;
 use crate::domain::Finding;
+
+/// Whether a language id corresponds to a preview adapter.
+///
+/// Only Rust is stable. TypeScript/JavaScript and Python are preview per
+/// RIPR-SPEC-0026.
+fn is_preview_language(language: LanguageId) -> bool {
+    matches!(
+        language,
+        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl
+    )
+}
 
 pub(crate) fn run_diff_pipeline_with_oracle_policy(
     options: &AnalysisOptions,
@@ -23,6 +34,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
 
     let mut findings: Vec<Finding> = Vec::new();
     let mut total_changed_files: usize = 0;
+    let mut preview_advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in languages {
         let result = match language {
             LanguageId::Rust => RustAdapter.analyze_diff(options, oracle_policy, &changed_files)?,
@@ -32,6 +44,11 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
             LanguageId::Python => analyze_python_diff(options, oracle_policy, &changed_files)?,
             LanguageId::Perl => analyze_perl_diff()?,
         };
+        if is_preview_language(*language) && result.changed_files > 0 {
+            let advisory =
+                build_diff_preview_advisory(*language, result.changed_files, &changed_files);
+            preview_advisories.push(advisory);
+        }
         findings.extend(result.findings);
         total_changed_files += result.changed_files;
     }
@@ -42,6 +59,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
     Ok(AnalysisResult {
         summary: summary_result,
         findings,
+        preview_language_advisories: preview_advisories,
     })
 }
 
@@ -52,6 +70,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
     let mut total_production_files: usize = 0;
+    let mut preview_advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in languages {
         let result = match language {
             LanguageId::Rust => RustAdapter.analyze_repo(options, oracle_policy)?,
@@ -61,6 +80,13 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
             LanguageId::Python => analyze_python_repo(options, oracle_policy)?,
             LanguageId::Perl => analyze_perl_repo()?,
         };
+        if is_preview_language(*language) && result.production_files > 0 {
+            preview_advisories.push(PreviewLanguageAdvisory {
+                language: language.as_str().to_string(),
+                file_count: result.production_files,
+                sample_paths: result.preview_sample_paths.clone(),
+            });
+        }
         findings.extend(result.findings);
         total_production_files += result.production_files;
     }
@@ -71,7 +97,31 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
     Ok(AnalysisResult {
         summary: summary_result,
         findings,
+        preview_language_advisories: preview_advisories,
     })
+}
+
+/// Build a preview advisory from the changed-file list, routing by adapter acceptance.
+///
+/// Only files that the preview adapter would accept (by extension) are counted.
+/// The `changed_files` count from the adapter result is the authoritative count;
+/// sample paths come from the same routing predicate applied to the diff list.
+fn build_diff_preview_advisory(
+    language: LanguageId,
+    file_count: usize,
+    changed_files: &[diff::ChangedFile],
+) -> PreviewLanguageAdvisory {
+    let sample_paths: Vec<String> = changed_files
+        .iter()
+        .filter(|f| super::language::route(&f.path) == Some(language))
+        .take(3)
+        .map(|f| f.path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    PreviewLanguageAdvisory {
+        language: language.as_str().to_string(),
+        file_count,
+        sample_paths,
+    }
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -288,6 +338,96 @@ index 0000000..1111111 100644
 
         assert!(result.findings.is_empty());
         assert_eq!(result.summary.changed_rust_files, 2);
+        Ok(())
+    }
+
+    // RIPR-SPEC-0082: preview-language advisory detection tests
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn diff_pipeline_emits_preview_advisory_when_ts_files_present() -> Result<(), String> {
+        let root = temp_root("spec-0082-ts-advisory")?;
+        let diff_file = root.join("ts.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/src/discount.ts b/src/discount.ts
+index 0000000..1111111 100644
+--- a/src/discount.ts
++++ b/src/discount.ts
+@@ -1,0 +1,3 @@
++export function discount(amount: number, threshold: number): number {
++  return amount >= threshold ? amount - 10 : amount;
++}
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: true,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+        )?;
+
+        // The advisory must be present with correct language and non-zero count.
+        if result.preview_language_advisories.is_empty() {
+            return Err(
+                "expected preview_language_advisories to be non-empty for TS diff".to_string(),
+            );
+        }
+        let advisory = &result.preview_language_advisories[0];
+        if advisory.language != "typescript" {
+            return Err(format!(
+                "expected language=typescript, got {}",
+                advisory.language
+            ));
+        }
+        if advisory.file_count == 0 {
+            return Err("expected file_count > 0 in preview advisory".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_pipeline_no_preview_advisory_for_rust_only_diff() -> Result<(), String> {
+        let root = temp_root("spec-0082-rust-only")?;
+        fs::create_dir_all(root.join("src"))
+            .map_err(|err| format!("create src dir failed: {err}"))?;
+        let diff_file = root.join("rust.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,0 +1,3 @@
++pub fn price(amount: i32, threshold: i32) -> i32 {
++    if amount >= threshold { amount - 10 } else { amount }
++}
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: true,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        if !result.preview_language_advisories.is_empty() {
+            return Err(format!(
+                "expected no preview advisories for Rust-only diff, got: {:?}",
+                result.preview_language_advisories
+            ));
+        }
         Ok(())
     }
 

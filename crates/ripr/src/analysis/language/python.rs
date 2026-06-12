@@ -4395,6 +4395,7 @@ impl LanguageAdapter for PythonAdapter {
         Ok(LanguageRepoResult {
             findings: Vec::new(),
             production_files: 0,
+            ..LanguageRepoResult::default()
         })
     }
 }
