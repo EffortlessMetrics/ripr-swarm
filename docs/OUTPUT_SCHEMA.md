@@ -652,6 +652,19 @@ The evidence-first fields are additive in schema `0.2`:
   repair packet.
   `repair_packet_ready` remains `false` for this preview slice, and nullable
   `verify.command` must not be interpreted as a delegated repair route.
+- `typescript_repair_packet` is an additive optional object present only when
+  `typescript_preview_card.repair_packet_ready == true` (i.e., the full RIPR-SPEC-0087
+  contract is satisfied). It is an advisory repair-work packet projected via the shared
+  renderer from the GapRecord computed by `typescript_gap_record_for`. It carries
+  `schema_version` (`"0.3"`), `source` (`"typescript_preview_projection"`),
+  `gap_id`, `canonical_gap_id`, `language`, `language_status` (`"preview"`),
+  `authority_boundary` (`"preview_advisory_only"`), optional `file`, optional `line`,
+  optional `owner`, `verify_command`, optional `receipt_command`, `allowed_edit_surface[]`,
+  `forbidden_files[]`, `must_not_change[]`, optional `assertion_shape`,
+  optional `repair_kind`, optional `target_test`, and optional `missing_discriminator`.
+  When absent, the human output contains a named `status: not actionable` limitation
+  section instead. This field is RIPR-SPEC-0088 §2.2. It is not a gate, badge, or
+  public repair authority; authority boundary remains `preview_advisory_only`.
 - `perl_preview_card` is an additive optional object for Perl preview findings
   that already have strict fact-packet evidence, canonical gap identity,
   related-test evidence, missing discriminator evidence, verify-command

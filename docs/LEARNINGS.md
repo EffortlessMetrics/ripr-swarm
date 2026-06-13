@@ -869,3 +869,36 @@ Key constraints for any future change:
   returns `Ok(())`. There is no shortcut.
 - `authority_boundary` stays `"preview_advisory_only"` even when flipped. TypeScript
   remains preview; the flipped finding is delegatable but not gate authority.
+
+## 2026-06-13: Surface projection for a TypeScript packet goes through the shared renderer, not a parallel TS renderer (RIPR-SPEC-0088)
+
+RIPR-SPEC-0088 (§PR8) projects the GapRecord computed in §PR7 into four surfaces:
+human field-note, JSON `typescript_repair_packet` field, LSP hover section, and
+LSP copy code action. The key architectural lesson is **reuse the shared helpers,
+not a new renderer**.
+
+Concretely:
+- `typescript_gap_record_for(finding)` (in `output/typescript_packet_projection.rs`)
+  returns `Option<GapRecord>`. Call it from each surface. `None` means "not actionable".
+- `allowed_edit_surface_for_gap_route` and `gap_record_packet_do_not_do` from
+  `output/agent_seam_packets.rs` provide the canonical allowed-surface and
+  must-not-change lists. Use them everywhere to avoid drift.
+- Forbidden-files computation was left inline in the JSON renderer (it filters the
+  anchor file against the edit surface) because `forbidden_files_for_gap_record` is
+  private. That is fine; the pattern is tiny.
+- The LSP code action reads from `data.typescript_repair_packet` if present, with
+  fallback to `data.verification_commands[0]`. This is because the JSON field is
+  not yet in `diagnostic.data` — if a future PR adds it there, the action will
+  prefer it.
+
+The "not actionable" case surfaces a named limitation section in human output for ALL
+TypeScript findings (not just specific ones). That drifted ~28 golden fixtures. Bless
+them all: the named limitation section is the correct output for blocked findings.
+
+When bless-count is unexpectedly large: first confirm that every drifted fixture
+really is a TypeScript/JavaScript finding. If yes, bless with a reason that
+cites the spec section. Do not suppress the limitation output.
+
+Authority boundary reminder: `preview_advisory_only` stays in all four surfaces
+even when the packet is actionable. No surface promotes TypeScript to gate or badge
+authority.
