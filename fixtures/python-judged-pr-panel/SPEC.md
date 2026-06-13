@@ -1,6 +1,6 @@
 # Python Tier B Judged-Diff Panel Fixtures
 
-Contract: [RIPR-SPEC-0091](../../docs/specs/RIPR-SPEC-0091-python-judged-pr-panel.md).
+Contract: [RIPR-SPEC-0092](../../docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md).
 
 These inputs define the **schema** for a Tier B judged-diff panel — the bridge
 from the Tier A robustness floor ([RIPR-SPEC-0086](../../docs/specs/RIPR-SPEC-0086-python-eval-sweep.md))

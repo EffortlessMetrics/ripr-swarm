@@ -1,4 +1,4 @@
-# RIPR-SPEC-0091: Python Tier B Judged-Diff Panel Schema
+# RIPR-SPEC-0092: Python Tier B Judged-Diff Panel Schema
 
 Status: proposed
 

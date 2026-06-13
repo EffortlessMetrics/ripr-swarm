@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "kind": "python_judged_pr_panel_manifest",
-  "spec": "RIPR-SPEC-0091",
+  "spec": "RIPR-SPEC-0092",
   "tier": "B",
   "description": "Seed Tier B judged-diff panel for Python: a small hand-vetted set of diffs spanning should_gap, should_stay_quiet, and should_limit. Schema + seed only; not a full corpus and not an automated judging engine. Labels are unjudged (null) in this seed PR; a later PR populates and measures them.",
   "limits": [
