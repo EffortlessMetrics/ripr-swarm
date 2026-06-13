@@ -76,6 +76,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0090: adds all-no-path advisory disclosure line to human output when all findings are no-path/unknown
+RIPR-SPEC-0028: surface Python oracle sink-alignment fields (changed_sink/observed_sink/oracle_alignment/alignment_reason); additive, no classification change
 
 Command:
 `cargo xtask goldens bless python_dynamic_import_limit --reason "..."`
