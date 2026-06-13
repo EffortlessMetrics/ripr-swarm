@@ -615,6 +615,10 @@ mod tests {
             language_status: None,
             owner_kind: None,
             static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
         }
     }
 
@@ -656,6 +660,10 @@ mod tests {
             language_status: None,
             owner_kind: None,
             static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
         }
     }
 
