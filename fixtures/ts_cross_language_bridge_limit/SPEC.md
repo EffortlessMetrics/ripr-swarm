@@ -1,6 +1,6 @@
 # Fixture: ts_cross_language_bridge_limit
 
-Spec: RIPR-SPEC-0086
+Spec: RIPR-SPEC-0087
 
 ## Given
 

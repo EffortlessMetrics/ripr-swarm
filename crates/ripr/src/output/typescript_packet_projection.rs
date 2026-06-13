@@ -1,4 +1,4 @@
-//! TypeScript preview → complete repair-packet projection (RIPR-SPEC-0086 §PR7).
+//! TypeScript preview → complete repair-packet projection (RIPR-SPEC-0087 §PR7).
 //!
 //! This module implements the **projection** side of the
 //! TypeScript-actionability gate: it reads evidence lines from a
@@ -166,7 +166,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         "agent_packet".to_string(),
         ProjectionEligibility {
             eligible: true,
-            reason: "TypeScript preview complete-contract projection (RIPR-SPEC-0086)".to_string(),
+            reason: "TypeScript preview complete-contract projection (RIPR-SPEC-0087)".to_string(),
         },
     );
 

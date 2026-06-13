@@ -1,4 +1,4 @@
-# RIPR-SPEC-0086: TypeScript preview→actionable repair-packet contract (0085 §PR7)
+# RIPR-SPEC-0087: TypeScript preview→actionable repair-packet contract (0085 §PR7)
 
 Status: proposed
 
@@ -388,7 +388,7 @@ not silent.
   the full contract (e.g. `ts_repair_packet_complete`) change from `false` to
   `true`. This is an **intended, documented behavior change**, recorded via
   `cargo xtask goldens bless ts_repair_packet_complete --reason
-  "RIPR-SPEC-0086 §PR7: complete TS repair packet now actionable"` — it is
+  "RIPR-SPEC-0087 §PR7: complete TS repair packet now actionable"` — it is
   NOT drift.
 - **No schema bump.** `repair_packet_ready` is an existing boolean in the
   `preview_actionability` JSON object (preview_actionability.rs:79;
@@ -424,7 +424,7 @@ cargo xtask check-no-panic-family
 cargo xtask check-allow-attributes
 cargo xtask check-architecture           # validator stays in output/, projection in analysis/typescript/
 cargo xtask check-public-api             # no new public symbols
-cargo xtask check-traceability           # RIPR-SPEC-0086 → tests → code mapped
+cargo xtask check-traceability           # RIPR-SPEC-0087 → tests → code mapped
 cargo xtask check-doc-index
 cargo xtask check-spec-format
 cargo xtask check-capabilities

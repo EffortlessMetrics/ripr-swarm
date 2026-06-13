@@ -478,12 +478,12 @@ The evidence-first fields are additive in schema `0.2`:
   and is not gate, badge, baseline, RIPR Zero, or agent-packet authority.
   Current fields are `authority_boundary` (`"preview_advisory_only"`),
   `repair_packet_ready` (boolean; `false` for most preview findings; flips to
-  `true` only for TypeScript findings satisfying the RIPR-SPEC-0086 complete
+  `true` only for TypeScript findings satisfying the RIPR-SPEC-0087 complete
   contract — see the flip condition below), `gap_state`, `actionability_category`,
   `why_not_actionable`, `repair_route`, `missing_actionability_fields[]`,
   `missing_graph_legs[]`, nullable `unlock_condition`,
   `evidence_needed_to_promote`, and `raw_evidence_refs[]`.
-  `repair_packet_ready` flip condition (RIPR-SPEC-0086 §PR7): a TypeScript
+  `repair_packet_ready` flip condition (RIPR-SPEC-0087 §PR7): a TypeScript
   finding flips `repair_packet_ready: true` iff ALL of the following hold:
   (a) `actionability_category == "incomplete_repair_packet"` (G-A);
   (b) `language_status == "preview"` and `language ∈ {typescript, javascript}`;

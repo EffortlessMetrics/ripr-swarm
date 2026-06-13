@@ -3,7 +3,7 @@
 ## Pending
 
 Reason:
-RIPR-SPEC-0086 §PR7: complete TS repair packet now actionable
+RIPR-SPEC-0087 §PR7: complete TS repair packet now actionable
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_complete --reason "..."`

@@ -1,6 +1,6 @@
 # Fixture: ts_already_observed
 
-Spec: RIPR-SPEC-0086
+Spec: RIPR-SPEC-0087
 
 ## Given
 

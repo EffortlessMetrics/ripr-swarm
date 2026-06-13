@@ -56,7 +56,7 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         .map(parse_raw_evidence_ref)
         .collect::<Vec<_>>();
 
-    // §1 / §2 (RIPR-SPEC-0086 §PR7): compute repair_packet_ready by projecting
+    // §1 / §2 (RIPR-SPEC-0087 §PR7): compute repair_packet_ready by projecting
     // a GapRecord from the finding and calling the SHARED Rust validator.
     // `None` packet ⇒ `false` automatically (fail-closed default).
     // No parallel TypeScript validator is introduced: the only flip authority

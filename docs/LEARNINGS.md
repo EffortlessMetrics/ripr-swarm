@@ -847,9 +847,9 @@ exists to catch, aimed at the operating environment instead of the code. Read th
 error the artifact actually returned; do not round it off to the nearest
 convenient cause.
 
-## 2026-06-12: TypeScript repair-packet flip reuses the Rust validator, never a parallel path (RIPR-SPEC-0086)
+## 2026-06-12: TypeScript repair-packet flip reuses the Rust validator, never a parallel path (RIPR-SPEC-0087)
 
-The TypeScript `repair_packet_ready: false → true` flip (RIPR-SPEC-0086 §PR7)
+The TypeScript `repair_packet_ready: false → true` flip (RIPR-SPEC-0087 §PR7)
 calls the **existing shared** `validate_agent_gap_record_packet` in
 `output/agent_seam_packets.rs`. It does NOT introduce a parallel TypeScript
 completeness validator, mirror, or inline re-implementation.

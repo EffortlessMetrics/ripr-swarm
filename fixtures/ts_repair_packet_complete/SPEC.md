@@ -1,6 +1,6 @@
 # Fixture: ts_repair_packet_complete
 
-Spec: RIPR-SPEC-0086
+Spec: RIPR-SPEC-0087
 
 ## Given
 
@@ -31,7 +31,7 @@ The TypeScript preview adapter:
 - Emits `typescript_oracle_expected: 50` (G-C: concrete literal, non-dynamic)
 - Resolves the verify command from package.json: `jest tests/discount.test.ts`
 - Projects a `GapRecord` that passes `validate_agent_gap_record_packet`
-- Flips `repair_packet_ready: true` (RIPR-SPEC-0086 §PR7 — the ONLY flip condition)
+- Flips `repair_packet_ready: true` (RIPR-SPEC-0087 §PR7 — the ONLY flip condition)
 - Sets `actionability_category: complete_repair_packet` (§1.3)
 - Sets `gap_state: actionable` (§1.3)
 - Sets `missing_actionability_fields: []` (§1.3)

@@ -5292,9 +5292,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0086"
+id = "RIPR-SPEC-0087"
 name = "TypeScript preview actionable repair-packet contract"
-spec = "docs/specs/RIPR-SPEC-0086-typescript-preview-actionable-repair-packet.md"
+spec = "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md"
 tests = [
   # §7.4 validator-parity tests
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_complete_finding_passes_shared_validator",
@@ -5327,7 +5327,7 @@ code = [
   "crates/ripr/src/output/preview_actionability.rs"
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0086-typescript-preview-actionable-repair-packet.md",
+  "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/CAPABILITY_MATRIX.md"
 ]

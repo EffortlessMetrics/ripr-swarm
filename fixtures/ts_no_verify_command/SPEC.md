@@ -1,6 +1,6 @@
 # Fixture: ts_no_verify_command
 
-Spec: RIPR-SPEC-0086
+Spec: RIPR-SPEC-0087
 
 ## Given
 
