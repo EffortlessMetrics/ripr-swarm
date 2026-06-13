@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+re-bless: #1204 added related_tests_total to JSON output after #1205 blessed this golden; restore main goldens
+
+Command:
+`cargo xtask goldens bless python_local_callable_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
