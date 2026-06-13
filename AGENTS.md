@@ -207,6 +207,19 @@ Prefer small, high-signal changes:
 - Do not credit reach-plus-a-strong-oracle as `exposed`: a strong oracle must
   observe the changed sink (see `docs/STATIC_EXPOSURE_MODEL.md` § Discrimination
   vs Coverage). Crediting proximity as discrimination is the coverage mistake.
+- Real producers only: do not flip a not-available field to a fabricated
+  taxonomy or a fake-zero. Until a real production condition populates the
+  inspected field, defer the named limitation to a code comment rather than
+  emit invented evidence (see `docs/LEARNINGS.md` § Detection needs a real
+  producer).
+- The actionability flip is the cardinal-sin seam: a wrong
+  `repair_packet_ready: true` is worse than ten advisory findings. Under-emit
+  before you over-emit — keep the flip fail-closed and let the shared validator
+  be the only authority.
+- Reuse the shared enforcement layer (validators, renderers, route helpers)
+  across every surface; do not fork a parallel validator. Reconcile derived
+  messaging in the layer that owns the final decision so all surfaces agree
+  (see `docs/adr/0019-language-adapters-reuse-shared-packet-contract.md`).
 
 Do not add deep semantic dependencies, persistent databases, or broad LSP
 features unless the basic CLI, schema, packaging, and tests remain green.
@@ -223,6 +236,14 @@ features unless the basic CLI, schema, packaging, and tests remain green.
   dogfood`) before finalizing. The golden corpus is the regression net and will
   catch an over-corrected heuristic; an in-repo corpus that already passes is not
   evidence the change is accurate on external code.
+- Verify the artifact, not the report: every PR, RUN the command and READ the
+  output before claiming it works. Gates passing, tests passing, and a builder's
+  own "all gates pass" are weak oracles for behavior. Never merge on a
+  sub-agent's or builder's self-report.
+- Run the full `routed-rust.yml` `cargo xtask check-*` list, not `precommit` and
+  not a hand-picked subset. A partial list silently skips `check-network-policy`,
+  `check-dependencies`, and `check-generated`; CI will fail what local guessing
+  missed.
 
 ## PR Scope Doctrine
 
@@ -257,6 +278,24 @@ review -> improve -> validate -> commit -> push -> open/update PR -> merge when 
 A PR is ready when the branch is current, required checks pass, real review
 findings are addressed, the diff matches the stated scope, and repo policy does
 not require a different sequence.
+
+Merge-safety rules, learned the hard way:
+
+- Treat CI checks like oracles. A check that *runs* but is not *required* is not
+  a discriminator for merge safety — an advisory red can still merge. Before
+  saying a policy is protected by a gate, verify the required check actually
+  depends on it
+  (`gh api repos/<owner>/<repo>/branches/main/protection/required_status_checks`).
+- Do not treat `mergeStateStatus=UNSTABLE` as a merge decision by itself. Inspect
+  required checks, advisory checks, and branch protection separately; merge only
+  when the required discriminator is green, and explain advisory failures rather
+  than waving them through.
+- When a PR fails on a file or spec it did not touch, reproduce against
+  `origin/main`. If `main` is already broken, fix `main` in a tiny unblock PR
+  first, then rebase the dependent work — do not debug your own diff for an
+  inherited failure.
+- A pass with zero analyzed subjects is `not_run`, not evidence. Preserve
+  denominators in reports; a green state with an empty denominator proves nothing.
 
 `stackable = false` means do not build the next dependent work item on top of
 the current branch. It does not create an approval gate.
