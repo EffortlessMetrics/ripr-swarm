@@ -1,6 +1,6 @@
 # Fixture: match_arm_blind
 
-Spec: RIPR-SPEC-0092
+Spec: RIPR-SPEC-0093
 
 ## Given
 
@@ -48,7 +48,7 @@ The discriminate stage must be `weak` with reason
 `arm_observation_unverified`, and confidence must be less than 1.0.
 
 This fixture is the **before/after proof** for the fix introduced in
-[RIPR-SPEC-0092](../../docs/specs/RIPR-SPEC-0092-match-arm-blind-reach-downgrade.md):
+[RIPR-SPEC-0093](../../docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md):
 without the fix this probe was reported `exposed / confidence 1.0` — a
 false-actionable because no test exercises the `None` arm.
 

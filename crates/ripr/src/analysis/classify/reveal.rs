@@ -866,7 +866,7 @@ mod tests {
         }
     }
 
-    // --- RIPR-SPEC-0092 arm-blind downgrade ---
+    // --- RIPR-SPEC-0093 arm-blind downgrade ---
 
     /// A MatchArm probe whose expression has no extractable tokens (e.g. `None`
     /// is filtered) and whose single related test has an ExactValue oracle for a

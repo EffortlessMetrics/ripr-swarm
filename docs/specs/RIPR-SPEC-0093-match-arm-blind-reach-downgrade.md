@@ -1,4 +1,4 @@
-# RIPR-SPEC-0092: Match-Arm Blind-Reach Downgrade
+# RIPR-SPEC-0093: Match-Arm Blind-Reach Downgrade
 
 Status: proposed
 

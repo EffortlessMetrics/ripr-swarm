@@ -5491,9 +5491,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0092"
+id = "RIPR-SPEC-0093"
 name = "match-arm blind-reach downgrade"
-spec = "docs/specs/RIPR-SPEC-0092-match-arm-blind-reach-downgrade.md"
+spec = "docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md"
 tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_probe_without_token_match_downgrades_discriminate_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_probe_with_token_match_keeps_discriminate_yes",
@@ -5507,7 +5507,7 @@ code = [
   "crates/ripr/src/analysis/classify/reveal.rs"
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0092-match-arm-blind-reach-downgrade.md",
+  "docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md",
   "fixtures/match_arm_blind/expected/check.json",
   "fixtures/match_arm_blind/expected/human.txt",
   "fixtures/match_arm_observer/expected/check.json",

@@ -1,6 +1,6 @@
 # Fixture: match_arm_observer
 
-Spec: RIPR-SPEC-0092
+Spec: RIPR-SPEC-0093
 
 ## Given
 
@@ -49,7 +49,7 @@ probe. The `token_match` confirms the assertion references this arm's variant,
 so `arm_observation_unverified` must NOT be set.
 
 This fixture is the **anti-over-correction proof** for
-[RIPR-SPEC-0092](../../docs/specs/RIPR-SPEC-0092-match-arm-blind-reach-downgrade.md):
+[RIPR-SPEC-0093](../../docs/specs/RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md):
 a real arm-observer with `token_match` must not be downgraded.
 
 ## Must Not
