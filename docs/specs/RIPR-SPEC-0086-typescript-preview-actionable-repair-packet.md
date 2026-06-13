@@ -100,6 +100,59 @@ path.
 
 ---
 
+## Behavior
+
+For a TypeScript/JavaScript preview finding, `repair_packet_ready` flips from
+`false` to `true` if and only if:
+
+1. All G-A through G-F preconditions hold (see §1.2).
+2. A `GapRecord` projected from the finding passes the shared
+   `validate_agent_gap_record_packet` validator (see §1.1).
+
+When flipped:
+
+- `actionability_category` becomes `"complete_repair_packet"`.
+- `gap_state` becomes `"actionable"`.
+- `missing_actionability_fields` is cleared to `[]`.
+- `authority_boundary` stays `"preview_advisory_only"` (no language promotion).
+
+In every other case — static limit, dynamic oracle, heuristic relation, missing
+context, no verify command, cross-language bridge — the finding stays preview
+with a **named** reason surfaced in `actionability_category` or
+`why_not_actionable`. There is no silent non-actionable path.
+
+## Required Evidence
+
+- A TypeScript finding that satisfies G-A–G-F: category
+  `incomplete_repair_packet`, non-dynamic concrete oracle,
+  import-aware/owner-call related test, discoverable `verify_command` from
+  `package.json`, non-empty `missing_discriminators`.
+- A `GapRecord` projected by `typescript_gap_record_for` carrying all six
+  fields validated by `validate_agent_gap_record_packet`: `projection_eligibility`,
+  `repair_route`, `verification_commands`, `repairability`, `allowed_edit_surface`,
+  `receipt_command`.
+- A `receipt_command` of the form `ripr outcome … target/ripr/receipts/<gap_id>.json`
+  (no external provider, no fabricated command).
+- A `canonical_gap_id` of the form `gap:typescript:<family>:<fp8>`, with path
+  normalized `\`→`/`.
+- Behavioral fixtures for the complete case (flips) and one per each of the
+  F1–F16 failure families (stays non-actionable, reason named).
+
+## Non-Goals
+
+- No new language promotion. Preview stays `preview_advisory_only`.
+- No new oracle, owner, framework, or discriminator producer beyond the four
+  packet-completion fields named in §3. This is a projection + gate slice,
+  not an evidence-extraction slice.
+- No mutation execution, no runtime confirmation, no coverage.
+- No second validator. The flip calls `validate_agent_gap_record_packet`
+  exclusively; any parallel TypeScript completeness check is a bug.
+- No flip for static-limit, already-observed, missing-context,
+  ambiguous-related-test, or missing-target-shape findings. Only
+  `incomplete_repair_packet` is eligible to become `complete_repair_packet`.
+
+---
+
 ## 1. The actionability gate (exact flip condition)
 
 ### 1.1 Single authority: reuse `validate_agent_gap_record_packet`
@@ -445,3 +498,145 @@ parallel TS path — if someone later forks the logic, this test breaks.
    `schema_version` unchanged; no other drift.
 7. Full §7.1 gate list and §7.3 behavioral repro pass; §7.4 parity test
    passes.
+
+---
+
+## Acceptance Examples
+
+### Complete repair packet (flips `repair_packet_ready: true`)
+
+```text
+input:  TypeScript owner applyDiscount, predicate change (> → >=),
+        direct import-aware related test with concrete literal oracle
+        toBeGreaterThan(50), discoverable package.json (jest/npm),
+        named missing discriminator (amount == threshold)
+output: repair_packet_ready: true
+        actionability_category: complete_repair_packet
+        gap_state: actionable
+        missing_actionability_fields: []
+        authority_boundary: preview_advisory_only
+```
+
+### Dynamic oracle (stays non-actionable, F1/F2)
+
+```text
+input:  related test uses expect(result).toBe(expected) where expected is a variable
+output: repair_packet_ready: false
+        actionability_category: strong_oracle_observed (oracle_strength Strong → Exposed)
+```
+
+### Heuristic relation only (stays non-actionable, F3)
+
+```text
+input:  related test only has heuristic name proximity (no direct import)
+output: repair_packet_ready: false
+        actionability_category: ambiguous_related_test
+```
+
+### No test context (stays non-actionable, F4)
+
+```text
+input:  no related test found for the changed owner
+output: repair_packet_ready: false
+        actionability_category: missing_context
+```
+
+### No verify command (stays non-actionable, F5)
+
+```text
+input:  no package.json present → no typescript_verify_command evidence
+output: repair_packet_ready: false
+        actionability_category: incomplete_repair_packet
+        (projection returns None — no verify command)
+```
+
+### Static limit (stays non-actionable, F10)
+
+```text
+input:  changed line uses computed member invocation handlers[key]()
+output: repair_packet_ready: false
+        actionability_category: dynamic_dispatch
+        gap_state: static_limitation
+```
+
+### Cross-language bridge / mock limit (stays non-actionable, F11)
+
+```text
+input:  test file uses vi.mock() → mocked_module static limit
+output: repair_packet_ready: false
+        actionability_category: mocked_module
+        gap_state: static_limitation
+```
+
+### Already-observed strong oracle (stays non-actionable, F12)
+
+```text
+input:  related test uses toBe(true) with oracle_strength Strong
+output: repair_packet_ready: false
+        actionability_category: strong_oracle_observed
+        gap_state: already_observed
+```
+
+## Test Mapping
+
+The §7.4 validator-parity tests live in:
+
+```text
+crates/ripr/src/output/typescript_packet_projection.rs::tests::
+  validator_parity_complete_finding_passes_shared_validator
+  validator_parity_missing_verify_command_returns_none
+  validator_parity_missing_oracle_expected_returns_none
+  validator_parity_dynamic_oracle_returns_none
+  validator_parity_wrong_category_returns_none
+  validator_parity_no_related_tests_returns_none
+  validator_parity_no_missing_discriminators_returns_none
+  validator_parity_cross_language_bridge_returns_none
+  canonical_gap_id_derives_from_finding_id
+  canonical_gap_id_normalizes_backslashes
+  receipt_command_is_ripr_outcome_shape
+  must_not_change_includes_preview_clause_via_shared_function
+```
+
+The eight fixtures serve as behavioral integration tests:
+
+```text
+fixtures/ts_repair_packet_complete   — complete contract (flips)
+fixtures/ts_dynamic_oracle           — F1/F2: strong oracle + dynamic arg
+fixtures/ts_heuristic_relation       — F3: heuristic relation only
+fixtures/ts_cross_package_test       — F4: no related test
+fixtures/ts_no_verify_command        — F5: no verify command
+fixtures/ts_static_limit             — F10: dynamic dispatch static limit
+fixtures/ts_cross_language_bridge_limit — F11: mocked module static limit
+fixtures/ts_already_observed         — F12: strong exact oracle observed
+```
+
+## Implementation Mapping
+
+The implementation adds two modules and modifies one:
+
+```text
+NEW  crates/ripr/src/output/typescript_packet_projection.rs
+     (projection: typescript_gap_record_for, G-A–G-F checks,
+      canonical_gap_id, receipt_command, route_kind mapping)
+
+MOD  crates/ripr/src/output/preview_actionability.rs
+     (replaces hardcoded false at line 63 with computed repair_packet_ready
+      via typescript_gap_record_for + validate_agent_gap_record_packet)
+
+MOD  crates/ripr/src/output/mod.rs
+     (registers typescript_packet_projection module)
+```
+
+The shared validator lives in (not modified):
+
+```text
+crates/ripr/src/output/agent_seam_packets.rs::validate_agent_gap_record_packet
+```
+
+## Metrics
+
+- `typescript_actionable_repair_packet_contract_status_proposed` — tracks
+  the proposed status of this contract. The single behavioral metric is the
+  binary `repair_packet_ready` value: exactly one fixture flips `true`
+  (`ts_repair_packet_complete`), and all others stay `false`. Real
+  route-quality metrics remain deferred to the TypeScript route-quality PR.

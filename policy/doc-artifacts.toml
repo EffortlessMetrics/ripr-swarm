@@ -297,3 +297,11 @@ path = "docs/specs/RIPR-SPEC-0085-typescript-evidence-adapter-contract.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Umbrella contract for turning the existing oxc-AST TypeScript preview adapter into a bounded evidence adapter (two outcomes: complete repair packet or named limitation); anchors the TypeScript wave PR sequence; references SPEC-0027/0071/0062/0063; no separate proposal artifact."
+
+[[artifact]]
+id = "RIPR-SPEC-0086"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0086-typescript-preview-actionable-repair-packet.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "PR 7 of the RIPR-SPEC-0085 TypeScript evidence-adapter wave: closes the repair_packet_ready false→true flip for TypeScript findings with provably complete, evidence-backed, non-dynamic repair packets; reuses the shared validate_agent_gap_record_packet validator; no separate proposal artifact."
