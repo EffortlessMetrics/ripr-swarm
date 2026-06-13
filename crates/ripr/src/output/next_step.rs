@@ -282,10 +282,10 @@ mod tests {
             "SARIF output must be valid JSON; got: {sarif_out}"
         );
         let sarif_value = sarif_parse.unwrap_or(serde_json::Value::Null);
-        let sarif_action =
-            sarif_value["runs"][0]["results"][0]["properties"]["suggested_next_action"]
-                .as_str()
-                .unwrap_or("");
+        let sarif_result = &sarif_value["runs"][0]["results"][0];
+        let sarif_action = sarif_result["properties"]["suggested_next_action"]
+            .as_str()
+            .unwrap_or("");
         assert_eq!(
             sarif_action, expected,
             "SARIF suggested_next_action must equal reconciled next-step.\nGot: {sarif_action}\nExpected: {expected}"
@@ -293,6 +293,29 @@ mod tests {
         assert!(
             !sarif_action.contains("no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available"),
             "SARIF must NOT contain blocked-case tail when packet is complete; got: {sarif_action}"
+        );
+
+        // SARIF message.text is ALSO a machine-consumed surface: it embeds the
+        // "Next step". It must carry the reconciled tail and NOT the blocked-case
+        // string when the packet is complete (the gap that the first fix missed).
+        let sarif_message = sarif_result["message"]["text"].as_str().unwrap_or("");
+        assert!(
+            sarif_message.contains("the repair packet is complete and delegatable (advisory)"),
+            "SARIF message.text must contain reconciled next-step.\nExpected tail: {expected}\nMessage: {sarif_message}"
+        );
+        assert!(
+            !sarif_message.contains("no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available"),
+            "SARIF message.text must NOT contain blocked-case tail when packet is complete; got: {sarif_message}"
+        );
+
+        // Whole-document guard: ZERO occurrences of the blocked-case string
+        // anywhere in the rendered SARIF for a complete packet.
+        assert_eq!(
+            sarif_out
+                .matches("no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available")
+                .count(),
+            0,
+            "complete packet must produce ZERO blocked-case strings anywhere in SARIF.\nSARIF: {sarif_out}"
         );
     }
 
@@ -329,13 +352,20 @@ mod tests {
             "SARIF output must be valid JSON; got: {sarif_out}"
         );
         let sarif_value = sarif_parse.unwrap_or(serde_json::Value::Null);
-        let sarif_action =
-            sarif_value["runs"][0]["results"][0]["properties"]["suggested_next_action"]
-                .as_str()
-                .unwrap_or("");
+        let sarif_result = &sarif_value["runs"][0]["results"][0];
+        let sarif_action = sarif_result["properties"]["suggested_next_action"]
+            .as_str()
+            .unwrap_or("");
         assert!(
             sarif_action.contains("no actionable repair packet is emitted"),
             "SARIF must preserve blocked-case disclosure for incomplete packet; got: {sarif_action}"
+        );
+
+        // SARIF message.text must ALSO preserve the blocked-state disclosure.
+        let sarif_message = sarif_result["message"]["text"].as_str().unwrap_or("");
+        assert!(
+            sarif_message.contains("no actionable repair packet is emitted"),
+            "SARIF message.text must preserve blocked-case disclosure for incomplete packet; got: {sarif_message}"
         );
     }
 }

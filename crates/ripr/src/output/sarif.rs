@@ -663,9 +663,12 @@ fn finding_message(finding: &Finding) -> String {
         message.push_str(": ");
         message.push_str(&finding.probe.expression);
     }
-    if let Some(next) = &finding.recommended_next_step {
+    // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
+    // Use the shared reconciliation fn (not the raw field) so the embedded
+    // "Next step" agrees with suggested_next_action and the other surfaces.
+    if finding.recommended_next_step.is_some() {
         message.push_str(". Next step: ");
-        message.push_str(next);
+        message.push_str(&reconcile_next_step(finding));
     }
     message
 }
