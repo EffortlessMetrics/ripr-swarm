@@ -34,7 +34,8 @@ Support-tier impact:
 - The bound is additive: when applied it inserts a `limitations[]` disclosure
   into both artifacts naming the cap, the controlling env var, and a repair
   route. No new fields are added to the `check.json` shape. No schema version
-  bump.
+  bump. Claim boundaries and tier governance remain governed by the canonical
+  ledger in [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
