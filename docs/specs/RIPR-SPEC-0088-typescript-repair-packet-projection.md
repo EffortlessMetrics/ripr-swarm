@@ -89,6 +89,31 @@ readiness.
 
 ## Behavior
 
+### Actionable-case consistency (the `Preview actionability` and card blocks)
+
+For an **actionable** finding (`repair_packet_ready: true`) the existing
+`Preview actionability` block and the TypeScript preview card must NOT emit the
+incomplete-packet messaging that was written for blocked findings, because it
+directly contradicts the complete packet. Specifically, when actionable:
+
+- the `why not actionable:` line is relabeled `why actionable:` and reads as a
+  confirmation naming the resolved contract fields (package root, runner, owner,
+  oracle target, verify, receipt, edit cage);
+- the `repair route:` line is relabeled `repair action:` and names the actual
+  repair (the suggested assertion shape / missing discriminator), not the
+  blocked-case "project ... only after verify, receipt, evidence refs, and edit
+  boundaries are available" text;
+- the `evidence needed:` line is omitted entirely (nothing is needed);
+- the `Next step` line drops the "; no actionable repair packet is emitted until
+  ... available" tail and confirms the packet is complete and delegatable.
+
+The blocked cases are unchanged: they keep `why not actionable`, `repair route`,
+and `evidence needed`. The JSON `preview_actionability` object keeps its stable
+keys (`why_not_actionable`, `repair_route`, `evidence_needed_to_promote`) for
+schema compatibility, but their content reads as actionable when flipped:
+`repair_route` is the repair action, `evidence_needed_to_promote` is the empty
+string, and `why_not_actionable` is the actionable confirmation.
+
 ### Human output (explain + check human)
 
 For an **actionable** TypeScript finding (`repair_packet_ready: true`):

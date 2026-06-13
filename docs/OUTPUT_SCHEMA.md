@@ -501,6 +501,16 @@ The evidence-first fields are additive in schema `0.2`:
   `[]`, and `authority_boundary` stays `"preview_advisory_only"` (TypeScript
   remains preview). Only `incomplete_repair_packet` is eligible to flip; all
   other categories stay non-actionable. `schema_version` is unchanged.
+  When flipped, the actionability fields are rewritten to read as actionable
+  (RIPR-SPEC-0088 §PR8) so they do not contradict the complete packet:
+  `repair_route` names the actual repair action (the suggested assertion shape
+  or missing discriminator) rather than the blocked-case "only after ...
+  available" text; `evidence_needed_to_promote` is the empty string (nothing is
+  needed); and `why_not_actionable` carries the "why actionable" confirmation
+  naming the resolved contract fields. The JSON keys are kept stable for schema
+  compatibility; the human renderer relabels them to `why actionable` /
+  `repair action` and omits the empty `evidence needed` line for the actionable
+  case.
   Raw evidence refs carry the original raw string plus parsed `file`, `line`,
   `kind`, `source_id`, optional `owner`, optional graph `leg`, and optional
   source `sample` when present.

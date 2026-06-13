@@ -24,9 +24,8 @@ Preview actionability
   gap state: actionable
   category: complete_repair_packet
   repair packet ready: true
-  why not actionable: complete repair packet — TypeScript finding is delegatable (advisory)
-  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
-  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
+  repair action: add or strengthen the focused assertion `expect(result).toBe(50)` in the related test
   raw evidence: src/discount.ts:2 (typescript_preview_probe) source=probe:src_discount.ts:typescript_preview:2396aec1 owner=applyDiscount
 
 Static exposure
@@ -56,8 +55,8 @@ TypeScript preview card (advisory)
   suggested assertion shape: Add an exact boundary assertion for `amount == threshold`.
   verify: jest tests/discount.test.ts
   repair packet ready: true
-  why not actionable: complete repair packet — TypeScript finding is delegatable (advisory)
-  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
+  repair action: add or strengthen the focused assertion `expect(result).toBe(50)` in the related test
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
     - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
@@ -81,7 +80,7 @@ TypeScript repair packet (advisory)
   authority: preview_advisory_only
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete and delegatable (advisory).
 
 
 Note: 1 Typescript(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

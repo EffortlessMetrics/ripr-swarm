@@ -121,10 +121,34 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
 
     if let Some(step) = &finding.recommended_next_step {
         out.push_str("\nNext step\n");
-        out.push_str(&format!("  {step}\n"));
+        out.push_str(&format!("  {}\n", next_step_for_finding(finding, step)));
     }
 
     out
+}
+
+/// Render the recommended next step, rewriting the blocked-case
+/// "no actionable repair packet is emitted until ... available" tail when the
+/// finding is in fact an actionable complete TypeScript repair packet
+/// (RIPR-SPEC-0088 §PR8). The `recommended_next_step` string is produced in the
+/// analysis layer, which cannot see the output-layer validator flip, so the
+/// correction happens here at render time.
+fn next_step_for_finding(finding: &Finding, step: &str) -> String {
+    let actionable = preview_actionability_for(finding)
+        .map(|a| a.repair_packet_ready)
+        .unwrap_or(false);
+    if !actionable {
+        return step.to_string();
+    }
+    // Strip the contradictory "; no actionable repair packet is emitted until
+    // ..." tail and replace it with an actionable confirmation.
+    let head = step
+        .split("; no actionable repair packet is emitted until")
+        .next()
+        .unwrap_or(step)
+        .trim_end_matches(['.', ' '])
+        .to_string();
+    format!("{head}; the repair packet is complete and delegatable (advisory).")
 }
 
 fn push_preview_actionability(out: &mut String, actionability: &PreviewActionability) {
@@ -142,11 +166,26 @@ fn push_preview_actionability(out: &mut String, actionability: &PreviewActionabi
         "  repair packet ready: {}\n",
         actionability.repair_packet_ready
     ));
-    out.push_str(&format!(
-        "  why not actionable: {}\n",
-        actionability.why_not_actionable
-    ));
-    out.push_str(&format!("  repair route: {}\n", actionability.repair_route));
+    // RIPR-SPEC-0088 §PR8: an actionable finding must not emit
+    // "why not actionable" / "evidence needed" / blocked-case messaging — that
+    // contradicts the complete packet. Relabel to "why actionable" and the
+    // actual repair action, and drop the "evidence needed" line.
+    if actionability.repair_packet_ready {
+        out.push_str(&format!(
+            "  why actionable: {}\n",
+            actionability.why_not_actionable
+        ));
+        out.push_str(&format!(
+            "  repair action: {}\n",
+            actionability.repair_route
+        ));
+    } else {
+        out.push_str(&format!(
+            "  why not actionable: {}\n",
+            actionability.why_not_actionable
+        ));
+        out.push_str(&format!("  repair route: {}\n", actionability.repair_route));
+    }
     if !actionability.missing_actionability_fields.is_empty() {
         out.push_str(&format!(
             "  missing fields: {}\n",
@@ -162,10 +201,12 @@ fn push_preview_actionability(out: &mut String, actionability: &PreviewActionabi
     if let Some(unlock_condition) = &actionability.unlock_condition {
         out.push_str(&format!("  unlock condition: {unlock_condition}\n"));
     }
-    out.push_str(&format!(
-        "  evidence needed: {}\n",
-        actionability.evidence_needed_to_promote
-    ));
+    if !actionability.repair_packet_ready && !actionability.evidence_needed_to_promote.is_empty() {
+        out.push_str(&format!(
+            "  evidence needed: {}\n",
+            actionability.evidence_needed_to_promote
+        ));
+    }
     for raw_ref in &actionability.raw_evidence_refs {
         out.push_str("  raw evidence: ");
         push_raw_ref(out, raw_ref);
@@ -386,11 +427,19 @@ fn push_typescript_preview_card(out: &mut String, card: &TypeScriptPreviewCard) 
         "  repair packet ready: {}\n",
         card.repair_packet_ready
     ));
-    out.push_str(&format!(
-        "  why not actionable: {}\n",
-        card.why_not_actionable
-    ));
-    out.push_str(&format!("  repair route: {}\n", card.repair_route));
+    // RIPR-SPEC-0088 §PR8: relabel for the actionable case so the card does not
+    // emit blocked-case "why not actionable" / "only after available" text that
+    // contradicts the complete packet.
+    if card.repair_packet_ready {
+        out.push_str(&format!("  why actionable: {}\n", card.why_not_actionable));
+        out.push_str(&format!("  repair action: {}\n", card.repair_route));
+    } else {
+        out.push_str(&format!(
+            "  why not actionable: {}\n",
+            card.why_not_actionable
+        ));
+        out.push_str(&format!("  repair route: {}\n", card.repair_route));
+    }
     out.push_str("  limits:\n");
     for limit in &card.limits {
         out.push_str(&format!("    - {limit}\n"));

@@ -902,3 +902,40 @@ cites the spec section. Do not suppress the limitation output.
 Authority boundary reminder: `preview_advisory_only` stays in all four surfaces
 even when the packet is actionable. No surface promotes TypeScript to gate or badge
 authority.
+
+### §PR8 follow-up: the flip must also rewrite the evidence strings, not just the boolean
+
+The first §PR8 cut flipped `repair_packet_ready`/`gap_state`/`category` and added
+the new field-note, but left the OLD incomplete-packet evidence strings
+(`why_not_actionable`, `repair_route` = "...only after verify/receipt/edit
+boundaries are available", `evidence_needed_to_promote`, and the analysis-layer
+`recommended_next_step` "no actionable repair packet is emitted until...")
+flowing straight through to the `Preview actionability` block, the preview card,
+and the LSP hover. Result: the flagship actionable output simultaneously said
+"category: complete_repair_packet / repair packet ready: true" AND "why not
+actionable: ... / evidence needed: [the fields it already has] / project ... only
+after [those fields] are available". A direct honesty contradiction.
+
+Root cause: those strings are authored in the analysis layer for the BLOCKED
+cases and are reused verbatim. The flip happens later in `output/` (via the
+shared validator), so the analysis-layer strings never learn about it.
+
+Fix pattern (one place, three consumers):
+- In `output/preview_actionability.rs::preview_actionability_for`, when
+  `repair_packet_ready`, replace `repair_route` with the actual repair action
+  (assertion shape / missing discriminator via `actionable_repair_route`), set
+  `evidence_needed_to_promote` to the empty string, and make
+  `why_not_actionable` an actionable confirmation. JSON keys stay stable for
+  schema compatibility; only content changes.
+- In the three human/hover renderers, branch on `repair_packet_ready`: relabel
+  "why not actionable"→"why actionable", "repair route"→"repair action", and
+  omit the empty "evidence needed" line for the actionable case.
+- The analysis-layer `recommended_next_step` is corrected at RENDER time
+  (`next_step_for_finding`): strip the "; no actionable repair packet is emitted
+  until ..." tail and confirm completeness. The analysis layer can't see the
+  output-layer flip, so the renderer is the right seam.
+
+General lesson: when a downstream layer flips a status, audit EVERY string that
+was authored for the pre-flip status and still rides through. A boolean flip
+without a message rewrite produces output that contradicts itself — the exact
+proxy-for-artifact dishonesty `ripr` exists to catch, turned inward.

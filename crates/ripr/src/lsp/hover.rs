@@ -434,16 +434,28 @@ fn push_preview_actionability(lines: &mut Vec<String>, finding: &Finding) {
             "not ready"
         }
     ));
-    lines.push(format!(
-        "Why not actionable: {}",
-        actionability.why_not_actionable
-    ));
-    lines.push(format!("Repair route: {}", actionability.repair_route));
-    push_missing_actionability_fields(lines, &actionability);
-    lines.push(format!(
-        "Evidence needed: {}",
-        actionability.evidence_needed_to_promote
-    ));
+    // RIPR-SPEC-0088 §PR8: relabel for the actionable case so the hover does
+    // not show blocked-case "Why not actionable" / "Evidence needed" lines that
+    // contradict the complete packet.
+    if actionability.repair_packet_ready {
+        lines.push(format!(
+            "Why actionable: {}",
+            actionability.why_not_actionable
+        ));
+        lines.push(format!("Repair action: {}", actionability.repair_route));
+        push_missing_actionability_fields(lines, &actionability);
+    } else {
+        lines.push(format!(
+            "Why not actionable: {}",
+            actionability.why_not_actionable
+        ));
+        lines.push(format!("Repair route: {}", actionability.repair_route));
+        push_missing_actionability_fields(lines, &actionability);
+        lines.push(format!(
+            "Evidence needed: {}",
+            actionability.evidence_needed_to_promote
+        ));
+    }
     lines.push("Authority: preview advisory only".to_string());
     lines.push(String::new());
 

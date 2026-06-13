@@ -88,14 +88,14 @@
           "name": "applyDiscount applies discount when amount meets threshold"
         },
         "repair_packet_ready": true,
-        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "repair_route": "add or strengthen the focused assertion `expect(result).toBe(50)` in the related test",
         "source": "check_typescript_preview",
         "static_limits": [],
         "suggested_assertion_shape": "Add an exact boundary assertion for `amount == threshold`.",
         "verify": {
           "command": "jest tests/discount.test.ts"
         },
-        "why_not_actionable": "complete repair packet — TypeScript finding is delegatable (advisory)"
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
       },
       "typescript_repair_packet": {
         "allowed_edit_surface": [
@@ -131,7 +131,7 @@
       "preview_actionability": {
         "actionability_category": "complete_repair_packet",
         "authority_boundary": "preview_advisory_only",
-        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "evidence_needed_to_promote": "",
         "gap_state": "actionable",
         "missing_actionability_fields": [],
         "missing_graph_legs": [],
@@ -148,9 +148,9 @@
           }
         ],
         "repair_packet_ready": true,
-        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "repair_route": "add or strengthen the focused assertion `expect(result).toBe(50)` in the related test",
         "unlock_condition": null,
-        "why_not_actionable": "complete repair packet — TypeScript finding is delegatable (advisory)"
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
       },
       "stop_reasons": [],
       "oracle_kind": "relational_check",

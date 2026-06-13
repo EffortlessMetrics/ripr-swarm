@@ -5364,7 +5364,10 @@ tests = [
   "crates/ripr/src/output/human/sections.rs::tests::typescript_repair_packet_field_note_renders_limitation_for_blocked_finding",
   # JSON surface — typescript_repair_packet field
   "crates/ripr/src/output/json/report.rs::tests::typescript_repair_packet_json_field_present_when_actionable",
-  "crates/ripr/src/output/json/report.rs::tests::typescript_repair_packet_json_field_absent_when_blocked"
+  "crates/ripr/src/output/json/report.rs::tests::typescript_repair_packet_json_field_absent_when_blocked",
+  # Actionable-case consistency — no contradictory blocked-case messaging
+  "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_names_assertion_shape_not_blocked_text",
+  "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_falls_back_to_discriminator_then_generic"
 ]
 fixtures = [
   "fixtures/ts_repair_packet_complete",
@@ -5379,6 +5382,7 @@ fixtures = [
 code = [
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/preview_actionability.rs",
   "crates/ripr/src/lsp/hover.rs",
   "crates/ripr/src/lsp/actions.rs"
 ]
