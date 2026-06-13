@@ -36,7 +36,7 @@ visible in emitted output; a drifting parallel validator is the kind of failure
 that hides until two languages disagree about whether the same shaped gap is
 safe to hand an agent.
 
-The fix already proven in the TypeScript wave is structural, not procedural:
+The fix demonstrated in the TypeScript wave is structural, not procedural:
 the TypeScript projection
 ([`crates/ripr/src/output/typescript_packet_projection.rs`](../../crates/ripr/src/output/typescript_packet_projection.rs))
 builds a `GapRecord` via `typescript_gap_record_for` and flips
