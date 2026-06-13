@@ -72,6 +72,17 @@ stable gaps, honest no-gaps, and fail-closed on unsupported shapes. **No error
   needs the exact work-item schema and the "not the active Codex Goals manifest"
   phrase on one line; `fixtures/python-eval-sweep` needs the manifest-only
   exemption in `xtask/src/main.rs`.
+- **Policy gates are advisory at merge time.** Branch protection on `main`
+  requires only `Ripr Rust Small Result`; the whole `source-of-truth` job
+  (`check-support-tiers`, `check-static-language`, `check-doc-index`,
+  `check-campaign`, …) runs but does **not** block the merge button. A red
+  `source-of-truth` once rode into `main` (RIPR-SPEC-0088 without a
+  `SUPPORT_TIERS.md` reference) and broke `check-support-tiers` for every
+  later PR until a one-line fix. **Read `source-of-truth` yourself and refuse
+  to merge on red** even though GitHub allows it. Also: a PR can fail a gate it
+  did not touch when `main` advanced underneath it — reproduce against
+  `origin/main`, and if `main` is already broken, fix it in a tiny unblock PR
+  before rebasing dependent work. Tracked for a real fix in issue #1181.
 
 ## The invariant to protect
 
