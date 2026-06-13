@@ -59,3 +59,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0090: adds all-no-path advisory disclosure line to human output when all findings are no-path/unknown
+
+Command:
+`cargo xtask goldens bless python_dynamic_import_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0090: adds all-no-path advisory disclosure line to human output when all findings are no-path/unknown
+
+Command:
+`cargo xtask goldens bless python_dynamic_import_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
