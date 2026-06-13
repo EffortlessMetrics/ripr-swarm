@@ -1,6 +1,6 @@
 ripr static RIPR exposure analysis
 mode: fast
-root: fixtures/typescript_disabled/input
+root: fixtures/ts_full_repo_guidance/input
 
 Summary: 0 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
 
