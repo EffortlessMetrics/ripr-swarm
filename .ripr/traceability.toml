@@ -5292,6 +5292,25 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0086"
+name = "python tier a eval sweep"
+spec = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
+tests = [
+  "xtask/src/reports/eval_sweep.rs"
+]
+fixtures = [
+  "fixtures/python-eval-sweep"
+]
+code = [
+  "xtask/src/reports/eval_sweep.rs"
+]
+outputs = []
+metrics = [
+  "crash_rate",
+  "gap_id_stability_rate"
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0087"
 name = "TypeScript preview actionable repair-packet contract"
 spec = "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md"
