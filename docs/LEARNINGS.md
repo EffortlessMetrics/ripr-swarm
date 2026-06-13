@@ -980,3 +980,26 @@ maximally over-eager analyzer scores perfectly on them. A trustworthy judged
 panel needs deliberately-constructed should-stay-quiet cases (direct-boundary
 assertions that must read `exposed`) alongside should-gap cases — otherwise the
 eval itself has a weak oracle.
+
+## 2026-06-13: A CI gate that runs but does not block over-credits itself
+
+The `source-of-truth` job runs the policy gates — `check-support-tiers`,
+`check-static-language`, `check-doc-index`, `check-campaign`, and the rest — but
+branch protection on `main` requires only one status check (`Ripr Rust Small
+Result`). Every policy gate is therefore *advisory at merge time*: it appears on
+the PR, but a red result does not block the merge button. A PR merged with its
+`source-of-truth` red (RIPR-SPEC-0088 landing without a `SUPPORT_TIERS.md`
+reference), which silently broke `check-support-tiers` on `main` for every
+subsequent PR until a one-line fix repaired it.
+
+This is the product thesis turned inward. A gate that runs but does not block is
+exactly a test that *reaches* the behavior but does not *discriminate* it: it
+looks green, the run happened, but nothing actually caught the regression — the
+gate over-credited itself the same way `reach + strong oracle` over-credits
+`exposed`. The check executing is not the signal; the check *being able to stop a
+bad merge* is. Verify which checks are genuinely required
+(`gh api repos/<owner>/<repo>/branches/main/protection/required_status_checks`),
+not which checks appear to run. Making `source-of-truth` a required check is the
+fix; tracked as hardening issue #1181. Until then, every agent and reviewer must read
+the `source-of-truth` result themselves and refuse to merge on red — the self-gate
+the watcher already enforces.
