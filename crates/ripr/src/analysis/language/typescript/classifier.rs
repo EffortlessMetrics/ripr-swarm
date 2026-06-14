@@ -51,28 +51,36 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 ///
 /// ### What the guard checks
 ///
-/// For **SideEffect / CallDeletion** families, a strong assertion FAILS the
-/// guard (returns `false`) only when ALL of the following hold:
-/// 1. Every strong assertion carries `observed_expression` metadata (SPEC-0085).
-/// 2. Every strong assertion that has `observed_expression` contains the OWNER
-///    NAME in that expression — indicating it is asserting the owner's return
-///    value, NOT the side effect.
-/// 3. No strong assertion is an effect-shape oracle
-///    (MockExpectation | Snapshot | WholeObjectEquality) and no strong assertion
-///    has an `observed_expression` that contains a changed token (> 3 chars).
+/// The confirmation decision keys on **`oracle_kind`** — which the live oracle
+/// extractor always populates (`oracle.rs`) — rather than relying on
+/// `observed_expression`, which is optional metadata. For SideEffect /
+/// CallDeletion families a strong assertion CONFIRMS (returns `true`,
+/// stays Exposed) only when it actually witnesses a call effect:
+/// 1. It is an effect-shape oracle
+///    (`MockExpectation` | `Snapshot` | `WholeObjectEquality`) — these capture
+///    mock-call expectations, serialized snapshots, or persisted whole-object
+///    state, all of which observe side effects directly; OR
+/// 2. It carries an `observed_expression` that either contains a changed token
+///    (> 3 chars) or names a side-channel (an expression that does NOT name the
+///    owner — e.g. a closure-local side-effect variable or a captured mock).
+///
+/// Value-shaped strong oracles (`ExactValue` / `ExactErrorVariant`) that observe
+/// the owner's RETURN VALUE do NOT witness a `console.log`/side-effect change, so
+/// they do not confirm. When the only strong oracles are value-shaped (or no
+/// observed-expression metadata is available to prove a side-channel), the guard
+/// **fails closed** and returns `false`, downgrading to WeaklyExposed.
 ///
 /// For all other families the guard always returns `true` (pre-guard behaviour).
 ///
-/// ### Conservative fallback
+/// ### Fail-closed default (RIPR-SPEC-0098 hardening, #1235)
 ///
-/// Returns `true` (confirmed) whenever:
-/// - The probe family is not SideEffect/CallDeletion.
-/// - All strong assertions have `observed_expression: None` (pre-SPEC-0085).
-/// - Any strong assertion is an effect-shape oracle.
-/// - Any strong assertion's `observed_expression` contains a changed token.
-/// - Any strong assertion's `observed_expression` does NOT contain the owner
-///   name (i.e. it is asserting something other than the owner return value —
-///   could be a closure-local, a mock result, or any side-channel).
+/// Earlier revisions returned `true` ("confirmed") when no strong assertion
+/// carried `observed_expression` metadata. That was a fail-OPEN fallback:
+/// "can't tell what's observed → assume observed → exposed", which is exactly the
+/// over-claim this guard exists to kill. It is removed. The decision now keys on
+/// `oracle_kind` (always populated live) plus an optional `observed_expression`
+/// token / side-channel check; absence of `observed_expression` no longer
+/// re-promotes a swallowed side effect to Exposed.
 pub(crate) fn ts_changed_value_is_observed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
@@ -97,15 +105,13 @@ pub(crate) fn ts_changed_value_is_observed(
         Vec::new()
     };
 
-    // Track whether ANY strong assertion with an observed_expression was
-    // inspected.  If NONE of the strong assertions carry observed_expression
-    // metadata (e.g. manually-constructed test stubs used in unit tests), we
-    // cannot verify OR refute — fall back to the pre-guard confirmed behaviour.
-    let mut any_strong_with_observed = false;
-    // Track whether ALL inspected observed_expressions name only the owner
-    // return value (the telltale false-positive pattern: `expect(ownerFn(...)).toBe(...)`).
-    let mut all_observed_are_owner_return = true;
-
+    // Fail-CLOSED: confirmation must be affirmatively established by at least one
+    // strong assertion that actually witnesses a call effect. We scan every
+    // strong assertion in the oracle-eligible candidates and return `true` the
+    // moment one of them qualifies. If none qualify, we downgrade — including the
+    // case where no `observed_expression` metadata is available at all (the
+    // former fail-OPEN `return true` fallback is deliberately gone: absence of
+    // proof is not proof of observation).
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -114,9 +120,10 @@ pub(crate) fn ts_changed_value_is_observed(
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
                 continue;
             }
-            // Effect-shape oracle kinds confirm unconditionally: these ARE
+            // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
             // effect observers (mock call expectation, snapshot, whole-object
-            // equality capturing persisted state).
+            // equality capturing persisted state). This decision keys ONLY on
+            // `oracle_kind`, which the live extractor always populates.
             if matches!(
                 assertion.oracle_kind,
                 OracleKind::MockExpectation
@@ -125,10 +132,12 @@ pub(crate) fn ts_changed_value_is_observed(
             ) {
                 return true;
             }
-            // When observed_expression is present we can do token checks.
+            // (2) Optional `observed_expression` checks — only when the live
+            // extractor retained the `expect(<expr>)` argument text. These can
+            // only ADD confirmations; their absence never re-promotes.
             if let Some(ref observed) = assertion.observed_expression {
-                any_strong_with_observed = true;
-                // Token match: changed token appears in observed_expression → confirmed.
+                // Token match: a changed token appears in the observed
+                // expression → this assertion observes the changed value.
                 if !changed_tokens.is_empty()
                     && changed_tokens
                         .iter()
@@ -136,30 +145,24 @@ pub(crate) fn ts_changed_value_is_observed(
                 {
                     return true;
                 }
-                // If the observed_expression does NOT contain the owner name,
-                // it is asserting something other than the owner return value.
-                // This could be a closure-local variable set as a side effect,
-                // a mock result, or any side-channel — so we conservatively
-                // treat it as potentially observing the effect.
+                // Side-channel: the observed expression does NOT name the owner,
+                // so it is asserting something other than the owner return value
+                // (a closure-local side-effect variable, a captured mock result,
+                // or any side-channel) — conservatively treat it as observing
+                // the effect.
                 if !observed.contains(owner_name) {
-                    all_observed_are_owner_return = false;
+                    return true;
                 }
             }
+            // Otherwise this strong assertion is value-shaped (ExactValue /
+            // ExactErrorVariant) observing the owner return value, or carries no
+            // observed_expression to prove a side-channel: it does NOT witness
+            // the call effect. Keep scanning for a qualifying assertion.
         }
     }
 
-    // If no strong assertion carried observed_expression metadata, we cannot
-    // make a determination — fall back to the pre-guard behaviour.
-    if !any_strong_with_observed {
-        return true;
-    }
-
-    // Downgrade only when EVERY strong assertion with observed_expression is
-    // asserting the owner RETURN VALUE (owner name is in observed_expression)
-    // and no token match or effect oracle confirmed above.
-    // In other words: the only strong assertions visible are observing the
-    // owner call's return value, not any call-effect of the changed expression.
-    !all_observed_are_owner_return
+    // No strong assertion witnessed the call effect: fail closed → downgrade.
+    false
 }
 
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.

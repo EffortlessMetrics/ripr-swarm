@@ -79,28 +79,38 @@ for these families.
 When the strongest related-test oracle satisfies the Strong threshold
 (`rank >= 5`), the classifier checks whether the observation is confirmed:
 
-A strong assertion confirms the observation when ANY of:
+The confirmation decision keys on **`oracle_kind`**, which the live oracle
+extractor (`oracle.rs`) always populates, rather than on `observed_expression`,
+which is optional metadata. A strong assertion confirms the observation
+(stays Exposed) when ANY of:
 1. Its `oracle_kind` is `MockExpectation | Snapshot | WholeObjectEquality`
    (effect-shape observer — confirms the call side effect unconditionally).
-2. Its `observed_expression` contains a changed identifier token
+2. Its `observed_expression` is present and contains a changed identifier token
    (length > 3, alphanumeric/underscore only) from the changed sub-expression.
-3. Its `observed_expression` does NOT contain the owner name (i.e. it is
-   asserting something other than the owner return value — may be a
+3. Its `observed_expression` is present and does NOT contain the owner name
+   (i.e. it is asserting something other than the owner return value — may be a
    closure-local side-effect variable, a mock result, or side channel).
 
-**Downgrade condition**: the guard fails (returns `observation_confirmed = false`)
-only when ALL of the following hold simultaneously:
-- Every strong assertion has `observed_expression` metadata (pre-SPEC-0085 test
-  stubs with `None` always fall back to confirmed).
-- Every strong assertion that has `observed_expression` contains the owner name
-  (indicating all are asserting the owner's RETURN VALUE, not the call effect).
-- No strong assertion is an effect-shape oracle (MockExpectation|Snapshot|
-  WholeObjectEquality), and no token match fired.
+**Fail-closed default (#1235 hardening)**: confirmation must be affirmatively
+established by one of the rules above. If no strong assertion qualifies — i.e.
+the only strong oracles are value-shaped (`ExactValue` / `ExactErrorVariant`)
+observing the owner return value, OR no `observed_expression` metadata is
+available to prove a side-channel — the guard returns
+`observation_confirmed = false` and the finding is downgraded.
 
 This is the exact false-positive pattern: the only strong assertions visible
 in the test body are `expect(ownerFn(...)).toBe(...)` calls asserting the
 UNCHANGED return value, while the changed SideEffect line (`console.log(...)`)
 has no direct observer.
+
+**Why not fail-open on missing `observed_expression`** (#1235): an earlier
+revision returned `confirmed` when no strong assertion carried
+`observed_expression` ("can't tell what's observed → assume observed →
+exposed"). That is precisely the over-claim this guard exists to kill, and it
+is unsafe because `observed_expression` is optional. Absence of proof is not
+proof of observation, so the missing-metadata case now downgrades. Effect
+observers are still credited because they are detected from `oracle_kind`
+alone, independent of `observed_expression`.
 
 ### Downgraded arm
 
@@ -166,8 +176,23 @@ Unit tests (in `crates/ripr/src/analysis/language/typescript/tests.rs`):
    (`timeout: 5000,`) with a strong `toEqual` assertion. MUST stay
    `class:exposed` (guard is not applied to FieldConstruction family).
 
+5. `ts_swallowed_console_log_downgrade_live_extractor` (#1235) — LIVE-pipeline
+   regression guard. Source and test text are parsed by the REAL
+   `extract_owners` / `extract_tests` (so assertions carry whatever
+   `observed_expression` the live extractor produces, not a hand-set field).
+   A swallowed `console.log` observed only by value-shaped `toBe` on the owner
+   return value MUST downgrade to `weakly_exposed` with `propagation_unknown`.
+   Fails if the guard ever regresses to a fail-OPEN keyed on
+   `observed_expression` population.
+
+6. `ts_side_effect_observed_by_mock_expectation_stays_exposed` (#1235) — a
+   SideEffect observed by `toHaveBeenCalledWith` (`oracle_kind:
+   MockExpectation`, `observed_expression: None`). The decision rests on
+   `oracle_kind` alone, so it MUST stay `class:exposed`, `discriminate:yes`.
+   Protects the effect-observer path from the fail-closed downgrade.
+
 No new golden fixtures are required for this change (the guard operates on
-already-extracted `observed_expression` metadata; no JSON schema changes).
+already-extracted oracle metadata; no JSON schema changes).
 
 ## Non-Goals
 

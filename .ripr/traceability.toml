@@ -5724,6 +5724,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_returnvalue_genuinely_observed_control",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_sibling_assertion_non_owner_prevents_downgrade",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_field_construction_observed_control",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_swallowed_console_log_downgrade_live_extractor",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_side_effect_observed_by_mock_expectation_stays_exposed",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
