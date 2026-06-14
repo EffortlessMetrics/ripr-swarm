@@ -1425,9 +1425,16 @@ Two durable points:
   `python_adversarial_mock_call_not_value` as end-to-end goldens that fail CI if
   the coincidence ever credits `exposed` again — the unit test for
   `oracle_text_observes_token` is not enough; pin it at the *classifier output*.
-  The new owner-name vector is filed
-  (`eval/python-false-exposed-attribute-call-owner-name`) and will be pinned the
-  same way once fixed.
+  The owner-name vector
+  (`fix/py-false-exposed-attribute-call-owner-name`) has its first guard pinned
+  this way — `python_adversarial_same_method_other_class` is held at
+  `weakly_exposed` — but this is a **partial hardening, not a closure**. The
+  shipped gate requires owner-*class* identity for method owners; oppositional
+  review found the same token-only disease still open on sibling vectors
+  (free-function module identity, changed-sink receiver identity). The proper
+  closure — resolving *receiver* identity at the relation layer — is deferred to
+  `analysis/python-method-owner-receiver-binding-identity`, which supersedes the
+  token-guard approach. Read this family as in-progress, not done.
 
 **How to apply:** before crediting `exposed` from any name/token match, ask "does
 this resolve to the *same entity*, or only the same *string*?" For a method
