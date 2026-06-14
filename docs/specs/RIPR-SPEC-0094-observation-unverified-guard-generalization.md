@@ -34,12 +34,28 @@ Policy impact:
 When a probe belongs to a family where the changed sub-expression must be
 directly witnessed by an assertion to justify `exposed` (ReturnValue,
 FieldConstruction, SideEffect, CallDeletion, MatchArm), and no assertion
-token references that changed expression, the discriminate stage is marked
-`weak` and the finding is downgraded to `weakly_exposed`. The discriminate
-summary contains `observation_unverified`. A token-match confirmation (any
-assertion text contains an identifier token of length > 3 from the probe
-expression — or, for MatchArm, from the variant tokens only) clears the
-weakness and allows `exposed`.
+confirms observation of that changed expression, the discriminate stage is
+marked `weak` and the finding is downgraded to `weakly_exposed`. The
+discriminate summary contains `observation_unverified`.
+
+Observation confirmation differs by family group:
+
+- **Value families** (ReturnValue, FieldConstruction, MatchArm): the only
+  static confirmation signal is a `token_match` — an assertion whose text
+  contains an identifier token of length > 3 from the probe expression (for
+  MatchArm, restricted to the variant tokens after `::`). A value assertion
+  whose oracle kind merely *shape*-matches the seam (e.g. an `assert_eq!`
+  comparing whole objects) does **not** confirm; it must name the changed
+  sub-expression.
+- **Effect families** (SideEffect, CallDeletion): the canonical observer of a
+  side effect or outbound call is a mock/expectation, a snapshot, or a
+  whole-object equality capturing the resulting persisted state. These
+  kind-match the seam without sharing a probe token. A genuine effect observer
+  (`effect_observer_confirms`: `MockExpectation | Snapshot |
+  WholeObjectEquality`) therefore confirms observation in addition to
+  `token_match`. A plain non-observing assertion (e.g. `assert!(result)`) that
+  only fired via the single-assertion escape hatch is **not** an effect
+  observer, so it stays `observation_unverified`.
 
 ## Problem
 
@@ -72,12 +88,30 @@ Add `match_arm_variant_tokens(expression)` to extract only the variant tokens
 `has_token_match` uses only these variant tokens, not the full token set. This
 prevents the shared enum qualifier from confirming a sibling-arm assertion.
 
+### Part C: Effect-family observers confirm without a token
+
+For the **effect** families (SideEffect, CallDeletion), the changed behavior is
+a side effect or outbound call whose legitimate observer is a mock/expectation
+or a persisted-state snapshot/whole-object assertion that kind-matches the seam
+without naming a probe token. Generalizing Part A on `token_match` alone would
+wrongly flag a real mock observer as `observation_unverified`. Part C adds
+`effect_observer_confirms(assertion)` (`MockExpectation | Snapshot |
+WholeObjectEquality`) and ORs it into the clear-signal **for effect families
+only**. This is intentionally narrower than `oracle_matches_family` for effect
+families — it excludes the broad `text.contains("assert" | "expect")` substring
+matches, so a plain non-observing assertion does not clear the guard. Value
+families are unchanged: only a `token_match` clears them.
+
 ## Non-Goals
 
 - Running mutations or dynamic analysis.
 - Changing behavior for Predicate or ErrorPath probes.
 - Bumping the JSON schema version.
-- Producing `exposed` for SideEffect/CallDeletion when oracle strength is Medium.
+- Changing the oracle-strength → discriminate-state mapping. A Medium effect
+  observer (bare `MockExpectation`) remains `weakly_exposed` via the existing
+  strength path; `exposed` still requires a Strong (exact-value /
+  whole-object) discriminator. Part C only fixes *which* observers clear
+  `observation_unverified`; it does not promote Medium oracles to Strong.
 
 ## Required Evidence
 
@@ -90,9 +124,14 @@ Per-family fixture pairs (blind and confirmed) plus the MatchArm qualifier-blind
 
 ## Outputs
 
-- `weakly_exposed` when `observation_unverified` fires (no token match).
-- `exposed` when `token_match` fires for the specific changed sub-expression.
-- `discriminate.summary` contains `"observation_unverified"` when unverified.
+- `weakly_exposed` with `observation_unverified` when no confirming assertion
+  exists (value family: no `token_match`; effect family: no `token_match` and
+  no effect observer).
+- `exposed` when the discriminator is confirmed AND strong: a `token_match`
+  with a Strong oracle (value families), or a Strong effect observer
+  (exact-value / whole-object persisted state) for effect families.
+- `discriminate.summary` contains `"observation_unverified"` only when the
+  guard fires; otherwise the summary reflects oracle strength.
 
 ## Acceptance Examples
 
@@ -125,6 +164,29 @@ Before fix:    exposed / confidence 1.0
 After fix:     weakly_exposed / confidence 0.92 / observation_unverified
 ```
 
+### SideEffect / CallDeletion blind (must downgrade)
+
+```
+probe family:  call_deletion (effect)
+expression:    notifier.send(order_id)
+test:          assert!(result);              // plain assert, no mock, no token
+After fix:     weakly_exposed / observation_unverified
+```
+
+### SideEffect / CallDeletion confirmed (Part C, must stay exposed)
+
+```
+probe family:  call_deletion (effect)
+expression:    notifier.send(order_id)
+test:          assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);
+After fix:     exposed   (strong persisted-state observer; token_match on
+                          `notifier`; effect observer kind-matches the seam)
+```
+
+A bare Medium mock observer (`mock.verify();`, no token) clears
+`observation_unverified` via Part C but remains `weakly_exposed` because Medium
+strength maps to a weak discriminator — see Non-Goals.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.
@@ -136,8 +198,11 @@ After fix:     weakly_exposed / confidence 0.92 / observation_unverified
 - `crates/ripr/src/analysis/classify/reveal.rs`:
   - `needs_token_confirmation(family)` new predicate.
   - `match_arm_variant_tokens(expression)` new helper for Part B.
+  - `is_effect_family(family)` + `effect_observer_confirms(assertion)` new
+    helpers for Part C.
   - `RevealAssertionAnalysis.observation_unverified` (renamed).
-  - `analyze_related_assertions` applies guard to all covered families.
+  - `analyze_related_assertions` computes `observation_confirmed =
+    has_token_match || (is_effect_family && effect_observer_confirms)`.
   - `assertion_matches_probe_detail` receives `match_arm_variants` param.
   - `build_discriminate_evidence` updated message.
 

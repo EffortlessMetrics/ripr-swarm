@@ -13,21 +13,22 @@ pub fn store_result(cache: &mut Cache, result: i32) {
 }
 ```
 
-The related test exercises `store_result` and then asserts on the cache
-contents, directly referencing `"result_key"`:
+The related test exercises `store_result` and then asserts the exact persisted
+cache contents with `assert_eq!` — a Strong exact-value observer that names
+`result_key` (a token from the probe expression):
 
 ```rust
 #[test]
-fn store_result_inserts_result_key() {
+fn store_result_inserts_result_key_with_value() {
     let mut cache = Cache::new();
     store_result(&mut cache, 42);
-    assert!(cache.inserted.iter().any(|entry| entry.contains("result_key")));
+    assert_eq!(cache.inserted, vec!["result_key=42".to_string()]);
 }
 ```
 
-The assertion text contains `"result_key"`, which is a token extracted from
-the `CallDeletion` probe expression `cache.insert("result_key", result)`.
-Therefore `token_match` fires and `observation_unverified` is NOT set.
+This assertion both (a) token-matches the `CallDeletion` probe expression
+`cache.insert("result_key", result)` and (b) reaches Strong oracle strength, so
+the discriminate stage is `yes` and the finding is `exposed`.
 
 ## When
 
@@ -44,16 +45,17 @@ ripr check --root fixtures/observation_verified_call_deletion/input \
 
 ## Then
 
-`ripr` must NOT emit `observation_unverified` for the `CallDeletion` probe.
-The discriminate summary must NOT contain `observation_unverified` — the
-weakness (if any) must come from oracle strength, not the token-match guard.
-
-This fixture is the **anti-over-correction proof** for the CallDeletion family
-in [RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md):
-a CallDeletion probe with a token-matching assertion must NOT be downgraded by
+`ripr` must classify the `CallDeletion` probe as `exposed` and must NOT emit
 `observation_unverified`.
+
+This fixture is the **verified-effect control** for
+[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md):
+a CallDeletion probe whose changed behavior is genuinely observed (strong
+persisted-state assertion) stays `exposed`, proving the `observation_unverified`
+guard does not over-correct legitimately-observed effects.
 
 ## Must Not
 
-- Emit `observation_unverified` when the assertion references the specific changed call argument.
+- Emit `observation_unverified` when the assertion observes the changed effect.
+- Downgrade a strong, token-matching effect observer to `weakly_exposed`.
 - Use mutation-runtime outcome vocabulary.

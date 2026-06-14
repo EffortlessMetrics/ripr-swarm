@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+Re-author with strong exact-value persisted-effect observer so the verified-effect control genuinely demonstrates exposed; pairs with reveal.rs effect_observer_confirms fix (#1216)
+
+Command:
+`cargo xtask goldens bless observation_verified_side_effect --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

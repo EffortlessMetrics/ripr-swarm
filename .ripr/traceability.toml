@@ -5551,10 +5551,13 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_with_token_match_keeps_discriminate_yes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_construction_family_match_only_without_token_downgrades_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::field_construction_with_token_match_keeps_discriminate_yes",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::side_effect_family_match_only_without_token_downgrades_to_weak",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::side_effect_plain_assertion_without_token_or_observer_emits_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::side_effect_with_token_match_keeps_discriminate_not_unverified",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::side_effect_mock_observer_without_token_clears_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::call_deletion_family_match_only_without_token_downgrades_to_weak",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::call_deletion_with_token_match_does_not_emit_observation_unverified",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::call_deletion_whole_object_observer_without_token_clears_observation_unverified",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_whole_object_without_token_still_emits_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_sibling_qualifier_does_not_clear_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes"
 ]

@@ -1,8 +1,15 @@
-pub struct Notifier;
+use std::cell::RefCell;
+
+pub struct Notifier {
+    pub sent: RefCell<Vec<String>>,
+}
 
 impl Notifier {
+    pub fn new() -> Self {
+        Notifier { sent: RefCell::new(Vec::new()) }
+    }
     pub fn send(&self, payload: &str) -> bool {
-        let _ = payload;
+        self.sent.borrow_mut().push(payload.to_string());
         true
     }
 }

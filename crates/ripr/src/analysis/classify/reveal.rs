@@ -44,20 +44,32 @@ struct RevealAssertionAnalysis {
     /// no such match has fired yet.
     ///
     /// Applies to: `MatchArm`, `ReturnValue`, `FieldConstruction`, `SideEffect`,
-    /// `CallDeletion`. For each of these families, `family_match` or
-    /// `assertion_count == 1` alone is insufficient: it tells us an oracle of
-    /// the right shape exists in a reachable test, but cannot confirm it
-    /// observes *this particular* changed expression (vs. a sibling, an
-    /// unrelated field, or a different call site). `token_match` — an assertion
-    /// whose text contains an identifier token from the probe expression — is
-    /// the only static signal of specificity. Cleared as soon as any
-    /// `token_match` fires.
+    /// `CallDeletion`. For each of these families, the broad `family_match` or
+    /// `assertion_count == 1` matcher alone is insufficient: it tells us an
+    /// oracle of the right shape exists in a reachable test, but cannot confirm
+    /// it observes *this particular* changed expression (vs. a sibling, an
+    /// unrelated field, or a different call site).
+    ///
+    /// Confirmation differs by family:
+    /// - **Value** families (MatchArm, ReturnValue, FieldConstruction): the only
+    ///   static signal of specificity is a `token_match` — an assertion whose
+    ///   text contains an identifier token from the probe expression.
+    /// - **Effect** families (SideEffect, CallDeletion): the canonical observer
+    ///   is a mock/expectation/snapshot that kind-matches the seam without
+    ///   sharing a token, so a genuine effect observer (`effect_observer_confirms`)
+    ///   confirms in addition to `token_match`.
+    ///
+    /// Cleared as soon as a confirming assertion fires.
     observation_unverified: bool,
 }
 
-/// Returns true for families where a `token_match` is required to confirm
-/// that a matching assertion actually discriminates this probe's specific
-/// changed sub-expression rather than a sibling or unrelated oracle.
+/// Returns true for families where an assertion must specifically reference the
+/// changed sub-expression to confirm observation. For **value** families
+/// (MatchArm, ReturnValue, FieldConstruction) the only static confirmation
+/// signal is a `token_match`. For **effect** families (SideEffect, CallDeletion)
+/// the legitimate observer is often a mock/expectation that **kind-matches the
+/// seam** without sharing any probe token; for those, a seam-kind match also
+/// confirms observation (see `effect_observer_confirms`).
 fn needs_token_confirmation(family: &ProbeFamily) -> bool {
     matches!(
         family,
@@ -66,6 +78,30 @@ fn needs_token_confirmation(family: &ProbeFamily) -> bool {
             | ProbeFamily::FieldConstruction
             | ProbeFamily::SideEffect
             | ProbeFamily::CallDeletion
+    )
+}
+
+/// Returns true for the **effect** families (SideEffect, CallDeletion) whose
+/// changed behavior is a side effect or outbound call. For these, the canonical
+/// observer is a mock/expectation that kind-matches the seam rather than a
+/// value assertion that names a token from the changed expression. A genuine
+/// effect observer therefore confirms observation even without a `token_match`.
+fn is_effect_family(family: &ProbeFamily) -> bool {
+    matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
+}
+
+/// Returns true when `assertion` is a genuine **effect observer** that
+/// kind-matches an effect seam: a mock/expectation, a snapshot, or a
+/// whole-object equality capturing the resulting state. This is intentionally
+/// narrower than `oracle_matches_family` for effect families — it excludes the
+/// broad `text.contains("assert")` / `text.contains("expect")` substring
+/// matches, so a plain non-observing assertion (e.g. `assert!(result)`) does
+/// **not** clear `observation_unverified`. Only a real expectation/snapshot
+/// observer does.
+fn effect_observer_confirms(assertion: &OracleFact) -> bool {
+    matches!(
+        assertion.kind,
+        OracleKind::MockExpectation | OracleKind::Snapshot | OracleKind::WholeObjectEquality
     )
 }
 
@@ -153,13 +189,25 @@ fn analyze_related_assertions(
             );
             if matched {
                 if confirm_required {
+                    // Observation is confirmed when the assertion specifically
+                    // references the changed sub-expression. For value families
+                    // (MatchArm/ReturnValue/FieldConstruction) the only static
+                    // signal is a `token_match`. For effect families
+                    // (SideEffect/CallDeletion) the canonical observer is a
+                    // mock/expectation/snapshot that kind-matches the seam
+                    // without sharing a token, so a genuine effect observer also
+                    // confirms. This prevents a real mock from being wrongly
+                    // flagged `observation_unverified`, while a plain
+                    // non-observing assertion (no token, no effect observer)
+                    // stays unverified.
+                    let observation_confirmed = has_token_match
+                        || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
                     if !matched_any {
                         // First matching assertion: observation is unverified
-                        // unless a token_match confirms it references this
-                        // probe's specific changed sub-expression.
-                        observation_unverified = !has_token_match;
-                    } else if has_token_match {
-                        // A confirmed token match clears the unverified flag.
+                        // unless confirmed.
+                        observation_unverified = !observation_confirmed;
+                    } else if observation_confirmed {
+                        // A later confirmed assertion clears the unverified flag.
                         observation_unverified = false;
                     }
                 }
@@ -1134,13 +1182,51 @@ mod tests {
         );
     }
 
-    /// A SideEffect probe whose single assertion triggers family_match via
-    /// `text.contains("mock")` but no token referencing the specific effect
-    /// must downgrade to Weak.
+    /// A SideEffect probe whose single PLAIN assertion has neither a token
+    /// referencing the changed effect NOR an effect-observer kind (no mock,
+    /// snapshot, or whole-object) must emit observation_unverified. This is the
+    /// genuinely-blind case: the assertion only fired via the single-assertion
+    /// escape hatch.
     #[test]
-    fn side_effect_family_match_only_without_token_downgrades_to_weak() {
-        // "send_notification(user_id)" — tokens: ["send", "notification", "user"] (all len > 3).
-        // Assertion "mock.verify();" does not contain any of those tokens.
+    fn side_effect_plain_assertion_without_token_or_observer_emits_observation_unverified() {
+        // "send_notification(user_id)" — tokens: ["send", "notification", "user"].
+        // Assertion "assert!(ran);" contains none of those, and is not a mock,
+        // snapshot, or whole-object observer.
+        let probe = probe(ProbeFamily::SideEffect, "send_notification(user_id)");
+        let test = test_with_assertions(
+            "ran",
+            vec![oracle(
+                "assert!(ran);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "SideEffect probe with no token and no effect observer must downgrade to Weak"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "plain non-observing assertion must emit observation_unverified: got `{}`",
+            discriminate.summary
+        );
+    }
+
+    /// REGRESSION LOCK (#1216 second-pass): a SideEffect probe whose single
+    /// matched assertion is a genuine MOCK EXPECTATION that kind-matches the seam
+    /// but shares NO token with the probe expression must NOT emit
+    /// observation_unverified. The mock observes the effect; downgrading it to
+    /// observation_unverified would be a false weakening. (It may still be Weak
+    /// via the Medium-strength path, but never via observation_unverified.)
+    #[test]
+    fn side_effect_mock_observer_without_token_clears_observation_unverified() {
+        // "send_notification(user_id)" — tokens: ["send", "notification", "user"].
+        // Assertion "mock.verify();" shares no token but is a MockExpectation,
+        // i.e. a genuine effect observer.
         let probe = probe(ProbeFamily::SideEffect, "send_notification(user_id)");
         let test = test_with_assertions(
             "notification_checked",
@@ -1153,10 +1239,73 @@ mod tests {
         let (_observe, discriminate, _related) =
             reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
 
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "a genuine mock observer must clear observation_unverified even without a token: got `{}`",
+            discriminate.summary
+        );
+    }
+
+    /// REGRESSION LOCK (#1216 second-pass): a CallDeletion probe whose single
+    /// matched assertion is a whole-object equality (a genuine effect observer)
+    /// sharing no token must NOT emit observation_unverified. Whole-object
+    /// equality captures the resulting persisted state, so it observes the
+    /// effect even without naming the changed call token.
+    #[test]
+    fn call_deletion_whole_object_observer_without_token_clears_observation_unverified() {
+        // "persist_audit(record)" — tokens: ["persist", "audit", "record"].
+        // Assertion "assert_eq!(store, expected);" shares no token but is a
+        // WholeObjectEquality effect observer (Strong).
+        let probe = probe(ProbeFamily::CallDeletion, "persist_audit(record)");
+        let test = test_with_assertions(
+            "store_matches_expected",
+            vec![oracle(
+                "assert_eq!(store, expected);",
+                OracleKind::WholeObjectEquality,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "a whole-object effect observer must clear observation_unverified even without a token: got `{}`",
+            discriminate.summary
+        );
+    }
+
+    /// A VALUE family (ReturnValue) must NOT treat a mock/whole-object as an
+    /// observation confirmation — only a token_match confirms value families.
+    /// This guards against the effect-family relaxation leaking into value
+    /// families (the point of #1200/#1216: an ExactValue/whole-object oracle
+    /// does not kind-match a value seam's specific sub-expression).
+    #[test]
+    fn return_value_whole_object_without_token_still_emits_observation_unverified() {
+        // "base * SCALE" — tokens: ["base", "SCALE"]. Assertion
+        // "assert_eq!(result, expected);" is WholeObjectEquality but shares no
+        // token; for a VALUE family this must NOT clear observation_unverified.
+        let probe = probe(ProbeFamily::ReturnValue, "base * SCALE");
+        let test = test_with_assertions(
+            "result_matches_expected",
+            vec![oracle(
+                "assert_eq!(result, expected);",
+                OracleKind::WholeObjectEquality,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
         assert_eq!(
             discriminate.state,
             StageState::Weak,
-            "SideEffect probe with no token_match must downgrade to Weak"
+            "ReturnValue (value family) with no token must stay observation_unverified"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "value family must not be cleared by an effect-observer kind: got `{}`",
+            discriminate.summary
         );
     }
 

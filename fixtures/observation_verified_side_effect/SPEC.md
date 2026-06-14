@@ -4,8 +4,8 @@ Spec: RIPR-SPEC-0094
 
 ## Given
 
-Production code changes a `process_order` function to pass `order_id` as the
-payload to `notifier.send`:
+Production code changes a `process_order` function to pass `order_id` (instead
+of a static literal) as the payload to `notifier.send`:
 
 ```rust
 pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {
@@ -13,24 +13,22 @@ pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {
 }
 ```
 
-The related test exercises `process_order` AND also directly calls
-`notifier.send(sent_order_id)` in its assertions, referencing `order_id` via a
-local variable `sent_order_id`:
+The `Notifier` records every payload it sends, and the related test asserts the
+exact recorded payload with `assert_eq!` — a Strong exact-value observer that
+also names `notifier` (a token from the probe expression):
 
 ```rust
 #[test]
-fn process_order_sends_order_id() {
-    let notifier = Notifier;
-    let sent_order_id = "order-42";
-    let result = process_order(&notifier, sent_order_id);
-    assert!(notifier.send(sent_order_id));
+fn process_order_sends_exact_order_id() {
+    let notifier = Notifier::new();
+    process_order(&notifier, "order-42");
+    assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);
 }
 ```
 
-The assertion `assert!(notifier.send(sent_order_id))` contains "sent_order_id",
-which as a substring contains "order_id" — a token from the probe expression
-`notifier.send(order_id)`. Therefore `token_match` fires and
-`observation_unverified` is NOT set.
+This assertion both (a) token-matches the probe expression
+`notifier.send(order_id)` and (b) reaches Strong oracle strength, so the
+discriminate stage is `yes` and the finding is `exposed`.
 
 ## When
 
@@ -47,17 +45,17 @@ ripr check --root fixtures/observation_verified_side_effect/input \
 
 ## Then
 
-`ripr` must NOT emit `observation_unverified` for the SideEffect probe.
-The discriminate summary must NOT contain `observation_unverified` — it may
-be weak from oracle strength (mock/expectation yields Medium), but the
-weakness must come from the oracle strength path, not the token-match guard.
+`ripr` must classify the SideEffect/CallDeletion probe as `exposed` and must
+NOT emit `observation_unverified`.
 
-This fixture is the **anti-over-correction proof** for the SideEffect family
-in [RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md):
-a SideEffect probe with a token-matching assertion must NOT be downgraded by
-`observation_unverified`.
+This fixture is the **verified-effect control** for
+[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md):
+an effect probe whose changed behavior is genuinely observed (strong persisted-
+state assertion) stays `exposed`, proving the `observation_unverified` guard
+does not over-correct legitimately-observed effects.
 
 ## Must Not
 
-- Emit `observation_unverified` when the assertion contains a token from the changed call.
+- Emit `observation_unverified` when the assertion observes the changed effect.
+- Downgrade a strong, token-matching effect observer to `weakly_exposed`.
 - Use mutation-runtime outcome vocabulary.
