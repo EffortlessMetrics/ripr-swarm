@@ -4257,16 +4257,48 @@ fn classify_sink_alignment(
         .max_by_key(|test| test.oracle_strength.rank())
         .and_then(|test| test.oracle.clone());
 
-    // Owner-name tokens.
-    let mut owner_tokens: Vec<String> = owner
+    // Owner-name tokens, split for identity-aware crediting. For a method /
+    // classmethod owner the bare method name is collision-prone: a same-named
+    // method on an unrelated class (`PaymentProcessor.validate` vs owner
+    // `TokenValidator.validate`) shares the token `validate` yet is a different
+    // entity. Crediting `direct` from the bare method name alone is a silent
+    // false-`exposed`, so it requires owner-class identity (the class token is
+    // observed, or a strong observing test imports the owner's class). Class
+    // tokens and free-function names are unambiguous and credit directly.
+    let is_method_owner = matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    );
+    let owner_class_token: Option<String> = if is_method_owner {
+        owner
+            .qualified_name
+            .rsplit_once('.')
+            .map(|(class, _)| class)
+            .filter(|class| !class.is_empty() && *class != "<module>")
+            .map(str::to_string)
+    } else {
+        None
+    };
+    // Unambiguous identity tokens: every qualified-name segment except the bare
+    // method name of a method owner. For non-method owners this is the full set
+    // (a free-function name is its own identity).
+    let mut identity_tokens: Vec<String> = owner
         .qualified_name
         .split('.')
         .filter(|token| !token.is_empty() && *token != "<module>")
+        .filter(|token| !(is_method_owner && *token == owner.name))
         .map(str::to_string)
         .collect();
-    if !owner.name.is_empty() && owner.name != "<module>" {
-        owner_tokens.push(owner.name.clone());
+    if !is_method_owner && !owner.name.is_empty() && owner.name != "<module>" {
+        identity_tokens.push(owner.name.clone());
     }
+    // The collision-prone bare method name of a method owner, gated on identity.
+    let method_name_token: Option<String> =
+        if is_method_owner && !owner.name.is_empty() && owner.name != "<module>" {
+            Some(owner.name.clone())
+        } else {
+            None
+        };
     // Import aliases of the owner: `from m import owner as alias` makes the test
     // assert on `alias(...)`, which still observes the owner's output.
     let owner_simple = owner
@@ -4285,14 +4317,19 @@ fn classify_sink_alignment(
         }
     }
     let mut change_only = change_tokens.clone();
-    owner_tokens.retain(|token| token.len() >= 2);
+    identity_tokens.retain(|token| token.len() >= 2);
+    let method_name_token = method_name_token.filter(|token| token.len() >= 2);
     alias_tokens.retain(|token| token.len() >= 2);
     change_only.retain(|token| token.len() >= 2);
 
     // Module owner / no usable token: the prior boolean returned `true` here, so
     // the decision must stay `observes`. Map to `unknown` with the reason that
     // `observes()` special-cases back to true.
-    if owner_tokens.is_empty() && alias_tokens.is_empty() && change_only.is_empty() {
+    if identity_tokens.is_empty()
+        && method_name_token.is_none()
+        && alias_tokens.is_empty()
+        && change_only.is_empty()
+    {
         return SinkAlignment {
             changed_sink,
             observed_sink,
@@ -4310,8 +4347,31 @@ fn classify_sink_alignment(
             })
         })
     };
-    let (oracle_alignment, alignment_reason) = if any_strong_observes(&owner_tokens) {
+    // Identity evidence for a method owner: a strong observing test that imports
+    // or aliases the owner's class. Without it, a bare method-name match is not
+    // enough to credit `direct` (the false-`exposed` guard).
+    let strong_test_imports_owner_class = owner_class_token.as_ref().is_some_and(|class| {
+        strong_tests.iter().any(|related_test| {
+            all_tests.iter().any(|test| {
+                test.name == related_test.name
+                    && test.file == related_test.file
+                    && test
+                        .imports
+                        .iter()
+                        .any(|import| &import.imported == class || &import.alias == class)
+            })
+        })
+    });
+    let method_name_observed = method_name_token
+        .as_ref()
+        .is_some_and(|token| any_strong_observes(std::slice::from_ref(token)));
+    let (oracle_alignment, alignment_reason) = if any_strong_observes(&identity_tokens) {
         ("direct", "strong_oracle_observes_owner_name")
+    } else if method_name_observed && strong_test_imports_owner_class {
+        (
+            "direct",
+            "strong_oracle_observes_owner_method_with_class_identity",
+        )
     } else if any_strong_observes(&alias_tokens) {
         ("alias", "strong_oracle_observes_import_alias")
     } else if any_strong_observes(&change_only) {
@@ -5747,6 +5807,66 @@ def test_build_user_smoke():
                 .iter()
                 .all(|entry| !entry.starts_with("missing_discriminator:"))
         );
+        Ok(())
+    }
+
+    const AUTH_SOURCE: &str = "class TokenValidator:\n    def __init__(self, valid):\n        self._valid = valid\n\n    def validate(self, token):\n        return token.strip() in self._valid\n";
+    const AUTH_CHANGED_LINE: &str = "        return token.strip() in self._valid";
+
+    #[test]
+    fn method_name_without_class_identity_stays_orthogonal() -> Result<(), String> {
+        // False-`exposed` guard: the only related test exercises a DIFFERENT
+        // class's same-named method (`PaymentProcessor.validate`) and never
+        // imports the owner's class. The bare method-name token `validate` must
+        // not credit `direct` alignment without owner-class identity.
+        let owners = extract_owners(Path::new("src/auth.py"), AUTH_SOURCE);
+        let tests = extract_tests(
+            Path::new("tests/test_billing.py"),
+            "from src.billing import PaymentProcessor\n\n\ndef test_billing_validate():\n    proc = PaymentProcessor()\n    assert proc.validate(\"card1234 \") == True\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/auth.py"),
+            6,
+            AUTH_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside validate should classify".to_string());
+        };
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "a same-named method on an unrelated class must not credit exposed"
+        );
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+        Ok(())
+    }
+
+    #[test]
+    fn method_name_with_class_import_identity_credits_exposed() -> Result<(), String> {
+        // Identity preserved: the test imports and constructs the owner's class,
+        // then observes its method under an exact-value oracle. The bare
+        // method-name match is legitimate here, so `direct`/`exposed` stands.
+        let owners = extract_owners(Path::new("src/auth.py"), AUTH_SOURCE);
+        let tests = extract_tests(
+            Path::new("tests/test_auth.py"),
+            "from src.auth import TokenValidator\n\n\ndef test_auth_validate():\n    validator = TokenValidator([\"card1234\"])\n    assert validator.validate(\"card1234\") == True\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/auth.py"),
+            6,
+            AUTH_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside validate should classify".to_string());
+        };
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "a test that imports and exercises the owner class keeps exposed credit"
+        );
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
         Ok(())
     }
 
