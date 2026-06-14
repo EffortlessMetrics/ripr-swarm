@@ -16,14 +16,14 @@ Probe
   owner:  src/lib.rs::impl Ledger::apply
 
 Static exposure
-  propagation_unknown (note, confidence 0.87)
+  propagation_unknown (note, confidence 0.79)
 
 Evidence
   - reach yes: Related tests appear to reach apply: apply_changes_balance
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches unknown sink: value is discarded at the call-chain tail; propagation unknown (line 11)
   - related test tests/ledger_tests.rs:4 apply_changes_balance uses strong exact value oracle: assert_eq!(ledger.balance(), 145);
   - observed function argument value amount = 5 at line 6
@@ -31,6 +31,7 @@ Evidence
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink
+  - No strong discriminator was detected
 
 Stop reasons:
   - propagation_evidence_unknown

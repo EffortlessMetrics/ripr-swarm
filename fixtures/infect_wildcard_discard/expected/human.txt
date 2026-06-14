@@ -16,14 +16,14 @@ Probe
   owner:  src/lib.rs::process
 
 Static exposure
-  infection_unknown (warning, confidence 0.74)
+  infection_unknown (warning, confidence 0.66)
 
 Evidence
   - reach yes: Related tests appear to reach process: process_returns_amount_unchanged
   - infection unknown: Changed value is bound to a discard pattern; it cannot infect a sink
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches unknown sink: value is discarded at the call-chain tail; propagation unknown (line 2)
   - related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);
   - observed assertion argument value 42 at line 5
@@ -31,6 +31,7 @@ Evidence
 
 Weakness
   - Changed value is bound to a discard pattern; it cannot infect a sink
+  - No strong discriminator was detected
 
 Stop reasons:
   - infection_evidence_unknown
@@ -50,14 +51,14 @@ Probe
   owner:  src/lib.rs::process
 
 Static exposure
-  propagation_unknown (note, confidence 0.87)
+  propagation_unknown (note, confidence 0.79)
 
 Evidence
   - reach yes: Related tests appear to reach process: process_returns_amount_unchanged
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches unknown sink: unknown sink (line 3)
   - related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);
   - observed assertion argument value 42 at line 5
@@ -65,6 +66,7 @@ Evidence
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink
+  - No strong discriminator was detected
 
 Stop reasons:
   - propagation_evidence_unknown

@@ -10,7 +10,7 @@
       "id": "probe:src_lib.rs:call_deletion:50f5e636",
       "classification": "infection_unknown",
       "severity": "warning",
-      "confidence": 0.74,
+      "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:call_deletion:50f5e636",
         "family": "call_deletion",
@@ -24,14 +24,14 @@
         "infect": {"state":"unknown","confidence":"low","summary":"Changed value is bound to a discard pattern; it cannot infect a sink"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach process: process_returns_amount_unchanged", "infection unknown: Changed value is bound to a discard pattern; it cannot infect a sink", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink: value is discarded at the call-chain tail; propagation unknown (line 2)", "related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);", "observed assertion argument value 42 at line 5", "observed function argument value amount = 42 at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach process: process_returns_amount_unchanged", "infection unknown: Changed value is bound to a discard pattern; it cannot infect a sink", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches unknown sink: value is discarded at the call-chain tail; propagation unknown (line 2)", "related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);", "observed assertion argument value 42 at line 5", "observed function argument value amount = 42 at line 5"],
       "flow_sinks": [
         {"kind":"unknown","text":"value is discarded at the call-chain tail; propagation unknown","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed value is bound to a discard pattern; it cannot infect a sink", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach process: process_returns_amount_unchanged", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Changed value is bound to a discard pattern; it cannot infect a sink"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed value is bound to a discard pattern; it cannot infect a sink", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach process: process_returns_amount_unchanged"],
+      "missing": ["Changed value is bound to a discard pattern; it cannot infect a sink", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(process(42), 42);"
       },
@@ -89,7 +89,7 @@
       "id": "probe:src_lib.rs:return_value:d0b06139",
       "classification": "propagation_unknown",
       "severity": "note",
-      "confidence": 0.87,
+      "confidence": 0.79,
       "probe": {
         "id": "probe:src_lib.rs:return_value:d0b06139",
         "family": "return_value",
@@ -103,14 +103,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach process: process_returns_amount_unchanged", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink: unknown sink (line 3)", "related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);", "observed assertion argument value 42 at line 5", "observed function argument value amount = 42 at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach process: process_returns_amount_unchanged", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches unknown sink: unknown sink (line 3)", "related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);", "observed assertion argument value 42 at line 5", "observed function argument value amount = 42 at line 5"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process: process_returns_amount_unchanged", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process: process_returns_amount_unchanged"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(process(42), 42);"
       },

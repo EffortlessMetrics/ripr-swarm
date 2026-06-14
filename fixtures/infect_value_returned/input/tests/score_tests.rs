@@ -1,6 +1,6 @@
-use infect_value_returned_fixture::score;
+use infect_value_returned_fixture::{MULTIPLIER, score};
 
 #[test]
-fn score_returns_expected_value() {
-    assert_eq!(score(10), 10);
+fn score_uses_multiplier() {
+    assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);
 }

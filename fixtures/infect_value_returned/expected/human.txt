@@ -2,13 +2,13 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/infect_value_returned/input
 
-Summary: 3 probe(s), 2 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown
+Summary: 3 probe(s), 1 exposed, 1 weak, 0 unrevealed, 0 no path, 1 unknown
 
-INFO fixtures/infect_value_returned/input/src/lib.rs:2
+INFO fixtures/infect_value_returned/input/src/lib.rs:4
 
 Changed
   before: amount + 1
-  after:  let result = helper(amount * 9);
+  after:  let result = helper(amount * MULTIPLIER);
 
 Probe
   family: call_deletion
@@ -19,17 +19,18 @@ Static exposure
   exposed (info, confidence 1.00)
 
 Evidence
-  - reach yes: Related tests appear to reach score: score_returns_expected_value
+  - reach yes: Related tests appear to reach score: score_uses_multiplier
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Changed behavior appears to influence call effect: let result = helper(amount * 9)
+  - propagation yes: Changed behavior appears to influence call effect: let result = helper(amount * MULTIPLIER)
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator yes: Strong oracle found: exact value or pattern assertion
-  - local flow reaches call effect: let result = helper(amount * 9) (line 2)
-  - related test tests/score_tests.rs:4 score_returns_expected_value uses strong exact value oracle: assert_eq!(score(10), 10);
+  - local flow reaches call effect: let result = helper(amount * MULTIPLIER) (line 4)
+  - related test tests/score_tests.rs:4 score_uses_multiplier uses strong exact value oracle: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);
+  - observed assertion argument value 1 at line 5
   - observed assertion argument value 10 at line 5
   - observed function argument value amount = 10 at line 5
 
-NOTE fixtures/infect_value_returned/input/src/lib.rs:2
+NOTE fixtures/infect_value_returned/input/src/lib.rs:4
 
 Changed
   before: amount + 1
@@ -44,13 +45,14 @@ Static exposure
   static_unknown (note, confidence 0.61)
 
 Evidence
-  - reach yes: Related tests appear to reach score: score_returns_expected_value
+  - reach yes: Related tests appear to reach score: score_uses_multiplier
   - infection unknown: Changed syntax is not mapped to a high-confidence probe family
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink: unknown sink (line 2)
-  - related test tests/score_tests.rs:4 score_returns_expected_value uses unknown exact value oracle: assert_eq!(score(10), 10);
+  - local flow reaches unknown sink: unknown sink (line 4)
+  - related test tests/score_tests.rs:4 score_uses_multiplier uses unknown exact value oracle: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);
+  - observed assertion argument value 1 at line 5
   - observed assertion argument value 10 at line 5
   - observed function argument value amount = 10 at line 5
 
@@ -64,7 +66,7 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 
-INFO fixtures/infect_value_returned/input/src/lib.rs:3
+WARNING fixtures/infect_value_returned/input/src/lib.rs:5
 
 Changed
   before: amount + 1
@@ -76,15 +78,22 @@ Probe
   owner:  src/lib.rs::score
 
 Static exposure
-  exposed (info, confidence 1.00)
+  weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach score: score_returns_expected_value
+  - reach yes: Related tests appear to reach score: score_uses_multiplier
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence returned value: result + 1
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
-  - local flow reaches returned value: result + 1 (line 3)
-  - related test tests/score_tests.rs:4 score_returns_expected_value uses strong exact value oracle: assert_eq!(score(10), 10);
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - local flow reaches returned value: result + 1 (line 5)
+  - related test tests/score_tests.rs:4 score_uses_multiplier uses strong exact value oracle: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);
+  - observed assertion argument value 1 at line 5
   - observed assertion argument value 10 at line 5
   - observed function argument value amount = 10 at line 5
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.

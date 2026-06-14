@@ -10,7 +10,7 @@
       "id": "probe:src_lib.rs:call_deletion:cdc2bbfa",
       "classification": "propagation_unknown",
       "severity": "note",
-      "confidence": 0.87,
+      "confidence": 0.79,
       "probe": {
         "id": "probe:src_lib.rs:call_deletion:cdc2bbfa",
         "family": "call_deletion",
@@ -24,14 +24,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach apply: apply_changes_balance", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink: value is discarded at the call-chain tail; propagation unknown (line 11)", "related test tests/ledger_tests.rs:4 apply_changes_balance uses strong exact value oracle: assert_eq!(ledger.balance(), 145);", "observed function argument value amount = 5 at line 6", "observed assertion argument value 145 at line 7"],
+      "evidence_path": ["reach yes: Related tests appear to reach apply: apply_changes_balance", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches unknown sink: value is discarded at the call-chain tail; propagation unknown (line 11)", "related test tests/ledger_tests.rs:4 apply_changes_balance uses strong exact value oracle: assert_eq!(ledger.balance(), 145);", "observed function argument value amount = 5 at line 6", "observed assertion argument value 145 at line 7"],
       "flow_sinks": [
         {"kind":"unknown","text":"value is discarded at the call-chain tail; propagation unknown","line":11}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach apply: apply_changes_balance", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach apply: apply_changes_balance"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
         "6": "ledger.apply(5);",
         "7": "assert_eq!(ledger.balance(), 145);"

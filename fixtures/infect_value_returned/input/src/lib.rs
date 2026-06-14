@@ -1,5 +1,7 @@
+pub const MULTIPLIER: i32 = 9;
+
 pub fn score(amount: i32) -> i32 {
-    let result = helper(amount * 9);
+    let result = helper(amount * MULTIPLIER);
     result + 1
 }
 
