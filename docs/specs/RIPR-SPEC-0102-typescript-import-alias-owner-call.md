@@ -161,6 +161,20 @@ the prior behavior was (likely uncredited / heuristic).
 - NEVER credit a shadowed alias at High — shadow guard applied before crediting.
 - Namespace imports (`import * as ns`): OUT OF SCOPE. They remain
   `ImportedOwnerCall` / `import_path_affinity` / Medium.
+
+## Known limitation (named, not hidden)
+
+The shadow guard `local_identifier_declared_in_test_body` is **line-based**: it
+scans each source line for a `const`/`let`/`var` declaration of the alias at the
+start of the (trimmed) line. A shadow declared **inline on the same source line**
+as other statements — e.g. `test('x', () => { const cv = f; expect(cv(5))... })`
+all on one physical line — is NOT detected, so such a case would still be credited
+at `direct_owner_call` / High. This form is rare and discouraged by standard
+formatters (prettier/eslint split it onto its own line, where the guard fires —
+verified behaviorally). The mis-statement is confined to the **advisory relation
+reason/confidence metadata**; it never changes the exposure class. This matches
+the pre-existing behavior of the `ImportedOwnerCall` path, which used the same
+line-based guard. A token-/AST-scoped shadow check is deferred (not in this slice).
 - Default imports: OUT OF SCOPE. Remain on existing path.
 - Re-export chains: OUT OF SCOPE. `ReExportChainFollowed` is unchanged.
 - No `schema_version` bump. The `relation_reason: "direct_owner_call"` string is
