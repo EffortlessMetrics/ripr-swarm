@@ -2304,8 +2304,17 @@ fn construct_result_is_called(text: &str, open_paren_idx: usize) -> bool {
 }
 
 fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    // A method/classmethod cannot be imported directly by its bare name, so the
+    // `import.imported == owner.name` branch would only ever match a same-named
+    // free function in an unrelated module — a false relation that then feeds a
+    // false-`exposed`. Restrict that branch to non-method owners.
+    let is_method_owner = matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    );
     test.imports.iter().any(|import| {
-        (import.imported == owner.name
+        (!is_method_owner
+            && import.imported == owner.name
             && import.alias != owner.name
             && contains_call_name(&test.body_text, &import.alias))
             || (imported_module_matches_owner(import, owner)
@@ -4181,9 +4190,16 @@ fn classify_sink_alignment(
     let mut alias_tokens: Vec<String> = Vec::new();
     for test in all_tests {
         for import in &test.imports {
-            if (import.imported == owner_simple || import.imported == owner.name)
-                && !import.alias.is_empty()
-            {
+            // For a method/classmethod owner the bare method name is not directly
+            // importable, so only the owner's CLASS alias is identity-bearing.
+            // Matching the bare method name here would credit any same-named free
+            // function aliased in an unrelated module (a false-`exposed`).
+            let imported_matches = if is_method_owner {
+                owner_class_token.as_deref() == Some(import.imported.as_str())
+            } else {
+                import.imported == owner_simple || import.imported == owner.name
+            };
+            if imported_matches && !import.alias.is_empty() {
                 alias_tokens.push(import.alias.clone());
             }
         }
@@ -4227,10 +4243,21 @@ fn classify_sink_alignment(
             all_tests.iter().any(|test| {
                 test.name == related_test.name
                     && test.file == related_test.file
-                    && test
-                        .imports
-                        .iter()
-                        .any(|import| &import.imported == class || &import.alias == class)
+                    && test.imports.iter().any(|import| {
+                        if &import.imported != class && &import.alias != class {
+                            return false;
+                        }
+                        // A dead import is not identity evidence: the test body
+                        // must actually use the owner class (by its local name),
+                        // else a same-named method on an unrelated receiver still
+                        // over-credits behind one unused import.
+                        let local = if import.alias.is_empty() {
+                            import.imported.as_str()
+                        } else {
+                            import.alias.as_str()
+                        };
+                        oracle_text_observes_token(&test.body_text, local)
+                    })
             })
         })
     });
@@ -5609,6 +5636,61 @@ def test_build_user_smoke():
             "a test that imports and exercises the owner class keeps exposed credit"
         );
         assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+        Ok(())
+    }
+
+    #[test]
+    fn method_name_dead_import_does_not_credit_exposed() -> Result<(), String> {
+        // Bypass guard: a DEAD import of the owner class (never used in the test
+        // body) is not identity evidence. The test exercises a different class's
+        // same-named method, so it must stay conservative.
+        let owners = extract_owners(Path::new("src/auth.py"), AUTH_SOURCE);
+        let tests = extract_tests(
+            Path::new("tests/test_billing.py"),
+            "from src.billing import PaymentProcessor\nfrom src.auth import TokenValidator\n\n\ndef test_billing_validate():\n    proc = PaymentProcessor()\n    assert proc.validate(\"card1234 \") == True\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/auth.py"),
+            6,
+            AUTH_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside validate should classify".to_string());
+        };
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "a dead import of the owner class must not credit exposed"
+        );
+        assert_ne!(finding.oracle_alignment.as_deref(), Some("direct"));
+        Ok(())
+    }
+
+    #[test]
+    fn method_owner_free_function_alias_does_not_credit_exposed() -> Result<(), String> {
+        // Bypass guard: a same-named FREE function aliased from an unrelated
+        // module must not credit `exposed`/`alias` for a method owner. The test
+        // never imports or exercises the owner's class.
+        let owners = extract_owners(Path::new("src/auth.py"), AUTH_SOURCE);
+        let tests = extract_tests(
+            Path::new("tests/test_helpers.py"),
+            "from src.helpers import validate as run_check\n\n\ndef test_helpers_run_check():\n    assert run_check(\"data\") == True\n",
+        );
+        if let Some(finding) = classify_change(
+            Path::new("src/auth.py"),
+            6,
+            AUTH_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) {
+            assert_ne!(
+                finding.class,
+                ExposureClass::Exposed,
+                "a same-named free-function alias must not credit exposed for a method owner"
+            );
+            assert_ne!(finding.oracle_alignment.as_deref(), Some("alias"));
+        }
         Ok(())
     }
 
