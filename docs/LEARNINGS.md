@@ -1219,3 +1219,167 @@ paid off; the two times a proxy was trusted (an "infra" failure that was a real
 golden drift; a plan that assumed a non-existent oracle) it cost a cycle. The
 full narrative lives in `docs/STATIC_EXPOSURE_MODEL.md`
 ("The discriminator test, turned inward").
+
+## 2026-06-13: Dogfood Honesty-Audit Method — a repeatable playbook
+
+This multi-wave method surfaced and fixed approximately ten real honesty bugs across a single campaign. Record it here so a future agent can re-run it cold.
+
+### The audit question
+
+For every surface and every pipeline stage, ask: can `ripr` emit a **fake-clean** (silence or under-report a real gap) or a **false-actionable** (claim `exposed`/covered when it is not)? Fail-open is the dangerous direction; fail-closed (`*_unknown` / `weakly_exposed` / named limitation) is safe. The product question under audit is the same one `ripr` answers on user diffs: "do the current tests appear to contain a discriminator that would notice if THIS changed behavior were wrong?"
+
+### Two audit axes
+
+**(a) Rendering surfaces.** Every surface that emits a finding — human, JSON, SARIF, GitHub annotation, LSP diagnostic, LSP hover, badge, repo-md, repo-SARIF, `explain`, `context` — must AGREE and must each carry the relevant disclosure. A fix applied on one surface (e.g. `reconcile_next_step`) must reach ALL surfaces via a shared helper plus an all-surface parity test; never fork a per-surface copy of the logic. See the "Reuse the shared validator/renderer" entry above for the parity-test pattern.
+
+**(b) RIPR pipeline stages.** At each stage — Reach → Infect → Propagate → Observe → Discriminate — the classifier must fail-closed to `*_unknown` when it cannot prove its answer. A single fail-open default at any stage inflates the whole finding to `exposed`. Check every stage independently; an `exposed` rating that cannot be traced to a confirmed discriminator at the Discriminate stage is the silent over-credit this audit exists to catch.
+
+### Per-gap discipline (non-negotiable sequence)
+
+1. **Dogfood with adversarial fixtures.** Run `cargo xtask dogfood` and `cargo xtask fixtures`. If a new fix candidate is unclear, add a should-gap fixture and a should-stay-quiet fixture before writing any code.
+2. **Producer-trace first.** For any classification or count change, identify the real production code path that would drive the field. A wrong flip — crediting a heuristic or a hand-set field — creates the inverse bug (a fake-zero or false-`exposed`). See the "not_available is better than a fake zero" and "Detection needs a real producer" entries.
+3. **Fail-closed slice with BEFORE/AFTER fixtures.** The fix must: (a) downgrade the over-claim, AND (b) leave a correctly-discriminated case at `exposed`, proving no over-correction.
+4. **Verify the artifact yourself.** Run the real command on a real finding and read the output. Gates, tests, and a builder's "all gates pass" are weak oracles — this campaign's sharpest honesty contradiction (`repair_packet_ready: true` next to "evidence needed: [the fields it already has]") passed every gate. The required discipline: `cargo check` for compilation, a fresh-binary behavioral repro of the exact reported scenario, and the full `cargo xtask check-*` gate list (not a hand-picked subset) before declaring done.
+
+### Cross-references
+
+This playbook generalizes several earlier entries: the "Detection needs a real producer" rule (fake-zero anti-pattern), the "any hash over a path must normalize separators" rule (content-addressed ids), the "full routed-rust gate list" rule (partial-gate leakage), the "register before launch" rule (spec-number collision under N-wide concurrency), and the "fail-open is the cardinal sin" principle throughout.
+
+## 2026-06-13: The Single-Assertion Escape Hatch — method-level reach is not sub-expression discrimination
+
+### The bug (first fixed in #1200, generalized in #1216)
+
+`analysis/classify/reveal.rs` contained an escape hatch: when `assertion_count == 1`, the classifier credited the test with discriminating the changed sub-expression even when the assertion text referenced **none of the changed tokens**. A test that merely reached the owner method was being credited as observing the specific change, inflating the finding to `exposed` / confidence 1.00.
+
+The fix for `MatchArm` (#1200) revealed the same pattern in `ReturnValue`, `FieldConstruction`, `SideEffect`, and `CallPresence` (#1216). A further variant — the type-blind-token hole — was found where a sibling-arm assertion could clear a guard via a shared enum qualifier without naming the discriminating arm's tokens.
+
+### The durable rule
+
+**Method-level reach must never be credited as sub-expression-level discrimination.** When the only basis for `exposed` is the single-assertion escape hatch with no token match between the assertion text and the changed sub-expression's tokens, downgrade `exposed` → `weakly_exposed`:
+
+- Reach, Infect, and Propagate hold (the test reaches the owner and the change can infect the execution path).
+- Observe and Discriminate are unconfirmed (the single assertion does not reference the specific changed token, so the oracle's discriminating power for this sub-expression is unknown).
+- Emit `arm_observation_unverified` (or the analogous typed reason for the probe family) as the downgrade reason so consumers understand what evidence is missing.
+
+### Why this matters
+
+This is the Observe/Discriminate-stage instance of the general fail-closed rule (see "Discrimination vs Coverage" and "Two error rates" entries above). The escape hatch was intended for the case where a single comprehensive assertion covers the entire changed expression, but it over-fired whenever any assertion existed at all. Because the over-credit is silent — `ripr` emits a clean `exposed` with no caveat — it is the dangerous direction. The fix is to require at least one assertion token to match a changed token before the escape hatch fires; absent that match, `weakly_exposed` with a named reason is the honest answer.
+
+Any future work on `reveal.rs` or the classification heuristics must apply this check per probe family and must be backed by both a should-gap fixture (where the single assertion genuinely does not observe the changed token, producing `weakly_exposed`) and a should-stay-`exposed` fixture (where a direct-token assertion keeps the finding at `exposed`, proving no over-correction).
+## 2026-06-13: The local-callable "flip to exposed" goal was aimed at the wrong case
+
+A multi-agent design pass confidently proposed a ~35-line relation fix to flip
+`fixtures/python_local_callable_binding` (the tenacity
+`stop = stop_after_attempt(3); self.assertTrue(stop(3))` shape) from
+`weakly_exposed` to `exposed`. Reading the actual classifier disproved it twice
+over, and the second disproof reframed the whole work item:
+
+1. **A relation fix alone cannot reach `exposed`.** `classify_change` yields
+   `exposed` only when `strongest_strength >= Strong` **and** `alignment.observes()`.
+   `oracle_for_call` maps `assertTrue`/`assertFalse` to `OracleStrength::Smoke`.
+   So even with a perfect relation, the smoke oracle falls through to
+   `weakly_exposed`; and `classify_sink_alignment` only inspects `Strong`-rank
+   oracles, and the oracle text `stop(3)` carries the local var `stop`, not the
+   owner tokens `stop_after_attempt`/`__call__`, so it would read `orthogonal`
+   anyway. Three coupled barriers, not one.
+2. **`exposed` is the *wrong target*.** The golden
+   `fixtures/python_broad_boolean_assertion` pins `assert is_priority(100)` — a
+   *direct* call to the changed predicate owner under a broad boolean — as
+   `weakly_exposed`/`smoke` **by design**. The tenacity case is that exact shape
+   plus a local binding. Flipping it to `exposed` would contradict the golden and
+   the discrimination-not-coverage contract: `assertTrue(predicate())` is a weak
+   oracle on purpose (a single truthy check does not pin the boundary). The
+   local-callable problem is therefore a **relation-diagnosis bug** (the card
+   falsely implies no direct test exists), not a classification bug; the correct
+   resolved state is `weakly_exposed`/`smoke`/direct-relation, *matching*
+   `broad_boolean`.
+
+The deeper correction is to the Tier B reading itself: the four measured
+false-actionables split by **oracle strength**. tenacity's discriminating
+assertion is `assertTrue(stop(3))` — a *smoke* oracle — so the *correct resolved*
+state is `weakly_exposed`/smoke per `broad_boolean`, not a clean false-actionable.
+(Be precise about cause: today `ripr` reaches `weakly_exposed` for a *different*
+reason than the resolved one — the `same_stem` relation miss means it never links
+the test, so it surfaces `oracle_strength: unknown`, not `smoke`. The relation fix
+*surfaces* the smoke oracle and corrects the misleading "no direct test" card
+without changing the class. Don't conflate "the assertion is smoke" with "`ripr`
+detected smoke" — it currently detects neither the relation nor the oracle.)
+jinja (`tmpl.render() == "exact"`, ExactValue), structlog
+(`pytest.raises(ValueError, match=...)`, ExactErrorVariant) and anyio
+(`pytest.raises(Cancelled)`) are *strong* oracles `ripr` never saw because of
+relation/extraction misses (framework dispatch, cross-file, function-result
+binding) — those are the **true** false-actionables, and the only ones
+legitimately flippable to `exposed` (an empirical grep corroborates the gate: 14
+smoke oracles classify `weakly_exposed`, 7 strong un-limited oracles classify
+`exposed`). So the real precision lever is **linking the
+strong oracle `ripr` is missing**, not crediting the weak smoke oracle it already
+half-sees. The fixture and tracker were built around the weakest example.
+
+**How to apply:** before "fixing" a `weakly_exposed`, check the oracle *strength*
+of the discriminating test against the `broad_boolean` golden. If it is a broad
+boolean / smoke assertion, `weakly_exposed` is correct and the work is a card-text
+fix, not a classification change — chasing `exposed` there would drift `ripr`
+back toward coverage. Reserve `exposed` flips for missed *strong, sink-aligned*
+oracles. See the "verify the artifact, not the proxy" entry above — an agent panel's plausible
+plan was disproved only by reading the classifier and the golden, not the plan.
+
+## 2026-06-13: The first false-`exposed` — substring token alignment over-credits
+
+An adversarial sweep across eight cloned Python repos found `ripr`'s first
+confirmed false-`exposed` (the silent over-credit direction the whole product
+exists to avoid). In anyio, changing `len(buffer) < max_buffer_size` to `<=` in
+`send_nowait` read `exposed`/`changed_sink_token` even though no *strong* oracle
+observes that boundary — because `classify_sink_alignment` matched changed-sink
+tokens by **substring** (`text.contains(token)`), and the changed token `buffer`
+is a substring of an unrelated `buffered_stream` oracle from a *different class*.
+Crediting coincidental co-occurrence as discrimination is exactly the "drift back
+to coverage" this log keeps warning about — and short, common tokens (`buffer`,
+`len`, `key`, `_state`) are the worst offenders. Fix (#1224): match tokens only at
+Python identifier boundaries (`oracle_text_observes_token`). `buffer` no longer
+matches `buffered_stream`; whole words like `key` in `Invalid key` still observe.
+
+Two durable points:
+
+- **Verify an agent's count, not just its claims.** The sweep agents reported "6
+  confirmed false-`exposed`." Reading the actual `ripr` output cut it to **one**:
+  four were conservative classes (`static_unknown`/`weakly_exposed`) the agents
+  mislabeled as over-credit, and one was a *correct* `exposed` they flagged in
+  error. A false-`exposed` is only real when `ripr` actually emits `exposed`;
+  bake that into the adjudication prompt or the agents conflate "the test doesn't
+  discriminate" with "`ripr` over-credited." Re-running the sweep with the strict
+  definition on the fixed binary returned **0** across the corpus, confirming the
+  vector closed with no siblings.
+- **The natural sweep stayed clean; this needed adversarial construction.** The
+  honest claim is "0 false-`exposed` on natural single-diff sweeps; one found
+  under adversarial token-coincidence probing, now closed." Both halves matter:
+  the safety result is real, *and* the heuristic had a reachable hole.
+
+**How to apply:** any token/substring match feeding `exposed` (alignment, escape
+hatches, relation heuristics) must use identifier boundaries, never raw
+`contains`. Guard new alignment code with a should-stay-`weakly_exposed` fixture
+built from a *coincidental* substring (proven `exposed` without the guard,
+`weakly_exposed` with it) — see `fixtures/python_substring_sink_alignment`.
+
+## 2026-06-13: Cross-file inline construct-call — the precision lever that *is* contract-safe
+
+The companion to the smoke-oracle reframing above: the Tier B false-actionables
+that legitimately flip to `exposed` are missed **strong** oracles, and the
+tractable one was a *relation* miss, not an alignment miss. structlog's
+`LogfmtRenderer.__call__` change was discriminated by
+`pytest.raises(ValueError, match='Invalid key…')` calling `LogfmtRenderer()(…)` —
+an exact-error oracle — but `ripr` linked the wrong test file by name proximity
+and never saw it. The fix (#1228) adds a `ConstructCall` relation that recognises
+an **inline** construct-call `OwnerClass(…)(…)` on a `__call__` owner, so the
+strong oracle is found and `key` aligns (post-#1224, as a whole word). structlog
+flips `weakly_exposed → exposed`, correctly.
+
+The discipline that kept it safe is the same boundary thinking: it is gated to
+`__call__` owners (Guard A), requires the test to *import* the class (Guard B,
+blocking same-name cross-module collisions), and an inline-only balanced-paren
+check distinguishes `C()(…)` from the bound local `x = C(); x(…)` — so
+`python_local_callable_binding` and `python_broad_boolean_assertion` stay
+`weakly_exposed`, preserving the contract from the entry above. This is the shape
+of a *good* `exposed` flip: a missed **strong, sink-aligned** oracle, linked
+without widening the net. jinja (framework filter-dispatch) and anyio
+(function-result binding + async non-value oracle) remain defensible limitations,
+not bugs.
