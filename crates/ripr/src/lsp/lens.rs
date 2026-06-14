@@ -145,12 +145,12 @@ pub(super) fn lens_title_is_static_language_clean(title: &str) -> bool {
     // These string literals are test guards checking that the words do not
     // appear in production output — the strings themselves are not output.
     let forbidden = [
-        "killed",   // ripr-allow: static-language: test guard verifying this term does not appear in lens output
+        "killed", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
         "survived", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "proven",   // ripr-allow: static-language: test guard verifying this term does not appear in lens output
+        "proven", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
         "adequate", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "covered",  // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "passing",  // ripr-allow: static-language: test guard verifying this term does not appear in lens output
+        "covered", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
+        "passing", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
         "untested", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
     ];
     !forbidden.iter().any(|word| title.contains(word))
@@ -354,10 +354,12 @@ mod tests {
                 "title must include class 'no_static_path', got: {title}"
             ));
         }
-        // Test guard: confirm the lens does not use the forbidden vocab term. // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        if title.to_lowercase().contains("untested") { // ripr-allow: static-language: test guard verifying this term does not appear in lens output
+        // Test guard: confirm the lens title uses none of the forbidden
+        // static-language vocabulary (delegates to the shared helper, which
+        // holds the flagged terms on stable, fmt-safe array lines).
+        if !lens_title_is_static_language_clean(&title) {
             return Err(format!(
-                "title must not use the unexercised-synonym flag word, got: {title}" // ripr-allow: static-language: message describing the guard, term not emitted in output
+                "title must not use forbidden static-language vocabulary, got: {title}"
             ));
         }
         Ok(())
