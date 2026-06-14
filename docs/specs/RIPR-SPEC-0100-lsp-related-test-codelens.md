@@ -1,4 +1,4 @@
-# RIPR-SPEC-0099: LSP Related-Test CodeLens
+# RIPR-SPEC-0100: LSP Related-Test CodeLens
 
 Status: accepted
 

@@ -395,9 +395,9 @@ owner = "product-swarm"
 standalone_reason = "Fail-closed fix for false-exposed TypeScript preview findings: downgrades exposed→weakly_exposed when a strong oracle exists but no assertion's observed_expression flows from the changed sub-expression; fixes console.log/#1235 repro; language_status stays Preview; no schema bump; 4 unit tests (2 downgrade proofs + 2 controls proving no over-correction)."
 
 [[artifact]]
-id = "RIPR-SPEC-0099"
+id = "RIPR-SPEC-0100"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0099-lsp-related-test-codelens.md"
+path = "docs/specs/RIPR-SPEC-0100-lsp-related-test-codelens.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Advisory-only LSP codeLens above changed symbols citing the cached related-test count; display-only (never a diagnostic or gate); honesty rules: snapshot==None→empty Vec, N==0→'no related tests found', count from related_tests.len() only, preview prefix for TS/Python; new lsp/lens.rs pure-helper module; zero VS Code extension changes; 10 unit tests (8 fixture + 2 wiring/capability)."

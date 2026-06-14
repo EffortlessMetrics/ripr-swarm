@@ -5742,9 +5742,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0099"
+id = "RIPR-SPEC-0100"
 name = "LSP related-test codeLens"
-spec = "docs/specs/RIPR-SPEC-0099-lsp-related-test-codelens.md"
+spec = "docs/specs/RIPR-SPEC-0100-lsp-related-test-codelens.md"
 tests = [
   "crates/ripr/src/lsp/tests.rs::capabilities_advertise_code_lens_provider",
   "crates/ripr/src/lsp/tests.rs::backend_code_lens_handler_delegates_to_lens_helper",
@@ -5763,7 +5763,7 @@ code = [
   "crates/ripr/src/lsp.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0099-lsp-related-test-codelens.md",
+  "docs/specs/RIPR-SPEC-0100-lsp-related-test-codelens.md",
 ]
 metrics = [
   "lsp_code_lens_advisory_count_per_document",
