@@ -1,4 +1,4 @@
-# RIPR-SPEC-0094: TypeScript Single-Hop Re-Export Test Discovery
+# RIPR-SPEC-0095: TypeScript Single-Hop Re-Export Test Discovery
 
 Status: accepted
 

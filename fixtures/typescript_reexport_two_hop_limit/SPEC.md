@@ -1,6 +1,6 @@
 # Fixture: typescript_reexport_two_hop_limit
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0095
 
 ## Given
 

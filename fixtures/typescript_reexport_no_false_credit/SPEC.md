@@ -1,6 +1,6 @@
 # Fixture: typescript_reexport_no_false_credit
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0095
 
 ## Given
 
