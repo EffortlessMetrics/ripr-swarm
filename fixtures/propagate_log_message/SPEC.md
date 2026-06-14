@@ -1,6 +1,6 @@
 # Fixture: propagate_log_message
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0096
 
 ## Given
 
@@ -42,7 +42,7 @@ ripr check --root fixtures/propagate_log_message/input --diff fixtures/propagate
 statically observable) and must retain their `LogMessage` sink kind.
 
 This fixture is the **control** for fix C (stdout-vs-log sub-case) in
-[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md):
+[RIPR-SPEC-0096](../../docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md):
 only bare `println!`/`eprintln!` are downgraded, not `log::` or `tracing::`.
 
 ## Must Not

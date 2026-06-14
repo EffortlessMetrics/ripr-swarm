@@ -1,6 +1,6 @@
 # Fixture: infect_value_returned
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0096
 
 ## Given
 
@@ -35,7 +35,7 @@ ripr check --root fixtures/infect_value_returned/input --diff fixtures/infect_va
 `ripr` must emit `exposed` for the named binding probe.  A named binding
 (`let result = …`) is NOT a discard — the value flows into `result + 1`.
 This is the **control** for fix A in
-[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md):
+[RIPR-SPEC-0096](../../docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md):
 the wildcard-discard predicate must NOT fire for `let _name = …`.
 
 ## Must Not

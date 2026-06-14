@@ -1,4 +1,4 @@
-# RIPR-SPEC-0094: INFECT/PROPAGATE Fail-Closed (Parts A, B, C)
+# RIPR-SPEC-0096: INFECT/PROPAGATE Fail-Closed (Parts A, B, C)
 
 Status: proposed
 

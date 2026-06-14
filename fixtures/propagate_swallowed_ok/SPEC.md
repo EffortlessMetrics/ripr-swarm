@@ -1,6 +1,6 @@
 # Fixture: propagate_swallowed_ok
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0096
 
 ## Given
 
@@ -45,7 +45,7 @@ ripr check --root fixtures/propagate_swallowed_ok/input --diff fixtures/propagat
 `unknown` because the call-chain tail swallows the return value.
 
 This fixture is the **before/after proof** for fix B introduced in
-[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md):
+[RIPR-SPEC-0096](../../docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md):
 without the fix this probe was reported `exposed` — a false-actionable
 because the swallowed result cannot reach a directly observable sink.
 

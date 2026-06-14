@@ -1,6 +1,6 @@
 # Fixture: propagate_value_returned
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0096
 
 ## Given
 
@@ -40,7 +40,7 @@ ripr check --root fixtures/propagate_value_returned/input --diff fixtures/propag
 `ripr` must emit `exposed` for the `return self.persist(amount * 9)` probe.
 A returned result is NOT swallowed — the value propagates to the caller.
 This is the **control** for fix B in
-[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md):
+[RIPR-SPEC-0096](../../docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md):
 the swallowed-value predicate must NOT fire when the result is returned.
 
 ## Must Not

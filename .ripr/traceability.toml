@@ -5543,9 +5543,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0094"
+id = "RIPR-SPEC-0096"
 name = "infect/propagate fail-closed (parts A, B, C)"
-spec = "docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md"
+spec = "docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md"
 tests = [
   "crates/ripr/src/analysis/classify/infection.rs::tests::wildcard_discard_is_infection_unknown_even_with_related_tests",
   "crates/ripr/src/analysis/classify/infection.rs::tests::typed_wildcard_discard_is_infection_unknown",
@@ -5575,7 +5575,7 @@ code = [
   "crates/ripr/src/analysis/classify/flow.rs"
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md",
+  "docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md",
   "fixtures/infect_wildcard_discard/expected/check.json",
   "fixtures/infect_wildcard_discard/expected/human.txt",
   "fixtures/infect_value_returned/expected/check.json",

@@ -1,6 +1,6 @@
 # Fixture: infect_wildcard_discard
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0096
 
 ## Given
 
@@ -38,7 +38,7 @@ ripr check --root fixtures/infect_wildcard_discard/input --diff fixtures/infect_
 cannot infect a sink".
 
 This fixture is the **before/after proof** for fix A introduced in
-[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md):
+[RIPR-SPEC-0096](../../docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md):
 without the fix this probe was reported `exposed` — a false-actionable
 because the discarded value can never reach a sink.
 

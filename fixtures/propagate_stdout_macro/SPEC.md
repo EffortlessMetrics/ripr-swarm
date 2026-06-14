@@ -1,6 +1,6 @@
 # Fixture: propagate_stdout_macro
 
-Spec: RIPR-SPEC-0094
+Spec: RIPR-SPEC-0096
 
 ## Given
 
@@ -43,7 +43,7 @@ ripr check --root fixtures/propagate_stdout_macro/input --diff fixtures/propagat
 
 This fixture is the **before/after proof** for fix C (stdout macro
 sub-case) introduced in
-[RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-infect-propagate-fail-closed.md).
+[RIPR-SPEC-0096](../../docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md).
 
 ## Must Not
 
