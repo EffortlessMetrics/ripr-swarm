@@ -104,3 +104,4 @@ observable behavior.
 | [RIPR-SPEC-0091](RIPR-SPEC-0091-pilot-artifact-size-bound.md) | proposed | Pilot artifact size bound (DEFAULT_PILOT_SEAM_BUDGET=2000) |
 | [RIPR-SPEC-0092](RIPR-SPEC-0092-python-judged-pr-panel.md) | proposed | Python Tier B judged-diff panel schema |
 | [RIPR-SPEC-0093](RIPR-SPEC-0093-match-arm-blind-reach-downgrade.md) | proposed | Match-arm blind-reach downgrade (arm_observation_unverified) |
+| [RIPR-SPEC-0094](RIPR-SPEC-0094-infect-propagate-fail-closed.md) | proposed | INFECT/PROPAGATE fail-closed: wildcard discard, swallowed tails, stdout macros (parts A/B/C of #1219) |
