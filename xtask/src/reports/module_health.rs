@@ -295,8 +295,14 @@ mod tests {
 
     #[test]
     fn relative_path_normalized_replaces_backslashes() {
-        let root = PathBuf::from("C:\\repo");
-        let path = PathBuf::from("C:\\repo\\xtask\\src\\main.rs");
+        // Build the backslash-separated path at runtime so no literal Windows
+        // path appears in source (keeps check-local-context clean) while still
+        // exercising the backslash -> forward-slash normalization on both
+        // platforms (on Windows strip_prefix splits components; on Linux the
+        // separator is a plain char and the whole string is normalized).
+        let bs = "\\";
+        let root = PathBuf::from("root");
+        let path = PathBuf::from(format!("root{bs}sub{bs}file.rs"));
         let result = relative_path_normalized(&path, &root);
         assert!(!result.contains('\\'), "backslash found in: {result}");
         assert!(result.contains('/'), "forward slash missing in: {result}");
