@@ -2583,6 +2583,7 @@ fn owner_class_locals(test: &PythonTest, class: &str) -> Vec<String> {
 ///   * `Local.method(...)`         — classmethod / direct call on the class;
 ///   * `Local(...).method(...)`    — inline construct then method call;
 ///   * `v = Local(...); v.method(...)` — single local binding then method call.
+///
 /// A bare `.method(` on an unrelated or unresolved receiver is NOT matched: that
 /// is the false-`exposed` guard — importing or merely mentioning the owner class
 /// is not evidence the asserted method ran on an instance of it.
@@ -2609,12 +2610,12 @@ fn body_calls_method_on_owner_bound_receiver(body: &str, local: &str, method: &s
     // Pattern 3: `v = Local(...); v.method(` — a single unambiguous local binding
     // (reuses the LocalBinding guards: one construction, direct assignment, one
     // assignment of the bound local) then a method call on that local.
-    if constructions.len() == 1 {
-        if let Some(var) = binding_target_for_construction(body, constructions[0]) {
-            if assignment_count(body, &var) == 1 && contains_attribute_call(body, &var, method) {
-                return true;
-            }
-        }
+    if constructions.len() == 1
+        && let Some(var) = binding_target_for_construction(body, constructions[0])
+        && assignment_count(body, &var) == 1
+        && contains_attribute_call(body, &var, method)
+    {
+        return true;
     }
     false
 }
