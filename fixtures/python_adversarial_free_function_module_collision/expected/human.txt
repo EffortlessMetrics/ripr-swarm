@@ -27,13 +27,13 @@ Evidence
   - reach yes: 1 related Python test(s) found for owner `validate`
   - infection yes: Changed Python return expression can alter the owner return value: `return payload.strip() == "ok"`
   - propagation yes: Changed Python return value is already at the owner output boundary.
-  - observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)
-  - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `return value == payload.strip() == "ok"`.
+  - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.
   - local flow reaches returned value: return payload.strip() == "ok" (line 2)
-  - related test tests/test_checker.py:4 test_checker_validate uses weak relational check oracle: assert validate("ok") is True
+  - related test tests/test_checker.py:4 test_checker_validate uses strong exact value oracle: assert validate("ok") == "ok"
 
 Weakness
-  - Related Python test reaches `validate` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value.
+  - A strong Python oracle reaches `validate`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.
   - missing discriminator return value == payload.strip() == "ok": changed Python returned-value at line 2 lacks a concrete repair discriminator
 
 Python repair card (preview/advisory)
@@ -43,7 +43,7 @@ Python repair card (preview/advisory)
   repair action: strengthen_existing_test
   changed owner: validate
   changed behavior: return_value changed at src/handler.py:2: `return payload.strip() == "ok"`
-  current test evidence: tests/test_checker.py:4 test_checker_validate currently has oracle_strength=weak, oracle_kind=relational_check: assert validate("ok") is True
+  current test evidence: tests/test_checker.py:4 test_checker_validate currently has oracle_strength=strong, oracle_kind=exact_value: assert validate("ok") == "ok"
   missing discriminator: return value == payload.strip() == "ok"
   recommended test shape: Strengthen the existing pytest exact return-value assertion for `return value == payload.strip() == "ok"`.
   suggested assertion: Assert the returned value equals the expected value for the changed inputs.

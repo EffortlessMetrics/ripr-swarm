@@ -4610,7 +4610,14 @@ fn classify_sink_alignment(
             )
         } else if any_strong_observes(&alias_tokens) {
             ("alias", "strong_oracle_observes_import_alias")
-        } else if any_strong_observes(&change_only) && change_only_credit_ok {
+        } else if any_strong_observes(&change_only)
+            && change_only_credit_ok
+            && (is_method_owner || free_fn_module_identity)
+        {
+            // Gate the changed-sink-token path with the same free-function module
+            // identity as the direct/alias paths: a same-named free function from a
+            // different module must not credit `exposed` via this sibling branch
+            // either (the #1249 every-branch lesson). Method owners are unaffected.
             (
                 "changed_sink_token",
                 "strong_oracle_observes_changed_sink_token",
@@ -6425,6 +6432,40 @@ def test_build_user_smoke():
             "an aliased same-module import is identity-bearing"
         );
         assert_eq!(finding.oracle_alignment.as_deref(), Some("alias"));
+        Ok(())
+    }
+
+    #[test]
+    fn free_function_changed_value_token_from_other_module_does_not_credit_exposed()
+    -> Result<(), String> {
+        // Sibling-branch guard (#1249 lesson): even when a wrong-module test's
+        // strong oracle observes the changed VALUE token ("ok"), the
+        // changed_sink_token path must require free-function module identity too —
+        // not just the direct/alias paths.
+        let source = "def classify(payload):\n    return payload.strip() == \"ok\"\n";
+        let owners = extract_owners(Path::new("src/handler.py"), source);
+        let tests = extract_tests(
+            Path::new("tests/test_checker.py"),
+            "from src.checker import classify\n\n\ndef test_checker_classify():\n    assert classify(\"ok\") == \"ok\"\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/handler.py"),
+            2,
+            "    return payload.strip() == \"ok\"",
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside classify should classify".to_string());
+        };
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "a changed-value token observed by a different-module test is not identity-bearing"
+        );
+        assert_ne!(
+            finding.oracle_alignment.as_deref(),
+            Some("changed_sink_token")
+        );
         Ok(())
     }
 

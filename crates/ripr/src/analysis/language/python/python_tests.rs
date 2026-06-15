@@ -2542,7 +2542,10 @@ fn sink_alignment_is_changed_sink_token_when_oracle_observes_changed_literal() {
     let owner = align_owner("compute", "compute");
     let line = "return base * rate";
     let related = [align_strong("assert result.rate == 0.1")];
-    let a = classify_sink_alignment(&owner, line, &related, &[]);
+    // The changed_sink_token path now requires free-function module identity, so
+    // supply a same-module import of the owner.
+    let all = [align_importing_test("compute", "owner")];
+    let a = classify_sink_alignment(&owner, line, &related, &all);
     assert_eq!(a.oracle_alignment, "changed_sink_token");
     assert_eq!(
         a.alignment_reason,
