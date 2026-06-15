@@ -45,8 +45,8 @@ An empty result here does NOT mean your changed behavior is covered.\n",
         if output.unanalyzed_working_tree {
             out.push_str(
                 "\nNote: uncommitted changes to tracked source were not analyzed. \
-`--base` compares committed history only; run `ripr check` (no --base) to analyze \
-your working tree.\n",
+`--base` compares committed history only — commit or stage these changes and re-run, \
+or analyze a committed branch with `ripr check --base origin/main`.\n",
             );
         }
         render_preview_language_advisories(&mut out, output);

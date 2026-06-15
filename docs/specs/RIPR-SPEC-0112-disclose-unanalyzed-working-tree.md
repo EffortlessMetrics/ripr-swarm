@@ -100,14 +100,16 @@ In the empty-findings branch (after "No diff-derived static exposure probes foun
 
 ```
 Note: uncommitted changes to tracked source were not analyzed. `--base` compares
-committed history only; run `ripr check` (no --base) to analyze your working tree.
+committed history only — commit or stage these changes and re-run, or analyze a
+committed branch with `ripr check --base origin/main`.
 ```
 
 In the non-empty-findings branch (after the all-no-path-disclosure):
 
 ```
 Note: uncommitted changes to tracked source were not analyzed. `--base` compares
-committed history only; run `ripr check` (no --base) to analyze your working tree.
+committed history only — commit or stage these changes and re-run, or analyze a
+committed branch with `ripr check --base origin/main`.
 ```
 
 The note does not change the exit code or pass/fail status.
