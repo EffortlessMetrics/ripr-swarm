@@ -1,7 +1,7 @@
 use super::arguments::{
     comparable_expression, custom_assertion_arguments, equality_assertion_arguments,
 };
-use crate::analysis::classify::error_constructor_call_paths;
+use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 
 pub(super) fn is_snapshot_assertion(line: &str) -> bool {
     let expect_test_comparison = (line.contains("expect![[") || line.contains("expect_file!["))
@@ -110,11 +110,17 @@ fn is_bound_error_equality_assertion(
 }
 
 fn expression_pins_specific_error(expression: &str) -> bool {
-    contains_named_enum_variant(expression) || contains_error_constructor_call(expression)
+    contains_named_enum_variant(expression)
+        || contains_error_constructor_call(expression)
+        || contains_error_payload_literal(expression)
 }
 
 fn contains_error_constructor_call(expression: &str) -> bool {
     !error_constructor_call_paths(expression).is_empty()
+}
+
+fn contains_error_payload_literal(expression: &str) -> bool {
+    !rust_string_literals(expression).is_empty()
 }
 
 /// Returns true when the line contains a path-qualified enum variant:
