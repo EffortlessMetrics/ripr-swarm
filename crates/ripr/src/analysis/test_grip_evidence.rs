@@ -3979,7 +3979,11 @@ fn format_literal_matches(pattern: &str, observed: &str) -> bool {
         return true;
     }
     let fragments = format_literal_fixed_fragments(pattern);
+    if !fragments.removed_placeholder {
+        return false;
+    }
     let meaningful = fragments
+        .values
         .iter()
         .filter(|fragment| substantial_literal_fragment(fragment))
         .collect::<Vec<_>>();
@@ -3996,9 +4000,15 @@ fn format_literal_matches(pattern: &str, observed: &str) -> bool {
     true
 }
 
-fn format_literal_fixed_fragments(pattern: &str) -> Vec<String> {
+struct FormatLiteralFragments {
+    values: Vec<String>,
+    removed_placeholder: bool,
+}
+
+fn format_literal_fixed_fragments(pattern: &str) -> FormatLiteralFragments {
     let mut fragments = Vec::new();
     let mut current = String::new();
+    let mut removed_placeholder = false;
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
@@ -4011,6 +4021,7 @@ fn format_literal_fixed_fragments(pattern: &str) -> Vec<String> {
                 if !current.is_empty() {
                     fragments.push(std::mem::take(&mut current));
                 }
+                removed_placeholder = true;
                 for inner in chars.by_ref() {
                     if inner == '}' {
                         break;
@@ -4029,7 +4040,10 @@ fn format_literal_fixed_fragments(pattern: &str) -> Vec<String> {
     if !current.is_empty() {
         fragments.push(current);
     }
-    fragments
+    FormatLiteralFragments {
+        values: fragments,
+        removed_placeholder,
+    }
 }
 
 fn substantial_literal_fragment(fragment: &str) -> bool {
@@ -5059,6 +5073,22 @@ fn artifact_sample_validator_reports_ref_errors() {
         );"##;
         if !error_string_payload_oracle_matches_seam(seam, matching_oracle) {
             return Err("real cargo-allow anyOf payload assertion should match".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn string_error_payload_match_requires_exact_plain_payload() -> Result<(), String> {
+        let seam = r#"return Err("permission denied".to_string());"#;
+        let containing_oracle =
+            r#"assert_eq!(validate(), Err("not permission denied".to_string()));"#;
+        if error_string_payload_oracle_matches_seam(seam, containing_oracle) {
+            return Err("plain error payloads must not match by substring".to_string());
+        }
+
+        let exact_oracle = r#"assert_eq!(validate(), Err("permission denied".to_string()));"#;
+        if !error_string_payload_oracle_matches_seam(seam, exact_oracle) {
+            return Err("plain error payloads should still match exact assertions".to_string());
         }
         Ok(())
     }
