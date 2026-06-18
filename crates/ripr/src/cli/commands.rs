@@ -4680,18 +4680,11 @@ mod tests {
 
         let cleanup = std::fs::remove_dir_all(&root)
             .map_err(|err| format!("failed to remove oversized diff root: {err}"));
-        match result {
-            Err(message) if message.contains("diff_scope_oversized") => cleanup,
-            other => {
-                let cleanup_message = match cleanup {
-                    Ok(()) => "cleanup ok".to_string(),
-                    Err(message) => message,
-                };
-                Err(format!(
-                    "expected diff_scope_oversized error, got {other:?}; {cleanup_message}"
-                ))
-            }
-        }
+        assert!(
+            matches!(result, Err(ref message) if message.contains("diff_scope_oversized")),
+            "expected diff_scope_oversized error, got {result:?}"
+        );
+        cleanup
     }
 
     fn oversized_rust_diff(changed_lines: usize) -> String {

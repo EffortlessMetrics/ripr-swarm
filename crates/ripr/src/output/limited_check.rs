@@ -84,9 +84,10 @@ mod tests {
     fn non_budget_error_does_not_render_limited_artifact() -> Result<(), String> {
         let rendered = render_diff_scope_limited_check_json(&input(), "git diff failed")?;
 
-        if rendered.is_some() {
-            return Err("non-budget error should not render limited JSON".to_string());
-        }
+        assert!(
+            rendered.is_none(),
+            "non-budget error should not render limited JSON"
+        );
         Ok(())
     }
 
@@ -128,16 +129,9 @@ mod tests {
             ),
         ];
         for (actual, expected, label) in cases {
-            if actual != &expected {
-                return Err(format!("expected {label}={expected:?}, got {actual:?}"));
-            }
+            assert_eq!(actual, &expected, "unexpected {label}");
         }
-        if value["findings"].as_array().map(Vec::len) != Some(0) {
-            return Err(format!(
-                "expected empty findings array, got {}",
-                value["findings"]
-            ));
-        }
+        assert_eq!(value["findings"].as_array().map(Vec::len), Some(0));
         Ok(())
     }
 
@@ -151,9 +145,10 @@ mod tests {
         let value: Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
 
-        if value.get("base").is_some() {
-            return Err(format!("base should be omitted when absent: {value}"));
-        }
+        assert!(
+            value.get("base").is_none(),
+            "base should be omitted when absent: {value}"
+        );
         let cases = [
             (
                 &value["analysis_scope"]["repair_route"],
@@ -167,9 +162,7 @@ mod tests {
             ),
         ];
         for (actual, expected, label) in cases {
-            if actual != &expected {
-                return Err(format!("expected {label}={expected:?}, got {actual:?}"));
-            }
+            assert_eq!(actual, &expected, "unexpected {label}");
         }
         Ok(())
     }
