@@ -3967,11 +3967,15 @@ fn oracle_string_payload_literal_sets(oracle_text: &str) -> Vec<Vec<String>> {
 }
 
 fn payload_literals_match(seam_literals: &[String], oracle_literals: &[String]) -> bool {
-    seam_literals.iter().any(|seam_literal| {
-        oracle_literals
-            .iter()
-            .any(|oracle_literal| format_literal_matches(seam_literal, oracle_literal))
-    })
+    seam_literals
+        .iter()
+        .filter(|literal| payload_literal_has_fixed_text(literal))
+        .any(|seam_literal| {
+            oracle_literals
+                .iter()
+                .filter(|literal| payload_literal_has_fixed_text(literal))
+                .any(|oracle_literal| format_literal_matches(seam_literal, oracle_literal))
+        })
 }
 
 fn format_literal_matches(pattern: &str, observed: &str) -> bool {
@@ -3991,24 +3995,47 @@ fn format_literal_matches(pattern: &str, observed: &str) -> bool {
         return false;
     }
     let mut search_from = 0usize;
-    for fragment in meaningful {
+    let last_index = meaningful.len().saturating_sub(1);
+    for (index, fragment) in meaningful.iter().enumerate() {
+        let fragment = fragment.as_str();
         let Some(relative) = observed[search_from..].find(fragment) else {
             return false;
         };
-        search_from += relative + fragment.len();
+        let absolute = search_from + relative;
+        if index == 0 && !fragments.starts_with_placeholder && absolute != 0 {
+            return false;
+        }
+        let fragment_end = absolute + fragment.len();
+        if index == last_index && !fragments.ends_with_placeholder && fragment_end != observed.len()
+        {
+            return false;
+        }
+        search_from = fragment_end;
     }
     true
+}
+
+fn payload_literal_has_fixed_text(literal: &str) -> bool {
+    format_literal_fixed_fragments(literal)
+        .values
+        .iter()
+        .any(|fragment| fragment.chars().any(|ch| ch.is_alphanumeric()))
 }
 
 struct FormatLiteralFragments {
     values: Vec<String>,
     removed_placeholder: bool,
+    starts_with_placeholder: bool,
+    ends_with_placeholder: bool,
 }
 
 fn format_literal_fixed_fragments(pattern: &str) -> FormatLiteralFragments {
     let mut fragments = Vec::new();
     let mut current = String::new();
     let mut removed_placeholder = false;
+    let mut saw_content = false;
+    let mut starts_with_placeholder = false;
+    let mut ends_with_placeholder = false;
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
@@ -4016,12 +4043,19 @@ fn format_literal_fixed_fragments(pattern: &str) -> FormatLiteralFragments {
                 if matches!(chars.peek(), Some('{')) {
                     let _ = chars.next();
                     current.push('{');
+                    saw_content = true;
+                    ends_with_placeholder = false;
                     continue;
                 }
                 if !current.is_empty() {
                     fragments.push(std::mem::take(&mut current));
                 }
+                if !saw_content {
+                    starts_with_placeholder = true;
+                }
+                saw_content = true;
                 removed_placeholder = true;
+                ends_with_placeholder = true;
                 for inner in chars.by_ref() {
                     if inner == '}' {
                         break;
@@ -4032,9 +4066,15 @@ fn format_literal_fixed_fragments(pattern: &str) -> FormatLiteralFragments {
                 if matches!(chars.peek(), Some('}')) {
                     let _ = chars.next();
                     current.push('}');
+                    saw_content = true;
+                    ends_with_placeholder = false;
                 }
             }
-            _ => current.push(ch),
+            _ => {
+                current.push(ch);
+                saw_content = true;
+                ends_with_placeholder = false;
+            }
         }
     }
     if !current.is_empty() {
@@ -4043,6 +4083,8 @@ fn format_literal_fixed_fragments(pattern: &str) -> FormatLiteralFragments {
     FormatLiteralFragments {
         values: fragments,
         removed_placeholder,
+        starts_with_placeholder,
+        ends_with_placeholder,
     }
 }
 
@@ -5114,6 +5156,36 @@ fn artifact_sample_validator_reports_ref_errors() {
                 r#"return Err(format!("schema-required {path} keys missing"));"#,
                 r#"assert_eq!(validate(), Err("schema-required $".to_string()));"#,
                 false,
+            ),
+            (
+                "first required format fragment absent",
+                r#"return Err(format!("schema-required {path} keys missing"));"#,
+                r#"assert_eq!(validate(), Err("prefix $ keys missing".to_string()));"#,
+                false,
+            ),
+            (
+                "shared delimiter literal is auxiliary",
+                r#"return Err(format!("left payload {}", values.join(", ")));"#,
+                r#"assert_eq!(validate(), Err(format!("right payload {}", values.join(", "))));"#,
+                false,
+            ),
+            (
+                "leading fixed fragment is anchored",
+                r#"return Err(format!("permission denied: {reason}"));"#,
+                r#"assert_eq!(validate(), Err("not permission denied: root".to_string()));"#,
+                false,
+            ),
+            (
+                "trailing fixed fragment is anchored",
+                r#"return Err(format!("{path} permission denied"));"#,
+                r#"assert_eq!(validate(), Err("$.mode permission denied extra".to_string()));"#,
+                false,
+            ),
+            (
+                "leading placeholder can precede fixed text",
+                r#"return Err(format!("{path} schema uses non-local ref {reference}"));"#,
+                r#"assert_eq!(validate(), Err("$ schema uses non-local ref other.json".to_string()));"#,
+                true,
             ),
             (
                 "escaped braces remain fixed text",

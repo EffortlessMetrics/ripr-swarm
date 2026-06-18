@@ -120,7 +120,38 @@ fn contains_error_constructor_call(expression: &str) -> bool {
 }
 
 fn contains_error_payload_literal(expression: &str) -> bool {
-    !rust_string_literals(expression).is_empty()
+    rust_string_literals(expression)
+        .iter()
+        .any(|literal| literal_has_fixed_payload_text(literal))
+}
+
+fn literal_has_fixed_payload_text(literal: &str) -> bool {
+    let mut fixed = String::new();
+    let mut chars = literal.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '{' => {
+                if matches!(chars.peek(), Some('{')) {
+                    let _ = chars.next();
+                    fixed.push('{');
+                    continue;
+                }
+                for inner in chars.by_ref() {
+                    if inner == '}' {
+                        break;
+                    }
+                }
+            }
+            '}' => {
+                if matches!(chars.peek(), Some('}')) {
+                    let _ = chars.next();
+                    fixed.push('}');
+                }
+            }
+            _ => fixed.push(ch),
+        }
+    }
+    fixed.chars().any(|ch| ch.is_alphanumeric())
 }
 
 /// Returns true when the line contains a path-qualified enum variant:
@@ -331,6 +362,41 @@ mod spec_0106_tests {
     }
 
     // Control 3 (GENERIC): generic assertion without variant token → no upgrade.
+    #[test]
+    fn is_unwrap_err_bound_error_assertion_rejects_placeholder_only_string_payload()
+    -> Result<(), String> {
+        let bound = vars(&["err"]);
+        let cases = [
+            (
+                "placeholder-only",
+                r#"assert_eq!(err, format!("{}", id));"#,
+                false,
+            ),
+            (
+                "escaped-placeholder-only",
+                r#"assert_eq!(err, format!("{{}} {}", id));"#,
+                false,
+            ),
+            (
+                "fixed-text",
+                r#"assert_eq!(err, format!("duplicate allow id `{}`", id));"#,
+                true,
+            ),
+            (
+                "escaped-fixed-text",
+                r#"assert_eq!(err, format!("{{duplicate}} {}", id));"#,
+                true,
+            ),
+        ];
+        for (label, assertion, expected) in cases {
+            let actual = is_unwrap_err_bound_error_assertion(assertion, &bound);
+            if actual != expected {
+                return Err(format!("{label}: expected {expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn generic_assertion_on_bound_var_not_upgraded() {
         let bound = vars(&["err"]);
