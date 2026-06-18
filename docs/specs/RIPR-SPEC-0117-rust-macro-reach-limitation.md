@@ -16,9 +16,9 @@ Linked PRs:
 
 Support-tier impact:
 
-- No tier change. This spec adds one additive `static_limit_kind` value,
-  `rust_macro_reach_unresolved`, and one additive `stop_reasons` value,
-  `macro_reach_unresolved`.
+- No tier change. `docs/status/SUPPORT_TIERS.md` remains unchanged. This spec
+  adds one additive `static_limit_kind` value, `rust_macro_reach_unresolved`,
+  and one additive `stop_reasons` value, `macro_reach_unresolved`.
 - Classification stays `no_static_path`. This is a named limitation, not a
   coverage claim, test relation, repair packet, release-readiness claim, or
   macro-expansion engine.
