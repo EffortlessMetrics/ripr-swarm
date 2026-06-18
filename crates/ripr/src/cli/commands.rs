@@ -3441,18 +3441,33 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     // These are needed for the RIPR-SPEC-0112 disclosure check after the analysis.
     let input_root = input.root.clone();
     let input_diff_file_is_some = input.diff_file.is_some();
-    let mut output = if format.is_repo_seam_inventory() {
+    let limited_check_input = input.clone();
+    let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
         // seam walker directly from `output.root`. The synthesized
         // `CheckOutput` carries only the fields these renderers read.
-        app::repo_seam_inventory_input(input)
+        Ok(app::repo_seam_inventory_input(input))
     } else if format.is_repo_scope() {
-        app::check_workspace_repo_with_config(input, &config)?
+        app::check_workspace_repo_with_config(input, &config)
     } else if worktree_explicitly_provided {
-        app::check_workspace_worktree_with_config(input, &config)?
+        app::check_workspace_worktree_with_config(input, &config)
     } else {
-        app::check_workspace_with_config(input, &config)?
+        app::check_workspace_with_config(input, &config)
+    };
+    let mut output = match output_result {
+        Ok(output) => output,
+        Err(err) => {
+            if matches!(format, OutputFormat::Json)
+                && let Some(rendered) = output::limited_check::render_diff_scope_limited_check_json(
+                    &limited_check_input,
+                    &err,
+                )?
+            {
+                write_stdout_chunked(&rendered)?;
+            }
+            return Err(err);
+        }
     };
     // RIPR-SPEC-0083: disclose when no scope was provided and the result is empty.
     // The guidance fires only when scope was NOT explicitly provided — it must
