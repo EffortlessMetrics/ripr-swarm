@@ -330,19 +330,24 @@ mod spec_0106_tests {
     }
 
     #[test]
-    fn is_unwrap_err_bound_error_assertion_upgrades_constructor_payload_equality() {
+    fn is_unwrap_err_bound_error_assertion_upgrades_constructor_payload_equality()
+    -> Result<(), String> {
         let bound = vars(&["err"]);
-        assert!(
-            is_unwrap_err_bound_error_assertion(
-                r#"assert_eq!(err, CargoAllowError::new(format!("duplicate allow id `{}`", id)));"#,
-                &bound,
-            ),
-            "exact constructor-payload equality on bound error must be recognized"
-        );
-        assert!(
-            !is_unwrap_err_bound_error_assertion("assert_eq!(err, expected_error);", &bound),
-            "opaque expected variables must not be promoted to exact error variants"
-        );
+        if !is_unwrap_err_bound_error_assertion(
+            r#"assert_eq!(err, CargoAllowError::new(format!("duplicate allow id `{}`", id)));"#,
+            &bound,
+        ) {
+            return Err(
+                "exact constructor-payload equality on bound error must be recognized".to_string(),
+            );
+        }
+        if is_unwrap_err_bound_error_assertion("assert_eq!(err, expected_error);", &bound) {
+            return Err(
+                "opaque expected variables must not be promoted to exact error variants"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     // Control 3 (GENERIC): generic assertion without variant token → no upgrade.
