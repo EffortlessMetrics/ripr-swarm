@@ -392,6 +392,7 @@ mod tests {
         let payloads = error_result_payload_literal_sets(
             r#"
 // Err("comment")
+/* Err("block comment") */
 let text = "Err(\"string literal\")";
 return Err(format!("{path} schema uses non-local ref {reference}"));
 "#,

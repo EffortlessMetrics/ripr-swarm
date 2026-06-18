@@ -5094,6 +5094,46 @@ fn artifact_sample_validator_reports_ref_errors() {
     }
 
     #[test]
+    fn string_error_payload_match_fails_closed_for_unmatched_payload_shapes() -> Result<(), String>
+    {
+        let cases = [
+            (
+                "non Err seam",
+                r#"return Ok(());"#,
+                r#"assert_eq!(validate(), Err("permission denied".to_string()));"#,
+                false,
+            ),
+            (
+                "oracle without payload literal",
+                r#"return Err("permission denied".to_string());"#,
+                r#"assert!(validate().is_err());"#,
+                false,
+            ),
+            (
+                "missing required format fragment",
+                r#"return Err(format!("schema-required {path} keys missing"));"#,
+                r#"assert_eq!(validate(), Err("schema-required $".to_string()));"#,
+                false,
+            ),
+            (
+                "escaped braces remain fixed text",
+                r#"return Err(format!("schema {{required}} {path} keys missing"));"#,
+                r#"assert_eq!(validate(), Err("schema {required} $.mode keys missing".to_string()));"#,
+                true,
+            ),
+        ];
+        for (label, seam, oracle, expected) in cases {
+            let actual = error_string_payload_oracle_matches_seam(seam, oracle);
+            if actual != expected {
+                return Err(format!(
+                    "{label}: expected {expected}, got {actual} for seam {seam:?} and oracle {oracle:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn given_side_effect_seam_when_no_effect_observer_exists_then_observe_evidence_is_weak_or_unknown()
     -> Result<(), String> {
         let prod = PathBuf::from("src/publish.rs");
