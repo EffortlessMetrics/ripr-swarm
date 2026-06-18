@@ -39,6 +39,10 @@ const DIFF_CHANGED_RUST_LINE_LIMIT: usize = 2_000;
 /// Env override for [`DIFF_CHANGED_RUST_LINE_LIMIT`]. Operators can raise it
 /// for larger runners or lower it to exercise the guard.
 const DIFF_CHANGED_RUST_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_RUST_LINES";
+const NO_TESTS_INFECTION_SUMMARY: &str =
+    "No tests were found, so activation/infection cannot be estimated";
+const NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY: &str =
+    "No statically reachable test path was found, so activation/infection cannot be estimated";
 
 fn diff_index_file_limit() -> Result<usize, String> {
     diff_index_file_limit_from_env(std::env::var(DIFF_INDEX_FILE_LIMIT_ENV))
@@ -217,6 +221,7 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
             .evidence
             .push(classify::transitive_reach_witness_pointer(&witness));
     } else if let Some(witness) = classify::find_macro_reach_witness(&owner_name, index) {
+        replace_macro_witness_infection_summary(finding);
         finding.static_limit_kind = Some(StaticLimitKind::RustMacroReachUnresolved);
         finding.stop_reasons.push(StopReason::MacroReachUnresolved);
         finding
@@ -225,6 +230,18 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
         finding
             .evidence
             .push(classify::macro_reach_witness_pointer(&witness));
+    }
+}
+
+fn replace_macro_witness_infection_summary(finding: &mut Finding) {
+    if finding.ripr.infect.summary == NO_TESTS_INFECTION_SUMMARY {
+        finding.ripr.infect.summary =
+            NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY.to_string();
+    }
+    for evidence in &mut finding.evidence {
+        if evidence == NO_TESTS_INFECTION_SUMMARY {
+            *evidence = NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY.to_string();
+        }
     }
 }
 

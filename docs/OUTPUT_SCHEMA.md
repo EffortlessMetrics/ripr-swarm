@@ -1060,6 +1060,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `feature_unknown`
 - `async_boundary_opaque`
 - `no_changed_rust_line`
+- `macro_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
 - `static_probe_unknown`

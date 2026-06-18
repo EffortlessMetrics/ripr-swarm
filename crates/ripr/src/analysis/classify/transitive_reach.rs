@@ -496,55 +496,119 @@ fn next_non_ws_is_macro_delimiter(bytes: &[u8], start: usize) -> bool {
 }
 
 fn macro_definition_mentions_owner(index: &RustIndex, macro_name: &str, owner_name: &str) -> bool {
-    index
-        .files
-        .values()
-        .any(|file| source_macro_definition_mentions_owner(&file.source, macro_name, owner_name))
+    let mut same_name_count = 0usize;
+    let mut owner_mention_count = 0usize;
+    for file in index.files.values() {
+        let scan = scan_macro_definitions(&file.source, macro_name, owner_name);
+        same_name_count = same_name_count.saturating_add(scan.same_name_count);
+        owner_mention_count = owner_mention_count.saturating_add(scan.owner_mention_count);
+    }
+
+    same_name_count == 1 && owner_mention_count == 1
 }
 
+#[cfg(test)]
 fn source_macro_definition_mentions_owner(
     source: &str,
     macro_name: &str,
     owner_name: &str,
 ) -> bool {
-    let mut in_target_macro = false;
-    let mut saw_open_brace = false;
-    let mut brace_depth = 0usize;
+    let scan = scan_macro_definitions(source, macro_name, owner_name);
+    scan.same_name_count == 1 && scan.owner_mention_count == 1
+}
 
-    for line in source.lines() {
-        if !in_target_macro && line_macro_rules_name(line).as_deref() == Some(macro_name) {
-            in_target_macro = true;
-        }
-        if !in_target_macro {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MacroDefinitionScan {
+    same_name_count: usize,
+    owner_mention_count: usize,
+}
+
+fn scan_macro_definitions(source: &str, macro_name: &str, owner_name: &str) -> MacroDefinitionScan {
+    let marker = "macro_rules!";
+    let mut scan = MacroDefinitionScan::default();
+    let mut cursor = 0usize;
+
+    while let Some(relative_start) = source.get(cursor..).and_then(|tail| tail.find(marker)) {
+        let marker_start = cursor.saturating_add(relative_start);
+        let name_start = skip_ascii_whitespace(source, marker_start.saturating_add(marker.len()));
+        let name_end = ascii_ident_end(source, name_start);
+        let Some(found_name) = source.get(name_start..name_end) else {
+            break;
+        };
+        if found_name.is_empty() {
+            cursor = marker_start.saturating_add(marker.len());
             continue;
         }
 
-        if contains_identifier(line, owner_name) {
-            return true;
-        }
-
-        for ch in line.chars() {
-            match ch {
-                '{' => {
-                    saw_open_brace = true;
-                    brace_depth = brace_depth.saturating_add(1);
+        if found_name == macro_name {
+            scan.same_name_count = scan.same_name_count.saturating_add(1);
+            if let Some((body_start, body_end)) = macro_body_range(source, name_end) {
+                if source
+                    .get(body_start..body_end)
+                    .is_some_and(|body| contains_identifier(body, owner_name))
+                {
+                    scan.owner_mention_count = scan.owner_mention_count.saturating_add(1);
                 }
-                '}' => {
-                    brace_depth = brace_depth.saturating_sub(1);
-                }
-                _ => {}
+                cursor = body_end;
+                continue;
             }
         }
 
-        if saw_open_brace && brace_depth == 0 {
-            in_target_macro = false;
-            saw_open_brace = false;
-        }
+        cursor = name_end;
     }
 
-    false
+    scan
 }
 
+fn skip_ascii_whitespace(source: &str, start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn ascii_ident_end(source: &str, start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    while cursor < bytes.len() && is_ascii_ident_byte(bytes[cursor]) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn macro_body_range(source: &str, after_name: usize) -> Option<(usize, usize)> {
+    let bytes = source.as_bytes();
+    let body_start = skip_ascii_whitespace(source, after_name);
+    let open = *bytes.get(body_start)?;
+    let close = match open {
+        b'{' => b'}',
+        b'(' => b')',
+        b'[' => b']',
+        _ => return None,
+    };
+    let mut depth = 0usize;
+    let mut cursor = body_start;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            byte if byte == open => {
+                depth = depth.saturating_add(1);
+            }
+            byte if byte == close => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((body_start, cursor.saturating_add(1)));
+                }
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    None
+}
+
+#[cfg(test)]
 fn line_macro_rules_name(line: &str) -> Option<String> {
     let marker = "macro_rules!";
     let start = line.find(marker)?.saturating_add(marker.len());
@@ -1125,6 +1189,40 @@ mod tests {
         assert!(!contains_identifier("inner", ""));
         assert!(!source_macro_definition_mentions_owner(
             "fn before() { inner(); }\nmacro_rules! call_inner { () => { other() }; }\nfn after() { inner(); }",
+            "call_inner",
+            "inner",
+        ));
+    }
+
+    #[test]
+    fn macro_definition_scanner_fail_closes_on_duplicate_macro_names() {
+        assert!(!source_macro_definition_mentions_owner(
+            "macro_rules! call_inner { () => { other() }; }\n\
+             macro_rules! call_inner { () => { inner() }; }",
+            "call_inner",
+            "inner",
+        ));
+    }
+
+    #[test]
+    fn macro_definition_scanner_handles_non_brace_body_delimiters() {
+        assert!(source_macro_definition_mentions_owner(
+            "macro_rules! call_inner ( () => { inner() }; );\nfn after() { other(); }",
+            "call_inner",
+            "inner",
+        ));
+        assert!(source_macro_definition_mentions_owner(
+            "macro_rules! call_inner [ () => { inner() }; ];\nfn after() { other(); }",
+            "call_inner",
+            "inner",
+        ));
+        assert!(!source_macro_definition_mentions_owner(
+            "macro_rules! call_inner ( () => { other() }; );\nfn after() { inner(); }",
+            "call_inner",
+            "inner",
+        ));
+        assert!(!source_macro_definition_mentions_owner(
+            "macro_rules! call_inner [ () => { other() }; ];\nfn after() { inner(); }",
             "call_inner",
             "inner",
         ));

@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0117: address macro review fixes and non-reachable infection wording
+
+Command:
+`cargo xtask goldens bless rust_macro_reach_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
