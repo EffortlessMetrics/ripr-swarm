@@ -873,6 +873,18 @@ mod tests {
     }
 
     #[test]
+    fn given_empty_owner_then_witnesses_are_none() {
+        let index = index_with_source(
+            vec![make_fn("outer", vec!["inner"])],
+            vec![make_test("test_uses_outer", vec!["outer"])],
+            "macro_rules! call_inner { () => { inner() }; }".to_string(),
+        );
+
+        assert!(find_transitive_witness("", &index).is_none());
+        assert!(find_macro_reach_witness("", &index).is_none());
+    }
+
+    #[test]
     fn given_entry_path_stops_at_owner_macro_then_macro_witness_is_captured() {
         let outer = make_fn_with_body(
             "outer",
@@ -912,6 +924,84 @@ mod tests {
     }
 
     #[test]
+    fn given_file_local_test_has_multiple_macro_candidates_then_first_is_stable() {
+        let outer = make_fn_with_body(
+            "outer",
+            vec![],
+            "pub fn outer() -> i32 {\n    call_inner!()\n}".to_string(),
+        );
+        let source = "macro_rules! call_inner {\n    () => { inner() };\n}\n\
+             macro_rules! beta_inner {\n    () => { inner() };\n}"
+            .to_string();
+        let mut index = index_with_source(vec![outer], Vec::new(), source);
+        let test = TestFact {
+            body: "fn test_macro_entry() {\n    beta_inner!();\n}".to_string(),
+            ..make_test_at("test_file_local", "tests/file_local.rs", 7, vec!["outer"])
+        };
+        if let Some(file) = index.files.values_mut().next() {
+            file.tests.push(test);
+        }
+
+        let witness = find_macro_reach_witness("inner", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.test_name.as_str()),
+            Some("test_file_local")
+        );
+        assert_eq!(
+            witness.as_ref().map(|w| w.entry_symbol.as_str()),
+            Some("beta_inner!")
+        );
+        assert_eq!(witness.as_ref().map(|w| w.other_test_count), Some(0));
+    }
+
+    #[test]
+    fn given_macro_walk_follows_helper_calls_before_macro() {
+        let outer = make_fn("outer", vec!["vec!", "inner", "helper"]);
+        let helper = make_fn_with_body(
+            "helper",
+            vec![],
+            "fn helper() -> i32 {\n    call_inner!()\n}".to_string(),
+        );
+        let source =
+            "macro_rules! call_inner {\n    () => { crate::internal::inner() };\n}".to_string();
+        let index = index_with_source(
+            vec![outer, helper],
+            vec![make_test("test_uses_outer", vec!["outer"])],
+            source,
+        );
+
+        let witness = find_macro_reach_witness("inner", &index);
+        assert_eq!(
+            witness.as_ref().map(|w| w.entry_symbol.as_str()),
+            Some("outer")
+        );
+        assert_eq!(
+            witness.as_ref().map(|w| w.macro_host.as_str()),
+            Some("helper")
+        );
+    }
+
+    #[test]
+    fn given_macro_walk_exceeds_depth_or_missing_function_then_none() {
+        let fn_a = make_fn("fn_a", vec!["fn_b", "missing_helper"]);
+        let fn_b = make_fn("fn_b", vec!["fn_c"]);
+        let fn_c = make_fn("fn_c", vec!["fn_d"]);
+        let fn_d = make_fn_with_body(
+            "fn_d",
+            vec![],
+            "fn fn_d() -> i32 {\n    call_inner!()\n}".to_string(),
+        );
+        let source = "macro_rules! call_inner {\n    () => { inner() };\n}".to_string();
+        let index = index_with_source(
+            vec![fn_a, fn_b, fn_c, fn_d],
+            vec![make_test("test_too_deep", vec!["fn_a"])],
+            source,
+        );
+
+        assert!(find_macro_reach_witness("inner", &index).is_none());
+    }
+
+    #[test]
     fn given_macro_definition_does_not_name_owner_then_macro_witness_is_none() {
         let outer = make_fn_with_body(
             "outer",
@@ -924,6 +1014,17 @@ mod tests {
             vec![outer],
             vec![make_test("test_uses_outer", vec!["outer"])],
             source,
+        );
+
+        assert!(find_macro_reach_witness("inner", &index).is_none());
+    }
+
+    #[test]
+    fn given_test_calls_macro_and_owner_then_macro_witness_is_none() {
+        let index = index_with_source(
+            Vec::new(),
+            vec![make_test("test_direct_or_macro", vec!["vec!", "inner"])],
+            "macro_rules! call_inner { () => { inner() }; }".to_string(),
         );
 
         assert!(find_macro_reach_witness("inner", &index).is_none());
@@ -975,6 +1076,58 @@ mod tests {
         assert!(!pointer.contains("reaches"));
         assert!(!pointer.contains("covers"));
         assert!(!pointer.contains("exercise"));
+    }
+
+    #[test]
+    fn macro_witness_pointer_reports_zero_and_plural_other_tests() {
+        let mut witness = MacroReachWitness {
+            test_name: "test_uses_outer".to_string(),
+            test_file: PathBuf::from("tests\\it.rs"),
+            test_line: 4,
+            entry_symbol: "outer".to_string(),
+            macro_name: "call_inner".to_string(),
+            macro_file: PathBuf::from("src\\lib.rs"),
+            macro_line: 6,
+            macro_host: "outer".to_string(),
+            other_test_count: 0,
+        };
+        let zero = macro_reach_witness_pointer(&witness);
+        assert!(zero.contains("tests/it.rs:4"));
+        assert!(zero.contains("src/lib.rs:6"));
+        assert!(!zero.contains("other test"));
+
+        witness.other_test_count = 2;
+        assert!(macro_reach_witness_pointer(&witness).contains("and 2 other tests"));
+    }
+
+    #[test]
+    fn macro_invocation_parser_handles_delimiters_whitespace_and_invalid_bangs() {
+        let invocations = macro_invocations_in_text(
+            "call_inner ! (1);\narray_inner![a];\nblock_inner! { a }\nnot_macro! name\n!(missing)",
+            10,
+        );
+
+        assert_eq!(
+            invocations
+                .iter()
+                .map(|invocation| (invocation.name.as_str(), invocation.line))
+                .collect::<Vec<_>>(),
+            vec![("call_inner", 10), ("array_inner", 11), ("block_inner", 12),]
+        );
+    }
+
+    #[test]
+    fn macro_definition_scanner_requires_boundaries_and_target_macro() {
+        assert_eq!(line_macro_rules_name("macro_rules! {"), None);
+        assert!(!contains_identifier("innerish", "inner"));
+        assert!(!contains_identifier("outer innerish", "inner"));
+        assert!(contains_identifier("outer inner", "inner"));
+        assert!(!contains_identifier("inner", ""));
+        assert!(!source_macro_definition_mentions_owner(
+            "fn before() { inner(); }\nmacro_rules! call_inner { () => { other() }; }\nfn after() { inner(); }",
+            "call_inner",
+            "inner",
+        ));
     }
 
     #[test]
