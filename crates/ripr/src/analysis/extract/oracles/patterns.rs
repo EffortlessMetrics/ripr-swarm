@@ -1,6 +1,7 @@
 use super::arguments::{
     comparable_expression, custom_assertion_arguments, equality_assertion_arguments,
 };
+use crate::analysis::classify::error_constructor_call_paths;
 
 pub(super) fn is_snapshot_assertion(line: &str) -> bool {
     let expect_test_comparison = (line.contains("expect![[") || line.contains("expect_file!["))
@@ -70,7 +71,6 @@ pub(crate) fn is_unwrap_err_bound_error_assertion(
     }
     // The line must be an assertion macro invocation.
     let is_assert = line.contains("assert_eq!")
-        || line.contains("assert_ne!")
         || line.contains("assert_matches!")
         || line.contains("matches!")
         || line.contains("assert!");
@@ -114,42 +114,7 @@ fn expression_pins_specific_error(expression: &str) -> bool {
 }
 
 fn contains_error_constructor_call(expression: &str) -> bool {
-    constructor_call_paths(expression).next().is_some()
-}
-
-fn constructor_call_paths(expression: &str) -> impl Iterator<Item = &str> {
-    expression.match_indices('(').filter_map(|(open, _)| {
-        let before = &expression[..open];
-        let start = before
-            .char_indices()
-            .rev()
-            .find_map(|(index, ch)| (!is_rust_path_char(ch)).then_some(index + ch.len_utf8()))
-            .unwrap_or(0);
-        let path = before[start..].trim();
-        is_error_constructor_path(path).then_some(path)
-    })
-}
-
-fn is_error_constructor_path(path: &str) -> bool {
-    let Some((owner, method)) = path.rsplit_once("::") else {
-        return false;
-    };
-    let Some(owner_tail) = owner.rsplit("::").next() else {
-        return false;
-    };
-    let owner_is_type = owner_tail
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_uppercase());
-    let method_is_constructor = method
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_lowercase());
-    owner_is_type && method_is_constructor
-}
-
-fn is_rust_path_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'
+    !error_constructor_call_paths(expression).is_empty()
 }
 
 /// Returns true when the line contains a path-qualified enum variant:
@@ -346,6 +311,15 @@ mod spec_0106_tests {
                 "opaque expected variables must not be promoted to exact error variants"
                     .to_string(),
             );
+        }
+        if is_unwrap_err_bound_error_assertion(
+            r#"assert_ne!(err, CargoAllowError::new(format!("duplicate allow id `{}`", id)));"#,
+            &bound,
+        ) {
+            return Err("negative constructor-payload assertions must not be promoted".to_string());
+        }
+        if is_unwrap_err_bound_error_assertion("assert_ne!(err, CalcError::Negative);", &bound) {
+            return Err("negative enum-variant assertions must not be promoted".to_string());
         }
         Ok(())
     }

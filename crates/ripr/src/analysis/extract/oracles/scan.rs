@@ -51,7 +51,7 @@ where
         let Some((_, next_line)) = lines.peek() else {
             return;
         };
-        statement.push(' ');
+        statement.push('\n');
         statement.push_str(next_line.trim());
         let _ = lines.next();
     }
@@ -61,7 +61,25 @@ fn delimiter_depth(text: &str) -> i32 {
     let mut depth = 0i32;
     let mut in_string = false;
     let mut escaped = false;
-    for ch in text.chars() {
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if ch == '*'
+                && let Some('/') = chars.peek().copied()
+            {
+                let _ = chars.next();
+                in_block_comment = false;
+            }
+            continue;
+        }
         if in_string {
             if escaped {
                 escaped = false;
@@ -74,6 +92,17 @@ fn delimiter_depth(text: &str) -> i32 {
         }
         match ch {
             '"' => in_string = true,
+            '/' => match chars.peek().copied() {
+                Some('/') => {
+                    let _ = chars.next();
+                    in_line_comment = true;
+                }
+                Some('*') => {
+                    let _ = chars.next();
+                    in_block_comment = true;
+                }
+                _ => {}
+            },
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
             _ => {}
@@ -285,6 +314,27 @@ mod spec_0106_scan_tests {
             return Err(format!(
                 "constructor-payload equality on expect_err binding must be ExactErrorVariant, got {:?}",
                 got.kind
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extract_assertions_does_not_collect_after_line_comment_delimiter() -> Result<(), String> {
+        let body = r#"
+            assert!(first_observed); // (
+            assert!(second_observed);
+        "#;
+        let facts = extract_assertions(body, 1);
+        if facts.len() != 2 {
+            return Err(format!(
+                "line comment delimiter should not join assertions: {facts:?}"
+            ));
+        }
+        if facts[0].text.contains("second_observed") {
+            return Err(format!(
+                "first assertion should not consume the second assertion: {:?}",
+                facts[0]
             ));
         }
         Ok(())

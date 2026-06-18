@@ -3914,97 +3914,18 @@ fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str)
 }
 
 fn error_constructor_payload_oracle_matches_seam(seam_text: &str, oracle_text: &str) -> bool {
-    let seam_constructors = constructor_call_paths(seam_text);
-    if seam_constructors.is_empty() {
-        return false;
-    }
-    let oracle_constructors = constructor_call_paths(oracle_text);
-    if !seam_constructors
-        .iter()
-        .any(|path| oracle_constructors.iter().any(|oracle| oracle == path))
-    {
-        return false;
-    }
+    use super::classify::error_constructor_payloads;
 
-    let seam_literals = string_literals(seam_text);
-    if seam_literals.is_empty() {
-        return false;
-    }
-    let oracle_literals = string_literals(oracle_text);
-    seam_literals
+    let seam_payloads = error_constructor_payloads(seam_text);
+    let oracle_payloads = error_constructor_payloads(oracle_text);
+    seam_payloads
         .iter()
-        .any(|literal| oracle_literals.iter().any(|oracle| oracle == literal))
-}
-
-fn constructor_call_paths(text: &str) -> Vec<String> {
-    let mut paths = text
-        .match_indices('(')
-        .filter_map(|(open, _)| {
-            let before = &text[..open];
-            let start = before
-                .char_indices()
-                .rev()
-                .find_map(|(index, ch)| (!is_rust_path_char(ch)).then_some(index + ch.len_utf8()))
-                .unwrap_or(0);
-            let path = before[start..].trim();
-            is_error_constructor_path(path).then(|| path.to_string())
+        .filter(|seam| !seam.string_literals.is_empty())
+        .any(|seam| {
+            oracle_payloads.iter().any(|oracle| {
+                oracle.path == seam.path && oracle.string_literals == seam.string_literals
+            })
         })
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths.dedup();
-    paths
-}
-
-fn is_error_constructor_path(path: &str) -> bool {
-    let Some((owner, method)) = path.rsplit_once("::") else {
-        return false;
-    };
-    let Some(owner_tail) = owner.rsplit("::").next() else {
-        return false;
-    };
-    let owner_is_type = owner_tail
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_uppercase());
-    let method_is_constructor = method
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_lowercase());
-    owner_is_type && method_is_constructor
-}
-
-fn is_rust_path_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'
-}
-
-fn string_literals(text: &str) -> Vec<String> {
-    let mut literals = Vec::new();
-    let mut start = None;
-    let mut escaped = false;
-    for (index, ch) in text.char_indices() {
-        if let Some(content_start) = start {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == '"' {
-                let literal = text[content_start..index].to_string();
-                if !literal.is_empty() {
-                    literals.push(literal);
-                }
-                start = None;
-            }
-        } else if ch == '"' {
-            start = Some(index + ch.len_utf8());
-        }
-    }
-    literals.sort();
-    literals.dedup();
-    literals
 }
 
 /// Returns true when `oracle_kind` is an acceptable discriminator for `seam_kind`.
@@ -4879,6 +4800,21 @@ fn duplicate_allow_id_reports_exact_error_payload() {
             r#"assert_eq!(err, OtherAllowError::new(format!("duplicate allow id `{}`", id)));"#;
         if error_constructor_payload_oracle_matches_seam(seam, different_constructor) {
             return Err("different constructor path must not match".to_string());
+        }
+        let assertion_message_only = r#"assert_eq!(err, CargoAllowError::new(format!("unknown allow id `{}`", id)), "duplicate allow id `{}`");"#;
+        if error_constructor_payload_oracle_matches_seam(seam, assertion_message_only) {
+            return Err(
+                "assertion message literals must not satisfy constructor payload".to_string(),
+            );
+        }
+
+        let multi_arg_seam =
+            r#"return Err(CargoAllowError::new("E_DUPLICATE", "duplicate allow id"));"#;
+        let partially_shared_multi_arg =
+            r#"assert_eq!(err, CargoAllowError::new("E_DUPLICATE", "unknown allow id"));"#;
+        if error_constructor_payload_oracle_matches_seam(multi_arg_seam, partially_shared_multi_arg)
+        {
+            return Err("partially shared constructor literals must not match".to_string());
         }
         Ok(())
     }
