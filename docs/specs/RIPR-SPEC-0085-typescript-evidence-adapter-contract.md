@@ -202,6 +202,7 @@ its receiver is not the test parameter. The argument order is
 ```text
 t.is / t.not                        -> exact_value (strong)      # AVA
 t.equal / t.notEqual                -> exact_value (strong)      # tape / node:test
+t.strictEqual / t.notStrictEqual    -> exact_value (strong)      # tape / node:test
 t.deepEqual / t.notDeepEqual        -> exact_value (strong)      # shared
 t.truthy / t.falsy / t.pass / t.fail / t.assert / t.ok / t.notOk -> smoke_only (smoke)
 t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)

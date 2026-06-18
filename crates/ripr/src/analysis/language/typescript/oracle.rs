@@ -37,13 +37,13 @@ pub(crate) fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) 
 pub(crate) fn oracle_for_ava_assertion(method: &str) -> (OracleKind, OracleStrength) {
     match method {
         // Exact equality / inequality — discriminates a value change.
-        // `is` / `not` are AVA; `equal` / `notEqual` are tape / node:test;
-        // `deepEqual` / `notDeepEqual` are shared. The implementation treats
-        // exact and deep equality alike (as `oracle_for_matcher` does for
-        // Jest's `toBe` / `toEqual` / `toStrictEqual`).
-        "is" | "not" | "equal" | "notEqual" | "deepEqual" | "notDeepEqual" => {
-            (OracleKind::ExactValue, OracleStrength::Strong)
-        }
+        // `is` / `not` are AVA; `equal` / `strictEqual` and their negated
+        // forms are tape / node:test style aliases; `deepEqual` /
+        // `notDeepEqual` are shared. The implementation treats exact and deep
+        // equality alike (as `oracle_for_matcher` does for Jest's `toBe` /
+        // `toEqual` / `toStrictEqual`).
+        "is" | "not" | "equal" | "notEqual" | "strictEqual" | "notStrictEqual" | "deepEqual"
+        | "notDeepEqual" => (OracleKind::ExactValue, OracleStrength::Strong),
         // Truthiness — does not pin the exact changed value. `truthy` / `falsy`
         // / `pass` / `fail` / `assert` are AVA; `ok` / `notOk` are tape.
         "true" | "false" | "truthy" | "falsy" | "pass" | "fail" | "assert" | "ok" | "notOk" => {
@@ -769,6 +769,8 @@ pub(crate) fn is_execution_context_assertion_matcher(matcher: &str) -> bool {
         "is" | "not"
             | "equal"
             | "notEqual"
+            | "strictEqual"
+            | "notStrictEqual"
             | "deepEqual"
             | "notDeepEqual"
             | "true"

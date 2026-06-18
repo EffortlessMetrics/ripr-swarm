@@ -5046,11 +5046,19 @@ fn ava_truthy_is_smoke_only() {
 }
 
 /// Tape / node:test equality aliases use the same receiver-gated path as AVA:
-/// `t.equal(...)`, `t.notEqual(...)`, and deep-equality forms are exact-value
-/// oracles when the receiver matches the test callback parameter.
+/// `t.equal(...)`, `t.strictEqual(...)`, their negated forms, and deep-equality
+/// forms are exact-value oracles when the receiver matches the test callback
+/// parameter.
 #[test]
 fn tape_equal_aliases_extract_exact_value_oracles() {
-    for method in ["equal", "notEqual", "deepEqual", "notDeepEqual"] {
+    for method in [
+        "equal",
+        "notEqual",
+        "strictEqual",
+        "notStrictEqual",
+        "deepEqual",
+        "notDeepEqual",
+    ] {
         let source = format!("t.{method}(score(10, 3), 7);");
         let allocator = Allocator::default();
         let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
@@ -5070,6 +5078,7 @@ fn tape_equal_aliases_extract_exact_value_oracles() {
             Some("score(10, 3)")
         );
         assert_eq!(assertion.expected_value_or_variant.as_deref(), Some("7"));
+        assert_eq!(assertion_oracle_text(assertion), format!("t.{method}(...)"));
         assert!(!assertion.has_dynamic_matcher_arg);
     }
 }
