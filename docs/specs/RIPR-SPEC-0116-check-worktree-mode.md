@@ -16,9 +16,10 @@ Linked PRs:
 
 Support-tier impact:
 
-- No tier change. This adds an explicit CLI input mode for draft analysis; it
-  does not change classifications, repair-packet authority, schema version,
-  support tiers, or release claims.
+- No tier change. `docs/status/SUPPORT_TIERS.md` remains unchanged; this adds
+  an explicit CLI input mode for draft analysis and does not change
+  classifications, repair-packet authority, schema version, support tiers, or
+  release claims.
 - Existing committed-history modes stay compatible. `--base <rev>` without
   `--worktree` still compares committed history and keeps the
   `unanalyzed_working_tree` disclosure from RIPR-SPEC-0112.
