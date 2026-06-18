@@ -140,4 +140,37 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn budget_error_without_base_omits_base_and_keeps_limitation() -> Result<(), String> {
+        let mut check_input = input();
+        check_input.base = None;
+        let message = "\n  diff_scope_oversized: 4 changed Rust lines exceed the limit";
+        let rendered = render_diff_scope_limited_check_json(&check_input, message)?
+            .ok_or("expected limited artifact with leading whitespace")?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+
+        if value.get("base").is_some() {
+            return Err(format!("base should be omitted when absent: {value}"));
+        }
+        let cases = [
+            (
+                &value["analysis_scope"]["repair_route"],
+                Value::String(DIFF_SCOPE_REPAIR_ROUTE.to_string()),
+                "analysis_scope.repair_route",
+            ),
+            (
+                &value["run_limitations"][0]["message"],
+                Value::String(message.to_string()),
+                "run_limitations[0].message",
+            ),
+        ];
+        for (actual, expected, label) in cases {
+            if actual != &expected {
+                return Err(format!("expected {label}={expected:?}, got {actual:?}"));
+            }
+        }
+        Ok(())
+    }
 }

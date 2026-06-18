@@ -4660,6 +4660,57 @@ mod tests {
     }
 
     #[test]
+    fn check_json_returns_limited_artifact_error_for_oversized_diff() -> Result<(), String> {
+        let root = unique_repo_relative_test_dir("oversized-diff");
+        let diff = root.join("oversized.diff");
+        std::fs::create_dir_all(&root)
+            .map_err(|err| format!("failed to create oversized diff root: {err}"))?;
+        std::fs::write(&diff, oversized_rust_diff(2001))
+            .map_err(|err| format!("failed to write oversized diff: {err}"))?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let diff_arg = diff.to_string_lossy().into_owned();
+
+        let result = check(&[
+            "--root".to_string(),
+            root_arg,
+            "--diff".to_string(),
+            diff_arg,
+            "--json".to_string(),
+        ]);
+
+        let cleanup = std::fs::remove_dir_all(&root)
+            .map_err(|err| format!("failed to remove oversized diff root: {err}"));
+        match result {
+            Err(message) if message.contains("diff_scope_oversized") => cleanup,
+            other => {
+                let cleanup_message = match cleanup {
+                    Ok(()) => "cleanup ok".to_string(),
+                    Err(message) => message,
+                };
+                Err(format!(
+                    "expected diff_scope_oversized error, got {other:?}; {cleanup_message}"
+                ))
+            }
+        }
+    }
+
+    fn oversized_rust_diff(changed_lines: usize) -> String {
+        let mut diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             index 0000000..1111111 100644\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1,{changed_lines} @@\n",
+        );
+        for index in 0..changed_lines {
+            diff.push_str(&format!(
+                "+pub fn generated_{index}() -> usize {{ {index} }}\n"
+            ));
+        }
+        diff
+    }
+
+    #[test]
     fn command_help_branches_return_ok() {
         assert_eq!(init(&args(&["--help"])), Ok(()));
         assert_eq!(pilot(&args(&["--help"])), Ok(()));
