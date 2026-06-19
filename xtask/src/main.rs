@@ -11530,7 +11530,6 @@ fn evidence_promotion_semantic_violations(
                 }
             }
             EvidencePromotionSemanticAssertion::MustDiscloseWitness => {
-                const WITNESS_PREFIX: &str = "For example, the test ";
                 let discloses = findings.iter().any(|finding| {
                     finding
                         .get("evidence")
@@ -11539,13 +11538,23 @@ fn evidence_promotion_semantic_violations(
                             evidence
                                 .iter()
                                 .filter_map(Value::as_str)
-                                .any(|line| line.starts_with(WITNESS_PREFIX))
+                                .any(|line| line.starts_with(EVIDENCE_PROMOTION_WITNESS_PREFIX))
                         })
                 });
                 if !discloses {
                     violations.push(format!(
-                        "{case_label}: `must_disclose_witness` did not find evidence prefix `{WITNESS_PREFIX}`"
+                        "{case_label}: `must_disclose_witness` did not find evidence prefix `{EVIDENCE_PROMOTION_WITNESS_PREFIX}`"
                     ));
+                }
+                if let Some(human_text) = human_text {
+                    let missing_human_paths =
+                        evidence_promotion_missing_human_witness_paths(human_text);
+                    if !missing_human_paths.is_empty() {
+                        violations.push(format!(
+                            "{case_label}: `must_disclose_witness` requires fixture human output to surface the witness under `Where to look`, but missing {}",
+                            missing_human_paths.join(", ")
+                        ));
+                    }
                 }
             }
             EvidencePromotionSemanticAssertion::MustNotClaimNoTestsFound => {
@@ -11580,10 +11589,34 @@ fn evidence_promotion_semantic_violations(
     violations
 }
 
+const EVIDENCE_PROMOTION_WITNESS_PREFIX: &str = "For example, the test ";
+
 fn evidence_promotion_no_tests_found_claim_paths(value: &Value) -> Vec<String> {
     let mut paths = Vec::new();
     collect_no_tests_found_claim_paths(value, "$".to_string(), &mut paths);
     paths
+}
+
+fn evidence_promotion_missing_human_witness_paths(human_text: &str) -> Vec<String> {
+    let mut missing = Vec::new();
+    let has_where_to_look = human_text
+        .lines()
+        .any(|line| line.trim() == "Where to look");
+    let has_witness = human_text.lines().any(|line| {
+        line.trim_start()
+            .starts_with(EVIDENCE_PROMOTION_WITNESS_PREFIX)
+    });
+
+    if !has_where_to_look {
+        missing.push("expected/human.txt:missing Where to look".to_string());
+    }
+    if !has_witness {
+        missing.push(format!(
+            "expected/human.txt:missing witness prefix `{EVIDENCE_PROMOTION_WITNESS_PREFIX}`"
+        ));
+    }
+
+    missing
 }
 
 fn evidence_promotion_no_tests_found_human_paths(human_text: &str) -> Vec<String> {
@@ -74309,6 +74342,43 @@ mod tests {
     }
 
     #[test]
+    fn evidence_promotion_semantic_assertions_reject_human_missing_witness_projection() {
+        let assertions = vec![super::EvidencePromotionSemanticAssertion::MustDiscloseWitness];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [
+                {
+                    "id": "probe:src_lib.rs:predicate:witnessed",
+                    "classification": "no_static_path",
+                    "evidence": [
+                        "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
+                    ]
+                }
+            ]
+        });
+        let human_text = "Static limitation\nNo statically reachable test path was found\n";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "witnessed_human_missing_projection",
+            Some("fixtures/witnessed_human_missing_projection"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+        )
+        .join("\n");
+
+        assert!(report.contains("must_disclose_witness"), "{report}");
+        assert!(
+            report.contains("expected/human.txt:missing Where to look"),
+            "{report}"
+        );
+        assert!(
+            report.contains("expected/human.txt:missing witness prefix"),
+            "{report}"
+        );
+    }
+
+    #[test]
     fn evidence_promotion_semantic_assertions_reject_human_no_tests_claim_with_witness() {
         let assertions = vec![
             super::EvidencePromotionSemanticAssertion::MustDiscloseWitness,
@@ -74331,8 +74401,11 @@ mod tests {
                 }
             ]
         });
-        let human_text =
-            "Where to look\nNo tests were found, so activation/infection cannot be estimated\n";
+        let human_text = concat!(
+            "Where to look\n",
+            "  For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here.\n",
+            "No tests were found, so activation/infection cannot be estimated\n",
+        );
 
         let report = super::evidence_promotion_semantic_violations(
             "witnessed_human_no_tests_claim",
@@ -74344,7 +74417,7 @@ mod tests {
         .join("\n");
 
         assert!(report.contains("must_not_claim_no_tests_found"), "{report}");
-        assert!(report.contains("expected/human.txt:2"), "{report}");
+        assert!(report.contains("expected/human.txt:3"), "{report}");
     }
 
     #[test]
