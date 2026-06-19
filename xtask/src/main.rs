@@ -11329,7 +11329,7 @@ fn evidence_promotion_external_semantic_violations(
     case: &EvidencePromotionExternalCase,
     check_json: &Value,
 ) -> Vec<String> {
-    evidence_promotion_semantic_violations(&case.id, None, &case.assertions, check_json)
+    evidence_promotion_semantic_violations(&case.id, None, &case.assertions, check_json, None)
 }
 
 fn evidence_promotion_semantic_violations(
@@ -11337,6 +11337,7 @@ fn evidence_promotion_semantic_violations(
     source_fixture: Option<&str>,
     assertions: &[EvidencePromotionSemanticAssertion],
     check_json: &Value,
+    human_text: Option<&str>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     let case_label = evidence_promotion_assertion_case_label(case_id, source_fixture);
@@ -11548,7 +11549,11 @@ fn evidence_promotion_semantic_violations(
                 }
             }
             EvidencePromotionSemanticAssertion::MustNotClaimNoTestsFound => {
-                let no_tests_paths = evidence_promotion_no_tests_found_claim_paths(check_json);
+                let mut no_tests_paths = evidence_promotion_no_tests_found_claim_paths(check_json);
+                if let Some(human_text) = human_text {
+                    no_tests_paths
+                        .extend(evidence_promotion_no_tests_found_human_paths(human_text));
+                }
                 if !no_tests_paths.is_empty() {
                     violations.push(format!(
                         "{case_label}: `must_not_claim_no_tests_found` forbids `No tests were found` claims when candidate test evidence is disclosed, but found them at {}",
@@ -11579,6 +11584,15 @@ fn evidence_promotion_no_tests_found_claim_paths(value: &Value) -> Vec<String> {
     let mut paths = Vec::new();
     collect_no_tests_found_claim_paths(value, "$".to_string(), &mut paths);
     paths
+}
+
+fn evidence_promotion_no_tests_found_human_paths(human_text: &str) -> Vec<String> {
+    human_text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains("No tests were found"))
+        .map(|(index, _)| format!("expected/human.txt:{}", index + 1))
+        .collect()
 }
 
 fn collect_no_tests_found_claim_paths(value: &Value, path: String, paths: &mut Vec<String>) {
@@ -12523,6 +12537,15 @@ fn validate_evidence_promotion_honesty_corpus_at(
                 normalize_path(&check_json_path)
             )
         })?;
+        let source_human_text = if source_fixture.is_empty() {
+            None
+        } else {
+            let human_path = Path::new(source_fixture).join("expected/human.txt");
+            human_path
+                .exists()
+                .then(|| read_text_lossy(&human_path))
+                .transpose()?
+        };
         if case.get("assertions").is_some() {
             if assertions.iter().any(|assertion| {
                 matches!(
@@ -12542,6 +12565,7 @@ fn validate_evidence_promotion_honesty_corpus_at(
                 Some(source_artifact),
                 &assertions,
                 &check_json,
+                source_human_text.as_deref(),
             ));
             continue;
         }
@@ -74232,6 +74256,7 @@ mod tests {
             Some("fixtures/projection_drift"),
             &assertions,
             &check_json,
+            None,
         )
         .join("\n");
 
@@ -74271,6 +74296,7 @@ mod tests {
             Some("fixtures/witnessed_no_tests_claim"),
             &assertions,
             &check_json,
+            None,
         )
         .join("\n");
 
@@ -74280,6 +74306,45 @@ mod tests {
             report.contains("$.findings[0].ripr.infect.summary"),
             "{report}"
         );
+    }
+
+    #[test]
+    fn evidence_promotion_semantic_assertions_reject_human_no_tests_claim_with_witness() {
+        let assertions = vec![
+            super::EvidencePromotionSemanticAssertion::MustDiscloseWitness,
+            super::EvidencePromotionSemanticAssertion::MustNotClaimNoTestsFound,
+        ];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [
+                {
+                    "id": "probe:src_lib.rs:predicate:witnessed",
+                    "classification": "no_static_path",
+                    "ripr": {
+                        "infect": {
+                            "summary": "No statically reachable test path was found, so activation/infection cannot be estimated"
+                        }
+                    },
+                    "evidence": [
+                        "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
+                    ]
+                }
+            ]
+        });
+        let human_text =
+            "Where to look\nNo tests were found, so activation/infection cannot be estimated\n";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "witnessed_human_no_tests_claim",
+            Some("fixtures/witnessed_human_no_tests_claim"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+        )
+        .join("\n");
+
+        assert!(report.contains("must_not_claim_no_tests_found"), "{report}");
+        assert!(report.contains("expected/human.txt:2"), "{report}");
     }
 
     #[test]
@@ -74300,6 +74365,7 @@ mod tests {
             Some("fixtures/scope_honesty_no_scope_empty"),
             &no_scope_assertions,
             &no_scope,
+            None,
         );
         assert!(
             no_scope_violations.is_empty(),
@@ -74320,6 +74386,7 @@ mod tests {
             Some("fixtures/scope_honesty_unanalyzed_worktree_empty"),
             &dirty_assertions,
             &dirty_worktree,
+            None,
         );
         assert!(
             dirty_violations.is_empty(),
@@ -74340,6 +74407,7 @@ mod tests {
             Some("fixtures/scope_honesty_bare_empty"),
             &assertions,
             &bare_empty,
+            None,
         )
         .join("\n");
 

@@ -222,6 +222,8 @@ Unchanged: bare `no_static_path`, no `static_limit_kind`, no witness.
   — non-generic infection summaries are not broadened or rewritten
 - `xtask/src/main.rs::tests::evidence_promotion_semantic_assertions_reject_no_tests_claim_with_witness`
   — the corpus assertion fails closed when a witnessed limitation still says no tests were found
+- `xtask/src/main.rs::tests::evidence_promotion_semantic_assertions_reject_human_no_tests_claim_with_witness`
+  — the corpus assertion fails closed when a fixture human golden still says no tests were found
 
 ## Implementation Mapping
 

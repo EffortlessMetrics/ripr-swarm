@@ -141,9 +141,10 @@ says it was re-blessed to."
    against a re-bless that drops the witness back to the bare 0114 limitation
    message, regressing the first-run-trust UX.
 4d2. `must_not_claim_no_tests_found` cases (additive, RIPR-SPEC-0115): asserts the
-    report does not contain the string `No tests were found` anywhere. This is for
-    witnessed limitation cases: once RIPR names a candidate test to inspect, the
-    same artifact must not also claim no tests were found. It may still say no
+    JSON report does not contain the string `No tests were found` anywhere. For
+    fixture-backed cases, the assertion also checks `expected/human.txt`. This is
+    for witnessed limitation cases: once RIPR names a candidate test to inspect,
+    the same artifact must not also claim no tests were found. It may still say no
     *statically reachable* test path was confirmed.
 4e. `must_disclose_scope` cases (additive, first-run trust): asserts the
     byte-pinned `expected/check.json` still carries the report-level scope header
@@ -399,6 +400,7 @@ the gate has over-corrected or the fixture needs re-blessing
 | `evidence_promotion_honesty_rejects_unknown_assertion_type` | Validator fails closed on an unknown typed assertion |
 | `evidence_promotion_semantic_assertions_reject_projection_drift` | Shared assertion evaluator rejects verify-command, packet, limitation, and completeness drift |
 | `evidence_promotion_semantic_assertions_reject_no_tests_claim_with_witness` | Shared assertion evaluator rejects a witnessed limitation that still claims `No tests were found` |
+| `evidence_promotion_semantic_assertions_reject_human_no_tests_claim_with_witness` | Shared assertion evaluator rejects a fixture human golden that still claims `No tests were found` |
 | `evidence_promotion_semantic_assertions_accept_scope_limited_empty_results` | Shared assertion evaluator treats no-scope and unanalyzed-worktree disclosures as non-clean empty results |
 | `evidence_promotion_semantic_assertions_reject_bare_empty_false_clean` | Shared assertion evaluator rejects a bare empty result for `must_not_report_clean` |
 | `evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape` | Semantic assertion accepts the current semver limitation shape |
