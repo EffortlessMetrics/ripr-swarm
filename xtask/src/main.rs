@@ -12349,6 +12349,10 @@ fn validate_evidence_promotion_honesty_corpus_at(
             .get("source_fixture")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let source_report = case
+            .get("source_report")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let tier = case.get("tier").and_then(Value::as_str).unwrap_or("");
         let assertions = match evidence_promotion_case_assertions(case) {
             Ok(assertions) => assertions,
@@ -12419,33 +12423,53 @@ fn validate_evidence_promotion_honesty_corpus_at(
             )),
         }
 
-        // Parity: source fixture must exist
-        let fixture_dir = Path::new(source_fixture);
-        if !fixture_dir.exists() {
+        if source_fixture.is_empty() == source_report.is_empty() {
             violations.push(format!(
-                "evidence promotion honesty case `{id}`: source_fixture `{source_fixture}` does not exist"
+                "evidence promotion honesty case `{id}`: pure cases require exactly one of `source_fixture` or `source_report`"
             ));
             continue;
         }
 
-        // Parity: source fixture must have expected/check.json
-        let check_json_path = fixture_dir.join("expected/check.json");
-        if !check_json_path.exists() {
-            violations.push(format!(
-                "evidence promotion honesty case `{id}`: `{}` is missing expected/check.json",
-                normalize_path(fixture_dir)
-            ));
-            continue;
-        }
+        let (source_artifact, check_json_path) = if source_fixture.is_empty() {
+            let report_path = PathBuf::from(source_report);
+            if !report_path.exists() {
+                violations.push(format!(
+                    "evidence promotion honesty case `{id}`: source_report `{source_report}` path does not exist"
+                ));
+                continue;
+            }
+            (source_report, report_path)
+        } else {
+            // Parity: source fixture must exist.
+            let fixture_dir = Path::new(source_fixture);
+            if !fixture_dir.exists() {
+                violations.push(format!(
+                    "evidence promotion honesty case `{id}`: source_fixture `{source_fixture}` does not exist"
+                ));
+                continue;
+            }
 
-        // Parity: source fixture must NOT be in the manifest-only denylist
-        // (it must stay covered by `goldens check`)
-        if is_manifest_only_fixture_dir(fixture_dir) {
-            violations.push(format!(
-                "evidence promotion honesty case `{id}`: source_fixture `{source_fixture}` is a manifest-only fixture dir; only regular fixtures with golden check.json may be charter members"
-            ));
-            continue;
-        }
+            // Parity: source fixture must have expected/check.json.
+            let check_json_path = fixture_dir.join("expected/check.json");
+            if !check_json_path.exists() {
+                violations.push(format!(
+                    "evidence promotion honesty case `{id}`: `{}` is missing expected/check.json",
+                    normalize_path(fixture_dir)
+                ));
+                continue;
+            }
+
+            // Parity: source fixture must NOT be in the manifest-only denylist
+            // (it must stay covered by `goldens check`).
+            if is_manifest_only_fixture_dir(fixture_dir) {
+                violations.push(format!(
+                    "evidence promotion honesty case `{id}`: source_fixture `{source_fixture}` is a manifest-only fixture dir; only regular fixtures with golden check.json may be charter members"
+                ));
+                continue;
+            }
+
+            (source_fixture, check_json_path)
+        };
 
         // Read the golden check.json (byte-pinned source of truth)
         let check_json_text = read_text_lossy(&check_json_path)?;
@@ -12471,7 +12495,7 @@ fn validate_evidence_promotion_honesty_corpus_at(
             }
             violations.extend(evidence_promotion_semantic_violations(
                 id,
-                Some(source_fixture),
+                Some(source_artifact),
                 &assertions,
                 &check_json,
             ));
@@ -63501,6 +63525,9 @@ fn markdown_links() -> Result<(), String> {
             continue;
         }
         let path = Path::new(&file);
+        if !path.exists() {
+            continue;
+        }
         let text = read_text_lossy(path)?;
         for link in markdown_links_in_text(&text) {
             let Some(target_path) = local_markdown_target(&link.target) else {
@@ -63520,7 +63547,7 @@ fn markdown_links() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "markdown-links.md",
             check: "markdown-links",
-            why_it_matters: "Markdown links are repo state for humans and long-context agents; deleted or renamed docs should fail before review.",
+            why_it_matters: "Markdown links are repo state for humans and long-context agents; links to deleted or renamed docs should fail before review.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update links when docs are renamed or deleted.",
@@ -73940,7 +73967,7 @@ mod tests {
         let corpus = root.join("corpus.json");
         let py_fixture = root.join("fixtures/py");
         let ts_fixture = root.join("fixtures/ts");
-        let rust_fixture = root.join("fixtures/rust-rich");
+        let rust_report = root.join("reports/rust-rich.json");
         let rust_control_fixture = root.join("fixtures/rust-control");
         let ts_control_fixture = root.join("fixtures/ts-control");
 
@@ -73948,9 +73975,9 @@ mod tests {
         write_evidence_promotion_check(&ts_fixture, "weakly_exposed")?;
         write_evidence_promotion_check(&rust_control_fixture, "exposed")?;
         write_evidence_promotion_check(&ts_control_fixture, "exposed")?;
-        write_evidence_promotion_check_json(
-            &rust_fixture,
-            serde_json::json!({
+        write(
+            &rust_report,
+            &serde_json::to_string_pretty(&serde_json::json!({
                 "schema_version": "0.2",
                 "tool": "ripr",
                 "mode": "fast",
@@ -73970,8 +73997,9 @@ mod tests {
                         ]
                     }
                 ]
-            }),
-        )?;
+            }))
+            .map_err(|err| err.to_string())?,
+        );
 
         let corpus_json = serde_json::json!({
             "cases": [
@@ -73999,7 +74027,7 @@ mod tests {
                     "id": "rust_typed_vocabulary",
                     "language": "rust",
                     "tier": "pure",
-                    "source_fixture": rust_fixture,
+                    "source_report": rust_report,
                     "assertions": [
                         {"type": "must_not_report_clean"},
                         {"type": "must_disclose_scope"},

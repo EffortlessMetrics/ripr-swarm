@@ -161,7 +161,7 @@
       "id": "scope_no_scope_empty_not_clean",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/scope_honesty_no_scope_empty",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-no-scope-empty-not-clean.json",
       "vector": "empty_result_no_scope_disclosure_not_clean",
       "assertions": [
         { "type": "must_not_report_clean" },
@@ -172,7 +172,7 @@
       "id": "scope_unanalyzed_worktree_empty_not_clean",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/scope_honesty_unanalyzed_worktree_empty",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-unanalyzed-worktree-empty-not-clean.json",
       "vector": "empty_base_head_dirty_worktree_disclosure_not_clean",
       "assertions": [
         { "type": "must_not_report_clean" },
@@ -183,7 +183,7 @@
       "id": "scope_clean_complete_empty_may_be_clean",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/scope_honesty_clean_complete_empty",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
       "vector": "empty_complete_scope_can_report_clean",
       "assertions": [
         { "type": "must_report_clean" },
@@ -195,7 +195,7 @@
       "id": "scope_limited_empty_not_clean",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/scope_honesty_limited_empty",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-limited-empty-not-clean.json",
       "vector": "empty_limited_scope_not_clean",
       "assertions": [
         { "type": "must_not_report_clean" },
