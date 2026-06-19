@@ -96,8 +96,11 @@ says it was re-blessed to."
     Supported assertion types are:
     - `must_promote`
     - `must_not_promote`
+    - `must_report_clean`
     - `must_not_report_clean`
     - `must_disclose_scope`
+    - `must_disclose_no_scope`
+    - `must_disclose_unanalyzed_working_tree`
     - `must_emit_limitation` with `expected_limit_kind`
     - `must_not_emit_limitation`
     - `must_have_verify_command`
@@ -115,10 +118,11 @@ says it was re-blessed to."
 4. `expected_promoted` (control) cases: asserts at least one finding's
    `classification` is `exposed` (must-not-over-correct guard).
 4b. `must_not_report_clean` cases (additive, first-run trust): asserts the
-   byte-pinned golden still reports at least one finding (`summary.findings > 0`
-   and non-empty `findings[]`). This guards against a re-bless that makes a
-   known unresolved edge disappear into a clean-looking empty result instead of
-   emitting a named limitation.
+   byte-pinned golden still carries a non-clean signal: findings, a no-scope
+   disclosure, an unanalyzed-worktree disclosure, preview-language advisory,
+   `limitations[]`, or a named `static_limit_kind`. This guards against a
+   re-bless that makes a known unresolved edge or incomplete scope disappear
+   into a clean-looking empty result.
 4c. `must_emit_limitation` cases (additive, RIPR-SPEC-0114/0115): asserts at
    least one finding carries `static_limit_kind == expected_limit_kind`. This is
    an independent assertion (a case may combine it with `must_remain_non_promoted`)
@@ -281,6 +285,9 @@ gate-specific artifacts.
 | rust_transitive_reach_named_limitation | rust | rust_transitive_reach_positive | transitive_reach_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_transitive_reach_unresolved` + `must_not_emit_repair_packet` + `must_disclose_witness`) |
 | rust_transitive_reach_test_helper_chain_named_limitation | rust | rust_transitive_reach_test_helper_chain | test_helper_public_api_transitive_reach_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_transitive_reach_unresolved` + `must_not_emit_repair_packet` + `must_disclose_witness`) |
 | rust_macro_reach_named_limitation | rust | rust_macro_reach_limitation | macro_reach_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_reach_unresolved` + `must_not_emit_repair_packet` + `must_disclose_witness`) |
+| scope_no_scope_empty_not_clean | rust | scope_honesty_no_scope_empty | empty_result_no_scope_disclosure_not_clean (also `must_disclose_no_scope`) |
+| scope_unanalyzed_worktree_empty_not_clean | rust | scope_honesty_unanalyzed_worktree_empty | empty_base_head_dirty_worktree_disclosure_not_clean (also `must_disclose_unanalyzed_working_tree`) |
+| scope_limited_empty_not_clean | rust | scope_honesty_limited_empty | empty_limited_scope_not_clean (also `expected_completeness: limited`) |
 
 ### Pinned external cases
 
@@ -295,6 +302,7 @@ gate-specific artifacts.
 | rust_strong_error_oracle_control | rust | strong_error_oracle |
 | rust_unwrap_err_variant_positive_control | rust | unwrap_err_variant_positive |
 | ts_strong_oracle_control | typescript | typescript_strong_oracle |
+| scope_clean_complete_empty_may_be_clean | rust | scope_honesty_clean_complete_empty |
 
 ### Validation by `check-fixture-contracts`
 
@@ -376,6 +384,8 @@ the gate has over-corrected or the fixture needs re-blessing
 | `evidence_promotion_honesty_accepts_typed_assertion_vocabulary` | Validator accepts typed semantic assertions as the canonical corpus contract |
 | `evidence_promotion_honesty_rejects_unknown_assertion_type` | Validator fails closed on an unknown typed assertion |
 | `evidence_promotion_semantic_assertions_reject_projection_drift` | Shared assertion evaluator rejects verify-command, packet, limitation, and completeness drift |
+| `evidence_promotion_semantic_assertions_accept_scope_limited_empty_results` | Shared assertion evaluator treats no-scope and unanalyzed-worktree disclosures as non-clean empty results |
+| `evidence_promotion_semantic_assertions_reject_bare_empty_false_clean` | Shared assertion evaluator rejects a bare empty result for `must_not_report_clean` |
 | `evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape` | Semantic assertion accepts the current semver limitation shape |
 | `evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet` | Semantic assertion rejects false clean, false promotion, missing witness, and false packet readiness |
 | `evidence_promotion_honesty_rejects_missing_scope_for_scope_guard_case` | Validator rejects scope-guard cases without a report scope header |
