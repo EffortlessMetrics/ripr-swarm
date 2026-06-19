@@ -137,7 +137,8 @@ says it was re-blessed to."
 4d. `must_disclose_witness` cases (additive, RIPR-SPEC-0115): asserts at least one
    finding's `evidence` contains the concrete transitive-reach *witness* pointer
    (prose beginning `For example, the test `), and for fixture-backed cases asserts
-   `expected/human.txt` surfaces the same witness shape under `Where to look`.
+   `expected/human.txt` exists and surfaces the same exact witness line under
+   `Where to look`.
    Independent of the other assertions; guards against a re-bless that drops the
    witness back to the bare 0114 limitation message or lets JSON and human output
    drift apart, regressing the first-run-trust UX.
@@ -402,6 +403,8 @@ the gate has over-corrected or the fixture needs re-blessing
 | `evidence_promotion_semantic_assertions_reject_projection_drift` | Shared assertion evaluator rejects verify-command, packet, limitation, and completeness drift |
 | `evidence_promotion_semantic_assertions_reject_no_tests_claim_with_witness` | Shared assertion evaluator rejects a witnessed limitation that still claims `No tests were found` |
 | `evidence_promotion_semantic_assertions_reject_human_missing_witness_projection` | Shared assertion evaluator rejects a fixture human golden that drops the witnessed `Where to look` projection |
+| `evidence_promotion_semantic_assertions_reject_human_mismatched_witness_projection` | Shared assertion evaluator rejects a fixture human golden that keeps a stale witness line |
+| `evidence_promotion_semantic_assertions_reject_missing_human_witness_golden` | Shared assertion evaluator rejects a fixture-backed witnessed case with no `expected/human.txt` |
 | `evidence_promotion_semantic_assertions_reject_human_no_tests_claim_with_witness` | Shared assertion evaluator rejects a fixture human golden that still claims `No tests were found` |
 | `evidence_promotion_semantic_assertions_accept_scope_limited_empty_results` | Shared assertion evaluator treats no-scope and unanalyzed-worktree disclosures as non-clean empty results |
 | `evidence_promotion_semantic_assertions_reject_bare_empty_false_clean` | Shared assertion evaluator rejects a bare empty result for `must_not_report_clean` |
