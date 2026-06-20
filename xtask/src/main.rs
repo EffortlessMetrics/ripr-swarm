@@ -11867,6 +11867,27 @@ fn evidence_promotion_semantic_violations(
                         contradictory.join(", ")
                     ));
                 }
+                if fixture_human_required {
+                    match human_text {
+                        Some(human_text) => {
+                            let contradictory_human =
+                                evidence_promotion_human_contradictory_packet_messaging_lines(
+                                    human_text,
+                                );
+                            if !contradictory_human.is_empty() {
+                                violations.push(format!(
+                                    "{case_label}: `must_not_have_contradictory_packet_messaging` forbids fixture human output for packet-ready findings from retaining blocked actionability messaging, but found {}",
+                                    contradictory_human.join(", ")
+                                ));
+                            }
+                        }
+                        None => {
+                            violations.push(format!(
+                                "{case_label}: `must_not_have_contradictory_packet_messaging` requires fixture human output at `expected/human.txt`, but it was missing"
+                            ));
+                        }
+                    }
+                }
             }
             EvidencePromotionSemanticAssertion::ExpectedOracle {
                 kind: expected_kind,
@@ -12612,6 +12633,55 @@ fn evidence_promotion_packet_blocked_message_reason(value: &str) -> Option<&'sta
     }
     if trimmed.contains("lacks a complete repair packet contract")
         || trimmed.contains("only after verify, receipt, evidence refs")
+    {
+        return Some("blocked incomplete-packet text");
+    }
+    None
+}
+
+fn evidence_promotion_human_contradictory_packet_messaging_lines(human_text: &str) -> Vec<String> {
+    human_text
+        .lines()
+        .filter_map(|line| {
+            evidence_promotion_human_packet_blocked_message_reason(line)
+                .map(|reason| format!("expected/human.txt:{}:{reason}", line.trim()))
+        })
+        .collect()
+}
+
+fn evidence_promotion_human_packet_blocked_message_reason(value: &str) -> Option<&'static str> {
+    let trimmed = value.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized == "status: not actionable" {
+        return Some("blocked not-actionable status");
+    }
+    if normalized == "repair packet ready: false" {
+        return Some("blocked packet-ready false status");
+    }
+    if normalized == "gap state: advisory" {
+        return Some("blocked advisory gap state");
+    }
+    if normalized == "category: incomplete_repair_packet" {
+        return Some("blocked incomplete actionability category");
+    }
+    if normalized.starts_with("why not actionable:") {
+        return Some("blocked why-not-actionable line");
+    }
+    if normalized.starts_with("limitation:") {
+        return Some("blocked limitation line");
+    }
+    if normalized.starts_with("repair route:") {
+        return Some("blocked repair-route line");
+    }
+    if normalized.starts_with("missing fields:") {
+        return Some("blocked missing-fields line");
+    }
+    if normalized.starts_with("evidence needed:") {
+        return Some("blocked evidence-needed line");
+    }
+    if normalized.contains("lacks a complete repair packet contract")
+        || normalized.contains("no actionable repair packet is emitted")
+        || normalized.contains("no repair packet is emitted")
     {
         return Some("blocked incomplete-packet text");
     }
@@ -76446,6 +76516,124 @@ Static exposure
             report.contains("$.findings[0].evidence[3]:blocked why-not-actionable evidence"),
             "{report}"
         );
+    }
+
+    #[test]
+    fn evidence_promotion_semantic_assertions_reject_human_contradictory_packet_messaging() {
+        let assertions = vec![
+            super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging,
+        ];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [
+                {
+                    "id": "packet-human-contradictory-messaging",
+                    "classification": "weakly_exposed",
+                    "preview_actionability": {
+                        "repair_packet_ready": true,
+                        "gap_state": "actionable",
+                        "actionability_category": "complete_repair_packet"
+                    },
+                    "typescript_repair_packet": {
+                        "canonical_gap_id": "gap:typescript:discount",
+                        "verify_command": "jest tests/discount.test.ts",
+                        "receipt_command": "ripr outcome --before baseline --after repair"
+                    },
+                    "evidence": [
+                        "owner: applyDiscount",
+                        "gap_state: actionable",
+                        "actionability_category: complete_repair_packet"
+                    ]
+                }
+            ]
+        });
+        let human_text = "\
+TypeScript repair packet (advisory)
+  canonical gap: gap:typescript:discount
+  status: not actionable
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  missing fields: verify_command, receipt_command
+";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "packet_human_contradictory_messaging",
+            Some("fixtures/packet_human_contradictory_messaging"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+            true,
+        )
+        .join("\n");
+
+        assert!(
+            report.contains("must_not_have_contradictory_packet_messaging"),
+            "{report}"
+        );
+        assert!(
+            report.contains(
+                "expected/human.txt:status: not actionable:blocked not-actionable status"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains("expected/human.txt:missing fields: verify_command, receipt_command:blocked missing-fields line"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn evidence_promotion_semantic_assertions_accept_human_complete_packet_messaging() {
+        let assertions = vec![
+            super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging,
+        ];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [
+                {
+                    "id": "packet-human-complete-messaging",
+                    "classification": "weakly_exposed",
+                    "preview_actionability": {
+                        "repair_packet_ready": true,
+                        "gap_state": "actionable",
+                        "actionability_category": "complete_repair_packet"
+                    },
+                    "typescript_repair_packet": {
+                        "canonical_gap_id": "gap:typescript:discount",
+                        "verify_command": "jest tests/discount.test.ts",
+                        "receipt_command": "ripr outcome --before baseline --after repair"
+                    },
+                    "evidence": [
+                        "owner: applyDiscount",
+                        "gap_state: actionable",
+                        "actionability_category: complete_repair_packet",
+                        "why_actionable: complete repair packet"
+                    ]
+                }
+            ]
+        });
+        let human_text = "\
+TypeScript repair packet (advisory)
+  canonical gap: gap:typescript:discount
+  source: applyDiscount at src/discount.ts:2
+  related test: tests/discount.test.ts::discount
+  oracle: expect(result).toBe(50)
+  edit surface: tests/discount.test.ts
+  verify: jest tests/discount.test.ts
+  receipt: ripr outcome --before baseline --after repair
+  why actionable: complete repair packet
+  authority: preview_advisory_only
+";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "packet_human_complete_messaging",
+            Some("fixtures/packet_human_complete_messaging"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+            true,
+        );
+
+        assert!(report.is_empty(), "{report:?}");
     }
 
     #[test]
