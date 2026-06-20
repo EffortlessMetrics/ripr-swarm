@@ -11828,6 +11828,29 @@ fn evidence_promotion_semantic_violations(
                         ));
                     }
                 }
+                if fixture_human_required {
+                    match human_text {
+                        Some(human_text) => {
+                            let missing_human =
+                                evidence_promotion_missing_human_oracle_projection_paths(
+                                    human_text,
+                                    expected_kind,
+                                    expected_strength,
+                                );
+                            if !missing_human.is_empty() {
+                                violations.push(format!(
+                                    "{case_label}: `expected_oracle` requires fixture human output to project oracle `{expected_kind}/{expected_strength}`, but found {}",
+                                    missing_human.join(", ")
+                                ));
+                            }
+                        }
+                        None => {
+                            violations.push(format!(
+                                "{case_label}: `expected_oracle` requires fixture human output at `expected/human.txt`, but it was missing"
+                            ));
+                        }
+                    }
+                }
             }
             EvidencePromotionSemanticAssertion::ExpectedClass {
                 class: expected_class,
@@ -12656,6 +12679,28 @@ fn collect_no_tests_found_claim_paths(value: &Value, path: String, paths: &mut V
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
+}
+
+fn evidence_promotion_missing_human_oracle_projection_paths(
+    human_text: &str,
+    expected_kind: &str,
+    expected_strength: &str,
+) -> Vec<String> {
+    let canonical_card = format!("oracle: {expected_kind} ({expected_strength})");
+    let current_evidence =
+        format!("oracle_strength={expected_strength}, oracle_kind={expected_kind}");
+    let current_evidence_reversed =
+        format!("oracle_kind={expected_kind}, oracle_strength={expected_strength}");
+    if human_text.contains(&canonical_card)
+        || human_text.contains(&current_evidence)
+        || human_text.contains(&current_evidence_reversed)
+    {
+        return Vec::new();
+    }
+
+    vec![format!(
+        "expected/human.txt:missing oracle projection `{expected_kind}/{expected_strength}`"
+    )]
 }
 
 fn collect_string_paths(value: &Value, path: String, paths: &mut Vec<(String, String)>) {
@@ -75497,6 +75542,48 @@ mod tests {
         assert!(report.contains("expected_oracle"), "{report}");
         assert!(report.contains("oracle_kind `exact_value`"), "{report}");
         assert!(report.contains("oracle_strength `strong`"), "{report}");
+    }
+
+    #[test]
+    fn evidence_promotion_semantic_assertions_reject_human_missing_oracle_projection() {
+        let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
+            kind: "exact_value".to_string(),
+            strength: "strong".to_string(),
+        }];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [
+                {
+                    "id": "probe:typescript:oracle-human-drift",
+                    "classification": "exposed",
+                    "oracle_kind": "exact_value",
+                    "oracle_strength": "strong"
+                }
+            ]
+        });
+        let human_text = "\
+RIPR static exposure report
+
+Evidence
+  - related test tests/score.test.ts:3 reaches score
+";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "oracle_human_drift",
+            Some("fixtures/typescript_oracle_human_drift"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+            true,
+        )
+        .join("\n");
+
+        assert!(report.contains("expected_oracle"), "{report}");
+        assert!(report.contains("fixture human output"), "{report}");
+        assert!(
+            report.contains("oracle projection `exact_value/strong`"),
+            "{report}"
+        );
     }
 
     #[test]
