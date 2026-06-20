@@ -24,6 +24,8 @@ Support-tier impact:
   reachability proof.
 - No `schema_version` bump is required because `static_limit_kind` is already
   additive optional finding metadata.
+- Claim boundaries remain governed by the canonical ledger in
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
