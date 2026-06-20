@@ -387,6 +387,10 @@
             "string",
             "null"
           ]
+        },
+        "related_test": {
+          "description": "Card-level structured related test to imitate per RIPR-SPEC-0068: name plus navigable file:line and the oracle of the nearest strong test. Present when a nearest strong test exists.",
+          "$ref": "#/$defs/related_test"
         }
       }
     },
@@ -491,6 +495,39 @@
             "string",
             "null"
           ]
+        }
+      }
+    },
+    "related_test": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "name",
+        "file",
+        "line",
+        "oracle_kind",
+        "oracle_strength"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "oracle_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle_strength": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

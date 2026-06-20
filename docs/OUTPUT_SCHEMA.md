@@ -6001,6 +6001,13 @@ JSON shape:
         "recommended_name": "discounted_total_boundary",
         "near_test": "applies_discount_above_threshold"
       },
+      "related_test": {
+        "name": "applies_discount_above_threshold",
+        "file": "tests/pricing.rs",
+        "line": 21,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong"
+      },
       "llm_guidance": {
         "prompt": "Write one focused Rust test for the missing equality boundary. Place it near tests/pricing.rs::applies_discount_above_threshold. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
         "command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-brief.json",
@@ -6085,6 +6092,16 @@ Field contract:
 - `comments[].suggested_test` - bounded test intent, candidate values,
   assertion shape, recommended test file, and related test to imitate when
   available.
+- `comments[].related_test` - card-level structured related test to imitate per
+  RIPR-SPEC-0068, derived from the nearest strong test that backs
+  `suggested_test.near_test`. Carries `name`, navigable `file` and `line`, and
+  the test's `oracle_kind` / `oracle_strength` so a reviewer or agent can jump to
+  the test and see what it observes. Present only when a nearest strong test
+  exists; omitted otherwise (the card never asserts a related test it cannot
+  locate). The working-set renderer populates this; the gap-ledger path retains
+  its single-string `near_test` until its `GapRepairRoute` carries the
+  structured grip. Enforced by reject-list test
+  `spec0068_card_related_test_object_carries_navigation_and_oracle`.
 - `comments[].llm_guidance` - bounded handoff command and prompt for one
   focused test. It is not a request for free-form diff review.
 - `comments[].repair_card` - optional GapRecord-backed repair card. When

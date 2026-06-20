@@ -862,6 +862,26 @@ fn review_recommendation_json(
         object.insert("non_claims".to_string(), non_claims);
     }
 
+    // Project the card-level structured related-test object (RIPR-SPEC-0068:
+    // a navigational `{name, file, line}` plus the oracle of the nearest
+    // strong test to imitate). Derived from the same `nearest` grip that backs
+    // the `suggested_test.near_test` string, so the card carries a resolvable
+    // file:line for the test to imitate instead of a bare name. Omitted when no
+    // nearest strong test exists; the card stays additive and fails closed by
+    // simply not asserting a related test it cannot locate.
+    if let (Some(test), Some(object)) = (nearest, recommendation.as_object_mut()) {
+        object.insert(
+            "related_test".to_string(),
+            json!({
+                "name": test.test_name.as_str(),
+                "file": display_path(&test.file),
+                "line": test.line,
+                "oracle_kind": test.oracle_kind.as_str(),
+                "oracle_strength": test.oracle_strength.as_str(),
+            }),
+        );
+    }
+
     if target_unresolved && let Some(object) = recommendation.as_object_mut() {
         object.insert("repairability".to_string(), json!("no_action"));
         object.insert(
@@ -2749,6 +2769,50 @@ mod tests {
                 "cross-language card must carry gap_state field: {card:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn spec0068_card_related_test_object_carries_navigation_and_oracle() -> Result<(), String> {
+        // RIPR-SPEC-0068 card-level related-test object: when a nearest strong
+        // test exists, the card carries a structured `related_test` with a
+        // navigable name + file:line and the oracle of that test, not just the
+        // bare `suggested_test.near_test` name.
+        let seams = [classified(88)];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value(&working_set, &seams)?;
+        let card = all_cards(&value)
+            .into_iter()
+            .find(|card| card.get("related_test").is_some())
+            .ok_or("expected a card carrying related_test for a nearest strong test")?;
+        let related = card
+            .get("related_test")
+            .ok_or("related_test missing on card")?;
+        for field in ["name", "file", "oracle_kind", "oracle_strength"] {
+            let value = related.get(field).and_then(Value::as_str).unwrap_or("");
+            assert!(
+                !value.is_empty(),
+                "related_test.{field} must be non-empty: {related:?}"
+            );
+        }
+        assert!(
+            related.get("line").and_then(Value::as_u64).is_some(),
+            "related_test.line must be an integer: {related:?}"
+        );
+        // The structured object agrees with the bare near_test name it
+        // supersedes, so consumers can migrate without divergence.
+        let near_test = card
+            .get("suggested_test")
+            .and_then(|test| test.get("near_test"))
+            .and_then(Value::as_str);
+        assert_eq!(
+            related.get("name").and_then(Value::as_str),
+            near_test,
+            "related_test.name must match suggested_test.near_test"
+        );
         Ok(())
     }
 

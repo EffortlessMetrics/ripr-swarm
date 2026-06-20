@@ -297,6 +297,10 @@ these states as success:
   — every rendered card (inline, summary-only, cross-language) carries gap_state.
 - `crates/ripr/src/output/review_comments.rs::tests::spec0068_summary_reason_is_closed_vocabulary`
   — every summary_reason value is a member of the closed vocabulary constants.
+- `crates/ripr/src/output/review_comments.rs::tests::spec0068_card_related_test_object_carries_navigation_and_oracle`
+  — when a nearest strong test exists, the card carries a structured
+  `related_test` with name, navigable file:line, and oracle_kind/oracle_strength,
+  agreeing with the bare `suggested_test.near_test` name.
 - `crates/ripr/src/output/review_comments.rs::tests::review_comments_gap_ledger_renders_only_eligible_repair_cards`
   — gap-ledger review guidance carries `analysis_scope.run_status =
   "artifact_scope"` and the named ledger-artifact limitation.
@@ -326,8 +330,10 @@ source_location contract is fully enforced now.
 - `crates/ripr/src/output/pr_inline_comment_publish_plan.rs` — publish plan.
 - `schemas/ripr/review-comments.schema.json` — schema updated to allow
   `gap_state`, `receipt_command`, `non_claims`, `why_not_actionable`,
-  `canonical_gap_id` on recommendation cards and the
-  `gap_ledger_artifact` / `artifact_scope` analysis-scope tokens.
+  `canonical_gap_id`, and the structured `related_test`
+  (`name` / `file` / `line` / `oracle_kind` / `oracle_strength`) on
+  recommendation cards and the `gap_ledger_artifact` / `artifact_scope`
+  analysis-scope tokens.
 - `docs/OUTPUT_SCHEMA.md` — card fields documented.
 - `.ripr/traceability.toml` — SPEC-0068 mapped to the five reject-list tests.
 
@@ -349,12 +355,21 @@ source_location contract is fully enforced now.
   `ReviewCommentsAnalysisScope::gap_ledger_artifact`.
 - Five reject-list unit tests (SPEC-0068 prefix).
 - Golden fixtures re-blessed for all pr-guidance cases.
+- Card-level structured `related_test` object (`name`, navigable `file` /
+  `line`, `oracle_kind`, `oracle_strength`) on working-set cards, derived from
+  the nearest strong test that backs `suggested_test.near_test`. This delivers
+  both the structured related-test object `{name, file, line}` and the
+  card-level `oracle_kind` / `oracle_strength` planned items. Present only when a
+  nearest strong test exists; omitted otherwise so the card never asserts a
+  related test it cannot locate.
 
 ### Deferred (linked plan slice)
 
 - `canonical_gap_id` on working-set cards (gap-ledger path already has it).
-- Structured related-test object `{name, file, line}`.
-- Card-level `oracle_kind` / `oracle_strength`.
+- Structured `related_test` on the gap-ledger path: its `GapRepairRoute`
+  carries a single-string `related_test` with no line or oracle, so promoting
+  that path to the structured object requires threading the test grip through
+  the gap-ledger renderer.
 
 ## Metrics
 

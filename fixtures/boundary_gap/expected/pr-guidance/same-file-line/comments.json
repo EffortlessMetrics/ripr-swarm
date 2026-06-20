@@ -44,6 +44,13 @@
       },
       "reason": "Static evidence names missing discriminator `input that hits the boundary: amount == discount_threshold` for this seam.",
       "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json",
+      "related_test": {
+        "file": "tests/pricing.rs",
+        "line": 12,
+        "name": "above_threshold_gets_discount",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong"
+      },
       "seam": {
         "expression": "amount >= discount_threshold",
         "file": "src/pricing.rs",
