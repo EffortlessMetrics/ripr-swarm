@@ -75500,6 +75500,31 @@ mod tests {
     }
 
     #[test]
+    fn evidence_promotion_semantic_assertions_reject_expected_oracle_without_findings() {
+        let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
+            kind: "exact_value".to_string(),
+            strength: "strong".to_string(),
+        }];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 0},
+            "findings": []
+        });
+
+        let report = super::evidence_promotion_semantic_violations(
+            "oracle_empty",
+            Some("fixtures/typescript_oracle_empty"),
+            &assertions,
+            &check_json,
+            None,
+            false,
+        )
+        .join("\n");
+
+        assert!(report.contains("expected_oracle"), "{report}");
+        assert!(report.contains("requires at least one finding"), "{report}");
+    }
+
+    #[test]
     fn evidence_promotion_semantic_assertions_reject_missing_receipt_command() {
         let assertions = vec![
             super::EvidencePromotionSemanticAssertion::MustHaveReceiptCommand,
