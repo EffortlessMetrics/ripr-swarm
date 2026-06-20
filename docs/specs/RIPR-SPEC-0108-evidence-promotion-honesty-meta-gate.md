@@ -16,9 +16,10 @@ Linked PRs:
 
 Support-tier impact:
 
-- Honesty enforcement meta-gate: no classifier behavior change; no new output
-  field; no schema bump; no version bump. This spec pins the semantic expectation
-  that non-promoted charter fixtures must remain non-promoted, independently of
+- Honesty enforcement meta-gate: no classifier behavior change; additive xtask
+  report-envelope fields are allowed when documented here; no `ripr check` JSON
+  schema bump and no version bump. This spec pins the semantic expectation that
+  non-promoted charter fixtures must remain non-promoted, independently of
   whether a golden was re-blessed. Tier labels and claim boundaries remain
   governed by the canonical ledger in
   [support tiers](../status/SUPPORT_TIERS.md).
