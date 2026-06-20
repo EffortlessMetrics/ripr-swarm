@@ -11872,7 +11872,7 @@ fn evidence_promotion_semantic_violations(
                         Some(human_text) => {
                             let contradictory_human =
                                 evidence_promotion_human_contradictory_packet_messaging_lines(
-                                    human_text,
+                                    check_json, human_text,
                                 );
                             if !contradictory_human.is_empty() {
                                 violations.push(format!(
@@ -12568,10 +12568,28 @@ fn evidence_promotion_expected_human_repair_packet_detail_mismatches(
 }
 
 fn evidence_promotion_human_repair_packet_section(human_text: &str) -> Option<&str> {
-    let start = human_text.find("TypeScript repair packet")?;
-    let tail = &human_text[start..];
-    let end = tail.find("\n\n").unwrap_or(tail.len());
-    Some(&tail[..end])
+    evidence_promotion_human_repair_packet_sections(human_text)
+        .into_iter()
+        .next()
+}
+
+fn evidence_promotion_human_repair_packet_sections(human_text: &str) -> Vec<&str> {
+    let mut sections = Vec::new();
+    let mut search_start = 0;
+    while let Some(relative_start) = human_text[search_start..].find("TypeScript repair packet") {
+        let start = search_start + relative_start;
+        let tail = &human_text[start..];
+        let end = tail
+            .find("\n\n")
+            .map(|relative_end| start + relative_end)
+            .unwrap_or(human_text.len());
+        sections.push(&human_text[start..end]);
+        if end == human_text.len() {
+            break;
+        }
+        search_start = end + 2;
+    }
+    sections
 }
 
 fn evidence_promotion_contradictory_packet_messaging_paths(check_json: &Value) -> Vec<String> {
@@ -12639,14 +12657,63 @@ fn evidence_promotion_packet_blocked_message_reason(value: &str) -> Option<&'sta
     None
 }
 
-fn evidence_promotion_human_contradictory_packet_messaging_lines(human_text: &str) -> Vec<String> {
-    human_text
-        .lines()
-        .filter_map(|line| {
-            evidence_promotion_human_packet_blocked_message_reason(line)
-                .map(|reason| format!("expected/human.txt:{}:{reason}", line.trim()))
+fn evidence_promotion_human_contradictory_packet_messaging_lines(
+    check_json: &Value,
+    human_text: &str,
+) -> Vec<String> {
+    let ready_gap_ids = evidence_promotion_packet_ready_canonical_gap_ids(check_json);
+    evidence_promotion_human_repair_packet_sections(human_text)
+        .into_iter()
+        .filter(|section| {
+            ready_gap_ids.is_empty()
+                || ready_gap_ids
+                    .iter()
+                    .any(|canonical_gap_id| section.contains(canonical_gap_id))
+        })
+        .flat_map(|section| {
+            section.lines().filter_map(|line| {
+                evidence_promotion_human_packet_blocked_message_reason(line)
+                    .map(|reason| format!("expected/human.txt:{}:{reason}", line.trim()))
+            })
         })
         .collect()
+}
+
+fn evidence_promotion_packet_ready_canonical_gap_ids(check_json: &Value) -> Vec<String> {
+    let Some(findings) = check_json.get("findings").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut gap_ids = Vec::new();
+    for finding in findings {
+        if evidence_promotion_finding_packet_ready(finding) {
+            collect_canonical_gap_ids(finding, &mut gap_ids);
+        }
+    }
+    gap_ids.sort();
+    gap_ids.dedup();
+    gap_ids
+}
+
+fn collect_canonical_gap_ids(value: &Value, gap_ids: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(gap_id) = map.get("canonical_gap_id").and_then(Value::as_str) {
+                let gap_id = gap_id.trim();
+                if !gap_id.is_empty() {
+                    gap_ids.push(gap_id.to_string());
+                }
+            }
+            for child in map.values() {
+                collect_canonical_gap_ids(child, gap_ids);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_canonical_gap_ids(item, gap_ids);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
 }
 
 fn evidence_promotion_human_packet_blocked_message_reason(value: &str) -> Option<&'static str> {
@@ -76627,6 +76694,82 @@ TypeScript repair packet (advisory)
         let report = super::evidence_promotion_semantic_violations(
             "packet_human_complete_messaging",
             Some("fixtures/packet_human_complete_messaging"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+            true,
+        );
+
+        assert!(report.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn evidence_promotion_semantic_assertions_accept_human_mixed_packet_and_blocked_messaging() {
+        let assertions = vec![
+            super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging,
+        ];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 2},
+            "findings": [
+                {
+                    "id": "packet-human-complete-messaging",
+                    "classification": "weakly_exposed",
+                    "preview_actionability": {
+                        "repair_packet_ready": true,
+                        "gap_state": "actionable",
+                        "actionability_category": "complete_repair_packet"
+                    },
+                    "typescript_repair_packet": {
+                        "canonical_gap_id": "gap:typescript:discount",
+                        "verify_command": "jest tests/discount.test.ts",
+                        "receipt_command": "ripr outcome --before baseline --after repair"
+                    },
+                    "evidence": [
+                        "owner: applyDiscount",
+                        "gap_state: actionable",
+                        "actionability_category: complete_repair_packet",
+                        "why_actionable: complete repair packet"
+                    ]
+                },
+                {
+                    "id": "packet-human-blocked-messaging",
+                    "classification": "weakly_exposed",
+                    "preview_actionability": {
+                        "repair_packet_ready": false,
+                        "gap_state": "advisory",
+                        "actionability_category": "incomplete_repair_packet"
+                    },
+                    "evidence": [
+                        "owner: shippingTotal",
+                        "gap_state: advisory",
+                        "actionability_category: incomplete_repair_packet",
+                        "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
+                    ]
+                }
+            ]
+        });
+        let human_text = "\
+TypeScript repair packet (advisory)
+  canonical gap: gap:typescript:discount
+  source: applyDiscount at src/discount.ts:2
+  related test: tests/discount.test.ts::discount
+  oracle: expect(result).toBe(50)
+  edit surface: tests/discount.test.ts
+  verify: jest tests/discount.test.ts
+  receipt: ripr outcome --before baseline --after repair
+  why actionable: complete repair packet
+  authority: preview_advisory_only
+
+TypeScript repair packet (advisory)
+  canonical gap: gap:typescript:shipping
+  status: not actionable
+  why not actionable: TypeScript preview lacks a complete repair packet contract
+  missing fields: verify_command, receipt_command
+";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "packet_human_mixed_messaging",
+            Some("fixtures/packet_human_mixed_messaging"),
             &assertions,
             &check_json,
             Some(human_text),
