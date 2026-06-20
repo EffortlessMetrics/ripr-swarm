@@ -17,8 +17,8 @@ Linked PRs:
 
 Support-tier impact:
 
-- No tier change. This spec adds one additive `static_limit_kind` value,
-  `rust_macro_wrapped_assertion_unresolved`.
+- None for support-tier status. This spec adds one additive
+  `static_limit_kind` value, `rust_macro_wrapped_assertion_unresolved`.
 - Classification stays reachable-but-undiscriminated. The value names an
   unresolved assertion macro, not a reach claim, oracle claim, repair packet, or
   macro expansion proof.
