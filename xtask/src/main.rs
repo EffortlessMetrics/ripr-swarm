@@ -12356,6 +12356,9 @@ fn evidence_promotion_expected_human_repair_packet_detail_mismatches(
     expected: &ExpectedRepairPacketDetail,
 ) -> Vec<String> {
     let mut missing = Vec::new();
+    let Some(packet_section) = evidence_promotion_human_repair_packet_section(human_text) else {
+        return vec!["expected/human.txt:missing TypeScript repair packet section".to_string()];
+    };
     let source_line = expected.source_line.to_string();
     for (label, snippet) in [
         ("canonical gap", expected.canonical_gap_id.as_str()),
@@ -12367,25 +12370,32 @@ fn evidence_promotion_expected_human_repair_packet_detail_mismatches(
         ("verify command", expected.verify_command.as_str()),
         ("receipt command", expected.receipt_command.as_str()),
     ] {
-        if !human_text.contains(snippet) {
+        if !packet_section.contains(snippet) {
             missing.push(format!("expected/human.txt:missing {label} `{snippet}`"));
         }
     }
     for value in &expected.allowed_edit_surface {
-        if !human_text.contains(value) {
+        if !packet_section.contains(value) {
             missing.push(format!(
                 "expected/human.txt:missing allowed edit surface `{value}`"
             ));
         }
     }
     for value in &expected.forbidden_files {
-        if !human_text.contains(value) {
+        if !packet_section.contains(value) {
             missing.push(format!(
                 "expected/human.txt:missing forbidden file `{value}`"
             ));
         }
     }
     missing
+}
+
+fn evidence_promotion_human_repair_packet_section(human_text: &str) -> Option<&str> {
+    let start = human_text.find("TypeScript repair packet")?;
+    let tail = &human_text[start..];
+    let end = tail.find("\n\n").unwrap_or(tail.len());
+    Some(&tail[..end])
 }
 
 fn evidence_promotion_contradictory_packet_messaging_paths(check_json: &Value) -> Vec<String> {
@@ -75702,6 +75712,96 @@ TypeScript repair packet (advisory)
         );
         assert!(
             report.contains("expected/human.txt:missing receipt command `receipt:`"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn evidence_promotion_semantic_assertions_reject_human_wrong_repair_packet_detail() {
+        let assertions = vec![
+            super::EvidencePromotionSemanticAssertion::ExpectedRepairPacketDetail {
+                detail: super::ExpectedRepairPacketDetail {
+                    canonical_gap_id: "gap:typescript:discount".to_string(),
+                    source_file: "src/discount.ts".to_string(),
+                    source_line: 2,
+                    target_test: "tests/discount.test.ts::discount boundary".to_string(),
+                    assertion_shape: "expect(result).toBe(50)".to_string(),
+                    authority_boundary: "preview_advisory_only".to_string(),
+                    repair_kind: "AddBoundaryAssertion".to_string(),
+                    verify_command: "jest tests/discount.test.ts".to_string(),
+                    receipt_command: "ripr outcome --before baseline --after repair".to_string(),
+                    allowed_edit_surface: vec!["tests/discount.test.ts".to_string()],
+                    forbidden_files: vec!["src/discount.ts".to_string()],
+                },
+            },
+        ];
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [
+                {
+                    "id": "packet-human-wrong-detail",
+                    "classification": "weakly_exposed",
+                    "repair_packet_ready": true,
+                    "typescript_repair_packet": {
+                        "allowed_edit_surface": ["tests/discount.test.ts"],
+                        "assertion_shape": "expect(result).toBe(50)",
+                        "authority_boundary": "preview_advisory_only",
+                        "canonical_gap_id": "gap:typescript:discount",
+                        "file": "src/discount.ts",
+                        "forbidden_files": ["src/discount.ts"],
+                        "gap_id": "probe:discount",
+                        "language": "typescript",
+                        "language_status": "preview",
+                        "line": 2,
+                        "must_not_change": ["Do not edit production code."],
+                        "receipt_command": "ripr outcome --before baseline --after repair",
+                        "repair_kind": "AddBoundaryAssertion",
+                        "target_test": "tests/discount.test.ts::discount boundary",
+                        "verify_command": "jest tests/discount.test.ts"
+                    }
+                }
+            ]
+        });
+        let human_text = "\
+Preview actionability
+  related test: tests/discount.test.ts::discount boundary
+  verify: jest tests/discount.test.ts
+  authority: preview_advisory_only
+
+TypeScript repair packet (advisory)
+  canonical gap: gap:typescript:discount
+  source: applyDiscount at src/discount.ts:2
+  related test: tests/wrong.test.ts::discount boundary
+  oracle: expect(result).toBe(50)
+  edit surface: tests/discount.test.ts
+  verify: jest tests/wrong.test.ts
+  receipt: ripr outcome --before baseline --after repair
+  must not change:
+    - Do not edit production code.
+  authority: preview_advisory_only
+";
+
+        let report = super::evidence_promotion_semantic_violations(
+            "packet_human_wrong_detail",
+            Some("fixtures/packet_human_wrong_detail"),
+            &assertions,
+            &check_json,
+            Some(human_text),
+            true,
+        )
+        .join("\n");
+
+        assert!(report.contains("expected_repair_packet_detail"), "{report}");
+        assert!(
+            report.contains(
+                "expected/human.txt:missing target test `tests/discount.test.ts::discount boundary`"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains(
+                "expected/human.txt:missing verify command `jest tests/discount.test.ts`"
+            ),
             "{report}"
         );
     }
