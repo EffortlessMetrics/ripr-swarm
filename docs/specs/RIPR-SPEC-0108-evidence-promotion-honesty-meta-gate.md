@@ -487,7 +487,10 @@ the gate has over-corrected or the fixture needs re-blessing
 | `evidence_promotion_semantic_assertions_reject_wrong_repair_packet_detail` | Shared assertion evaluator rejects a packet-ready report whose target test or verify command drifts from the corpus contract |
 | `evidence_promotion_semantic_assertions_reject_human_missing_repair_packet_detail` | Shared assertion evaluator rejects a fixture human golden that drops repair-packet handoff detail |
 | `evidence_promotion_semantic_assertions_reject_oracle_drift` | Shared assertion evaluator rejects a report whose oracle kind or strength drifts from `expected_oracle` |
+| `evidence_promotion_semantic_assertions_accept_human_oracle_projection` | Shared assertion evaluator accepts fixture human output that projects the expected oracle kind and strength |
 | `evidence_promotion_semantic_assertions_reject_human_missing_oracle_projection` | Shared assertion evaluator rejects a fixture human golden that drops oracle kind or strength projection |
+| `evidence_promotion_semantic_assertions_reject_missing_human_oracle_golden` | Shared assertion evaluator rejects a fixture-backed oracle assertion with no `expected/human.txt` |
+| `evidence_promotion_human_oracle_line_matches_normalized_projection` | Shared assertion evaluator accepts normalized human oracle projection formats without treating kind-only prose as strength evidence |
 | `evidence_promotion_semantic_assertions_reject_no_tests_claim_with_witness` | Shared assertion evaluator rejects a witnessed limitation that still claims `No tests were found` |
 | `evidence_promotion_semantic_assertions_reject_human_missing_witness_projection` | Shared assertion evaluator rejects a fixture human golden that drops the witnessed `Where to look` projection |
 | `evidence_promotion_semantic_assertions_reject_human_mismatched_witness_projection` | Shared assertion evaluator rejects a fixture human golden that keeps a stale witness line |
