@@ -5102,3 +5102,164 @@ Non-goals:
 - Completeness across all Python constructs or frameworks.
 - A `stable` claim; the target is `usable`.
 - Supporting Django/SQLAlchemy/etc — only failing closed (named limitation) there.
+
+## Campaign 31: Perl Repair-Routing Production Bridge
+
+Campaign ID: `perl-repair-routing-bridge`
+
+Status: tracker
+
+Tracker: `.ripr/goals/perl-repair-routing.toml` · umbrella issue #1379
+
+Note: this is a focused tracker campaign, not the selected active campaign in
+`.ripr/goals/active.toml` (which remains `use-case-spec-spine`). Promotion into
+`active.toml` is a maintainer decision.
+
+Objective:
+
+```text
+Close the two missing production bridges between perl-lsp and ripr so that one
+real Perl repository can flow end-to-end: perl-lsp ripr-facts -> ripr finding
+-> perl_preview_card.v1 on every output surface. Public repair/agent packets
+stay disabled; the end-state is a preview/advisory loop, not a support-tier
+promotion.
+```
+
+Why it matters:
+
+The Perl adapter today is a well-designed `#[cfg(test)]` scaffold: a complete
+24-condition strict-actionability validator, a fail-closed dynamic-boundary
+model (14 boundary kinds), fixture-backed packet parsing, and a real
+(non-cfg-test) `perl_preview_card.v1` renderer already wired into JSON, human,
+SARIF, GitHub annotation, and gap-ledger output. What it lacks is the two
+production bridges: a `perl-lsp ripr-facts` exporter and a ripr-side consumer
+that is not test-scoped. This campaign lands both, plus the routing and
+integrity checks needed to make the loop honest, before any support-tier
+promotion is even discussed.
+
+Verified ground truth (scout-passed, file:line-confirmed):
+
+- Adapter is `#[cfg(test)] mod perl;` at
+  `crates/ripr/src/analysis/language/mod.rs:25-26`; implements no
+  `LanguageAdapter` trait (`adapter.rs:41`).
+- Router recognizes no Perl extension (`router.rs:18-26`).
+- `lang-perl = []` exists but is not in `default`
+  (`crates/ripr/Cargo.toml:50,54`); enabling it only changes the error to
+  "fact-packet preview unavailable" (`pipeline.rs:289-314`).
+- Output renderer `perl_preview_card.rs` is real production code; all authority
+  flags `false` except `public_projection_ready: true`
+  (`perl_preview_card.rs:104-111`); `gap_state: "actionable"` with
+  `repair_packet_ready: false` (`:106,113`).
+- perl-lsp already produces a serde-serializable `FileFactShard`
+  (anchors/entities/occurrences/edges, dynamic-boundary occurrences,
+  `PRODUCER_SCHEMA_VERSION=1`); the exporter is a thin new `LaunchAction`
+  variant, not a from-scratch build.
+- `check-fixture-contracts` already validates the Perl corpus; the
+  evidence-promotion-honesty corpus has zero Perl entries (deferred until a
+  confirmed false-promotion is observed).
+
+End state (campaign complete when all are true):
+
+- `perl-lsp ripr-facts --schema ripr-perl-facts-v1` produces a packet from a
+  real Perl repo, validated by a JSON Schema file checked into perl-lsp.
+- ripr consumes that packet through a production (non-cfg-test) `PerlAdapter`
+  implementing `LanguageAdapter`.
+- ripr routes `.pm`/`.pl` (and `.t` with test-role distinction) to Perl when
+  `lang-perl` is enabled.
+- ripr validates packet freshness/integrity before trusting it.
+- One real mini-repo (the `fixtures/perl_lsp_facts_exporter/input/` sample, or a
+  small synthetic repo) flows exporter -> ripr finding -> preview card on every
+  output surface, demonstrated by an end-to-end integration test.
+- `public_repair_packet`, `agent_packet_ready`, `gate_candidate`,
+  `badge_candidate`, `ripr_zero_candidate` all remain `false`.
+- All claim-control drift corrected; no doc advertises Perl as supported.
+
+Non-goals:
+
+- Support-tier promotion. Perl stays preview/advisory.
+- Enabling public repair/agent packets or PR/CI/LSP projection of them.
+- Real-repository dogfooding at scale, false-actionable recording, or
+  before/after repair receipts (next campaign).
+- A new Perl parser in ripr.
+- Reconciling the FNV-1a gap-id scheme with ripr's SHA-256-based finding
+  identity (tracked as a follow-up PR before IDs become public receipt keys).
+
+Work items (each one PR-sized unless noted):
+
+| Work item | Status | Notes |
+| --- | --- | --- |
+| `docs/perl-campaign-31` | done | This campaign entry. |
+| `claim-control/changelog-09` | pending | Correct CHANGELOG 0.9.0 Perl over-claim wording to "scaffold". |
+| `claim-control/support-tier-row` | pending | Add explicit "Perl scaffold/blocked" row to `docs/status/SUPPORT_TIERS.md`. |
+| `claim-control/config-and-doctor` | pending | Clarify (not remove) Perl as scaffold/not-yet-functional across all user-facing config + doctor + schema-doc surfaces: `config.rs:79-87` embedded example AND root `ripr.toml.example:55-61`, `config.rs:237` parser error string, `docs/CONFIGURATION.md`, doctor Tip block (`commands.rs:4103-4110`), and `docs/OUTPUT_SCHEMA.md` perl_preview_card description. The parser at `config.rs:234,246` already fails closed when the feature is off, so the load-bearing honesty is in code; this item is wording/clarification to avoid implying the adapter is functional. Reframed as "clarify" (not "drop") so the bridge PRs do not churn the same lines re-adding Perl. |
+| `exporter/launch-action` | pending | perl-lsp: add `LaunchAction::RiprFacts` variant + CLI flag. Blocked until bridge work begins. |
+| `exporter/packet-emitter` | pending | perl-lsp: wrap `FileFactShard` -> `ripr-perl-facts-v1`; JSON Schema file; fixtures. |
+| `consumer/productionize` | pending | ripr: `mod perl;` cfg(test) -> cfg(feature="lang-perl"); add `impl LanguageAdapter for PerlAdapter`. Reviewers should treat the ENTIRE `perl.rs` module (~1900 lines of previously-test-only code: strict-actionability validator, packet parser, gap-id hashing, all helpers) as becoming production code under the feature, not just the new trait impl. `lang-perl` stays opt-in (not added to default). Zero behavior change for default builds. |
+| `consumer/typed-runner-commands` | pending | ripr: typed `prove -l`/`yath`/`carton exec`/`dzil` runner-command model (replaces positional path matching). |
+| `routing/perl-extensions` | pending | ripr: route `.pm`/`.pl`/`.t`/`.psgi` to `LanguageId::Perl`; test/source role distinction. |
+| `pipeline/replace-stub` | pending | ripr: replace `pipeline.rs:289-314` fail-closed stub; wire consumer through `strict_actionability_for_change`. |
+| `ingestion/integrity-checks` | pending | ripr: packet fingerprint, producer capability, root/diff coherence, file-digest freshness, referential integrity, ID uniqueness, deterministic ordering. |
+| `verification/end-to-end-mini-repo` | pending | ripr: integration test exporter -> consumer -> preview card; gate the loop. CI story must be explicit: ripr-swarm CI cannot build perl-lsp (separate repo), so the e2e test either (a) commits the expected packet as the e2e input and runs only the ripr half in CI while documenting that the full two-binary loop is verified locally, or (b) adds a CI job that checks out + builds perl-lsp. Option (a) is the v1; the full two-binary loop is verified locally before merge and documented in the PR. |
+| `claim-control/gap-state-vocabulary-note` | pending | Document that `gap_state = "actionable"` means static-evidence-actionable (the strict-actionability check passed), NOT repair-packet-ready (`repair_packet_ready = false`). Add a doc note to `docs/OUTPUT_SCHEMA.md` or `docs/STATIC_EXPOSURE_MODEL.md` near the perl_preview_card description so the vocabulary is not publicly confusing. Vocabulary reconciliation (renaming to `analysis_actionable`/`delegation_ready`/`public_packet_eligible`) is deferred. |
+| `identity/gap-id-reconciliation` | deferred | FNV-1a -> SHA-256-derivation alignment; before public receipt keys. |
+
+Dependencies:
+
+- `exporter/*` and `consumer/*` can proceed in parallel once claim-control lands;
+  they are independent repos (exporter in `perl-lsp-swarm`, consumer in
+  `ripr-swarm`).
+- `consumer/typed-runner-commands` must land before `pipeline/replace-stub` (the
+  work item that makes the validator reachable from production code); it does
+  NOT block `consumer/productionize` (the module-gate flip alone exposes no
+  production path until the pipeline dispatches).
+- `pipeline/replace-stub` depends on `consumer/productionize` (needs the trait
+  impl). It does NOT depend on `routing/perl-extensions`: the pipeline dispatch
+  keys off the enabled-languages list, not `route()` (`route()` is advisory-only
+  at `pipeline.rs:187`).
+- `routing/perl-extensions` depends on `consumer/productionize` (routing to an
+  unimplemented adapter is worse than not routing).
+- `ingestion/integrity-checks` depends on `consumer/productionize`.
+- `verification/end-to-end-mini-repo` depends on all of exporter + consumer +
+  routing + pipeline + ingestion.
+- `identity/gap-id-reconciliation` is deferred (separate follow-up campaign).
+
+Blocking conditions:
+
+- any output-shape change to `perl_preview_card.v1` (requires full golden
+  re-bless in the same PR)
+- any flip of an authority flag to `true` (cardinal-sin seam; not in scope)
+- `lang-perl` added to `default` features (out of scope; stays opt-in)
+- spec status flip of SPEC-0064 / PROP-0018 / ADR-0018 / ADR-0019 before
+  exporter + consumer + end-to-end all land
+
+Commands:
+
+```bash
+cargo xtask check-pr
+cargo xtask fixtures
+cargo xtask goldens check
+cargo xtask check-fixture-contracts
+cargo xtask check-evidence-promotion-honesty
+cargo xtask check-static-language
+cargo xtask check-no-panic-family
+cargo xtask check-public-api
+cargo xtask check-output-contracts
+cargo xtask check-architecture
+cargo fmt --check
+cargo check --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+# perl-lsp side: cargo test -p perl-lsp-rs-core (exporter unit tests)
+# end-to-end: cargo test --test perl_end_to_end (final work item)
+```
+
+Review policy:
+
+- Each work item is one scoped PR following `docs/SCOPED_PR_CONTRACT.md`.
+- Claim-control work items are stackable (docs-only, low conflict risk).
+- Exporter, consumer, routing, pipeline, ingestion work items are NOT stackable:
+  each touches production behavior and needs its own failing-fixture proof.
+- Every production-behavior PR must include a failing fixture (new or extended)
+  that passes only after the change. No merge on self-report.
+- `stackable = false` between exporter and consumer repos (different repos, no
+  shared CI); they merge independently and the end-to-end PR ties them.

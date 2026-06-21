@@ -1,0 +1,237 @@
+id = "perl-repair-routing-bridge"
+title = "Perl Repair-Routing Production Bridge"
+status = "tracker"
+lane = 2
+
+# Focused Perl production-bridge tracker.
+# This is not the active Codex Goals manifest. `.ripr/goals/active.toml` remains
+# the active execution manifest (currently `use-case-spec-spine`). Promotion into
+# `active.toml` is a maintainer decision recorded here.
+#
+# Durable plan: docs/IMPLEMENTATION_CAMPAIGNS.md -> Campaign 31
+# Spec: docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md (proposed)
+# Proposal: docs/proposals/RIPR-PROP-0018-perl-repair-routing-lane.md (proposed)
+# ADR: docs/adr/0018-perl-lsp-fact-substrate.md (proposed)
+# Producer repo: perl-lsp-swarm (published crate: perl-lsp-rs-core)
+#
+# Public tracker: https://github.com/EffortlessMetrics/ripr-swarm/issues/1379
+#
+# NOTE on status vocabulary: this tracker uses ready/blocked/done per
+# .ripr/goals/README.md. "Deferred to next campaign" items are recorded as
+# status = "blocked" with a note (there is no "deferred" status; using blocked
+# keeps the manifest promotion-safe for check-goals).
+
+objective = """
+Close the two missing production bridges between perl-lsp and ripr so that one
+real Perl repository can flow end-to-end: perl-lsp ripr-facts -> ripr finding
+-> perl_preview_card.v1 on every output surface. Public repair/agent packets
+stay disabled; the end-state is a preview/advisory loop, not a support-tier
+promotion.
+"""
+
+non_goals = [
+  "Support-tier promotion. Perl stays preview/advisory.",
+  "Enabling public repair/agent packets or PR/CI/LSP projection of them.",
+  "Real-repository dogfooding at scale, false-actionable recording, or before/after repair receipts (next campaign).",
+  "A new Perl parser in ripr.",
+  "Reconciling the FNV-1a gap-id scheme with ripr's SHA-256-based finding identity (blocked work item here, lands before IDs become public receipt keys).",
+]
+
+# The end state is an end-to-end preview loop, not a release claim.
+end_state = [
+  "perl-lsp ripr-facts --schema ripr-perl-facts-v1 produces a packet from a real Perl repo, validated by a JSON Schema file checked into perl-lsp.",
+  "ripr consumes that packet through a production (non-cfg-test) PerlAdapter implementing LanguageAdapter.",
+  "ripr routes .pm/.pl (and .t with test-role distinction) to Perl when lang-perl is enabled.",
+  "ripr validates packet freshness/integrity before trusting it.",
+  "One real mini-repo flows exporter -> ripr finding -> preview card on every output surface, demonstrated by an end-to-end integration test.",
+  "public_repair_packet, agent_packet_ready, gate_candidate, badge_candidate, ripr_zero_candidate all remain false.",
+  "All claim-control drift corrected; no doc advertises Perl as supported.",
+]
+
+# --- Lane 0: claim control (no production-behavior change, stackable docs) ---
+
+[[work_item]]
+id = "claim-control/support-tier-row"
+status = "ready"
+stackable = true
+branch = "docs/perl-support-tier-scaffold-row"
+acceptance = "Add an explicit 'Perl scaffold/blocked' row to docs/status/SUPPORT_TIERS.md naming the real state (cfg-test adapter, no production routing, lang-perl not default). This is the load-bearing honesty fix; everything else is secondary. NOT a promotion. Docs-only; stackable with other claim-control items. Failing fixture: a docs-as-test (or check-support-tiers) that asserts a Perl row exists AND does not claim preview/usable/stable."
+commands = [
+  "cargo xtask check-spec-format",
+  "cargo xtask check-doc-index",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "claim-control/changelog-09"
+status = "ready"
+stackable = true
+branch = "docs/perl-changelog-09-scaffold-wording"
+acceptance = "Correct CHANGELOG.md 0.9.0 'Perl strict actionability enforcement' and 'Perl preview cards ... on every surface' wording to reflect that the adapter is fixture-only/cfg-test and the cards project only from synthetic test findings, not from any production Perl source. Keep the cards-existing fact true; correct the implication that they are fed by real analysis. Docs-only; stackable."
+commands = [
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "claim-control/config-and-doctor"
+status = "ready"
+stackable = true
+branch = "docs/perl-config-and-doctor-claim-correction"
+acceptance = "CLARIFY (not remove) Perl as scaffold/not-yet-functional across ALL user-facing config + doctor + schema-doc surfaces so none imply the adapter is functional: (1) crates/ripr/src/config.rs:79-87 embedded ripr.toml.example comment; (2) root ripr.toml.example:55-61 (separate file from the embedded one — both need the same clarification); (3) config.rs:237 parser error string 'valid values are rust, typescript, python, perl' (clarify perl is scaffold, or drop it from the advertised list); (4) docs/CONFIGURATION.md (resolve the parser-accepts/doc-omits inconsistency); (5) crates/ripr/src/cli/commands.rs:4103-4110 doctor Tip block — do not suggest enabled = [\"rust\", \"perl\"] (detection at commands.rs:4029-4032 stays honest). The parser at config.rs:234,246 already fails closed when the feature is off, so the load-bearing honesty is already in code; this item is wording to avoid implying functionality. Reframed as 'clarify' (not 'drop') so the bridge PRs (consumer/productionize, routing/perl-extensions) do not churn the same lines re-adding Perl. Behavior change in doctor output may require a doctor fixture update."
+commands = [
+  "cargo xtask check-output-contracts",
+  "cargo xtask goldens check",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "claim-control/gap-state-vocabulary-note"
+status = "ready"
+stackable = true
+branch = "docs/perl-gap-state-vocabulary-note"
+acceptance = "Document that gap_state = \"actionable\" (perl_preview_card.rs:113) means static-evidence-actionable (the strict-actionability check at perl.rs:380 passed), NOT repair-packet-ready (repair_packet_ready = false at perl_preview_card.rs:106). Add a doc note to docs/OUTPUT_SCHEMA.md near the perl_preview_card.v1 description (and/or docs/STATIC_EXPOSURE_MODEL.md) so the vocabulary is not publicly confusing — a user reading 'actionable' alongside repair_packet_ready=false reasonably sees a contradiction. Vocabulary reconciliation (renaming to analysis_actionable / delegation_ready / public_packet_eligible) is explicitly deferred to a future UX PR, not this campaign. Docs-only; stackable."
+commands = [
+  "cargo xtask check-output-contracts",
+  "cargo xtask check-doc-index",
+  "cargo xtask check-pr",
+]
+
+# --- Lane 1: producer (perl-lsp side; repo: perl-lsp-swarm) ---
+
+[[work_item]]
+id = "exporter/schema-file"
+status = "blocked"
+stackable = false
+branch = "exporter/perl-ripr-facts-schema"
+acceptance = "BLOCKED on schema-pinning being agreed as the first Lane 1 step (no code dependency; this is the sequencing decision). In perl-lsp-swarm: add a versioned JSON Schema file (ripr-perl-facts-v1.json) under schemas/ that pins the packet shape perl-lsp will emit. Must match the field set consumed by ripr's fixtures/perl_lsp_facts_exporter/expected/ripr-perl-facts-v1.json (the existing hand-authored expected packet is the reference). This is the contract the exporter and the ripr consumer both pin against. Landing this first lets ripr's consumer work proceed against a frozen schema."
+commands = [
+  "cargo test -p perl-lsp-rs-core",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "exporter/launch-action"
+status = "blocked"
+stackable = false
+branch = "exporter/perl-ripr-facts-action"
+acceptance = "BLOCKED on exporter/schema-file. In perl-lsp-swarm: add a LaunchAction::RiprFacts variant (crates/perl-lsp-rs-core/src/runtime/launcher/mod.rs:346 enum) plus the flat CLI flag wired through crates/perl-lsp-rs/src/cli.rs:54 dispatch. The action accepts --schema ripr-perl-facts-v1 --root . --base origin/main --head HEAD --fact-classes owners,changes,tests,oracles --out <path> per SPEC-0064:96-98. Request paths repo-relative, use /, no host/drive/temp. Unit test the arg parse and dispatch."
+commands = [
+  "cargo test -p perl-lsp-rs-core",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "exporter/packet-emitter"
+status = "blocked"
+stackable = false
+branch = "exporter/perl-ripr-facts-emitter"
+acceptance = "BLOCKED on exporter/schema-file + exporter/launch-action. In perl-lsp-swarm: implement the emitter body. Map the existing perl-workspace FileFactShard (anchors/entities/occurrences/edges, dynamic-boundary occurrences, PRODUCER_SCHEMA_VERSION=1) into the ripr-perl-facts-v1 packet shape (files/owners/changes/tests/oracles/relations/dynamic_boundaries/verify_commands/limitations/provenance). Validate output against the schema file from exporter/schema-file. The packet fed to ripr's fixtures/perl_lsp_facts_exporter/expected/ must now be reproducible from a real perl-lsp run on fixtures/perl_lsp_facts_exporter/input/lib/My/App.pm + input/t/app.t. Failing fixture: a perl-lsp test that runs the emitter on the sample input and diffs against the expected packet."
+commands = [
+  "cargo test -p perl-lsp-rs-core",
+  "cargo test -p perl-workspace",
+  "cargo xtask check-pr",
+]
+
+# --- Lane 2: consumer (ripr side) ---
+
+[[work_item]]
+id = "consumer/typed-runner-commands"
+status = "ready"
+stackable = false
+branch = "consumer/perl-typed-runner-commands"
+acceptance = "Replace the positional path-matching verify-command validation in crates/ripr/src/analysis/language/perl.rs:1665-1689 (is_verify_command) with a typed runner-command model that recognizes prove -l / prove -lv / prove -Ilib / carton exec prove -l / yath test / dzil test --test <path> shapes: flags and options are typed, only trailing positional args must be t/*.t paths. Adds regression fixtures proving 'prove -l t/app.t' now validates and 'prove t/app.t /etc/passwd' still rejects. NOTE on blast radius: is_verify_command is called only from strict_actionability_for_change (perl.rs:439), which is reachable only through the cfg(test)-gated module today (mod.rs:25-26). So this work item is cfg-test-only and has zero production exposure until pipeline/replace-stub wires the validator into the live pipeline — meaning typed-runner-commands must land before pipeline/replace-stub, but does NOT need to land before consumer/productionize (the module-gate flip alone exposes no production path). Preserve all existing safe-path rejections."
+commands = [
+  "cargo test -p ripr --lib",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "consumer/productionize"
+status = "blocked"
+stackable = false
+branch = "consumer/perl-adapter-productionize"
+acceptance = "BLOCKED on the campaign starting (no code dep on typed-runner-commands — see that item's note; the validator is not reachable until pipeline/replace-stub). Move the Perl adapter out of cfg(test): crates/ripr/src/analysis/language/mod.rs:25-26 from #[cfg(test)] mod perl; to #[cfg(feature = \"lang-perl\")] mod perl; with a pub(crate) use perl::PerlAdapter; re-export under the same feature. Add impl LanguageAdapter for PerlAdapter (adapter.rs:41 contract): accepts_path for .pm/.pl/.t/.psgi, analyze_diff and analyze_repo that consume a ripr-perl-facts-v1 packet (path supplied via a new option) and produce Vec<Finding> carrying the perl_*: evidence keys the renderer at output/perl_preview_card.rs:67-95 expects. BLAST RADIUS NOTE FOR REVIEWERS: flipping the module gate makes the ENTIRE perl.rs module (~1900 lines of previously-test-only code: strict-actionability validator at perl.rs:380-513, packet parser at perl.rs:19-31, gap-id FNV hashing at perl.rs:1856-1869, all helpers) production code under cfg(feature = \"lang-perl\") — NOT just the new trait impl. Review the whole module for production soundness. The pipeline stub at pipeline.rs:289-314 is replaced in pipeline/replace-stub; this work item is ONLY the trait impl + module gate + re-export, gated behind lang-perl (NOT added to default). lang-perl stays opt-in. Zero behavior change for default builds (feature off)."
+commands = [
+  "cargo check -p ripr --no-default-features --features lang-perl",
+  "cargo test -p ripr --features lang-perl",
+  "cargo xtask check-architecture",
+  "cargo xtask check-public-api",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "routing/perl-extensions"
+status = "blocked"
+stackable = false
+branch = "routing/perl-path-extensions"
+acceptance = "BLOCKED on consumer/productionize (routing to an unimplemented adapter is worse than not routing). Teach crates/ripr/src/analysis/language/router.rs:18-26 to route .pm/.pl/.t/.psgi to LanguageId::Perl (when lang-perl enabled; fall through to None when feature off so default builds are untouched). Also add LanguageId::Perl to PREVIEW_LANGUAGE_ORDER (pipeline.rs:158-162) under the feature gate so advisory ordering includes Perl when enabled. .t files get a Test role hint distinct from .pm/.pl Source. NOTE: pipeline dispatch keys off the enabled-languages list, NOT route() (route() is advisory-only at pipeline.rs:187), so this work item is needed for the e2e test and advisory path but does NOT block pipeline/replace-stub. Regression: a non-perl-enabled build still routes none of these."
+commands = [
+  "cargo test -p ripr",
+  "cargo test -p ripr --no-default-features --features lang-perl",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "pipeline/replace-stub"
+status = "blocked"
+stackable = false
+branch = "pipeline/perl-consumer-wiring"
+acceptance = "BLOCKED on consumer/productionize (needs the trait impl) AND consumer/typed-runner-commands (the validator must accept real prove -l shapes before it becomes reachable). Does NOT depend on routing/perl-extensions (pipeline dispatch keys off enabled-languages list, not route()). Replace the fail-closed stub at crates/ripr/src/analysis/pipeline.rs:289-314 (analyze_perl_diff / analyze_perl_repo returning perl_fact_packet_preview_unavailable()) with real dispatch into PerlAdapter::analyze_diff/analyze_repo from consumer/productionize. The new path reads the packet (from a new --perl-facts <path> option), feeds it through consume_fact_packet + strict_actionability_for_change, and emits Findings. When no packet path is supplied and the exporter is unavailable, the path must STILL fail closed with a named limitation (no invented packet, no fabricated finding). Also document --perl-facts in docs/CONFIGURATION.md and CLI --help as part of this item (not a separate doc PR)."
+commands = [
+  "cargo test -p ripr --features lang-perl",
+  "cargo xtask check-output-contracts",
+  "cargo xtask goldens check",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "ingestion/integrity-checks"
+status = "blocked"
+stackable = false
+branch = "ingestion/perl-packet-integrity"
+acceptance = "BLOCKED on consumer/productionize. Add a production ingestion boundary to the packet consumer that the fixture-only parser (which today checks only schema_version at entry) currently lacks: packet_fingerprint correctness vs recomputed hash; producer identity/capability compatibility (reject producers that lack required fact_classes); root and diff coherence (root path matches request, base/head match diff); file digest freshness; uniqueness of IDs across all fact kinds; referential integrity (every owner_id/change_id/test_id/oracle_id referenced by a relation/verify_command/provenance exists); deterministic ordering of arrays; duplicate-fact detection; oversized-packet/resource limits. JSON-Schema validation against the checked-in ripr-perl-facts-v1.json (from exporter/schema-file, vendored as a ripr fixture) is INTENTIONALLY PRODUCER-SIDE: ripr's boundary is structural serde + the integrity checks above, not loading the JSON Schema (no jsonschema/schemars dep in the workspace, and adding one is out of scope). Each check fails closed to a named PerlActionabilityBlocker (perl.rs:1118) or a new ingestion-error variant; no silent acceptance of bad input. Fixture-driven: one bad-packet fixture per check that the gate rejects."
+commands = [
+  "cargo test -p ripr --features lang-perl",
+  "cargo xtask check-fixture-contracts",
+  "cargo xtask check-pr",
+]
+
+# --- Lane 3: end-to-end proof ---
+
+[[work_item]]
+id = "verification/end-to-end-mini-repo"
+status = "blocked"
+stackable = false
+branch = "verify/perl-end-to-end-mini-repo"
+acceptance = "BLOCKED on ALL of exporter/* (Lane 1) + consumer/* + routing + pipeline + ingestion (Lane 2). End-to-end integration test that runs the full loop against the sample mini-repo (fixtures/perl_lsp_facts_exporter/input/): perl-lsp ripr-facts --out facts.json; ripr check --perl-facts facts.json --json; assert the output contains a Finding with language=Perl, language_status=Preview, class=WeaklyExposed, a perl_preview_card.v1 block on JSON/human/SARIF/GitHub/gap-ledger surfaces, and all authority flags false. CROSS-REPO CI STORY (must be explicit, not hand-waved): ripr-swarm CI cannot build perl-lsp (separate repo, no shared workflow). v1 approach: commit the expected packet (fixtures/perl_lsp_facts_exporter/expected/ripr-perl-facts-v1.json) as the e2e input and run ONLY the ripr half in CI; the FULL two-binary loop (perl-lsp exporter + ripr consumer) is verified LOCALLY before merge and documented in the PR with the actual command sequence + output snippet. Optionally a later PR can add a CI job that checks out + builds perl-lsp, but that is NOT required to close this campaign. This is the campaign's load-bearing proof; no merge on self-report, verify the artifact by running both binaries locally."
+commands = [
+  "cargo test -p ripr --features lang-perl --test perl_end_to_end",
+  "cargo xtask goldens check",
+  "cargo xtask dogfood",
+  "cargo xtask check-pr",
+]
+
+# --- Blocked = deferred to next campaign (no "deferred" status; see header note) ---
+
+[[work_item]]
+id = "identity/gap-id-reconciliation"
+status = "blocked"
+stackable = false
+branch = "identity/perl-gap-id-sha256"
+acceptance = "DEFERRED to a dedicated later PR before Perl IDs become public receipt keys. Reconcile the FNV-1a 64-bit gap-id hashing in crates/ripr/src/analysis/language/perl.rs:1856-1869 with ripr's general SHA-256-derived finding identity, OR explicitly document why the Perl path-based id (used by the live preview card) is the canonical form and the FNV hash is vestigial. Decide representation before any public receipt command is enabled. Not on the critical path of this campaign (receipt stays null). Recorded as blocked (not a separate 'deferred' status) to keep the manifest promotion-safe for check-goals."
+commands = [
+  "cargo xtask check-public-api",
+  "cargo xtask check-pr",
+]
+
+[[work_item]]
+id = "dogfood/real-repo-and-receipts"
+status = "blocked"
+stackable = false
+branch = "dogfood/perl-real-repo-receipts"
+acceptance = "DEFERRED to next campaign. Dogfood real Perl repositories, record false-actionables and limitations, produce before/after repair receipts. Add the first Perl entry to fixtures/evidence-promotion-honesty-corpus/corpus.json (currently 0 Perl entries) once a confirmed false-promotion is observed, and extend the parity loop at xtask/src/main.rs:14567 to include perl. Only after this lands is support-tier promotion even discussable. Recorded as blocked (not a separate 'deferred' status) to keep the manifest promotion-safe for check-goals."
+commands = [
+  "cargo xtask check-evidence-promotion-honesty",
+  "cargo xtask dogfood",
+  "cargo xtask check-pr",
+]
