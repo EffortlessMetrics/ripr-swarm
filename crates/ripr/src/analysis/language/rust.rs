@@ -321,7 +321,8 @@ fn find_unresolved_assertion_macro_witness(
 
 fn unresolved_assertion_macro_invocations(body: &str, start_line: usize) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
-    for (offset, line) in body.lines().enumerate() {
+    let masked_body = mask_rust_comments_and_strings(body);
+    for (offset, line) in masked_body.lines().enumerate() {
         let mut search_start = 0usize;
         while let Some(relative_bang) = line[search_start..].find('!') {
             let bang = search_start + relative_bang;
@@ -349,6 +350,138 @@ fn unresolved_assertion_macro_invocations(body: &str, start_line: usize) -> Vec<
     invocations.sort();
     invocations.dedup();
     invocations
+}
+
+fn mask_rust_comments_and_strings(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut index = 0usize;
+    let mut block_depth = 0usize;
+
+    while index < bytes.len() {
+        if block_depth > 0 {
+            if starts_with_bytes(bytes, index, b"/*") {
+                mask_non_newline_bytes(&mut masked, index, index.saturating_add(2));
+                block_depth = block_depth.saturating_add(1);
+                index = index.saturating_add(2);
+            } else if starts_with_bytes(bytes, index, b"*/") {
+                mask_non_newline_bytes(&mut masked, index, index.saturating_add(2));
+                block_depth = block_depth.saturating_sub(1);
+                index = index.saturating_add(2);
+            } else {
+                mask_non_newline_bytes(&mut masked, index, index.saturating_add(1));
+                index = index.saturating_add(1);
+            }
+            continue;
+        }
+
+        if starts_with_bytes(bytes, index, b"//") {
+            let end = bytes[index..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| index + offset);
+            mask_non_newline_bytes(&mut masked, index, end);
+            index = end;
+            continue;
+        }
+
+        if starts_with_bytes(bytes, index, b"/*") {
+            mask_non_newline_bytes(&mut masked, index, index.saturating_add(2));
+            block_depth = 1;
+            index = index.saturating_add(2);
+            continue;
+        }
+
+        if let Some(end) = rust_raw_string_literal_end(bytes, index) {
+            mask_non_newline_bytes(&mut masked, index, end);
+            index = end;
+            continue;
+        }
+
+        if bytes[index] == b'"' {
+            let end = rust_string_literal_end(bytes, index);
+            mask_non_newline_bytes(&mut masked, index, end);
+            index = end;
+            continue;
+        }
+
+        index = index.saturating_add(1);
+    }
+
+    match String::from_utf8(masked) {
+        Ok(value) => value,
+        Err(_) => text.to_string(),
+    }
+}
+
+fn starts_with_bytes(bytes: &[u8], index: usize, needle: &[u8]) -> bool {
+    bytes
+        .get(index..index.saturating_add(needle.len()))
+        .is_some_and(|candidate| candidate == needle)
+}
+
+fn mask_non_newline_bytes(bytes: &mut [u8], start: usize, end: usize) {
+    let bounded_end = end.min(bytes.len());
+    for byte in bytes.iter_mut().take(bounded_end).skip(start) {
+        if *byte != b'\n' {
+            *byte = b' ';
+        }
+    }
+}
+
+fn rust_string_literal_end(bytes: &[u8], start: usize) -> usize {
+    let mut index = start.saturating_add(1);
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            return index.saturating_add(1);
+        }
+        index = index.saturating_add(1);
+    }
+    bytes.len()
+}
+
+fn rust_raw_string_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let prefix_len = if bytes.get(start) == Some(&b'r') {
+        1
+    } else if bytes.get(start) == Some(&b'b') && bytes.get(start.saturating_add(1)) == Some(&b'r') {
+        2
+    } else {
+        return None;
+    };
+
+    let mut delimiter = start.saturating_add(prefix_len);
+    let mut hashes = 0usize;
+    while bytes.get(delimiter) == Some(&b'#') {
+        hashes = hashes.saturating_add(1);
+        delimiter = delimiter.saturating_add(1);
+    }
+    if bytes.get(delimiter) != Some(&b'"') {
+        return None;
+    }
+
+    let mut index = delimiter.saturating_add(1);
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            let suffix_start = index.saturating_add(1);
+            let suffix_end = suffix_start.saturating_add(hashes);
+            if suffix_end <= bytes.len()
+                && bytes[suffix_start..suffix_end]
+                    .iter()
+                    .all(|byte| *byte == b'#')
+            {
+                return Some(suffix_end);
+            }
+        }
+        index = index.saturating_add(1);
+    }
+
+    Some(bytes.len())
 }
 
 fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
@@ -868,6 +1001,34 @@ mod tests {
                 "tests/it.rs",
                 4,
                 "let result = inner(10, 3);\nassert_eq!(result, 7);",
+            )],
+            ..RustIndex::default()
+        };
+
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+
+        assert_eq!(finding.static_limit_kind, None);
+        assert!(finding.evidence.is_empty());
+    }
+
+    #[test]
+    fn macro_wrapped_assertion_limit_ignores_comments_and_string_literals() {
+        let mut finding = reachable_unrevealed_finding_with_related_test(
+            "test_inner_with_commented_assertion_macro",
+            "tests/it.rs",
+            4,
+        );
+        let index = RustIndex {
+            tests: vec![test_summary(
+                "test_inner_with_commented_assertion_macro",
+                "tests/it.rs",
+                4,
+                r##"let result = inner(10, 3);
+// assert_result!(result, 7);
+/* assert_block_result!(result, 7); */
+let note = "assert_string_result!(result, 7)";
+let raw = r#"assert_raw_result!(result, 7)"#;
+let _ = (result, note, raw);"##,
             )],
             ..RustIndex::default()
         };
