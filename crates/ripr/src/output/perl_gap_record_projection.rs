@@ -31,19 +31,15 @@
 //! `GapRecord` with `agent_packet` eligible, gated by the shared validator.
 //! Per the Campaign 31 plan, the bespoke path is decommissioned in PR 16
 //! once this shared-validator path is the single authority.
-
-// This module's public entry point (`perl_gap_record_for`) and its private
-// helpers have no non-test caller yet: the flip-site wiring
-// (`preview_actionability.rs`) + the shared-renderer consumption land in
-// Campaign 31 PR 16 (ripr-swarm#1409), at which point the bespoke
-// `gap_record_from_perl_preview_finding` path is decommissioned. Per ADR 0019
-// §77-81, the parity tests here prove the projection is correct today; the
-// `dead_code` allowances are removed by PR 16. This mirrors the TypeScript
-// projection's pre-wiring state.
-#![allow(
-    dead_code,
-    reason = "Perl projection awaiting flip-site wiring in Campaign 31 PR 16 (ripr-swarm#1409); parity tests here prove correctness today."
-)]
+//!
+//! Wiring: `preview_actionability.rs` calls `perl_gap_record_for` for
+//! `LanguageId::Perl` findings, mirroring how it calls
+//! `typescript_gap_record_for` for TypeScript/JavaScript. In the current
+//! state, production Perl findings do not carry the `gap_state:` /
+//! `actionability_category:` evidence `preview_actionability_for` reads, so
+//! the function returns `None` at that gate before reaching the projection;
+//! the projection only ever produces `Some(record)` for synthetic test
+//! findings. PR 16 lands the real Perl evidence path.
 
 use crate::domain::{ExposureClass, Finding, LanguageId, LanguageStatus};
 use crate::output::gap_decision_ledger::{
