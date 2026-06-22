@@ -40,7 +40,10 @@
 // §77-81, the parity tests here prove the projection is correct today; the
 // `dead_code` allowances are removed by PR 16. This mirrors the TypeScript
 // projection's pre-wiring state.
-#![allow(dead_code, reason = "Perl projection awaiting flip-site wiring in Campaign 31 PR 16 (ripr-swarm#1409); parity tests here prove correctness today.")]
+#![allow(
+    dead_code,
+    reason = "Perl projection awaiting flip-site wiring in Campaign 31 PR 16 (ripr-swarm#1409); parity tests here prove correctness today."
+)]
 
 use crate::domain::{ExposureClass, Finding, LanguageId, LanguageStatus};
 use crate::output::gap_decision_ledger::{
@@ -581,10 +584,7 @@ mod tests {
     /// (mirrors the TS receipt invariant).
     #[test]
     fn perl_receipt_command_is_ripr_outcome_shape() {
-        let cmd = perl_receipt_command(
-            "gap:perl:lib/My/App.pm:discount",
-            "prove t/app.t",
-        );
+        let cmd = perl_receipt_command("gap:perl:lib/My/App.pm:discount", "prove t/app.t");
         assert!(
             cmd.starts_with("ripr outcome --before"),
             "receipt must be a ripr outcome command: {cmd}"
@@ -619,9 +619,7 @@ mod tests {
         };
         let do_not_do = gap_record_packet_do_not_do(&record);
         assert!(
-            do_not_do
-                .iter()
-                .any(|line| line.contains("preview")),
+            do_not_do.iter().any(|line| line.contains("preview")),
             "shared gap_record_packet_do_not_do must include the preview clause for a Perl GapRecord: {do_not_do:?}"
         );
     }
