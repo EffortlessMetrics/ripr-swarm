@@ -352,6 +352,31 @@ mod tests {
     // --- State mapping rows (RIPR-SPEC-0066 "State mapping rules") ---
 
     #[test]
+    fn state_tokens_are_stable() {
+        // The sidecar `state` token is a public contract; pin every arm.
+        assert_eq!(PublicBadgeState::ZeroActionable.as_str(), "zero_actionable");
+        assert_eq!(PublicBadgeState::Actionable(3).as_str(), "actionable");
+        assert_eq!(PublicBadgeState::Limited.as_str(), "limited");
+        assert_eq!(PublicBadgeState::Stale.as_str(), "stale");
+        assert_eq!(PublicBadgeState::Unknown.as_str(), "unknown");
+    }
+
+    #[test]
+    fn state_messages_are_the_closed_vocabulary() {
+        assert_eq!(
+            PublicBadgeState::ZeroActionable.shields_message(),
+            "0 actionable"
+        );
+        assert_eq!(
+            PublicBadgeState::Actionable(7).shields_message(),
+            "7 actionable"
+        );
+        assert_eq!(PublicBadgeState::Limited.shields_message(), "limited");
+        assert_eq!(PublicBadgeState::Stale.shields_message(), "stale");
+        assert_eq!(PublicBadgeState::Unknown.shields_message(), "unknown");
+    }
+
+    #[test]
     fn full_current_zero_gaps_is_zero_actionable() {
         let projection = project_public_badge(&full_canonical(0));
         assert_eq!(projection.state, PublicBadgeState::ZeroActionable);
