@@ -4247,20 +4247,20 @@ fn detect_perl_framework(root: &Path) -> &'static str {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "t") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if content.contains("use Test2::V0") {
-                    return "Test2::V0";
-                }
-                if content.contains("use Test::More") {
-                    return "Test::More";
-                }
-                if content.contains("use Test::Exception") {
-                    return "Test::Exception";
-                }
-                if content.contains("use Test::Fatal") {
-                    return "Test::Fatal";
-                }
+        if path.extension().is_some_and(|e| e == "t")
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            if content.contains("use Test2::V0") {
+                return "Test2::V0";
+            }
+            if content.contains("use Test::More") {
+                return "Test::More";
+            }
+            if content.contains("use Test::Exception") {
+                return "Test::Exception";
+            }
+            if content.contains("use Test::Fatal") {
+                return "Test::Fatal";
             }
         }
     }
