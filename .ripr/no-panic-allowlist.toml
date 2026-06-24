@@ -332,7 +332,7 @@ callee = "unwrap"
 receiver_fingerprint = "run_analysis(&AnalysisOptions { root: root.clone(), base: None, diff_file: Some(root.join(\"diff.patch\")), mode: AnalysisMode::Draft, include_unchanged_tests: true, resolve_tsconfig_paths: false, perl_facts_path: None, })"
 
 [allow.last_seen]
-line = 254
+line = 327
 column = 19
 
 [[allow]]
@@ -348,7 +348,7 @@ callee = "unwrap"
 receiver_fingerprint = "run_analysis(&AnalysisOptions { root: root.clone(), base: None, diff_file: Some(root.join(\"diff.patch\")), mode: AnalysisMode::Instant, include_unchanged_tests: true, resolve_tsconfig_paths: false, perl_facts_path: None, })"
 
 [allow.last_seen]
-line = 271
+line = 345
 column = 23
 
 [[allow]]
