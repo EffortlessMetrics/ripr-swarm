@@ -102,11 +102,12 @@ fn run_check(
     // a fact packet, then consume it automatically. NO silent invocation
     // unless explicitly configured.
     let perl_config = config.perl();
-    if let Some(producer) = perl_config.producer() {
-        if producer == "perllsp" && input.perl_facts_path.is_none() {
-            let packet_path = invoke_perl_lsp_producer(perl_config, &input)?;
-            input.perl_facts_path = Some(packet_path);
-        }
+    if let Some(producer) = perl_config.producer()
+        && producer == "perllsp"
+        && input.perl_facts_path.is_none()
+    {
+        let packet_path = invoke_perl_lsp_producer(perl_config, &input)?;
+        input.perl_facts_path = Some(packet_path);
     }
 
     let options = options_builder::analysis_options_from_input_and_config(&input, config);
