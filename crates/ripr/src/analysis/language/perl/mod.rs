@@ -76,16 +76,14 @@ impl LanguageAdapter for PerlAdapter {
         })?;
         let packet = self.consume_fact_packet(&packet_text)?;
 
-        // Convert the packet into Findings. C2 (packet→Finding conversion)
-        // lands the full mapping; for C1 this returns whatever Findings the
-        // packet's strict-actionability validator produces.
-        let findings = packet_to_findings(&packet, options);
-        let changed_files = packet.changes.len();
-
-        Ok(LanguageDiffResult {
-            findings,
-            changed_files,
-        })
+        // C2 (ripr-swarm#1429): the packet→Finding mapping is not yet
+        // implemented. Return Err so the pipeline non-abort contract records
+        // this as `unavailable` in language_runs — NOT Ok(empty), which would
+        // look like a successful clean Perl analysis.
+        Err(
+            "Perl fact packet parsed and validated, but packet-to-Finding conversion is not yet implemented (C2, ripr-swarm#1429)"
+                .to_string(),
+        )
     }
 
     fn analyze_repo(
@@ -108,34 +106,12 @@ impl LanguageAdapter for PerlAdapter {
         })?;
         let packet = self.consume_fact_packet(&packet_text)?;
 
-        let findings = packet_to_findings(&packet, options);
-        let production_files = packet.files.len();
-
-        Ok(LanguageRepoResult {
-            findings,
-            production_files,
-        })
+        // C2: same as analyze_diff — mapper not yet implemented.
+        Err(
+            "Perl fact packet parsed and validated, but packet-to-Finding conversion is not yet implemented (C2, ripr-swarm#1429)"
+                .to_string(),
+        )
     }
-}
-
-/// Convert a validated packet into ripr domain Findings.
-///
-/// C1 initial slice: for each change, attempt strict-actionability. If it
-/// passes, emit a WeaklyExposed Finding. If it fails, emit a named-limitation
-/// Finding. Either way, the Finding carries the `perl_*` evidence keys that
-/// `perl_gap_record_for` can project.
-///
-/// C2 (ripr-swarm#1429) will enrich this with full RIPR evidence,
-/// canonical-gap identity, related tests, and sink alignment.
-fn packet_to_findings(
-    packet: &PerlFactPacket,
-    _options: &AnalysisOptions,
-) -> Vec<crate::domain::Finding> {
-    // C1: return empty for now — the full packet→Finding mapping is C2.
-    // This is the honest state: the adapter compiles + routes + reads packets,
-    // but doesn't yet produce Findings. The pipeline non-abort contract
-    // records this as a Perl run that produced zero findings.
-    Vec::new()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
