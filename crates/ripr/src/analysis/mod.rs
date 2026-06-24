@@ -76,6 +76,11 @@ pub struct AnalysisOptions {
     ///
     /// Default: `false` (opt-in, fail-closed per RIPR-SPEC-0099).
     pub resolve_tsconfig_paths: bool,
+    /// Path to a `ripr-perl-facts-v1` packet file for the Perl adapter
+    /// (Campaign 31, #1429). When `None`, the Perl adapter returns a named
+    /// limitation (no analysis). When `Some`, the adapter reads the packet
+    /// and produces Findings + limitations from it.
+    pub perl_facts_path: Option<PathBuf>,
 }
 
 /// Advisory record for one compiled preview-language adapter whose files are

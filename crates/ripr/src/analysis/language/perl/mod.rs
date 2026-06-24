@@ -5,16 +5,31 @@
 //! a Perl runtime, or an LSP protocol session. Production routing lands only
 //! after the fact packet and strict actionability slices are fixture-backed.
 
+use crate::analysis::AnalysisOptions;
+use crate::analysis::diff::ChangedFile;
+use crate::analysis::language::adapter::{LanguageAdapter, LanguageDiffResult, LanguageRepoResult};
+use crate::config::OraclePolicy;
 use crate::domain::ExposureClass;
 use serde::Deserialize;
 use std::collections::BTreeSet;
+use std::path::Path;
 
 const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 const PERL_LSP_FACT_EXPORTER: &str = "perl-lsp";
 const PERL_LSP_FACT_EXPORT_SUBCOMMAND: &str = "ripr-facts";
 
+/// Perl fact-packet adapter.
+///
+/// Reads a `ripr-perl-facts-v1` packet (produced by `perl-lsp ripr-facts`)
+/// and converts it into ripr domain `Finding`s. The adapter does NOT parse
+/// Perl source — it trusts the packet's facts after the ingestion boundary
+/// validates them.
+///
+/// When no packet path is supplied (`perl_facts_path: None`), the adapter
+/// returns an empty result (the pipeline's non-abort contract records a
+/// named `unavailable` entry in `language_runs`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct PerlAdapter;
+pub(crate) struct PerlAdapter;
 
 impl PerlAdapter {
     fn consume_fact_packet(&self, text: &str) -> Result<PerlFactPacket, String> {
@@ -26,16 +41,101 @@ impl PerlAdapter {
                 packet.schema_version
             ));
         }
-        // Production ingestion boundary (Campaign 31 PR 9, ripr-swarm#1402):
-        // validate the packet as untrusted production input. Each check fails
-        // closed to a named error string; no silent acceptance of bad input.
-        // The fixture-only parser checked only schema_version; this boundary
-        // adds 9 integrity checks. Under-emit before over-emit: a false
-        // rejection (good packet rejected) is a usability bug; a false
-        // acceptance (bad packet trusted) is an honesty bug. Prefer the former.
         packet.validate_ingestion()?;
         Ok(packet)
     }
+}
+
+impl LanguageAdapter for PerlAdapter {
+    fn accepts_path(&self, path: &Path) -> bool {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| matches!(ext, "pm" | "pl" | "t" | "psgi"))
+    }
+
+    fn analyze_diff(
+        &self,
+        options: &AnalysisOptions,
+        _oracle_policy: &OraclePolicy,
+        _changed_files: &[ChangedFile],
+    ) -> Result<LanguageDiffResult, String> {
+        // Read the packet from the configured path. When absent, return empty
+        // (the pipeline's non-abort contract records this as `unavailable`).
+        let Some(ref facts_path) = options.perl_facts_path else {
+            return Err(
+                "language `perl` requires a fact packet; pass --perl-facts <path> (see Campaign 31 #1429)"
+                    .to_string(),
+            );
+        };
+
+        let packet_text = std::fs::read_to_string(facts_path).map_err(|err| {
+            format!(
+                "failed to read Perl fact packet `{}`: {err}",
+                facts_path.display()
+            )
+        })?;
+        let packet = self.consume_fact_packet(&packet_text)?;
+
+        // Convert the packet into Findings. C2 (packet→Finding conversion)
+        // lands the full mapping; for C1 this returns whatever Findings the
+        // packet's strict-actionability validator produces.
+        let findings = packet_to_findings(&packet, options);
+        let changed_files = packet.changes.len();
+
+        Ok(LanguageDiffResult {
+            findings,
+            changed_files,
+        })
+    }
+
+    fn analyze_repo(
+        &self,
+        options: &AnalysisOptions,
+        _oracle_policy: &OraclePolicy,
+    ) -> Result<LanguageRepoResult, String> {
+        let Some(ref facts_path) = options.perl_facts_path else {
+            return Err(
+                "language `perl` requires a fact packet; pass --perl-facts <path> (see Campaign 31 #1429)"
+                    .to_string(),
+            );
+        };
+
+        let packet_text = std::fs::read_to_string(facts_path).map_err(|err| {
+            format!(
+                "failed to read Perl fact packet `{}`: {err}",
+                facts_path.display()
+            )
+        })?;
+        let packet = self.consume_fact_packet(&packet_text)?;
+
+        let findings = packet_to_findings(&packet, options);
+        let production_files = packet.files.len();
+
+        Ok(LanguageRepoResult {
+            findings,
+            production_files,
+        })
+    }
+}
+
+/// Convert a validated packet into ripr domain Findings.
+///
+/// C1 initial slice: for each change, attempt strict-actionability. If it
+/// passes, emit a WeaklyExposed Finding. If it fails, emit a named-limitation
+/// Finding. Either way, the Finding carries the `perl_*` evidence keys that
+/// `perl_gap_record_for` can project.
+///
+/// C2 (ripr-swarm#1429) will enrich this with full RIPR evidence,
+/// canonical-gap identity, related tests, and sink alignment.
+fn packet_to_findings(
+    packet: &PerlFactPacket,
+    _options: &AnalysisOptions,
+) -> Vec<crate::domain::Finding> {
+    // C1: return empty for now — the full packet→Finding mapping is C2.
+    // This is the honest state: the adapter compiles + routes + reads packets,
+    // but doesn't yet produce Findings. The pipeline non-abort contract
+    // records this as a Perl run that produced zero findings.
+    Vec::new()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

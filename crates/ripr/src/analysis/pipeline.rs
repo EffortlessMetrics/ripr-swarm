@@ -1,3 +1,5 @@
+#[cfg(feature = "lang-perl")]
+use super::language::PerlAdapter;
 #[cfg(feature = "lang-python")]
 use super::language::PythonAdapter;
 #[cfg(feature = "lang-typescript")]
@@ -78,7 +80,7 @@ fn run_pipeline_for_diff_text(
                 analyze_typescript_diff(options, oracle_policy, &changed_files)
             }
             LanguageId::Python => analyze_python_diff(options, oracle_policy, &changed_files),
-            LanguageId::Perl => analyze_perl_diff(),
+            LanguageId::Perl => analyze_perl_diff(options, oracle_policy, &changed_files),
             LanguageId::Rust => {
                 continue;
             }
@@ -138,7 +140,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
                 analyze_typescript_repo(options, oracle_policy)
             }
             LanguageId::Python => analyze_python_repo(options, oracle_policy),
-            LanguageId::Perl => analyze_perl_repo(),
+            LanguageId::Perl => analyze_perl_repo(options, oracle_policy),
             LanguageId::Rust => {
                 continue;
             }
@@ -338,30 +340,37 @@ fn analyze_python_repo(
 }
 
 #[cfg(feature = "lang-perl")]
-fn analyze_perl_diff() -> Result<LanguageDiffResult, String> {
-    perl_fact_packet_preview_unavailable()
+fn analyze_perl_diff(
+    options: &AnalysisOptions,
+    oracle_policy: &OraclePolicy,
+    changed_files: &[diff::ChangedFile],
+) -> Result<LanguageDiffResult, String> {
+    PerlAdapter.analyze_diff(options, oracle_policy, changed_files)
 }
 
 #[cfg(not(feature = "lang-perl"))]
-fn analyze_perl_diff() -> Result<LanguageDiffResult, String> {
+fn analyze_perl_diff(
+    _options: &AnalysisOptions,
+    _oracle_policy: &OraclePolicy,
+    _changed_files: &[diff::ChangedFile],
+) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::Perl)
 }
 
 #[cfg(feature = "lang-perl")]
-fn analyze_perl_repo() -> Result<LanguageRepoResult, String> {
-    perl_fact_packet_preview_unavailable()
+fn analyze_perl_repo(
+    options: &AnalysisOptions,
+    oracle_policy: &OraclePolicy,
+) -> Result<LanguageRepoResult, String> {
+    PerlAdapter.analyze_repo(options, oracle_policy)
 }
 
 #[cfg(not(feature = "lang-perl"))]
-fn analyze_perl_repo() -> Result<LanguageRepoResult, String> {
+fn analyze_perl_repo(
+    _options: &AnalysisOptions,
+    _oracle_policy: &OraclePolicy,
+) -> Result<LanguageRepoResult, String> {
     unavailable_language(LanguageId::Perl)
-}
-
-#[cfg(feature = "lang-perl")]
-fn perl_fact_packet_preview_unavailable<T>() -> Result<T, String> {
-    Err(
-        "language `perl` is a fact-packet preview; `ripr check` does not launch perl-lsp or consume live Perl fact packets yet".to_string(),
-    )
 }
 
 #[cfg(any(
