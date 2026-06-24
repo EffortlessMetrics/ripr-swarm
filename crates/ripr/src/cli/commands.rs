@@ -4234,6 +4234,7 @@ fn report_detected_test_surfaces(root: &Path) {
 ///   - `StaticLimitKind::CrossLanguageOracleVisibilityUnresolved` wire string
 ///     and its doc comment.
 ///   - 0.9.0 CHANGELOG non-claims.
+///
 /// Count files with a given extension in the root (shallow, non-recursive).
 fn count_files(root: &Path, ext: &str) -> usize {
     shallow_has_extension(root, ext) as usize
