@@ -331,6 +331,7 @@ index 0000000..1111111 100644
             mode: AnalysisMode::Draft,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
+            perl_facts_path: None,
         })
         .unwrap();
         assert!(!out.findings.is_empty());
@@ -348,6 +349,7 @@ index 0000000..1111111 100644
             mode: AnalysisMode::Instant,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
+            perl_facts_path: None,
         })
         .unwrap();
         assert!(instant.findings.iter().any(|finding| {
@@ -396,6 +398,7 @@ fn premium_customer_gets_discount() {
             mode: AnalysisMode::Draft,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
+            perl_facts_path: None,
         })?;
 
         if out.findings.is_empty() {
@@ -499,6 +502,7 @@ fn test_with_predicate() {
             mode: AnalysisMode::Draft,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
+            perl_facts_path: None,
         })?;
 
         for finding in &out.findings {
@@ -562,6 +566,7 @@ index 0000000..1111111 100644
             mode: AnalysisMode::Draft,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
+            perl_facts_path: None,
         })?;
 
         if !diff_out.findings.is_empty() {
@@ -575,6 +580,7 @@ index 0000000..1111111 100644
             mode: AnalysisMode::Draft,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
+            perl_facts_path: None,
         })?;
 
         if repo_out.findings.is_empty() {
