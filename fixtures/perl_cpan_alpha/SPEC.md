@@ -1,44 +1,41 @@
 # Perl CPAN Alpha Fixture
 
+Spec: RIPR-SPEC-0064
+
 Campaign 31 E1 convergence proof (ripr-swarm#1379).
 
-## Scope
+## Given
 
-Three-outcome CPAN-style fixture proving the Perl repair-routing loop
-produces honest Findings or named limitations from real Perl source.
+A CPAN-style Perl project with a package, a test file using Test::More, and
+a diff that changes a predicate boundary from `>=` to `>`.
+
+Fixture:
+- `input/lib/Pricing.pm`: package with `calculate_discount` + `dynamic_method`
+- `input/t/pricing.t`: Test::More with `ok()` (weak) + `is()` (exact)
+- `input/diff.patch`: changes `>=` to `>` in `calculate_discount`
 
 ## When
 
-The producer (`perllsp ripr-facts`) emits a fact packet from a CPAN-style
-project. The consumer (`ripr check --perl-facts`) reads it and produces
-honest results.
+The producer (`perllsp ripr-facts`) emits a fact packet from the project.
+The consumer (`ripr check --perl-facts`) reads it and produces honest results.
 
 ## Then
 
-### Outcome 1: Actionable (weak oracle on a changed boundary)
+### Outcome 1: Actionable
 
-The boundary diff changes `>=` to `>` in `calculate_discount`. The test file
-has `ok(calculate_discount(100))` — a weak smoke oracle that reaches the
-changed owner but does not pin the exact boundary.
+The `ok(calculate_discount(100))` oracle reaches the changed boundary but
+does not pin it. ripr produces a `WeaklyExposed` Finding with a concrete
+missing discriminator (`$amount > 100`).
 
-Expected ripr result: `WeaklyExposed` Finding with a concrete missing
-discriminator, a related test, and a candidate repair packet subject to the
-shared validator.
+### Outcome 2: Already observed
 
-### Outcome 2: Already observed (exact oracle discriminates the boundary)
+The `is(calculate_discount(100), 90)` oracle pins the exact boundary. No
+repair packet is needed.
 
-The test file also has `is(calculate_discount(100), 90)` — an exact oracle
-that pins the boundary.
+### Outcome 3: Limited
 
-Expected ripr result: no repair packet (the gap is already discriminated).
-
-### Outcome 3: Limited (dynamic dispatch blocks actionability)
-
-The dynamic-dispatch diff introduces `my $method = 'calculate_discount';
-return shift->$method();` — a dynamic boundary.
-
-Expected ripr result: `StaticUnknown` Finding with a named limitation
-(dynamic_dispatch boundary).
+The dynamic-dispatch pattern (`$obj->$method()`) produces a named limitation
+(`dynamic_dispatch` boundary), not a repair packet.
 
 ## Must Not
 
