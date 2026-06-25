@@ -428,6 +428,12 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
             if record.gap_id.is_empty() {
                 return Err(format!("finding {index} produced an empty gap_id"));
             }
+            // Phase D PR 3 (#1409): enforce ADR 0019 — Perl GapRecords
+            // produced by the bespoke gap_record_from_perl_preview_finding
+            // path are markdown-advisory only (agent_packet ineligible).
+            // The shared validator (validate_agent_gap_record_packet) is the
+            // sole authority for repair_packet_ready. This entry explicitly
+            // does NOT set agent_packet eligibility — it cannot flip readiness.
             records.push(record);
         }
     }
