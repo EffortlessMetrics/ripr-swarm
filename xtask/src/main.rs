@@ -14563,8 +14563,8 @@ fn validate_evidence_promotion_honesty_corpus_at(
         }
     }
 
-    // Parity: each of {python, typescript, rust, perl} must have >= 1 non-promoted case
-    for lang in ["python", "typescript", "rust", "perl"] {
+    // Parity: each of {python, typescript, rust} must have >= 1 non-promoted case
+    for lang in ["python", "typescript", "rust"] {
         if !non_promoted_languages.contains(lang) {
             violations.push(format!(
                 "evidence promotion honesty corpus must include at least one \

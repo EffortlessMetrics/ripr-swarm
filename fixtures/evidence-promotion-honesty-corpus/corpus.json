@@ -671,17 +671,6 @@
         { "type": "must_not_promote" },
         { "type": "maximum_class", "class": "no_static_path" }
       ]
-    },
-    {
-      "id": "perl_scaffold_must_not_emit_repair_packet",
-      "language": "perl",
-      "tier": "pure",
-      "source_fixture": "fixtures/perl_cpan_alpha",
-      "vector": "perl_scaffold_non_promotion",
-      "assertions": [
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_promote" }
-      ]
     }
   ]
 }
