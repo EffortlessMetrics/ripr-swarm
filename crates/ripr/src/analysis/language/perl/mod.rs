@@ -259,7 +259,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // then apply the relation-kind gate the packet classifier omits:
         // advisory kinds can never promote past ReachableUnrevealed. We never
         // *raise* the class beyond what the packet computes except for the
-        // proven-sink-alignment Exposed promotion; we downgrade advisory
+        // established-sink-alignment Exposed promotion; we downgrade advisory
         // relations and override to StaticUnknown on a blocking boundary.
         let sink_aligned_evidence = sink_aligned_observation(&related_evidence, change, packet);
         let class = if has_boundary {
@@ -267,7 +267,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         } else if related.is_empty() {
             ExposureClass::NoStaticPath
         } else if sink_aligned_evidence.is_some() {
-            // H2: proven sink alignment → already observed. The strongest
+            // H2: established sink alignment → already observed. The strongest
             // honest claim in the conservative taxonomy. No repair gap is
             // needed because a discriminator already exists.
             ExposureClass::Exposed
@@ -332,7 +332,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
 
         // Build evidence strings (perl_*: keys the projection reads).
         //
-        // H2: when the change is ALREADY OBSERVED (proven sink alignment),
+        // H2: when the change is ALREADY OBSERVED (established sink alignment),
         // emit `perl_already_discriminated:` explaining why no test is needed
         // (maintainer end-state outcome #2) and SUPPRESS the repair-gap fields
         // (perl_suggested_test_location / perl_suggested_assertion) — telling a
@@ -2285,7 +2285,7 @@ fn perl_relation_to_domain(
 
 /// Evidence that a related test's oracle observes the changed sink (H2).
 ///
-/// Returned by `sink_aligned_observation` when sink alignment is PROVEN, so the
+/// Returned by `sink_aligned_observation` when sink alignment is ESTABLISHED, so the
 /// change can be classified `Exposed` (already-observed). Carries the
 /// human-readable pieces for the `perl_already_discriminated:` evidence line.
 #[derive(Clone, Debug)]
