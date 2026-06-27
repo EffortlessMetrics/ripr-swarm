@@ -251,7 +251,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // `observed_sink` aligns to the change's `changed_observable`, the
         // change is ALREADY OBSERVED → `Exposed` (the maintainer end-state
         // outcome #2: "no test is needed"). This is the discrimination-vs-
-        // coverage distinction made concrete: owner-target identity alone is
+        // discrimination distinction made concrete: owner-target identity alone is
         // NOT observation (the false-exposed family); the oracle must observe
         // the *specific changed sink*.
         //
@@ -347,9 +347,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             "perl_target_test_shape: {}",
             change.behavior_hint.default_assertion_shape()
         ));
-        if is_already_observed
-            && let Some(aligned) = sink_aligned_evidence.as_ref()
-        {
+        if is_already_observed && let Some(aligned) = sink_aligned_evidence.as_ref() {
             // The sink-aligned evidence explains the observation: which test +
             // oracle observes which changed sink. This is the "already-observed
             // evidence explaining why no test is needed" (goal outcome #2).
@@ -2309,7 +2307,7 @@ struct SinkAlignedObservation {
 /// - the change carries a non-empty `changed_observable`;
 /// - `observed_sink` and `changed_observable` refer to the same sink.
 ///
-/// The last check is the discrimination-vs-coverage gate. Token-substring
+/// The last check is the discrimination gate. Token-substring
 /// matching is the recurring false-`exposed` family, so this is conservative:
 /// alignment is accepted when the two expressions are exactly equal, OR when
 /// one is a recognized trivial aliasing of the other (e.g. the observable is

@@ -2168,7 +2168,7 @@ fn findings_from_packet(text: &str) -> Result<Vec<crate::domain::Finding>, Strin
 // H2 uses oracle.observed_sink aligned to change.changed_observable to
 // distinguish a test that ALREADY discriminates the changed sink (Exposed /
 // already-observed — no test needed) from one that merely reaches the owner
-// (WeaklyExposed). This is the discrimination-vs-coverage distinction: owner-
+// (WeaklyExposed). This is the discrimination distinction: owner-
 // target identity is NOT observation (the false-exposed family). These tests
 // pin both the promotion and the fail-closed behavior.
 // ──────────────────────────────────────────────────────────────────────
