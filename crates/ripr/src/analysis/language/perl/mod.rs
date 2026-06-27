@@ -347,18 +347,20 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             "perl_target_test_shape: {}",
             change.behavior_hint.default_assertion_shape()
         ));
-        if is_already_observed {
+        if is_already_observed
+            && let Some(aligned) = sink_aligned_evidence.as_ref()
+        {
             // The sink-aligned evidence explains the observation: which test +
             // oracle observes which changed sink. This is the "already-observed
             // evidence explaining why no test is needed" (goal outcome #2).
-            let aligned = sink_aligned_evidence
-                .as_ref()
-                .expect("Exposed class implies sink-aligned evidence is Some");
             evidence.push(format!(
                 "perl_already_discriminated: {} observes changed sink `{}` via {}",
                 aligned.test_name, aligned.observed_sink, aligned.oracle_shape
             ));
-        } else if has_concrete_discriminator && let Some(first) = related.first() {
+        } else if !is_already_observed
+            && has_concrete_discriminator
+            && let Some(first) = related.first()
+        {
             evidence.push(format!(
                 "perl_suggested_test_location: {}::{}",
                 first.file.display(),
