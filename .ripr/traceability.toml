@@ -4474,10 +4474,10 @@ tests = [
   "xtask::tests::ripr_swarm_plan_blocks_missing_target_test_shape",
   "xtask::tests::ripr_swarm_plan_blocks_missing_raw_evidence_refs",
   "xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_strict_actionability_requires_all_packet_and_context_fields",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_strict_actionability_fails_closed_for_missing_or_weak_fields",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_repair_card_and_agent_packet_project_strict_actionability",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_strict_actionability_requires_all_packet_and_context_fields",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_strict_actionability_fails_closed_for_missing_or_weak_fields",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_repair_card_and_agent_packet_project_strict_actionability",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_iterator_local_then_activation_is_static_limitation",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_owner_call_when_input_operand_is_computed_local_then_activation_stays_static_limitation",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_call_presence_when_multi_owner_production_wrapper_has_target_affinity_then_activation_is_yes",
@@ -4706,17 +4706,17 @@ id = "RIPR-SPEC-0064"
 name = "Perl fact packet contract"
 spec = "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md"
 tests = [
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_fact_packet_adapter_consumes_exact_return_fixture",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perllsp_exporter_fixture_is_consumed_without_actionable_gap_state",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_fact_packet_adapter_preserves_source_test_and_oracle_taxonomy",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_related_test_linking_classifies_reachability_and_revealability",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_strict_actionability_requires_all_packet_and_context_fields",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_strict_actionability_fails_closed_for_missing_or_weak_fields",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_repair_card_and_agent_packet_project_strict_actionability",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_private_repair_card_and_agent_packet_json_preserve_internal_projection_boundary",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_lsp_export_request_renders_deterministic_batch_command",
-  "crates/ripr/src/analysis/language/perl.rs::tests::perl_lsp_exporter_unavailable_stays_non_actionable",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_fact_packet_adapter_consumes_exact_return_fixture",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perllsp_exporter_fixture_is_consumed_without_actionable_gap_state",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_fact_packet_adapter_preserves_source_test_and_oracle_taxonomy",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_related_test_linking_classifies_reachability_and_revealability",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_strict_actionability_requires_all_packet_and_context_fields",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_strict_actionability_fails_closed_for_missing_or_weak_fields",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_repair_card_and_agent_packet_project_strict_actionability",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_private_repair_card_and_agent_packet_json_preserve_internal_projection_boundary",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_lsp_export_request_renders_deterministic_batch_command",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_lsp_exporter_unavailable_stays_non_actionable",
   "crates/ripr/src/output/perl_preview_card.rs::tests::perl_preview_card_projects_public_preview_card",
   "crates/ripr/src/output/perl_preview_card.rs::tests::perl_preview_card_fails_closed_without_strict_projection_inputs",
   "crates/ripr/src/output/perl_preview_card.rs::tests::perl_preview_card_rejects_unsafe_or_incomplete_raw_refs",
@@ -4730,7 +4730,7 @@ fixtures = [
   "fixtures/perl_lsp_facts_exporter",
 ]
 code = [
-  "crates/ripr/src/analysis/language/perl.rs",
+  "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/output/perl_preview_card.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/human/sections.rs",
@@ -4770,11 +4770,36 @@ metrics = [
 id = "RIPR-SPEC-0066"
 name = "Repo badge use case"
 spec = "docs/specs/RIPR-SPEC-0066-repo-badge-use-case.md"
-tests = []
+tests = [
+  "crates/ripr/src/output/badge/public_projection.rs::tests::full_current_zero_gaps_is_zero_actionable",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::full_current_n_gaps_is_n_actionable",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::gap_decision_ledger_basis_is_a_valid_count_basis",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::limited_run_status_is_limited_with_named_reason",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::over_age_artifact_is_stale",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::raw_finding_basis_is_unknown_never_a_count",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::diff_scope_is_unknown_on_public_badge",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::missing_source_report_is_unknown",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::missing_generated_at_is_unknown",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::unrecognized_run_status_fails_closed_to_unknown",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::stale_takes_precedence_over_limited",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::unknown_takes_precedence_over_stale_and_limited",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::age_exactly_at_max_is_not_stale",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::age_one_second_over_max_is_stale",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::attach_projects_repo_canonical_summary",
+  "crates/ripr/src/output/badge/public_projection.rs::tests::attach_is_no_op_for_diff_badges",
+  "crates/ripr/src/app/tests/badge_rendering.rs::render_check_repo_badge_json_paints_scope_repo",
+]
 fixtures = []
-code = []
+code = [
+  "crates/ripr/src/output/badge/public_projection.rs",
+  "crates/ripr/src/output/badge/render.rs",
+  "crates/ripr/src/output/badge/model.rs",
+  "crates/ripr/src/output/render.rs",
+]
 outputs = [
   "docs/specs/RIPR-SPEC-0066-repo-badge-use-case.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "badges/README.md",
 ]
 metrics = [
   "repo_badge_use_case_status_proposed",
@@ -6342,4 +6367,120 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
   "honesty_corpus_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0120"
+name = "rust macro-wrapped assertion limitation"
+spec = "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro",
+  "crates/ripr/src/analysis/language/rust.rs::tests::macro_wrapped_assertion_limit_ignores_known_assertion_macros",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind",
+]
+fixtures = [
+  "fixtures/rust_macro_wrapped_assertion_limitation",
+  "fixtures/evidence-promotion-honesty-corpus",
+]
+code = [
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+  "honesty_corpus_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0118"
+name = "rust integration public-API path limitation"
+spec = "docs/specs/RIPR-SPEC-0118-rust-integration-public-api-path-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::transitive_reach_limit_kind_names_integration_test_path",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_integration_public_api_static_limit_kind",
+]
+fixtures = [
+  "fixtures/rust_transitive_reach_positive",
+  "fixtures/rust_transitive_reach_test_helper_chain",
+  "fixtures/evidence-promotion-honesty-corpus",
+]
+code = [
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/analysis/rust_index.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0118-rust-integration-public-api-path-limitation.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+  "honesty_corpus_pass_rate",
+  "pinned_external_corpus_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0119"
+name = "rust direct test macro-call limitation"
+spec = "docs/specs/RIPR-SPEC-0119-rust-direct-test-macro-call-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::macro_reach_limit_kind_names_direct_test_body_macro_path",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_test_call_static_limit_kind",
+]
+fixtures = [
+  "fixtures/rust_macro_wrapped_test_call_limitation",
+  "fixtures/rust_macro_reach_limitation",
+  "fixtures/evidence-promotion-honesty-corpus",
+]
+code = [
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs",
+  "crates/ripr/src/analysis/classify/mod.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0119-rust-direct-test-macro-call-limitation.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+  "honesty_corpus_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0121"
+name = "perl-lsp-swarm CI scratch-GC orphan-reaper path mismatch"
+spec = "docs/specs/RIPR-SPEC-0121-perl-lsp-swarm-scratch-gc-orphan-reaper-paths.md"
+# Spec-only: the fix lands in the perl-lsp-swarm repo, not ripr-swarm. Status
+# is `proposed` until the fix is applied there; there is no ripr test, fixture,
+# or code to trace. ripr-swarm's own scratch-gc.yml is the reference pattern
+# cited in the spec. The metric is a CI-operability signal produced in the
+# perl-lsp-swarm lane, not a ripr product metric.
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0121-perl-lsp-swarm-scratch-gc-orphan-reaper-paths.md",
+]
+metrics = [
+  "ci_scratch_disk_free_space_after_gc",
 ]

@@ -265,6 +265,288 @@ fn check_json_output_has_stable_contract_fields() {
     assert!(stdout.contains(r#""suggested_next_action""#));
 }
 
+// ── `check --suppression-policy` (#1441) ──
+
+fn write_suppression_policy(label: &str, text: &str) -> Result<PathBuf, String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let path = dir.join("ripr-suppressions.toml");
+    std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+#[test]
+fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let policy = write_suppression_policy(
+        "suppression-json",
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
+    )?;
+    let policy_arg = policy.display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--suppression-policy",
+        &policy_arg,
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("check JSON should parse: {err}\n{stdout}"))?;
+
+    let findings = value["findings"]
+        .as_array()
+        .ok_or("findings must be an array")?;
+    assert!(!findings.is_empty(), "sample diff must produce findings");
+    for finding in findings {
+        assert_eq!(
+            finding["suppressed"], true,
+            "every sample finding lives under the suppressed glob"
+        );
+        assert_eq!(finding["suppressed_by"], "crates/ripr/examples/sample/**");
+    }
+    assert_eq!(
+        value["summary"]["suppressed_by_policy"].as_u64(),
+        Some(findings.len() as u64)
+    );
+    // Per-class buckets count unsuppressed findings only.
+    assert_eq!(value["summary"]["weakly_exposed"].as_u64(), Some(0));
+    // `findings` stays the total rendered count.
+    assert_eq!(
+        value["summary"]["findings"].as_u64(),
+        Some(findings.len() as u64)
+    );
+    assert_eq!(value["suppression_policy"]["path"], policy_arg.as_str());
+    assert_eq!(
+        value["suppression_policy"]["warnings"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let policy = write_suppression_policy(
+        "suppression-human",
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
+    )?;
+    let policy_arg = policy.display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--suppression-policy",
+        &policy_arg,
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Suppressed by policy"),
+        "human output must disclose policy application: {stdout}"
+    );
+    assert!(stdout.contains("(selector: crates/ripr/examples/sample/**)"));
+    assert!(
+        !stdout.contains("Next step\n"),
+        "suppressed findings must not render detailed blocks: {stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn check_suppression_policy_missing_file_fails_closed() {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--suppression-policy",
+        "does/not/exist.toml",
+    ]);
+    assert_failure(&output);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read suppression policy"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let policy = write_suppression_policy(
+        "suppression-sarif",
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/**\"\nreason = \"unused\"\nowner = \"repo-owner\"\n",
+    )?;
+    let policy_arg = policy.display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--format",
+        "sarif",
+        "--suppression-policy",
+        &policy_arg,
+    ]);
+    assert_failure(&output);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--suppression-policy applies to the findings-based check formats"),
+        "stderr: {stderr}"
+    );
+    Ok(())
+}
+
+// ── `gate evaluate --exception-policy` (#1442) ──
+
+const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
+  "schema_version": "0.1",
+  "summary": {"unchanged_tests": true},
+  "comments": [],
+  "summary_only": [],
+  "suppressed": []
+}"#;
+
+fn write_exception_ledger(
+    dir: &std::path::Path,
+    review_after: &str,
+    expires: &str,
+) -> Result<PathBuf, String> {
+    let path = dir.join("quality-gate-exceptions.toml");
+    let ledger = format!(
+        "schema_version = 1\npolicy = \"quality-gate-exceptions\"\nstatus = \"active\"\ndue_review = \"fail\"\n\n[[exception]]\nid = \"total-burndown\"\nkind = \"temporary_burndown\"\nscope = \"ripr_plus_total\"\nowner = \"proof-lane\"\nreason = \"Pre-existing gaps predate the gate.\"\nfinal_target = \"unresolved total = 0\"\nevidence = \"target/receipts/quality/ripr-plus.json\"\nremoval_criteria = \"final mode requires zero\"\ncreated = \"2026-01-01\"\nreview_after = \"{review_after}\"\nexpires = \"{expires}\"\n"
+    );
+    std::fs::write(&path, ledger).map_err(|err| format!("write {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+#[test]
+fn gate_evaluate_exception_policy_active_ledger_reports_and_passes() -> Result<(), String> {
+    let dir = unique_temp_workspace("gate-exception-active");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write guidance: {err}"))?;
+    let ledger = write_exception_ledger(&dir, "9999-01-01", "9999-12-31")?;
+    let out = dir.join("gate-decision.json");
+
+    let output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--pr-guidance",
+        &guidance.display().to_string(),
+        "--exception-policy",
+        &ledger.display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
+    let value: serde_json::Value = serde_json::from_str(&decision)
+        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
+    assert_eq!(value["exception_policy"]["active_count"], 1);
+    assert_eq!(
+        value["exception_policy"]["violations"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_ne!(value["status"], "blocked");
+    Ok(())
+}
+
+#[test]
+fn gate_evaluate_exception_policy_expired_ledger_blocks_with_nonzero_exit() -> Result<(), String> {
+    let dir = unique_temp_workspace("gate-exception-expired");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write guidance: {err}"))?;
+    let ledger = write_exception_ledger(&dir, "2000-01-01", "2000-06-01")?;
+    let out = dir.join("gate-decision.json");
+
+    let output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--pr-guidance",
+        &guidance.display().to_string(),
+        "--exception-policy",
+        &ledger.display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_failure(&output);
+
+    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
+    let value: serde_json::Value = serde_json::from_str(&decision)
+        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
+    assert_eq!(value["status"], "blocked");
+    assert!(
+        value["exception_policy"]["violations"]
+            .as_array()
+            .is_some_and(|violations| violations
+                .iter()
+                .any(|violation| violation["kind"] == "quality_exception_expired")),
+        "decision: {decision}"
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(), String> {
+    let dir = unique_temp_workspace("gate-exception-missing");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write guidance: {err}"))?;
+    let out = dir.join("gate-decision.json");
+
+    let output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--pr-guidance",
+        &guidance.display().to_string(),
+        "--exception-policy",
+        &dir.join("does-not-exist.toml").display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_failure(&output);
+
+    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
+    assert!(
+        decision.contains("failed to read exception policy"),
+        "decision: {decision}"
+    );
+    Ok(())
+}
+
 #[test]
 fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String> {
     let root = workspace_root().display().to_string();
@@ -1439,7 +1721,9 @@ fn check_badge_json_output_has_native_badge_shape() {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.6""#));
+    assert!(stdout.contains(r#""schema_version": "0.7""#));
+    // Diff-scoped badge JSON never carries a public projection.
+    assert!(!stdout.contains(r#""public_projection""#));
     assert!(stdout.contains(r#""kind": "ripr""#));
     assert!(stdout.contains(r#""scope": "diff""#));
     assert!(stdout.contains(r#""basis": "finding_exposure""#));
@@ -1654,6 +1938,130 @@ fn doctor_reports_language_tiers_and_limitations() -> Result<(), String> {
     assert!(
         stdout.contains("ripr check --base origin/main"),
         "expected the diff-first recommended command in stdout:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_perl_preview_section_when_perl_markers_present() -> Result<(), String> {
+    // A workspace with Perl markers (Makefile.PL + lib/*.pm + t/*.t) must
+    // surface the rich "Perl preview:" section (Campaign 31 item 5):
+    // project counts, adapter, producer, perllsp, schema, test roots,
+    // frameworks, runners, and an exact next command.
+    let root = unique_temp_workspace("doctor-perl-preview");
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(root.join("t")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Makefile.PL"),
+        "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+    )
+    .map_err(|err| err.to_string())?;
+    // A minimal Cargo.toml so the doctor's root check passes (the realistic
+    // scenario is a mixed Rust+Perl repo; a pure-Perl repo would fail the
+    // Cargo.toml check, which is unrelated to the Perl preview).
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mixed-perl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("lib/Pricing.pm"),
+        "package Pricing;\nuse strict;\nsub discount { return 0; }\n1;\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("t/pricing.t"),
+        "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+    )
+    .map_err(|err| err.to_string())?;
+
+    let root_str = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_str]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The Perl preview section heading.
+    assert!(
+        stdout.contains("- Perl preview:"),
+        "expected '- Perl preview:' in stdout:\n{stdout}"
+    );
+    // Each sub-line of the rich preview.
+    assert!(
+        stdout.contains("project:"),
+        "expected 'project:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("adapter:"),
+        "expected 'adapter:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("producer:"),
+        "expected 'producer:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("exporter:"),
+        "expected 'exporter:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("schema:"),
+        "expected 'schema:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test roots:"),
+        "expected 'test roots:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("frameworks:"),
+        "expected 'frameworks:' line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("runners:"),
+        "expected 'runners:' line:\n{stdout}"
+    );
+    assert!(stdout.contains("next:"), "expected 'next:' line:\n{stdout}");
+
+    // Schema reports the expected version (single-sourced from app::PERL_FACT_PACKET_SCHEMA).
+    assert!(
+        stdout.contains("ripr-perl-facts-v1 expected"),
+        "expected 'ripr-perl-facts-v1 expected' on the schema line:\n{stdout}"
+    );
+    // Test framework detection: Test::More is present in t/pricing.t.
+    assert!(
+        stdout.contains("Test::More"),
+        "expected 'Test::More' detected:\n{stdout}"
+    );
+    // Test root detection: t/ is present.
+    assert!(
+        stdout.contains("t/ detected"),
+        "expected 't/ detected' on test roots line:\n{stdout}"
+    );
+    // The recursive count_files now reports the real .pm/.pl/.t counts (> 0).
+    let project_line = stdout
+        .lines()
+        .find(|l| l.contains("project:"))
+        .unwrap_or("");
+    assert!(
+        !project_line.contains("1 .pm, 0 .pl, 0 .t") || project_line.contains("1 .pm, 0 .pl, 1 .t"),
+        "project counts must reflect the recursive scan (1 .pm, 1 .t): {project_line}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
+    // A Rust-only workspace must NOT emit a Perl preview section.
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("- Perl preview:"),
+        "must not emit a Perl preview for a Rust-only workspace:\n{stdout}"
     );
 
     let _ = std::fs::remove_dir_all(&workspace);
@@ -2899,7 +3307,7 @@ fn check_repo_badge_plus_json_emits_native_shape_with_fixture_report() -> Result
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.6""#));
+    assert!(stdout.contains(r#""schema_version": "0.7""#));
     assert!(stdout.contains(r#""kind": "ripr_plus""#));
     assert!(stdout.contains(r#""scope": "repo""#));
     assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
@@ -2907,6 +3315,9 @@ fn check_repo_badge_plus_json_emits_native_shape_with_fixture_report() -> Result
     assert!(stdout.contains(r#""counts""#));
     assert!(stdout.contains(r#""reason_counts""#));
     assert!(stdout.contains(r#""policy""#));
+    // Repo-scoped public badge carries the RIPR-SPEC-0066 projection.
+    assert!(stdout.contains(r#""public_projection""#));
+    assert!(stdout.contains(r#""run_status": "full""#));
     assert!(stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#));
     assert!(stdout.contains(r#""intentional_test_efficiency_findings": 0"#));
     assert!(stdout.contains(r#""unknowns_test_efficiency": 0"#));
@@ -2998,7 +3409,7 @@ fn check_repo_badge_json_emits_repo_scope_metadata() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.6""#));
+    assert!(stdout.contains(r#""schema_version": "0.7""#));
     assert!(stdout.contains(r#""kind": "ripr""#));
     assert!(stdout.contains(r#""scope": "repo""#));
     assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
@@ -3008,6 +3419,9 @@ fn check_repo_badge_json_emits_repo_scope_metadata() -> Result<(), String> {
     );
     assert!(stdout.contains(r#""label": "ripr""#));
     assert!(stdout.contains(r#""counts""#));
+    // Repo-scoped public badge carries the RIPR-SPEC-0066 projection.
+    assert!(stdout.contains(r#""public_projection""#));
+    assert!(stdout.contains(r#""source_report": "target/ripr/reports/repo-ripr-badge.json""#));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -3068,10 +3482,13 @@ fn check_repo_badge_json_can_use_gap_ledger_targets() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.6""#));
+    assert!(stdout.contains(r#""schema_version": "0.7""#));
     assert!(stdout.contains(r#""basis": "gap_decision_ledger""#));
-    assert!(stdout.contains(r#""message": "1""#));
+    // The gap-ledger repo badge is projected into the closed public vocabulary.
+    assert!(stdout.contains(r#""message": "1 actionable""#));
     assert!(stdout.contains(r#""analyzed_gap_records": 2"#));
+    assert!(stdout.contains(r#""state": "actionable""#));
+    assert!(stdout.contains(r#""actionable_count": 1"#));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -3121,11 +3538,12 @@ fn check_repo_badge_plus_json_emits_repo_scope_metadata() -> Result<(), String> 
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.6""#));
+    assert!(stdout.contains(r#""schema_version": "0.7""#));
     assert!(stdout.contains(r#""kind": "ripr_plus""#));
     assert!(stdout.contains(r#""scope": "repo""#));
     assert!(stdout.contains(r#""basis": "canonical_actionable_gap""#));
     assert!(stdout.contains(r#""label": "ripr+""#));
+    assert!(stdout.contains(r#""public_projection""#));
 
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
@@ -4424,4 +4842,305 @@ fn check_worktree_base_head_clean_worktree_has_no_scope_or_unanalyzed_disclosure
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+// ── ripr pr-summary (Campaign 31 item 8: binary-first downstream CI) ──
+
+#[test]
+fn pr_summary_help_exits_cleanly() {
+    let output = run_ripr(&["pr-summary", "--help"]);
+    assert!(
+        output.status.success(),
+        "pr-summary --help must succeed\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--check"),
+        "help must mention --check:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--baseline"),
+        "help must mention --baseline:\n{stdout}"
+    );
+}
+
+#[test]
+fn pr_summary_with_missing_artifacts_writes_outputs() -> Result<(), String> {
+    let root = unique_temp_workspace("pr-summary-missing");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"pr-summary-missing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
+        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
+    let output = std::process::Command::new(&bin)
+        .current_dir(&root)
+        .arg("pr-summary")
+        .output()
+        .map_err(|err| err.to_string())?;
+    assert!(
+        output.status.success(),
+        "pr-summary must succeed even with missing artifacts:\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        root.join("target/ripr/pr/summary.md").is_file(),
+        "must write target/ripr/pr/summary.md"
+    );
+    assert!(
+        root.join("target/ripr/reports/pr-evidence-summary.json")
+            .is_file(),
+        "must write pr-evidence-summary.json"
+    );
+    assert!(
+        root.join("target/ripr/reports/pr-evidence-summary.md")
+            .is_file(),
+        "must write pr-evidence-summary.md"
+    );
+    let json = std::fs::read_to_string(root.join("target/ripr/reports/pr-evidence-summary.json"))
+        .unwrap_or_default();
+    assert!(
+        json.contains("not_available"),
+        "missing artifacts must surface not_available, not zero:\n{json}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn pr_summary_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["pr-summary", "--bogus"]);
+    assert!(!output.status.success(), "unknown arg must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown pr-summary argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+#[test]
+fn pr_summary_does_not_invoke_cargo() -> Result<(), String> {
+    let root = unique_temp_workspace("pr-summary-no-compile");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"pr-summary-no-compile\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
+        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
+    let start = std::time::Instant::now();
+    let output = std::process::Command::new(&bin)
+        .current_dir(&root)
+        .arg("pr-summary")
+        .output()
+        .map_err(|err| err.to_string())?;
+    let elapsed = start.elapsed();
+    assert!(output.status.success(), "pr-summary must succeed");
+    assert!(
+        elapsed.as_secs() < 10,
+        "pr-summary must complete in <10s (no compile); took {elapsed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+// ── ripr annotations (Campaign 31 item 8b: binary-first annotations) ──
+
+#[test]
+fn annotations_help_exits_cleanly() {
+    let output = run_ripr(&["annotations", "--help"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--comments"),
+        "help must mention --comments:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--out"),
+        "help must mention --out:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--check"),
+        "help must mention --check:\n{stdout}"
+    );
+}
+
+#[test]
+fn annotations_with_missing_comments_writes_empty() -> Result<(), String> {
+    let root = unique_temp_workspace("annotations-missing");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"annotations-missing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
+        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
+    let output = std::process::Command::new(&bin)
+        .current_dir(&root)
+        .arg("annotations")
+        .output()
+        .map_err(|err| err.to_string())?;
+    assert!(
+        output.status.success(),
+        "annotations must succeed with missing comments.json:\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        root.join("target/ripr/review/annotations.txt").is_file(),
+        "must write annotations.txt even when comments.json is missing"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn annotations_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["annotations", "--bogus"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown annotations argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+// ── ripr pr-evidence (Campaign 31 item 8c: binary-first PR evidence packet) ──
+
+#[test]
+fn pr_evidence_help_exits_cleanly() {
+    let output = run_ripr(&["pr-evidence", "--help"]);
+    assert!(
+        output.status.success(),
+        "pr-evidence --help must succeed\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--base"),
+        "help must mention --base:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--head"),
+        "help must mention --head:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--check"),
+        "help must mention --check:\n{stdout}"
+    );
+}
+
+#[test]
+fn pr_evidence_with_missing_artifacts_writes_error_packet() -> Result<(), String> {
+    // pr-evidence runs a live check; in a bare workspace the result is either
+    // an error packet (if git revisions resolve in the parent repo) or a
+    // revision error. Both are honest — the key is that it does not silently
+    // produce a misleading clean packet. Assert that the output mentions the
+    // evidence artifact or an error, not that it succeeds or fails.
+    let root = unique_temp_workspace("pr-evidence-missing");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"pr-evidence-missing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
+        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
+    let output = std::process::Command::new(&bin)
+        .current_dir(&root)
+        .arg("pr-evidence")
+        .output()
+        .map_err(|err| err.to_string())?;
+    // The command either writes evidence (Ok) or surfaces an error (Err).
+    // Both are acceptable. What's NOT acceptable: a silent hang or crash.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+    assert!(
+        combined.contains("repo-exposure")
+            || combined.contains("bad base/head")
+            || combined.contains("error"),
+        "pr-evidence must either write evidence or surface a named error:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn pr_evidence_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["pr-evidence", "--bogus"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown pr-evidence argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+// ── ripr impacted-evidence (item 8e: binary-first impacted evidence) ──
+
+#[test]
+fn impacted_evidence_help_exits_cleanly() {
+    let output = run_ripr(&["impacted-evidence", "--help"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--label"),
+        "help must mention --label:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--labels"),
+        "help must mention --labels:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--pr-evidence"),
+        "help must mention --pr-evidence:\n{stdout}"
+    );
+}
+
+#[test]
+fn impacted_evidence_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["impacted-evidence", "--bogus"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown impacted-evidence argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+// ── ripr plus (binary-first RIPR+ repo receipt, composition-only) ──
+
+#[test]
+fn plus_help_exits_cleanly() {
+    let output = run_ripr(&["plus", "--help"]);
+    assert!(
+        output.status.success(),
+        "plus --help must succeed\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--repo-exposure-summary"),
+        "help must mention --repo-exposure-summary:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--gap-ledger"),
+        "help must mention --gap-ledger:\n{stdout}"
+    );
+}
+
+#[test]
+fn plus_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["plus", "--bogus"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
 }

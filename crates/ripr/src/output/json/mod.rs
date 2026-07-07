@@ -151,8 +151,10 @@ mod tests {
                 ),
             ],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);
@@ -271,8 +273,10 @@ mod tests {
                 ),
             ],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);
@@ -437,8 +441,10 @@ mod tests {
                 ),
             ],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);
@@ -1105,9 +1111,70 @@ mod tests {
             summary: Summary::default(),
             findings: vec![unknown_finding()],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            suppression: None,
         }
+    }
+
+    // ── `--suppression-policy` JSON projection (#1441) ──
+
+    #[test]
+    fn render_omits_suppression_fields_without_a_policy() {
+        let rendered = render(&sample_output(None));
+
+        assert!(!rendered.contains("\"suppression_policy\""));
+        assert!(!rendered.contains("\"suppressed\""));
+        assert!(!rendered.contains("\"suppressed_by_policy\""));
+    }
+
+    #[test]
+    fn render_marks_suppressed_findings_and_reports_policy_stats() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut output = sample_output(None);
+        let finding_id = output.findings[0].id.clone();
+        output.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/ripr-suppressions.toml".to_string(),
+            suppressed: vec![SuppressedCheckFinding {
+                finding_id,
+                selector: "src/**".to_string(),
+            }],
+            warnings: vec![
+                "expired exposure_gap suppression for `old/**` (expired on 2025-01-01)".to_string(),
+            ],
+        });
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("\"suppressed\": true"));
+        assert!(rendered.contains("\"suppressed_by\": \"src/**\""));
+        assert!(rendered.contains("\"suppressed_by_policy\":1"));
+        assert!(rendered.contains("\"suppression_policy\": {"));
+        assert!(rendered.contains("\"path\": \"policy/ripr-suppressions.toml\""));
+        assert!(rendered.contains("\"suppressed\": 1"));
+        assert!(rendered.contains("expired exposure_gap suppression"));
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&rendered).is_ok(),
+            "suppression fields must keep the check JSON parseable"
+        );
+    }
+
+    #[test]
+    fn render_reports_policy_block_even_when_nothing_matched() {
+        use crate::output::suppressions::CheckSuppressionOutcome;
+        let mut output = sample_output(None);
+        output.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/ripr-suppressions.toml".to_string(),
+            suppressed: Vec::new(),
+            warnings: Vec::new(),
+        });
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("\"suppressed_by_policy\":0"));
+        assert!(rendered.contains("\"suppression_policy\": {"));
+        assert!(!rendered.contains("\"suppressed\": true"));
     }
 
     fn finding_with_expression(
@@ -1176,8 +1243,10 @@ mod tests {
             summary: Summary::default(),
             findings: vec![finding],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);
@@ -1221,8 +1290,10 @@ mod tests {
             summary: Summary::default(),
             findings: vec![],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: true,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);
@@ -1274,8 +1345,10 @@ mod tests {
             summary: Summary::default(),
             findings: vec![],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);
@@ -1306,8 +1379,10 @@ mod tests {
             summary: Summary::default(),
             findings: vec![],
             preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
             no_scope_provided: true,
             unanalyzed_working_tree: false,
+            suppression: None,
         };
 
         let rendered = render(&output);

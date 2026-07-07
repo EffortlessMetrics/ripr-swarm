@@ -1836,6 +1836,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut recommendation_calibration = None;
     let mut mutation_calibration = None;
     let mut baseline = None;
+    let mut exception_policy = None;
     let mut mode = output::gate::GateMode::VisibleOnly;
     let mut acknowledgement_labels = Vec::new();
     let mut out = PathBuf::from(output::gate::DEFAULT_GATE_OUT);
@@ -1902,6 +1903,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
                 i += 1;
                 baseline = Some(non_empty_path_arg(args, i, "--baseline", "gate")?);
             }
+            "--exception-policy" => {
+                i += 1;
+                exception_policy = Some(non_empty_path_arg(args, i, "--exception-policy", "gate")?);
+            }
             "--mode" => {
                 i += 1;
                 mode = output::gate::GateMode::parse(expect_value(args, i, "--mode")?)?;
@@ -1945,6 +1950,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             baseline,
             mode,
             acknowledgement_labels,
+            exception_policy,
         },
         out,
         out_md,
@@ -3390,6 +3396,18 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
                 input.include_unchanged_tests = false;
                 explicit.include_unchanged_tests = true;
             }
+            "--perl-facts" => {
+                i += 1;
+                input.perl_facts_path = Some(PathBuf::from(expect_value(args, i, "--perl-facts")?));
+            }
+            "--suppression-policy" => {
+                i += 1;
+                input.suppression_policy = Some(PathBuf::from(expect_value(
+                    args,
+                    i,
+                    "--suppression-policy",
+                )?));
+            }
             "--help" | "-h" => {
                 help::print_check_help();
                 return Ok(());
@@ -3411,6 +3429,23 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err("check --worktree cannot be combined with --diff".to_string());
+    }
+    // #1441: --suppression-policy applies to the findings-based check
+    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
+    // finding_id channel, and badge/repo formats have their own suppression
+    // projections — silently ignoring the flag there would misreport policy
+    // application, so fail closed with a named limitation instead.
+    if input.suppression_policy.is_some()
+        && !matches!(
+            input.format,
+            OutputFormat::Human | OutputFormat::Json | OutputFormat::Github
+        )
+    {
+        return Err(
+            "--suppression-policy applies to the findings-based check formats (human, json, github); \
+             it is not yet supported for SARIF, badge, or repo formats"
+                .to_string(),
+        );
     }
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
@@ -3641,6 +3676,8 @@ fn run_diff_check_from_file(
         mode: options.mode.clone(),
         format: OutputFormat::Json,
         include_unchanged_tests: options.include_unchanged_tests,
+        perl_facts_path: None,
+        suppression_policy: None,
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)
@@ -3735,7 +3772,8 @@ fn render_check_gap_ledger_badge(
         suppressions_path: config.suppressions().display_path(),
         ..output::badge::BadgePolicy::default()
     };
-    let summary = output::badge::repo_gap_ledger_badge_summary_from_json(&text, kind, policy)?;
+    let mut summary = output::badge::repo_gap_ledger_badge_summary_from_json(&text, kind, policy)?;
+    output::badge::attach_public_projection(&mut summary, &gap_ledger.display().to_string());
     if shields {
         Ok(output::badge::render_shields_json(&summary))
     } else {
@@ -3878,6 +3916,7 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     report_detected_languages(&root);
     suggest_preview_language_enablement(&root);
     report_detected_test_surfaces(&root);
+    report_perl_preview(&root);
     report_known_limitations();
 
     for (tool, args) in [
@@ -4102,6 +4141,22 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
     let mut suggestions = Vec::new();
     for id in &preview_detected {
         if id.is_available() && !enabled.contains(id) {
+            // Perl detects as a preview language (see language_status). In a
+            // default build, `LanguageId::Perl.is_available()` is
+            // `cfg!(feature="lang-perl")` == false, so the Tip never fires for
+            // Perl anyway. This guard is defense-in-depth for the
+            // `--features lang-perl` build: even when the Cargo feature is ON,
+            // the adapter is still scaffold-only (#[cfg(test)] mod perl; not
+            // production-routable, pipeline fail-closed stub). Suggesting
+            // `enabled = ["rust", "perl"]` in that build would mislead: the
+            // user would enable it and get zero analysis plus an explicit
+            // error. Detection at detect_languages() stays honest; only the
+            // enablement Tip is suppressed for Perl until Campaign 31 (#1379)
+            // lands the production bridge. TypeScript/Python are real preview
+            // adapters and remain Tip-eligible.
+            if matches!(id, LanguageId::Perl) {
+                continue;
+            }
             suggestions.push(format!(
                 "- Tip: {} files detected but the adapter is not enabled. To analyze them, add to ripr.toml:\n\n  [languages]\n  enabled = [\"rust\", \"{}\"]",
                 id.as_str(),
@@ -4163,7 +4218,38 @@ fn report_detected_test_surfaces(root: &Path) {
                 }
             }
             LanguageId::Perl => {
-                lines.push("perl: test framework not detected".to_string());
+                // Phase D PR 2 (#1408): upgraded Perl doctor diagnostics.
+                let pm_count = count_files(root, "pm");
+                let pl_count = count_files(root, "pl");
+                let t_count = count_files(root, "t");
+                if pm_count > 0 || pl_count > 0 || t_count > 0 {
+                    let framework = detect_perl_framework(root);
+                    lines.push(format!(
+                        "perl: {} .pm, {} .pl, {} .t; framework: {}",
+                        pm_count, pl_count, t_count, framework
+                    ));
+                    // Report adapter availability.
+                    if id.is_available() {
+                        lines.push("perl: adapter compiled (lang-perl feature ON)".to_string());
+                    } else {
+                        lines.push(
+                            "perl: adapter NOT compiled (build with --features lang-perl)"
+                                .to_string(),
+                        );
+                    }
+                    // Report runner availability.
+                    if which("prove") {
+                        lines.push("perl: prove available on PATH".to_string());
+                    } else {
+                        lines.push("perl: prove NOT found on PATH".to_string());
+                    }
+                    // Report exact first command.
+                    if id.is_available() {
+                        lines.push("perl: first command: ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string());
+                    }
+                } else {
+                    lines.push("perl: no Perl files detected".to_string());
+                }
             }
         }
     }
@@ -4181,6 +4267,338 @@ fn report_detected_test_surfaces(root: &Path) {
 ///   - `StaticLimitKind::CrossLanguageOracleVisibilityUnresolved` wire string
 ///     and its doc comment.
 ///   - 0.9.0 CHANGELOG non-claims.
+///
+/// Count files with a given extension under the root (recursive). Used by the
+/// Perl preview to report real .pm/.pl/.t counts. Campaign 31 item 5: the
+/// prior `shallow_has_extension as usize` returned only 0/1, not a real count.
+fn count_files(root: &Path, ext: &str) -> usize {
+    fn count_recursive(dir: &Path, ext: &str) -> usize {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut n = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Skip hidden + build/dependency dirs that inflate counts.
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if name.starts_with('.') || matches!(name, "target" | "node_modules" | "blib") {
+                    continue;
+                }
+                n += count_recursive(&path, ext);
+            } else if path.extension().and_then(|e| e.to_str()) == Some(ext) {
+                n += 1;
+            }
+        }
+        n
+    }
+    count_recursive(root, ext)
+}
+
+/// Detect the Perl test framework from .t files (shallow scan).
+fn detect_perl_framework(root: &Path) -> &'static str {
+    let t_dir = root.join("t");
+    let Ok(entries) = std::fs::read_dir(&t_dir) else {
+        return "not detected (no t/ directory)";
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "t")
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            if content.contains("use Test2::V0") {
+                return "Test2::V0";
+            }
+            if content.contains("use Test::More") {
+                return "Test::More";
+            }
+            if content.contains("use Test::Exception") {
+                return "Test::Exception";
+            }
+            if content.contains("use Test::Fatal") {
+                return "Test::Fatal";
+            }
+        }
+    }
+    "not detected"
+}
+
+/// Check if a binary is available on PATH.
+fn which(bin: &str) -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("which")
+            .arg(bin)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+    #[cfg(not(unix))]
+    {
+        std::process::Command::new("where")
+            .arg(bin)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+}
+
+/// Rich Perl preview for the doctor (Campaign 31 item 5). Reports everything a
+/// maintainer needs to know whether Perl analysis is available and how to
+/// invoke it: project markers, lang-perl compiled, [perl] producer configured,
+/// perllsp/perl-lsp found + version, schema compatible, t/ and t2/ roots,
+/// detected test frameworks, runner availability, and an exact next command.
+///
+/// Conservative throughout: every line reports only what the static layer can
+/// determine. No claim is made that the producer works end-to-end (that is the
+/// two-binary proof, item 3). Prints only when Perl markers are detected.
+fn report_perl_preview(root: &Path) {
+    let pm_count = count_files(root, "pm");
+    let pl_count = count_files(root, "pl");
+    let t_count = count_files(root, "t");
+    let has_markers = pm_count > 0 || pl_count > 0 || t_count > 0 || has_perl_project_markers(root);
+    if !has_markers {
+        return;
+    }
+
+    println!("- Perl preview:");
+    println!("  project: {pm_count} .pm, {pl_count} .pl, {t_count} .t");
+
+    // lang-perl compiled? (cfg!(feature = "lang-perl") is build-time constant.)
+    if cfg!(feature = "lang-perl") {
+        println!("  adapter: compiled (lang-perl feature ON)");
+    } else {
+        println!("  adapter: NOT compiled (build with --features lang-perl)");
+    }
+
+    // [perl] producer configured? + Perl facts exporter found? + version?
+    let producer_configured = perl_producer_configured(root);
+    match producer_configured.as_deref() {
+        Some("perl-ripr-facts") => {
+            println!("  producer: configured as `perl-ripr-facts` (canonical)")
+        }
+        Some("perllsp") => println!("  producer: configured as `perllsp` (compatibility wrapper)"),
+        Some("perl-lsp") => {
+            println!("  producer: configured as `perl-lsp` (compatibility wrapper)")
+        }
+        Some(other) => println!("  producer: configured as `{other}`"),
+        None => println!("  producer: not configured (managed mode off)"),
+    }
+
+    // Find the producer binary and its version. Try canonical first, then wrappers.
+    let (found_bin, version) = producer_binary_and_version(root);
+    match (found_bin.as_deref(), version.as_deref()) {
+        (Some(bin), Some(ver)) => {
+            println!("  exporter: found at {bin} (version {ver})");
+            // If only a wrapper was found (not the canonical exporter), explain.
+            if bin.contains("perllsp") || bin.contains("perl-lsp") {
+                if which("perl-ripr-facts") {
+                    // Canonical also present — no warning needed.
+                } else {
+                    println!(
+                        "  note: `{bin}` must delegate to the batch perl-ripr-facts exporter; RIPR does not use LSP protocol"
+                    );
+                }
+            }
+        }
+        (Some(bin), None) => println!("  exporter: found at {bin} (version unknown)"),
+        _ => println!(
+            "  exporter: NOT found on PATH (expected: perl-ripr-facts, perllsp, or perl-lsp)"
+        ),
+    }
+
+    // schema compatible? (always reports the schema this ripr build consumes.)
+    println!("  schema: {} expected", crate::app::PERL_FACT_PACKET_SCHEMA);
+
+    // t/ and t2/ roots detected?
+    let roots = detect_perl_test_roots(root);
+    println!("  test roots: {roots}");
+
+    // Detected test frameworks.
+    let frameworks = detect_perl_frameworks(root);
+    println!("  frameworks: {frameworks}");
+
+    // Runner availability: prove/yath/carton/dzil.
+    let mut runners: Vec<&str> = Vec::new();
+    if which("prove") {
+        runners.push("prove");
+    }
+    if which("yath") {
+        runners.push("yath");
+    }
+    if which("carton") {
+        runners.push("carton");
+    }
+    if which("dzil") {
+        runners.push("dzil");
+    }
+    let runners_str = if runners.is_empty() {
+        "none found on PATH".to_string()
+    } else {
+        runners.join(", ")
+    };
+    println!("  runners: {runners_str}");
+
+    // Exact next command: branch on whether managed mode is configured and
+    // whether the producer is present.
+    let next = perl_next_command(producer_configured.as_deref(), found_bin.as_deref());
+    println!("  next: {next}");
+}
+
+/// Whether `[perl].producer` is configured in the root's ripr config. Returns
+/// the configured producer name, or None if not set / config unreadable.
+fn perl_producer_configured(root: &Path) -> Option<String> {
+    let config = crate::config::load_for_root(root).ok()?;
+    config.perl().producer().map(|s| s.to_string())
+}
+
+/// Resolve the producer binary path and version. Honors `[perl].executable`
+/// when set; otherwise probes PATH for `perl-ripr-facts` (canonical, post
+/// perl-lsp-swarm #3294), then `perllsp`/`perl-lsp` (compatibility wrappers).
+/// Returns (resolved_path, version_string) where version comes from
+/// `--version` stdout.
+fn producer_binary_and_version(root: &Path) -> (Option<String>, Option<String>) {
+    // Honor explicit [perl].executable first.
+    let explicit = crate::config::load_for_root(root)
+        .ok()
+        .and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
+    let candidates: Vec<String> = match explicit {
+        Some(path) => vec![path],
+        None => vec![
+            "perl-ripr-facts".to_string(),
+            "perllsp".to_string(),
+            "perl-lsp".to_string(),
+        ],
+    };
+    for candidate in &candidates {
+        let probe = std::process::Command::new(candidate)
+            .arg("--version")
+            .output();
+        if let Ok(output) = probe
+            && output.status.success()
+        {
+            let version = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let resolved = which(candidate)
+                .then(|| resolve_binary_path(candidate))
+                .flatten();
+            return (resolved.or_else(|| Some(candidate.clone())), Some(version));
+        }
+    }
+    (None, None)
+}
+
+/// Best-effort resolution of a PATH binary to an absolute path for display.
+/// Falls back to the name itself if resolution is unavailable.
+fn resolve_binary_path(bin: &str) -> Option<String> {
+    // `which`/`where` already proved existence; re-run capturing stdout.
+    let lookup = if cfg!(unix) { "which" } else { "where" };
+    std::process::Command::new(lookup)
+        .arg(bin)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .map(|s| s.trim().to_string())
+        })
+}
+
+/// Detect CPAN-style project markers beyond .pm/.pl/.t files: Makefile.PL,
+/// Build.PL, cpanfile. These confirm a real CPAN-style project a producer can
+/// index.
+fn has_perl_project_markers(root: &Path) -> bool {
+    ["Makefile.PL", "Build.PL", "cpanfile"]
+        .iter()
+        .any(|marker| root.join(marker).is_file())
+}
+
+/// Detect Perl test directories: `t/` and `t2/`. Returns a human-readable
+/// summary.
+fn detect_perl_test_roots(root: &Path) -> String {
+    let has_t = root.join("t").is_dir();
+    let has_t2 = root.join("t2").is_dir();
+    match (has_t, has_t2) {
+        (true, true) => "t/ and t2/ detected".to_string(),
+        (true, false) => "t/ detected".to_string(),
+        (false, true) => "t2/ detected".to_string(),
+        (false, false) => "none detected".to_string(),
+    }
+}
+
+/// Detect Perl test frameworks from .t files in t/ and t2/. Returns a
+/// comma-separated list of detected frameworks (Test::More, Test2::V0/V1/Suite,
+/// Test::Exception, Test::Fatal), or "none detected".
+fn detect_perl_frameworks(root: &Path) -> String {
+    let mut found: Vec<&str> = Vec::new();
+    let mut contents: Vec<String> = Vec::new();
+    for dir in ["t", "t2"] {
+        let test_dir = root.join(dir);
+        let Ok(entries) = std::fs::read_dir(&test_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "t")
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                contents.push(content);
+            }
+        }
+    }
+    let blob = contents.join("\n");
+    if blob.contains("use Test2::V1") || blob.contains("use Test2::Bundle::More") {
+        found.push("Test2::V1");
+    }
+    if blob.contains("use Test2::V0") || blob.contains("use Test2::Tools::Basic") {
+        found.push("Test2::V0");
+    }
+    if blob.contains("use Test2::Suite") {
+        found.push("Test2::Suite");
+    }
+    if blob.contains("use Test::More") {
+        found.push("Test::More");
+    }
+    if blob.contains("use Test::Exception") {
+        found.push("Test::Exception");
+    }
+    if blob.contains("use Test::Fatal") {
+        found.push("Test::Fatal");
+    }
+    if found.is_empty() {
+        "none detected".to_string()
+    } else {
+        found.join(", ")
+    }
+}
+
+/// Choose the exact next command based on producer configuration + presence.
+fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>) -> String {
+    let managed = matches!(
+        producer_configured,
+        Some("perl-ripr-facts") | Some("perllsp") | Some("perl-lsp")
+    );
+    if managed && found_bin.is_some() {
+        // Managed mode + producer present: ripr invokes the exporter itself.
+        "ripr check --languages perl --base origin/main --head HEAD".to_string()
+    } else if managed {
+        // Managed mode configured but producer missing.
+        "install perllsp on PATH (or set [perl].executable), then: ripr check --languages perl"
+            .to_string()
+    } else {
+        // Explicit packet mode (or producer absent): supply --perl-facts.
+        "ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string()
+    }
+}
+
 fn report_known_limitations() {
     println!("- Known limitations:");
     println!(
@@ -4326,6 +4744,45 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
         }
     }
     crate::lsp::serve()
+}
+
+/// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).
+/// Composes existing RIPR artifacts into a PR evidence summary. Does NOT run
+/// analysis or invoke Cargo. The canonical downstream replacement for
+/// `cargo xtask ripr-pr-summary`.
+pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
+    crate::app::pr_summary::run_pr_summary(args)
+}
+
+/// `ripr annotations` — binary-first GitHub Actions annotations (item 8b).
+/// Reads comments.json and emits `::warning` annotation lines. The canonical
+/// downstream replacement for `cargo xtask ripr-annotations`.
+pub(super) fn annotations(args: &[String]) -> Result<(), String> {
+    crate::app::annotations::run_annotations(args)
+}
+
+/// `ripr pr-evidence` — binary-first PR evidence packet (Campaign 31 item 8c).
+/// Writes the PR diff, runs an in-process RIPR check, and composes the result
+/// into a PR evidence packet. The canonical downstream replacement for
+/// `cargo xtask ripr-pr`. Unlike the xtask, it calls `check_workspace`
+/// directly instead of shelling out to `cargo run -p ripr -- check`.
+pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
+    crate::app::pr_evidence::run_pr_evidence(args)
+}
+
+/// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
+/// Reads PR evidence + labels and emits routing decision JSON + Markdown.
+pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
+    crate::app::impacted_evidence::run_impacted_evidence(args)
+}
+
+/// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
+/// Composes the repo-wide RIPR+ quality-gate receipt from a pre-computed
+/// `repo-exposure-summary-json` or `--gap-ledger` artifact. The canonical
+/// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
+/// is artifact-composition-only and does not run an in-process full-repo scan.
+pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
+    crate::app::ripr_plus::run_ripr_plus(args)
 }
 
 #[cfg(test)]
@@ -5284,6 +5741,7 @@ mod tests {
                     baseline: Some(PathBuf::from("target/ripr/reports/gate-baseline.json")),
                     mode: output::gate::GateMode::CalibratedGate,
                     acknowledgement_labels: vec!["custom-waive".to_string()],
+                    exception_policy: None,
                 },
                 out: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
@@ -5331,6 +5789,7 @@ mod tests {
                     baseline: None,
                     mode: output::gate::GateMode::VisibleOnly,
                     acknowledgement_labels: Vec::new(),
+                    exception_policy: None,
                 },
                 out: PathBuf::from(output::gate::DEFAULT_GATE_OUT),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),

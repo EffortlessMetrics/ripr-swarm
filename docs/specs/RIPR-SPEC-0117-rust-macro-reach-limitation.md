@@ -103,6 +103,9 @@ definition does not mention the changed owner name.
   rustc integration.
 - If the macro definition is absent, ambiguous, generated, external, or does not
   lexically mention the owner, do not emit this limitation.
+- RIPR-SPEC-0119 refines direct test-body macro witnesses to
+  `rust_macro_wrapped_test_call_unresolved`; production-entry macro boundaries
+  keep `rust_macro_reach_unresolved`.
 
 ## Wire Format
 
@@ -134,7 +137,10 @@ definition does not mention the changed owner name.
 3. **External macro**: `outer()` invokes a macro whose definition is not in the
    indexed repo source. Result: unchanged bare `no_static_path`.
 4. **Lexical transitive path exists**: the RIPR-SPEC-0114 witness fires first.
-   Result remains `rust_transitive_reach_unresolved`, not macro-reach.
+   Result remains a transitive/public-API limitation, not macro-reach. For
+   integration-test witnesses, RIPR-SPEC-0118 refines the kind to
+   `rust_integration_public_api_path_unresolved`; non-integration witnesses
+   keep `rust_transitive_reach_unresolved`.
 
 ## Required Evidence
 

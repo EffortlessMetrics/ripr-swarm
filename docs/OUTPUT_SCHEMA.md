@@ -776,7 +776,15 @@ The evidence-first fields are additive in schema `0.2`:
   evidence, receipt evidence, stop conditions, must-not-change constraints, and
   safe repo-relative raw evidence refs. It is a check JSON, human CLI, SARIF,
   GitHub annotation, and gap-ledger Markdown advisory card, not a public repair
-  packet. The v1 card carries
+  packet. **Scope caveat (Campaign 31 #1379):** the renderer is real production
+  code, but in the current state it projects only from synthetic test findings —
+  no production Perl source can produce a finding that carries this card,
+  because the Perl adapter module is `#[cfg(test)] mod perl;`, the path router
+  ignores `.pm`/`.pl`/`.t`/`.psgi`, and the upstream `perl-lsp ripr-facts`
+  exporter does not exist yet. Perl's support tier is `scaffold`, not `preview`
+  (see [Support Tiers](status/SUPPORT_TIERS.md)). The card lights up for real
+  Perl source once Campaign 31 lands the production exporter + consumer bridge.
+  The v1 card carries
   `card_version`, `source`,
   `language`, `language_status`, `authority_boundary`, `surface_scope`,
   `public_projection_ready`, `public_repair_packet`, `repair_packet_ready`,
@@ -848,10 +856,15 @@ The evidence-first fields are additive in schema `0.2`:
   `opaque_custom_assertion_helper`, `property_based_test`,
   `unresolved_pytest_fixture`, `unsupported_syntax`,
   `cross_language_oracle_visibility_unresolved`,
-  `rust_transitive_reach_unresolved`, or `rust_macro_reach_unresolved`.
+  `rust_transitive_reach_unresolved`,
+  `rust_integration_public_api_path_unresolved`, or
+  `rust_macro_reach_unresolved`, or
+  `rust_macro_wrapped_test_call_unresolved`, or
+  `rust_macro_wrapped_assertion_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
-  limitation detail. Current Rust transitive-reach and macro-reach limitations
+  limitation detail. Current Rust transitive-reach, integration public-API path,
+  macro-reach, direct test macro-call, and macro-wrapped assertion limitations
   populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
@@ -958,6 +971,60 @@ instead of `--base`, when `--worktree` was used to include staged and unstaged
 tracked edits in the analyzed diff, or when `git status --porcelain` cannot be
 run (fail-closed: no fabricated disclosure).
 
+### `suppression_policy` and suppressed findings (top-level additive, #1441)
+
+Emitted only when `ripr check` is invoked with `--suppression-policy PATH`.
+Absent otherwise, so consumers without a policy see byte-identical output.
+Does not bump `schema_version`.
+
+The policy file uses the `.ripr/suppressions.toml` schema. `exposure_gap`
+entries select findings either by exact `finding_id` (the existing selector)
+or by a `path` glob over root-relative finding paths (`**` spans path
+segments, `*` and `?` stay within one segment), optionally narrowed by
+`static_class` (which must then be one of the seven `classification` values).
+Expired entries are not applied; expired and unmatched selectors surface as
+warnings. A missing or malformed policy fails the run (fail-closed): the run
+never silently emits unfiltered counts as if a policy had been applied.
+
+Three surfaces change when the flag is present:
+
+- `summary.suppressed_by_policy` — count of suppressed findings. The
+  per-class `summary` buckets (`exposed` … `static_unknown`) count
+  unsuppressed findings only; buckets plus `suppressed_by_policy` add back
+  up to `summary.findings`, which stays the total rendered count.
+- `findings[].suppressed` / `findings[].suppressed_by` — suppressed findings
+  stay fully rendered (visible, not hidden) and carry `"suppressed": true`
+  plus the selector (`finding_id` or path glob) that matched. The first
+  matching entry in policy-file order names the selector.
+- top-level `suppression_policy` object — `path` (as supplied), `suppressed`
+  (count), and `warnings` (expired/unmatched selector strings).
+
+Example:
+
+```json
+"summary": {"findings": 2, "no_static_path": 1, "suppressed_by_policy": 1},
+"findings": [
+  {"id": "probe:docs_gen_a", "suppressed": true, "suppressed_by": "docs/gen/**", ...},
+  {"id": "probe:src_lib", ...}
+],
+"suppression_policy": {
+  "path": "policy/ripr-suppressions.toml",
+  "suppressed": 1,
+  "warnings": []
+}
+```
+
+Scope: the flag applies to the findings-based check formats (`human`,
+`json`, `github`). Human output lists suppressed findings as compact
+one-liners instead of detailed blocks; GitHub-format output skips
+annotations for suppressed findings. SARIF keeps its existing
+`.ripr/suppressions.toml` `finding_id` suppression channel, and badge/repo
+formats keep their own suppression projections — `ripr check` rejects the
+flag for those formats instead of silently ignoring it. Date-expiry
+enforcement beyond `expires` (review-after deadlines, required-active
+ledgers) belongs to the gate exception policy (#1442), not check
+suppression.
+
 ## Enums
 
 `classification` values:
@@ -1008,7 +1075,13 @@ run (fail-closed: no fabricated disclosure).
 - `cross_language_oracle_visibility_unresolved` — The changed Rust seam owner is FFI/binding-exposed; whether an external-language (e.g. TypeScript) test oracle discriminates this behavior is not statically known — verify the external oracle rather than adding a Rust test.
 - `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`; this is a named limitation, not a coverage claim.
 
+- `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
+
 - `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a coverage claim.
+
+- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
+
+- `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
 
 Reserved `flow_sink` values:
 
@@ -1110,16 +1183,16 @@ ripr check --format repo-badge-plus-json
 ripr check --format repo-badge-json --gap-ledger target/ripr/reports/gap-decision-ledger.json
 ```
 
-Native schema `0.5`:
+Native schema `0.7`:
 
 ```json
 {
-  "schema_version": "0.5",
+  "schema_version": "0.7",
   "kind": "ripr",
   "scope": "repo",
   "basis": "canonical_actionable_gap",
   "label": "ripr",
-  "message": "0",
+  "message": "0 actionable",
   "status": "pass",
   "color": "brightgreen",
   "counts": {
@@ -1152,17 +1225,29 @@ Native schema `0.5`:
     "test_intent_path": ".ripr/test_intent.toml",
     "suppressions_path": ".ripr/suppressions.toml"
   },
-  "warnings": []
+  "warnings": [],
+  "preview_skipped": [],
+  "public_projection": {
+    "state": "zero_actionable",
+    "message": "0 actionable",
+    "run_status": "full",
+    "generated_at": "2026-06-20T00:00:00Z",
+    "actionable_count": 0,
+    "limited_reason": null,
+    "stale_age_secs": 0,
+    "source_report": "target/ripr/reports/repo-ripr-badge.json"
+  }
 }
 ```
 
 Field contract:
 
-- `schema_version` — currently `"0.5"`. `0.2` added `scope`; `0.3` adds
+- `schema_version` — currently `"0.7"`. `0.2` added `scope`; `0.3` adds
   `basis` and `counts.analyzed_seams`; `0.4` adds
   `basis = "gap_decision_ledger"` and `counts.analyzed_gap_records`;
   `0.5` adds `basis = "canonical_actionable_gap"` for public repair-item
-  projection.
+  projection; `0.6` adds `preview_skipped`; `0.7` adds the
+  `public_projection` object (RIPR-SPEC-0066) on repo-scoped public badges.
 - `kind` — `"ripr"` or `"ripr_plus"`.
 - `scope` — `"diff"` for PR/diff artifacts, `"repo"` for public repo
   baseline artifacts.
@@ -1173,8 +1258,12 @@ Field contract:
   rendered from supplied GapRecord projection targets. Diff-scoped badge
   formats currently use `finding_exposure`; repo-scoped public badge formats
   use `canonical_actionable_gap` unless `--gap-ledger` is supplied.
-- `message` — the headline count rendered as a string for Shields
-  compatibility. It is a count, never a denominator or coverage fraction.
+- `message` — the headline rendered as a string for Shields compatibility.
+  Diff-scoped and internal badges render the bare count (for example `"5"`).
+  Repo-scoped public badges render the closed RIPR-SPEC-0066 vocabulary
+  (`"0 actionable"`, `"<n> actionable"`, `"limited"`, `"stale"`, or
+  `"unknown"`), combined with the `label` to read as `ripr: <n> actionable`.
+  It is a count or a named state, never a denominator or coverage fraction.
 - `counts.unsuppressed_exposure_gaps` — diff scope: unsuppressed
   `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` Findings;
   repo public scope: unresolved actionable canonical repair items; seam-native
@@ -1194,6 +1283,33 @@ Field contract:
   canonical-actionable basis; `0` for finding-exposure and seam-native badges.
 - `warnings` — advisory suppressions/config warnings that remain visible in
   native JSON. The Shields projection never includes warnings.
+- `preview_skipped` — (v0.6) array of preview-language adapter names detected
+  in the diff but not enabled; a non-empty list means the result is not a
+  clean Rust-grade result. Always present as an array (possibly empty).
+- `public_projection` — (v0.7) present only on repo-scoped public badges
+  (`canonical_actionable_gap` or `gap_decision_ledger` basis). The
+  RIPR-SPEC-0066 projection of the badge into one closed public state plus
+  the required sidecar fields. Absent on diff-scoped and internal badges.
+  When present, the native `message` / `status` / `color` are projected from
+  it. Fields:
+  - `state` — one of `zero_actionable`, `actionable`, `limited`, `stale`,
+    `unknown`. Selected with fail-closed precedence
+    (`unknown > stale > limited > count`); a degraded input never resolves
+    toward the cleaner-looking state.
+  - `message` — the Shields message for the state (label-agnostic, e.g.
+    `0 actionable`, `limited`).
+  - `run_status` — Lane-1 completeness state of the source run (`full` or a
+    named `limited_*` value).
+  - `generated_at` — RFC3339 UTC timestamp the badge was generated, or `null`.
+  - `actionable_count` — unresolved canonical actionable gap count; present
+    only for the count states (`zero_actionable` / `actionable`), `null`
+    alongside any degraded state.
+  - `limited_reason` — the `limitation_category` (and repair route) for a
+    `limited` state; `null` otherwise.
+  - `stale_age_secs` — age of the artifact relative to its source at
+    evaluation time, in seconds; `null` when `generated_at` is unknown.
+  - `source_report` — repo-relative path the badge was projected from, or
+    `null`.
 
 Shields projection:
 
@@ -7134,6 +7250,70 @@ regardless of its own blocking/advisory label.
 `count=0`, and `reason` discloses the first config error. `count=0` with
 `basis=null` must NEVER be read as "clean/pass" — the `reason` field is
 the mandatory disclosure.
+
+### `exception_policy` ledger section (top-level additive, #1442)
+
+Emitted only when `ripr gate evaluate` is invoked with
+`--exception-policy PATH`. Absent otherwise, so existing gate-decision
+consumers and goldens see byte-identical output. Does not bump
+`schema_version`. `inputs.exception_policy` carries the supplied path when
+the flag is present.
+
+The ledger is a `quality-gate-exceptions` TOML file: a dated, auditable list
+of named temporary burndown exceptions. Header fields: `schema_version = 1`,
+`policy = "quality-gate-exceptions"`, optional `owner`, `status`
+(default `"active"`), `updated`, and `due_review = "warn" | "fail"`
+(default `"fail"`, fail-closed). An optional `[requirements] required_active`
+list names exception ids that MUST be active. Each `[[exception]]` requires
+`id`, `kind`, `scope`, `owner`, `reason`, `final_target`, `evidence`,
+`removal_criteria`, and `YYYY-MM-DD` `created`, `review_after`, and `expires`
+dates; `issue` is optional metadata. Unknown keys, blank required fields,
+malformed dates, and duplicate ids are load errors.
+
+Enforcement, evaluated against today's UTC date; ripr owns these semantics
+while the consumer owns only the ledger content:
+
+- `expires < today` → `quality_exception_expired` (blocking).
+- otherwise `review_after <= today` → `quality_exception_review_due`
+  (blocking under `due_review = "fail"`; a gate warning under `"warn"`).
+- a `required_active` id with no active exception →
+  `quality_exception_required_missing` (blocking). An expired required
+  exception raises both violations; both stay visible.
+- ledger `status = "final"` → every still-active exception is
+  `quality_exception_final_active` (blocking): final enforcement means zero
+  active exceptions remain.
+
+Any blocking violation makes the top-level gate `status` `"blocked"` (non-zero
+exit). A missing or malformed ledger is a `config_error`, never a silently
+ignored input — the gate must not report `pass` while believing a policy was
+applied.
+
+```json
+"exception_policy": {
+  "path": "policy/quality-gate-exceptions.toml",
+  "ledger_status": "active",
+  "ledger_owner": "EffortlessMetrics",
+  "due_review": "fail",
+  "active_count": 1,
+  "active": [
+    {"id": "ripr-total-burndown", "kind": "temporary_burndown",
+     "scope": "ripr_plus_total", "owner": "proof-lane",
+     "reason": "Existing repo-wide gaps predate the transition gate.",
+     "review_after": "2026-06-28", "expires": "2026-09-30"}
+  ],
+  "violations": [
+    {"kind": "quality_exception_review_due",
+     "exception_id": "ripr-total-burndown",
+     "detail": "exception `ripr-total-burndown` passed its review_after date 2026-06-28 (today 2026-07-05); re-review it and move review_after forward",
+     "blocking": true}
+  ]
+}
+```
+
+The Markdown report renders a matching `## Exception Policy` section with the
+ledger path, status, active entries, and violations (BLOCKING vs warning).
+These are gate policy states, not static exposure claims: violation kinds are
+`quality_exception_*` terms and never rewrite finding classifications.
 
 Markdown should fit in a job summary. It should name the top-level decision,
 mode, counts, blocking or acknowledged seams, repair action, and limits. It
