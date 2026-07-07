@@ -7512,6 +7512,10 @@ fn routed_rust_workflow_contract_violations(
             "needs.route.outputs.router_target == 'github'",
         ),
         (
+            "hosted fallback docs-detection guard",
+            "needs.detect-docs-only.result == 'success'",
+        ),
+        (
             "self-hosted scratch tempfail output",
             "scratch_status: ${{ steps.scratch.outputs.status }}",
         ),
@@ -7530,6 +7534,10 @@ fn routed_rust_workflow_contract_violations(
         (
             "normalized tempfail fallback result",
             "disk-guard tempfailed; GitHub-hosted fallback succeeded",
+        ),
+        (
+            "normalized docs detection failure",
+            "docs-surface detection result was $DOCS_DETECT_RESULT",
         ),
         (
             "CX43 scratch free-space floor",
@@ -85155,6 +85163,7 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-github:
     if: >-
+      needs.detect-docs-only.result == 'success' &&
       needs.route.outputs.router_target == 'github' ||
       needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
@@ -85165,9 +85174,11 @@ jobs:
   result:
     name: Ripr Rust Small Result
     env:
+      DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
       CX43_SCRATCH_STATUS: ${{ needs.rust-cx43.outputs.scratch_status }}
     steps:
       - run: echo "disk-guard tempfailed; GitHub-hosted fallback succeeded"
+      - run: echo "docs-surface detection result was $DOCS_DETECT_RESULT"
 "#;
         let settings = r#"
 repository:
@@ -85235,6 +85246,16 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             violations
                 .iter()
                 .any(|violation| { violation.contains("slurped idle runner query") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("hosted fallback docs-detection guard") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("normalized docs detection failure") })
         );
         assert!(
             violations
