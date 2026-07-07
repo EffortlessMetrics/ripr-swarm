@@ -83,3 +83,4 @@ pub mod output;
 pub use app::{CheckInput, CheckOutput, check_workspace, collect_context, explain_finding};
 /// Domain model types exposed as part of the stable public contract.
 pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};
+// module doc
