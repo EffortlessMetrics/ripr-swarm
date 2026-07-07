@@ -3082,6 +3082,50 @@ fn h1_dynamic_dispatch_limitation_blocks_related_finding_classification() -> Res
 }
 
 #[test]
+fn h1_dynamic_dispatch_limitation_suppresses_concrete_repair_gap() -> Result<(), String> {
+    let text = EXACT_RETURN_PACKET.replace(
+        "\"changed_text_digest\": \"sha256:return\"",
+        "\"changed_text_digest\": \"discriminator:$amount == $threshold\"",
+    );
+    let mut packet = consume(&bless_fingerprint(&text))?;
+    packet.limitations = vec![LimitationFact {
+        limitation_id: "limitation:dynamic-dispatch:relation".to_string(),
+        kind: "dynamic_dispatch".to_string(),
+        message: "producer could not bind the related call through dynamic dispatch".to_string(),
+        evidence_refs: vec!["relation:change:discount-return:test:threshold".to_string()],
+    }];
+
+    let findings = packet_to_findings(&packet);
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    assert_eq!(
+        finding.class,
+        crate::domain::ExposureClass::StaticUnknown,
+        "a dynamic_dispatch limitation tied to related evidence must stay fail-closed"
+    );
+    assert!(
+        finding.canonical_gap.is_none(),
+        "static-limited Perl findings must not attach repair gap identities"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("perl_suggested_test_location")),
+        "static-limited Perl findings must not suggest a repair test location"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("perl_suggested_assertion")),
+        "static-limited Perl findings must not suggest a repair assertion"
+    );
+    Ok(())
+}
+
+#[test]
 fn h1_dynamic_dispatch_limitation_blocks_no_static_path_classification() -> Result<(), String> {
     let mut packet = consume(EXACT_RETURN_PACKET)?;
     packet.relations.clear();

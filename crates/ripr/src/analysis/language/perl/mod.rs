@@ -416,11 +416,12 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             .unwrap_or_else(|| change.behavior_hint.default_assertion_shape().to_string());
 
         // Canonical gap: only when a concrete discriminator exists, the packet
-        // can form a stable identity, AND the change is NOT already observed.
-        // An already-observed change needs no repair gap. Otherwise None
-        // (informational Finding, no repair identity).
+        // can form a stable identity, the change is NOT already observed, and
+        // no dynamic boundary/limitation blocks static actionability. Static
+        // limits stay fail-closed: they may explain why classification is
+        // unknown, but they must not produce repair-shaped gap identities.
         let canonical_gap: Option<FindingCanonicalGap> =
-            if has_concrete_discriminator && !is_already_observed {
+            if has_concrete_discriminator && !is_already_observed && !has_boundary {
                 packet
                     .canonical_gap_identity_for_change_with_assertion_shape(
                         &change.change_id,
@@ -465,6 +466,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                 aligned.test_name, aligned.observed_sink, aligned.oracle_shape
             ));
         } else if !is_already_observed
+            && !has_boundary
             && has_concrete_discriminator
             && let Some(first) = related.first()
         {
