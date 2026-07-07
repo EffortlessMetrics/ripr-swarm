@@ -7509,7 +7509,27 @@ fn routed_rust_workflow_contract_violations(
         ),
         (
             "hosted fallback conditional job",
-            "if: needs.route.outputs.router_target == 'github'",
+            "needs.route.outputs.router_target == 'github'",
+        ),
+        (
+            "self-hosted scratch tempfail output",
+            "scratch_status: ${{ steps.scratch.outputs.status }}",
+        ),
+        (
+            "CX43 tempfail fallback predicate",
+            "needs.rust-cx43.outputs.scratch_status == 'tempfail'",
+        ),
+        (
+            "CPX42 tempfail fallback predicate",
+            "needs.rust-cpx42.outputs.scratch_status == 'tempfail'",
+        ),
+        (
+            "CX53 tempfail fallback predicate",
+            "needs.rust-cx53.outputs.scratch_status == 'tempfail'",
+        ),
+        (
+            "normalized tempfail fallback result",
+            "disk-guard tempfailed; GitHub-hosted fallback succeeded",
         ),
         (
             "CX43 scratch free-space floor",
@@ -85090,6 +85110,8 @@ jobs:
           echo rust-medium rust-16gb rust-large
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
     env:
       CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -85103,6 +85125,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
     env:
       CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -85116,6 +85140,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
     env:
       CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -85128,12 +85154,20 @@ jobs:
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-github:
-    if: needs.route.outputs.router_target == 'github'
+    if: >-
+      needs.route.outputs.router_target == 'github' ||
+      needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cx53.outputs.scratch_status == 'tempfail'
     steps:
       - name: Proof route dry-run (advisory)
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
   result:
     name: Ripr Rust Small Result
+    env:
+      CX43_SCRATCH_STATUS: ${{ needs.rust-cx43.outputs.scratch_status }}
+    steps:
+      - run: echo "disk-guard tempfailed; GitHub-hosted fallback succeeded"
 "#;
         let settings = r#"
 repository:
