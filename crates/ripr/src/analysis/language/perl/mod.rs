@@ -2885,29 +2885,6 @@ fn limitation_kind_blocks_strict_actionability(kind: &str) -> bool {
     )
 }
 
-impl BoundaryKind {
-    fn blocks_strict_actionability(self) -> bool {
-        matches!(
-            self,
-            Self::DynamicDispatch
-                | Self::ModuleResolutionUnknown
-                | Self::GeneratedSymbol
-                | Self::RoleComposition
-                | Self::MonkeypatchOrSymbolPatch
-                | Self::EvalOrStringCode
-                | Self::SymbolTableMutation
-                | Self::FrameworkIndirection
-                | Self::UnknownHelper
-                | Self::UnsupportedSyntax
-                | Self::MissingTestRunner
-                | Self::MissingDiffOwner
-                | Self::PacketIncomplete
-                | Self::PartialEmitter
-                | Self::Unknown
-        )
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct VerifyCommandFact {
     command_id: String,

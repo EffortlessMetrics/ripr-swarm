@@ -81337,7 +81337,7 @@ TypeScript repair packet (advisory)
     #[test]
     fn perl_lsp_facts_exporter_fixture_accepts_supported_producers() -> Result<(), String> {
         with_temp_cwd("perl-lsp-facts-exporter-producer-names", |root| {
-            for producer in ["perl-ripr-facts", "perllsp"] {
+            for producer in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
                 let packet = root.join(format!("{producer}.json"));
                 let packet_json = serde_json::to_string_pretty(&serde_json::json!({
                     "schema_version": "ripr-perl-facts-v1",
