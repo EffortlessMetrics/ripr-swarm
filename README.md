@@ -34,7 +34,7 @@
 
 **ripr shows your agents where tests are needed and which tests are too weak to trust — without running mutation testing.**
 
-The agent loop is one sentence:
+The agent loop is a simple three-step flow:
 
 ```text
 gap → fix → verify
@@ -43,10 +43,10 @@ gap → fix → verify
    ripr records a before/after receipt that the gap closed
 ```
 
-You work in five nouns. Everything else in this README and the reference docs
-expands on them:
+You work in five key terms. Everything else in this README and the reference
+docs expands on them:
 
-| Noun | One-line meaning |
+| Term | One-line meaning |
 | --- | --- |
 | **gap** | a place the code needs a test (or an existing test is too weak) |
 | **card** | the per-gap unit an agent acts on — what to assert, where, and why the current proof is weak |
