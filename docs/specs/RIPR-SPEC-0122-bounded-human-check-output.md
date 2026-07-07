@@ -35,6 +35,8 @@ Support-tier impact:
   `ripr check --format human`; it does not change analyzer classification,
   pass/fail authority, JSON schema, SARIF, GitHub annotations, badge output, or
   repo-exposure evidence.
+- Support-tier definitions remain governed by
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
 - Human output remains static advisory evidence. It must not claim runtime
   mutation confirmation, test adequacy, or exhaustive correctness.
 
