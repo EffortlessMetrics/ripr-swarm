@@ -698,8 +698,9 @@ fn non_empty(value: &str) -> Option<String> {
 /// Project the structured related-test object `{name, file, line}` from a
 /// gap-ledger repair route per RIPR-SPEC-0068. The gap-ledger artifact carries
 /// the related test as a single `related_test` string plus optional
-/// `target_file` / `target_line`; this projects them into the navigational
-/// object, or `null` when no related test name resolves.
+/// `target_file` / `target_line`; this projects them into the structured
+/// object, or `null` when no related test name resolves. The gap-ledger path
+/// may carry a name-only object when the source route has no resolved location.
 fn gap_record_related_test(route: &GapRepairRoute) -> Value {
     match route.related_test.as_deref() {
         Some(name) => json!({
@@ -2326,7 +2327,7 @@ mod tests {
     #[test]
     fn working_set_card_emits_null_related_test_without_strong_test() -> Result<(), String> {
         // When no strong related test resolves, the structured related_test
-        // object is an explicit null rather than a partial object.
+        // object is an explicit null rather than an object with no test name.
         let mut seam = classified(88);
         seam.evidence.related_tests.clear();
         let seams = [seam];
@@ -2902,7 +2903,7 @@ mod tests {
         // object {name, file, line} on suggested_test. When a strong related
         // test resolves the object is navigational (non-empty string name,
         // non-empty string file, integer line); otherwise it is an explicit
-        // null, never a partial object.
+        // null.
         let seams = [classified(88)];
         let working_set = AgentBriefResolvedWorkingSet::base(
             "main",

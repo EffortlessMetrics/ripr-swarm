@@ -357,8 +357,10 @@ source_location contract is fully enforced now.
   for both card paths: the working-set card projects the nearest strong
   related test (`nearest_strong_test_to_imitate`) via `display_path`; the
   gap-ledger card projects `GapRepairRoute.{related_test, target_file,
-  target_line}` through `gap_record_related_test`. The object is `null` when
-  no strong related test resolves, and never a partial object. The flat
+  target_line}` through `gap_record_related_test`. The field is always present:
+  the working-set card emits a fully navigable object or `null`, while the
+  gap-ledger card may emit a name-only object with `file` / `line` set to
+  `null` when its source route does not carry a resolved location. The flat
   `recommended_file` / `recommended_name` / `near_test` strings are retained
   alongside it.
 - `related_test` registered in `schemas/ripr/review-comments.schema.json`

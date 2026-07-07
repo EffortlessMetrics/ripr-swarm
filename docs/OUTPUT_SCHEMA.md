@@ -6210,9 +6210,9 @@ Field contract:
   `{name, file, line}` for the nearest strong related test (RIPR-SPEC-0068),
   or `null` when no strong related test resolves. The flat `recommended_file`,
   `recommended_name`, and `near_test` strings are retained alongside it; this
-  object adds a directly navigable `file:line` for the related test. On the
-  gap-ledger card path `file` and `line` may be `null` when the supplied
-  repair route names only the related test.
+  object adds a directly navigable `file:line` when the related-test location
+  is resolved. On the gap-ledger card path `file` and `line` may be `null`
+  when the supplied repair route names only the related test.
 - `comments[].llm_guidance` - bounded handoff command and prompt for one
   focused test. It is not a request for free-form diff review.
 - `comments[].repair_card` - optional GapRecord-backed repair card. When
