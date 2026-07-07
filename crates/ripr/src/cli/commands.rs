@@ -3606,7 +3606,10 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     if input.suppression_policy.is_some()
         && !matches!(
             input.format,
-            OutputFormat::Human | OutputFormat::Json | OutputFormat::Github
+            OutputFormat::Human
+                | OutputFormat::HumanFull
+                | OutputFormat::Json
+                | OutputFormat::Github
         )
     {
         return Err(
@@ -3618,6 +3621,13 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
+    if format.is_repo_scope() && (base_explicitly_provided || input.diff_file.is_some()) {
+        eprintln!(
+            "ripr: format {} is repo-scoped; --base/--diff does not bound it.
+Use --format json for diff-scoped findings, or --format repo-exposure-summary-json for a bounded repo summary.",
+            format.primary_cli_name()
+        );
+    }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
         write_stdout_chunked(&render_check_gap_ledger_badge(
             gap_ledger, &format, &config,

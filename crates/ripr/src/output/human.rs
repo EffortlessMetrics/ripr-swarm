@@ -3,29 +3,59 @@ use crate::config::RiprConfig;
 use crate::domain::Finding;
 use std::collections::BTreeSet;
 
-/// Render the complete check report in the human-readable CLI format.
+/// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
-    render_with_config(output, &RiprConfig::default())
+    render_bounded_with_config(output, &RiprConfig::default())
 }
 
+#[cfg(test)]
 pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
-        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n\n",
-        output.mode.as_str(),
-        output.root.display()
-    ));
-    out.push_str(&format!(
-        "Summary: {} probe(s), {} exposed, {} weak, {} unrevealed, {} no path, {} unknown\n\n",
-        output.summary.probes,
-        output.summary.exposed,
-        output.summary.weakly_exposed,
-        output.summary.reachable_unrevealed,
-        output.summary.no_static_path,
-        output.summary.static_unknown
-            + output.summary.infection_unknown
-            + output.summary.propagation_unknown
-    ));
+    render_bounded_with_config(output, config)
+}
+
+pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
+    let mut out = render_header_summary(output);
+    render_suppression_policy_block(&mut out, output);
+
+    if output.findings.is_empty() {
+        out.push_str("No diff-derived static exposure probes found.\n");
+        if output.no_scope_provided {
+            out.push_str(
+                "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
+Run `ripr check --base origin/main` to analyze your changes, or \
+`ripr check --root . --format repo-exposure-md` for a full-repo scan. \
+An empty result here does NOT mean your changed behavior is covered.\n",
+            );
+        }
+        if output.unanalyzed_working_tree {
+            out.push_str(
+                "\nNote: uncommitted changes to tracked source were not analyzed. \
+`--base` compares committed history only — commit or stage these changes and re-run, \
+or analyze a committed branch with `ripr check --base origin/main`.\n",
+            );
+        }
+        render_preview_language_advisories(&mut out, output);
+        render_language_runs(&mut out, output);
+        return out;
+    }
+
+    let triage = triage::select_human_triage(output, config);
+    triage::render_human_triage(&mut out, &triage, output, config);
+    render_all_no_path_disclosure(&mut out, output);
+    if output.unanalyzed_working_tree {
+        out.push_str(
+            "\nNote: uncommitted changes to tracked source were not analyzed. \
+`--base` compares committed history only; run `ripr check` (no --base) to analyze \
+your working tree.\n",
+        );
+    }
+    render_preview_language_advisories(&mut out, output);
+    render_language_runs(&mut out, output);
+    out
+}
+
+pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
+    let mut out = render_header_summary(output);
 
     render_suppression_policy_block(&mut out, output);
 
@@ -87,6 +117,27 @@ your working tree.\n",
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
+    out
+}
+
+fn render_header_summary(output: &CheckOutput) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n\n",
+        output.mode.as_str(),
+        output.root.display()
+    ));
+    out.push_str(&format!(
+        "Summary: {} probe(s), {} exposed, {} weak, {} unrevealed, {} no path, {} unknown\n\n",
+        output.summary.probes,
+        output.summary.exposed,
+        output.summary.weakly_exposed,
+        output.summary.reachable_unrevealed,
+        output.summary.no_static_path,
+        output.summary.static_unknown
+            + output.summary.infection_unknown
+            + output.summary.propagation_unknown
+    ));
     out
 }
 
@@ -261,6 +312,7 @@ pub fn render_finding(finding: &Finding) -> String {
 
 mod evidence_lines;
 mod sections;
+mod triage;
 
 pub(crate) use sections::render_finding_with_config;
 
@@ -312,6 +364,82 @@ mod tests {
             "Summary: 8 probe(s), 1 exposed, 2 weak, 1 unrevealed, 1 no path, 3 unknown"
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
+    }
+
+    #[test]
+    fn bounded_human_output_caps_many_findings_and_reports_omitted_count() {
+        let findings = (0..600)
+            .map(|idx| {
+                let mut finding = sample_finding();
+                finding.id = format!("finding-{idx}");
+                finding.probe.location.line = idx + 1;
+                finding
+            })
+            .collect::<Vec<_>>();
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 600,
+                findings: 600,
+                weakly_exposed: 600,
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("Start here:"));
+        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("599 lower-priority finding(s) omitted"));
+        assert!(rendered.contains("--format human-full"));
+        assert!(rendered.lines().count() < 150);
+        assert_eq!(rendered.matches("Static exposure").count(), 1);
+    }
+
+    #[test]
+    fn human_full_preserves_legacy_all_findings_output() {
+        let mut first = sample_finding();
+        first.id = "first".to_string();
+        first.probe.location.line = 7;
+        let mut second = sample_finding();
+        second.id = "second".to_string();
+        second.probe.location.line = 8;
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                weakly_exposed: 2,
+                ..Summary::default()
+            },
+            findings: vec![first, second],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+        };
+
+        let rendered =
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default());
+
+        assert_eq!(rendered.matches("Changed\n").count(), 2);
+        assert_eq!(rendered.matches("Probe\n").count(), 2);
+        assert!(!rendered.contains("lower-priority finding(s) omitted"));
     }
 
     #[test]

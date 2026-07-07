@@ -1,0 +1,157 @@
+use crate::app::CheckOutput;
+use crate::config::RiprConfig;
+use crate::domain::{ExposureClass, Finding};
+use std::collections::BTreeSet;
+
+use super::sections::render_finding_digest_with_config;
+
+pub(crate) struct HumanTriage<'a> {
+    pub(crate) state: HumanTriageState,
+    pub(crate) selected: Option<&'a Finding>,
+    pub(crate) omitted_findings: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HumanTriageState {
+    TopGap,
+    NoActionableGap,
+    StaticLimited,
+    PreviewLimited,
+}
+
+impl HumanTriageState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::TopGap => "top_gap",
+            Self::NoActionableGap => "no_actionable_gap",
+            Self::StaticLimited => "static_limited",
+            Self::PreviewLimited => "preview_limited",
+        }
+    }
+}
+
+pub(crate) fn select_human_triage<'a>(
+    output: &'a CheckOutput,
+    _config: &RiprConfig,
+) -> HumanTriage<'a> {
+    let suppressed_ids: BTreeSet<&str> = output
+        .suppression
+        .iter()
+        .flat_map(|outcome| {
+            outcome
+                .suppressed
+                .iter()
+                .map(|entry| entry.finding_id.as_str())
+        })
+        .collect();
+    let selected = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .min_by_key(|finding| triage_rank(finding));
+    let visible_findings = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .count();
+    let state = selected.map_or(HumanTriageState::StaticLimited, |finding| {
+        if is_preview_limited(finding) {
+            HumanTriageState::PreviewLimited
+        } else if finding.class == ExposureClass::Exposed {
+            HumanTriageState::NoActionableGap
+        } else if is_static_limited(finding) {
+            HumanTriageState::StaticLimited
+        } else {
+            HumanTriageState::TopGap
+        }
+    });
+    HumanTriage {
+        state,
+        selected,
+        omitted_findings: visible_findings.saturating_sub(usize::from(selected.is_some())),
+    }
+}
+
+pub(crate) fn render_human_triage(
+    out: &mut String,
+    triage: &HumanTriage<'_>,
+    _output: &CheckOutput,
+    config: &RiprConfig,
+) {
+    out.push_str("Start here:\n");
+    out.push_str(&format!("  State: {}\n", triage.state.as_str()));
+    match triage.state {
+        HumanTriageState::TopGap => out.push_str(
+            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
+        ),
+        HumanTriageState::NoActionableGap => out.push_str(
+            "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.\n",
+        ),
+        HumanTriageState::StaticLimited => out.push_str(
+            "  Safe next action: inspect the named static limitation before treating this as repair-ready.\n",
+        ),
+        HumanTriageState::PreviewLimited => out.push_str(
+            "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.\n",
+        ),
+    }
+    if let Some(finding) = triage.selected {
+        out.push_str(&render_finding_digest_with_config(finding, config));
+    }
+    out.push_str("\nHidden:\n");
+    out.push_str(&format!(
+        "  {} lower-priority finding(s) omitted from default human output.\n",
+        triage.omitted_findings
+    ));
+    out.push_str("  Full evidence: rerun with --format human-full\n");
+    out.push_str("  Machine data: rerun with --format json\n\n");
+}
+
+fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, i32, String, usize) {
+    let class_rank = match finding.class {
+        ExposureClass::ReachableUnrevealed => 2,
+        ExposureClass::WeaklyExposed => 3,
+        ExposureClass::NoStaticPath => 4,
+        ExposureClass::InfectionUnknown
+        | ExposureClass::PropagationUnknown
+        | ExposureClass::StaticUnknown => 5,
+        ExposureClass::Exposed => 9,
+    };
+    (
+        if has_repair_route(finding) {
+            0
+        } else {
+            class_rank
+        },
+        u8::from(finding.canonical_gap.is_none()),
+        u8::from(finding.related_tests.is_empty()),
+        u8::from(finding.missing.is_empty()),
+        -(finding.confidence * 100.0) as i32,
+        finding.probe.location.file.display().to_string(),
+        finding.probe.location.line,
+    )
+}
+
+fn has_repair_route(finding: &Finding) -> bool {
+    finding.recommended_next_step.is_some()
+        || finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("suggested_verify_command: "))
+}
+
+fn is_static_limited(finding: &Finding) -> bool {
+    matches!(
+        finding.class,
+        ExposureClass::NoStaticPath
+            | ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown
+    )
+}
+
+fn is_preview_limited(finding: &Finding) -> bool {
+    finding
+        .language_status
+        .is_some_and(|status| status.as_str() == "preview")
+        && !has_repair_route(finding)
+}
