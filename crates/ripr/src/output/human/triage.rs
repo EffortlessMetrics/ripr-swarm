@@ -17,6 +17,7 @@ pub(crate) enum HumanTriageState {
     NoActionableGap,
     StaticLimited,
     PreviewLimited,
+    MissingScope,
 }
 
 impl HumanTriageState {
@@ -26,6 +27,7 @@ impl HumanTriageState {
             Self::NoActionableGap => "no_actionable_gap",
             Self::StaticLimited => "static_limited",
             Self::PreviewLimited => "preview_limited",
+            Self::MissingScope => "missing_scope",
         }
     }
 }
@@ -54,17 +56,28 @@ pub(crate) fn select_human_triage<'a>(
         .iter()
         .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
         .count();
-    let state = selected.map_or(HumanTriageState::StaticLimited, |finding| {
-        if is_preview_limited(finding) {
-            HumanTriageState::PreviewLimited
-        } else if finding.class == ExposureClass::Exposed {
-            HumanTriageState::NoActionableGap
-        } else if is_static_limited(finding) {
-            HumanTriageState::StaticLimited
-        } else {
-            HumanTriageState::TopGap
-        }
-    });
+    let state = selected.map_or_else(
+        || {
+            if output.no_scope_provided {
+                HumanTriageState::MissingScope
+            } else if !output.findings.is_empty() && visible_findings == 0 {
+                HumanTriageState::NoActionableGap
+            } else {
+                HumanTriageState::StaticLimited
+            }
+        },
+        |finding| {
+            if is_preview_limited(finding) {
+                HumanTriageState::PreviewLimited
+            } else if finding.class == ExposureClass::Exposed {
+                HumanTriageState::NoActionableGap
+            } else if is_static_limited(finding) {
+                HumanTriageState::StaticLimited
+            } else {
+                HumanTriageState::TopGap
+            }
+        },
+    );
     HumanTriage {
         state,
         selected,
@@ -75,7 +88,7 @@ pub(crate) fn select_human_triage<'a>(
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
-    _output: &CheckOutput,
+    output: &CheckOutput,
     config: &RiprConfig,
 ) {
     out.push_str("Start here:\n");
@@ -84,14 +97,25 @@ pub(crate) fn render_human_triage(
         HumanTriageState::TopGap => out.push_str(
             "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
         ),
-        HumanTriageState::NoActionableGap => out.push_str(
-            "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.\n",
-        ),
+        HumanTriageState::NoActionableGap => {
+            if triage.selected.is_none() && !output.findings.is_empty() {
+                out.push_str(
+                    "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable.\n",
+                );
+            } else {
+                out.push_str(
+                    "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.\n",
+                );
+            }
+        }
         HumanTriageState::StaticLimited => out.push_str(
             "  Safe next action: inspect the named static limitation before treating this as repair-ready.\n",
         ),
         HumanTriageState::PreviewLimited => out.push_str(
             "  Safe next action: preview-language evidence is advisory; complete the missing repair-packet fields before acting.\n",
+        ),
+        HumanTriageState::MissingScope => out.push_str(
+            "  Safe next action: provide an analysis scope; this empty output is not an all-clear.\n",
         ),
     }
     if let Some(finding) = triage.selected {
@@ -106,7 +130,7 @@ pub(crate) fn render_human_triage(
     out.push_str("  Machine data: rerun with --format json\n\n");
 }
 
-fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, i32, String, usize) {
+fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, String, usize) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -116,12 +140,18 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, i32, String, usize) {
         | ExposureClass::StaticUnknown => 5,
         ExposureClass::Exposed => 9,
     };
+    let preview_rank = u8::from(is_preview_limited(finding));
+    let repair_rank = if finding.class != ExposureClass::Exposed
+        && !is_preview_limited(finding)
+        && has_repair_route(finding)
+    {
+        0
+    } else {
+        class_rank
+    };
     (
-        if has_repair_route(finding) {
-            0
-        } else {
-            class_rank
-        },
+        preview_rank,
+        repair_rank,
         u8::from(finding.canonical_gap.is_none()),
         u8::from(finding.related_tests.is_empty()),
         u8::from(finding.missing.is_empty()),
@@ -153,5 +183,4 @@ fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")
-        && !has_repair_route(finding)
 }

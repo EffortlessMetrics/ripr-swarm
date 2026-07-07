@@ -20,6 +20,10 @@ pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConf
     if output.findings.is_empty() {
         out.push_str("No diff-derived static exposure probes found.\n");
         if output.no_scope_provided {
+            let triage = triage::select_human_triage(output, config);
+            triage::render_human_triage(&mut out, &triage, output, config);
+        }
+        if output.no_scope_provided {
             out.push_str(
                 "\nNote: no analysis scope was provided — `ripr check` is diff-first. \
 Run `ripr check --base origin/main` to analyze your changes, or \
@@ -407,6 +411,155 @@ mod tests {
     }
 
     #[test]
+    fn bounded_human_output_does_not_select_exposed_over_non_exposed_repair() {
+        let mut exposed = sample_finding();
+        exposed.id = "exposed-with-route".to_string();
+        exposed.class = ExposureClass::Exposed;
+        exposed.probe.location = SourceLocation::new("src/exposed.rs", 1, 1);
+        exposed.confidence = 0.99;
+        exposed.recommended_next_step = Some("Review the already exposed evidence.".to_string());
+
+        let mut actionable = sample_finding();
+        actionable.id = "non-exposed-with-route".to_string();
+        actionable.class = ExposureClass::ReachableUnrevealed;
+        actionable.probe.location = SourceLocation::new("src/actionable.rs", 9, 1);
+        actionable.recommended_next_step =
+            Some("Add the missing discriminator assertion.".to_string());
+
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                exposed: 1,
+                reachable_unrevealed: 1,
+                ..Summary::default()
+            },
+            findings: vec![exposed, actionable],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("File: src/actionable.rs:9"));
+        assert!(rendered.contains("Static exposure: reachable_unrevealed"));
+        assert!(!rendered.contains("File: src/exposed.rs:1"));
+    }
+
+    #[test]
+    fn bounded_human_output_reports_missing_scope_as_start_here_state() {
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: true,
+            unanalyzed_working_tree: false,
+            suppression: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("Start here:"));
+        assert!(rendered.contains("State: missing_scope"));
+        assert!(rendered.contains("provide an analysis scope"));
+        assert!(rendered.contains("No diff-derived static exposure probes found."));
+    }
+
+    #[test]
+    fn bounded_human_output_keeps_preview_language_in_preview_limited_state() {
+        let mut finding = sample_finding();
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.recommended_next_step = Some("Add a TypeScript preview repair.".to_string());
+        finding
+            .evidence
+            .push("suggested_verify_command: npm test -- pricing".to_string());
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("preview-language evidence is advisory"));
+        assert!(!rendered.contains("State: top_gap"));
+    }
+
+    #[test]
+    fn bounded_human_output_prefers_stable_gap_over_preview_with_route() {
+        let mut stable = sample_finding();
+        stable.id = "stable-gap".to_string();
+        stable.probe.location = SourceLocation::new("src/stable.rs", 10, 1);
+
+        let mut preview = sample_finding();
+        preview.id = "preview-gap".to_string();
+        preview.language = Some(LanguageId::TypeScript);
+        preview.language_status = Some(LanguageStatus::Preview);
+        preview.probe.location = SourceLocation::new("src/preview.ts", 1, 1);
+        preview.recommended_next_step = Some("Add a TypeScript preview repair.".to_string());
+        preview
+            .evidence
+            .push("suggested_verify_command: npm test -- pricing".to_string());
+
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                weakly_exposed: 2,
+                ..Summary::default()
+            },
+            findings: vec![preview, stable],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("File: src/stable.rs:10"));
+        assert!(!rendered.contains("File: src/preview.ts:1"));
+    }
+
+    #[test]
     fn human_full_preserves_legacy_all_findings_output() {
         let mut first = sample_finding();
         first.id = "first".to_string();
@@ -486,6 +639,45 @@ mod tests {
         assert!(rendered.contains("policy warning: exposure_gap suppression for `missing/**`"));
         // The suppressed finding must not also render as a detailed block.
         assert!(!rendered.contains(&format!("WARNING {location}:7")));
+    }
+
+    #[test]
+    fn bounded_human_output_reports_no_actionable_gap_when_all_findings_suppressed() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: Some(CheckSuppressionOutcome {
+                policy_path: "policy/ripr-suppressions.toml".to_string(),
+                suppressed: vec![SuppressedCheckFinding {
+                    finding_id,
+                    selector: "src/**".to_string(),
+                }],
+                warnings: Vec::new(),
+            }),
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("State: no_actionable_gap"));
+        assert!(rendered.contains("all findings are suppressed by policy"));
+        assert!(!rendered.contains("inspect the named static limitation"));
     }
 
     #[test]
