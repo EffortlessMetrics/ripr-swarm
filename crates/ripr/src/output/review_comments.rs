@@ -850,6 +850,19 @@ fn review_recommendation_json(
         })
         .unwrap_or(Value::Null);
 
+    // Card-level oracle (RIPR-SPEC-0068): the representative oracle for this
+    // seam — the nearest strong related test if one resolves, else the
+    // top-ranked related test, else no oracle observed (`unknown` / `none`).
+    // This projects the same oracle facts agent briefs and seam packets carry;
+    // the review card does not compute an oracle of its own.
+    let representative_oracle = nearest.or_else(|| entry.evidence.related_tests.first());
+    let oracle_kind = representative_oracle
+        .map(|test| test.oracle_kind.as_str())
+        .unwrap_or_else(|| crate::domain::OracleKind::Unknown.as_str());
+    let oracle_strength = representative_oracle
+        .map(|test| test.oracle_strength.as_str())
+        .unwrap_or_else(|| crate::domain::OracleStrength::None.as_str());
+
     let mut recommendation = json!({
         "id": format!("ripr-review-{seam_id}"),
         "seam_id": seam_id,
@@ -857,6 +870,8 @@ fn review_recommendation_json(
         "kind": seam.kind().as_str(),
         "grip_class": entry.class.as_str(),
         "gap_state": gap_state,
+        "oracle_kind": oracle_kind,
+        "oracle_strength": oracle_strength,
         "severity": config.severity().for_seam(entry.class).as_str(),
         "owner": seam.owner(),
         "seam": {
@@ -2943,6 +2958,91 @@ mod tests {
             "classified(88) carries a strong related test; at least one card must \
              project a navigational related_test object"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn spec0068_card_carries_oracle_kind_and_strength() -> Result<(), String> {
+        // RIPR-SPEC-0068: every working-set card carries card-level oracle_kind
+        // and oracle_strength from the closed domain vocabulary, projecting the
+        // representative related test's oracle. classified(88) carries a strong
+        // exact-value related test, so its card reports exact_value / strong.
+        const ORACLE_KINDS: &[&str] = &[
+            "exact_value",
+            "exact_error_variant",
+            "whole_object_equality",
+            "snapshot",
+            "relational_check",
+            "broad_error",
+            "smoke_only",
+            "mock_expectation",
+            "unknown",
+        ];
+        const ORACLE_STRENGTHS: &[&str] = &["strong", "medium", "weak", "smoke", "none", "unknown"];
+        let seams = [classified(88)];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value(&working_set, &seams)?;
+        let mut saw_card = false;
+        for card in all_cards(&value) {
+            // Only working-set cards carry card-level oracle fields.
+            if card.get("seam").is_none() {
+                continue;
+            }
+            let oracle_kind = card
+                .get("oracle_kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("card missing oracle_kind: {card:?}"))?;
+            let oracle_strength = card
+                .get("oracle_strength")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("card missing oracle_strength: {card:?}"))?;
+            assert!(
+                ORACLE_KINDS.contains(&oracle_kind),
+                "oracle_kind '{oracle_kind}' is outside the closed vocabulary"
+            );
+            assert!(
+                ORACLE_STRENGTHS.contains(&oracle_strength),
+                "oracle_strength '{oracle_strength}' is outside the closed vocabulary"
+            );
+            assert_eq!(oracle_kind, "exact_value");
+            assert_eq!(oracle_strength, "strong");
+            saw_card = true;
+        }
+        assert!(saw_card, "expected at least one working-set card");
+        Ok(())
+    }
+
+    #[test]
+    fn working_set_card_reports_no_oracle_without_related_tests() -> Result<(), String> {
+        // With no related tests, the card-level oracle degrades honestly to
+        // unknown / none rather than claiming an observer that does not exist.
+        let mut seam = classified(88);
+        seam.evidence.related_tests.clear();
+        let seams = [seam];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value(&working_set, &seams)?;
+        let mut saw_card = false;
+        for card in all_cards(&value) {
+            if card.get("seam").is_none() {
+                continue;
+            }
+            assert_eq!(
+                card.get("oracle_kind").and_then(Value::as_str),
+                Some("unknown")
+            );
+            assert_eq!(
+                card.get("oracle_strength").and_then(Value::as_str),
+                Some("none")
+            );
+            saw_card = true;
+        }
+        assert!(saw_card, "expected at least one working-set card");
         Ok(())
     }
 }
