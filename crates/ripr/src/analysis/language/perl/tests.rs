@@ -3055,6 +3055,59 @@ fn h1_ownerless_file_boundary_still_blocks() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn h1_dynamic_dispatch_limitation_blocks_related_finding_classification() -> Result<(), String> {
+    let mut packet = consume(EXACT_RETURN_PACKET)?;
+    packet.limitations = vec![LimitationFact {
+        limitation_id: "limitation:dynamic-dispatch:relation".to_string(),
+        kind: "dynamic_dispatch".to_string(),
+        message: "producer could not bind the related call through dynamic dispatch".to_string(),
+        evidence_refs: vec!["relation:change:discount-return:test:threshold".to_string()],
+    }];
+
+    let findings = packet_to_findings(&packet);
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    assert!(
+        !finding.related_tests.is_empty(),
+        "fixture must keep related evidence so this covers the related-evidence limitation branch"
+    );
+    assert_eq!(
+        finding.class,
+        crate::domain::ExposureClass::StaticUnknown,
+        "a dynamic_dispatch limitation tied to related evidence must block strict finding classification"
+    );
+    Ok(())
+}
+
+#[test]
+fn h1_dynamic_dispatch_limitation_blocks_no_static_path_classification() -> Result<(), String> {
+    let mut packet = consume(EXACT_RETURN_PACKET)?;
+    packet.relations.clear();
+    packet.limitations = vec![LimitationFact {
+        limitation_id: "limitation:dynamic-dispatch:change".to_string(),
+        kind: "dynamic_dispatch".to_string(),
+        message: "producer could not bind the changed call through dynamic dispatch".to_string(),
+        evidence_refs: vec!["change:lib/My/App.pm:15:return".to_string()],
+    }];
+
+    let findings = packet_to_findings(&packet);
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    assert!(
+        finding.related_tests.is_empty(),
+        "fixture mutation must remove relation evidence so this covers the change-only limitation branch"
+    );
+    assert_eq!(
+        finding.class,
+        crate::domain::ExposureClass::StaticUnknown,
+        "a change-scoped dynamic_dispatch limitation must outrank no_static_path"
+    );
+    Ok(())
+}
+
 /// A change whose `changed_text_digest` is NOT a `discriminator:`-prefixed
 /// concrete discriminator must NOT carry a canonical repair gap. EXACT_RETURN_PACKET
 /// uses `"sha256:return"` (generic), so it must yield `canonical_gap: None`.
