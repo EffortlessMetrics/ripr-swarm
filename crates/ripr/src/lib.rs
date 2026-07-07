@@ -1,3 +1,4 @@
+// ripr — static mutation-exposure analyzer
 #![forbid(unsafe_code)]
 //! `ripr` is a static RIPR mutation-exposure analyzer for Rust workspaces.
 //!
