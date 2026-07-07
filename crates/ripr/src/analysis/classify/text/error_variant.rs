@@ -1,5 +1,14 @@
 use super::{delimited_contents_at, enum_variant_values};
 
+/// Returns true when `variant` matches a known auth-related error shape,
+/// case-insensitively.
+///
+/// Recognized shapes: `AuthError`, `PermissionDenied`, `Unauthorized`.
+pub(in crate::analysis) fn is_auth_error_variant(variant: &str) -> bool {
+    let lower = variant.to_ascii_lowercase();
+    lower.contains("autherror") || lower.contains("permissiondenied") || lower.contains("unauthorized")
+}
+
 pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
     let start = text.find("Err(")?;
     let inner = delimited_contents_at(text, start + "Err".len())?;
