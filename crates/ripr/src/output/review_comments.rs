@@ -3045,4 +3045,48 @@ mod tests {
         assert!(saw_card, "expected at least one working-set card");
         Ok(())
     }
+
+    #[test]
+    fn working_set_card_projects_first_related_test_oracle_when_no_strong() -> Result<(), String> {
+        // Middle fallback: nearest_strong_test_to_imitate returns None (no
+        // strong related test), but related_tests is non-empty — the card
+        // projects the top-ranked related test's oracle, not unknown/none.
+        let mut seam = classified(88);
+        // Downgrade the sole related test below Strong so no strong match
+        // exists; it remains the top-ranked related test.
+        for test in &mut seam.evidence.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+        }
+        let seams = [seam];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value(&working_set, &seams)?;
+        let mut saw_card = false;
+        for card in all_cards(&value) {
+            if card.get("seam").is_none() {
+                continue;
+            }
+            // No strong nearest test, so the structured related_test is null,
+            // but the card-level oracle comes from the first related test.
+            assert!(
+                card.get("suggested_test")
+                    .and_then(|suggested| suggested.get("related_test"))
+                    .is_some_and(Value::is_null),
+                "related_test should be null when no strong test resolves: {card:?}"
+            );
+            assert_eq!(
+                card.get("oracle_kind").and_then(Value::as_str),
+                Some("exact_value")
+            );
+            assert_eq!(
+                card.get("oracle_strength").and_then(Value::as_str),
+                Some("weak")
+            );
+            saw_card = true;
+        }
+        assert!(saw_card, "expected at least one working-set card");
+        Ok(())
+    }
 }
