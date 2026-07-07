@@ -63,11 +63,19 @@ pub(crate) struct TypeScriptRepoReadiness {
 #[cfg(feature = "lang-typescript")]
 pub(crate) fn workspace_typescript_repo_readiness(root: &Path) -> Option<TypeScriptRepoReadiness> {
     use language::{
-        TsPackageConfidence, collect_workspace_typescript_files, is_test_file,
-        resolve_package_discovery, verify_command_for_discovery,
+        TsPackageConfidence, is_test_file, resolve_package_discovery, verify_command_for_discovery,
     };
 
-    let files = collect_workspace_typescript_files(root);
+    let files = workspace_preview_language_files(root)
+        .into_iter()
+        .filter_map(|(language, path)| {
+            matches!(
+                language,
+                language::LanguageId::TypeScript | language::LanguageId::JavaScript
+            )
+            .then_some(path)
+        })
+        .collect::<Vec<_>>();
     if files.is_empty() {
         return None;
     }
@@ -81,6 +89,7 @@ pub(crate) fn workspace_typescript_repo_readiness(root: &Path) -> Option<TypeScr
     let mut framework_missing = 0usize;
     let mut runner_missing = 0usize;
     let mut package_manager_missing = 0usize;
+    let mut discovery_cache = HashMap::new();
 
     for file in &files {
         let file_is_test = is_test_file(file);
@@ -90,12 +99,15 @@ pub(crate) fn workspace_typescript_repo_readiness(root: &Path) -> Option<TypeScr
             source_file_count += 1;
         }
 
-        let discovery = resolve_package_discovery(file, root);
+        let parent = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        let discovery = discovery_cache
+            .entry(parent)
+            .or_insert_with(|| resolve_package_discovery(file, root));
         if let Some(package_root) = discovery.package_root.as_ref() {
             package_roots.insert(display_readiness_path(package_root));
         }
         best_confidence = max_ts_package_confidence(best_confidence, discovery.confidence);
-        if file_is_test && verify_command_for_discovery(&discovery, file).is_some() {
+        if file_is_test && verify_command_for_discovery(discovery, file).is_some() {
             verify_command_count += 1;
         }
         for limitation in &discovery.limitations {
@@ -215,7 +227,7 @@ fn top_typescript_readiness_blocker(
 
 use crate::config::OraclePolicy;
 use crate::domain::{Finding, Summary};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -575,6 +587,45 @@ fn premium_customer_gets_discount() {
         {
             return Err("expected at least one Predicate family finding".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_repo_readiness_uses_preview_file_scope() -> Result<(), String> {
+        let root = temp_dir("ts_readiness_scope");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        fs::create_dir_all(root.join("fixtures/noise/src"))
+            .map_err(|e| format!("failed to create ignored fixture dir: {e}"))?;
+        fs::write(
+            root.join("package.json"),
+            r#"{"devDependencies":{"vitest":"^1.0.0"}}"#,
+        )
+        .map_err(|e| format!("failed to write package.json: {e}"))?;
+        fs::write(root.join("pnpm-lock.yaml"), "")
+            .map_err(|e| format!("failed to write pnpm-lock.yaml: {e}"))?;
+        fs::write(root.join("src/app.ts"), "export const value = 1;\n")
+            .map_err(|e| format!("failed to write source file: {e}"))?;
+        fs::write(
+            root.join("src/app.test.ts"),
+            "import { value } from './app';\n",
+        )
+        .map_err(|e| format!("failed to write test file: {e}"))?;
+        fs::write(
+            root.join("fixtures/noise/src/noise.test.ts"),
+            "test('noise', () => {});\n",
+        )
+        .map_err(|e| format!("failed to write ignored fixture test file: {e}"))?;
+
+        let readiness = workspace_typescript_repo_readiness(&root)
+            .ok_or_else(|| "expected TypeScript readiness card".to_string())?;
+
+        assert_eq!(readiness.source_file_count, 1);
+        assert_eq!(readiness.test_file_count, 1);
+        assert_eq!(readiness.verify_command_count, 1);
+        assert_eq!(readiness.runner_status, "resolved");
+
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
         Ok(())
     }
 

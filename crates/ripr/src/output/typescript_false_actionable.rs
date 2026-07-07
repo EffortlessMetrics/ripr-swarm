@@ -259,50 +259,51 @@ fn parse_false_actionable_cases(
         .and_then(Value::as_array)
         .ok_or_else(|| "expected corpus object with cases array".to_string())?;
 
-    Ok(cases.iter().map(case_row_from_value).collect())
+    cases
+        .iter()
+        .enumerate()
+        .map(|(index, value)| case_row_from_value(value, index))
+        .collect()
 }
 
-fn case_row_from_value(value: &Value) -> TypeScriptFalseActionableCaseRow {
-    let repair_packet_ready = bool_at(value, &["repair_packet_ready"]).unwrap_or(true);
-    let gap_state = string_at(value, &["gap_state"]).unwrap_or("unknown");
-    let actionability_category = string_at(value, &["actionability_category"]).unwrap_or("unknown");
+fn case_row_from_value(
+    value: &Value,
+    index: usize,
+) -> Result<TypeScriptFalseActionableCaseRow, String> {
+    let id = required_string_at(value, &["id"], index)?;
+    let language = required_string_at(value, &["language"], index)?;
+    let risk_class = required_string_at(value, &["risk_class"], index)?;
+    let evidence_kind = required_string_at(value, &["evidence_kind"], index)?;
+    let disposition = required_string_at(value, &["disposition"], index)?;
+    let gap_state = required_string_at(value, &["gap_state"], index)?;
+    let actionability_category = required_string_at(value, &["actionability_category"], index)?;
+    let repair_packet_ready = required_bool_at(value, &["repair_packet_ready"], index)?;
     let must_remain_non_actionable =
-        bool_at(value, &["must_remain_non_actionable"]).unwrap_or(false);
+        required_bool_at(value, &["must_remain_non_actionable"], index)?;
+    let authority_boundary = required_string_at(value, &["authority_boundary"], index)?;
+    let source_fixture = required_string_at(value, &["source_fixture"], index)?;
+    let source_finding_id = required_string_at(value, &["source_finding_id"], index)?;
     let false_actionable = must_remain_non_actionable
         && (repair_packet_ready
             || gap_state == "actionable"
             || actionability_category == "complete_repair_packet");
 
-    TypeScriptFalseActionableCaseRow {
-        id: string_at(value, &["id"]).unwrap_or("unknown").to_string(),
-        language: string_at(value, &["language"])
-            .unwrap_or("unknown")
-            .to_string(),
-        risk_class: string_at(value, &["risk_class"])
-            .unwrap_or("unknown")
-            .to_string(),
-        evidence_kind: string_at(value, &["evidence_kind"])
-            .unwrap_or("unknown")
-            .to_string(),
-        disposition: string_at(value, &["disposition"])
-            .unwrap_or("unknown")
-            .to_string(),
+    Ok(TypeScriptFalseActionableCaseRow {
+        id: id.to_string(),
+        language: language.to_string(),
+        risk_class: risk_class.to_string(),
+        evidence_kind: evidence_kind.to_string(),
+        disposition: disposition.to_string(),
         gap_state: gap_state.to_string(),
         actionability_category: actionability_category.to_string(),
         static_limit_kind: string_at(value, &["static_limit_kind"]).map(ToString::to_string),
         repair_packet_ready,
         must_remain_non_actionable,
-        authority_boundary: string_at(value, &["authority_boundary"])
-            .unwrap_or("unknown")
-            .to_string(),
+        authority_boundary: authority_boundary.to_string(),
         false_actionable,
-        source_fixture: string_at(value, &["source_fixture"])
-            .unwrap_or("unknown")
-            .to_string(),
-        source_finding_id: string_at(value, &["source_finding_id"])
-            .unwrap_or("unknown")
-            .to_string(),
-    }
+        source_fixture: source_fixture.to_string(),
+        source_finding_id: source_finding_id.to_string(),
+    })
 }
 
 fn summarize_false_actionable_cases(
@@ -390,6 +391,28 @@ fn bool_at(value: &Value, path: &[&str]) -> Option<bool> {
         current = current.get(*key)?;
     }
     current.as_bool()
+}
+
+fn required_string_at<'a>(
+    value: &'a Value,
+    path: &[&str],
+    case_index: usize,
+) -> Result<&'a str, String> {
+    string_at(value, path).ok_or_else(|| {
+        format!(
+            "case {case_index} missing or non-string field {}",
+            path.join(".")
+        )
+    })
+}
+
+fn required_bool_at(value: &Value, path: &[&str], case_index: usize) -> Result<bool, String> {
+    bool_at(value, path).ok_or_else(|| {
+        format!(
+            "case {case_index} missing or non-boolean field {}",
+            path.join(".")
+        )
+    })
 }
 
 fn md_inline(value: &str) -> String {
@@ -481,6 +504,23 @@ mod tests {
         assert!(report.warnings[0].contains("expected schema_version 0.1"));
     }
 
+    #[test]
+    fn false_actionable_audit_blocks_on_incomplete_case_row() {
+        let report =
+            build_typescript_false_actionable_audit_report(TypeScriptFalseActionableAuditInput {
+                root: ".".to_string(),
+                generated_at: "123".to_string(),
+                corpus_path: "corpus.json".to_string(),
+                corpus_json: Ok(incomplete_case_corpus()),
+            });
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.summary.cases_total, 0);
+        assert!(
+            report.warnings[0].contains("missing or non-boolean field must_remain_non_actionable")
+        );
+    }
+
     fn safe_corpus() -> String {
         r#"{
   "schema_version": "0.1",
@@ -553,6 +593,29 @@ mod tests {
       "authority_boundary": "preview_advisory_only",
       "source_fixture": "fixtures/x",
       "source_finding_id": "probe:bad2"
+    }
+  ]
+}"#
+        .to_string()
+    }
+
+    fn incomplete_case_corpus() -> String {
+        r#"{
+  "schema_version": "0.1",
+  "kind": "typescript_preview_false_actionable_audit_corpus",
+  "cases": [
+    {
+      "id": "bad_missing_denominator",
+      "language": "typescript",
+      "risk_class": "bad packet ready",
+      "evidence_kind": "mock",
+      "disposition": "safe_advisory",
+      "gap_state": "actionable",
+      "actionability_category": "complete_repair_packet",
+      "repair_packet_ready": true,
+      "authority_boundary": "preview_advisory_only",
+      "source_fixture": "fixtures/x",
+      "source_finding_id": "probe:bad"
     }
   ]
 }"#

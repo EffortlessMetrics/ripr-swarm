@@ -43,8 +43,7 @@ pub(crate) use rust::RustAdapter;
 pub(crate) use typescript::TypeScriptAdapter;
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
-    TsPackageConfidence, collect_workspace_typescript_files, is_test_file,
-    resolve_package_discovery, verify_command_for_discovery,
+    TsPackageConfidence, is_test_file, resolve_package_discovery, verify_command_for_discovery,
 };
 
 #[cfg(test)]
