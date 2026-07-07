@@ -49,6 +49,170 @@ pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
     workspace::discover_rust_files(root).unwrap_or_default()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptRepoReadiness {
+    pub(crate) source_file_count: usize,
+    pub(crate) test_file_count: usize,
+    pub(crate) package_root_count: usize,
+    pub(crate) package_confidence: String,
+    pub(crate) runner_status: String,
+    pub(crate) verify_command_count: usize,
+    pub(crate) top_blocker: Option<String>,
+}
+
+#[cfg(feature = "lang-typescript")]
+pub(crate) fn workspace_typescript_repo_readiness(root: &Path) -> Option<TypeScriptRepoReadiness> {
+    use language::{
+        TsPackageConfidence, collect_workspace_typescript_files, is_test_file,
+        resolve_package_discovery, verify_command_for_discovery,
+    };
+
+    let files = collect_workspace_typescript_files(root);
+    if files.is_empty() {
+        return None;
+    }
+
+    let mut test_file_count = 0usize;
+    let mut source_file_count = 0usize;
+    let mut package_roots = BTreeSet::<String>::new();
+    let mut best_confidence = TsPackageConfidence::None;
+    let mut verify_command_count = 0usize;
+    let mut package_root_missing = 0usize;
+    let mut framework_missing = 0usize;
+    let mut runner_missing = 0usize;
+    let mut package_manager_missing = 0usize;
+
+    for file in &files {
+        let file_is_test = is_test_file(file);
+        if file_is_test {
+            test_file_count += 1;
+        } else {
+            source_file_count += 1;
+        }
+
+        let discovery = resolve_package_discovery(file, root);
+        if let Some(package_root) = discovery.package_root.as_ref() {
+            package_roots.insert(display_readiness_path(package_root));
+        }
+        best_confidence = max_ts_package_confidence(best_confidence, discovery.confidence);
+        if file_is_test && verify_command_for_discovery(&discovery, file).is_some() {
+            verify_command_count += 1;
+        }
+        for limitation in &discovery.limitations {
+            match limitation.as_str() {
+                "typescript_package_root_unresolved" => package_root_missing += 1,
+                "typescript_framework_hint_unresolved" => framework_missing += 1,
+                "typescript_test_runner_unresolved" => runner_missing += 1,
+                "typescript_package_manager_unresolved" => package_manager_missing += 1,
+                _ => {}
+            }
+        }
+    }
+
+    let runner_status = if test_file_count == 0 {
+        "no_tests_detected"
+    } else if verify_command_count == test_file_count {
+        "resolved"
+    } else if verify_command_count > 0 {
+        "partial"
+    } else {
+        "unresolved"
+    };
+    let top_blocker = top_typescript_readiness_blocker(
+        test_file_count,
+        package_root_missing,
+        framework_missing,
+        runner_missing,
+        package_manager_missing,
+    );
+
+    Some(TypeScriptRepoReadiness {
+        source_file_count,
+        test_file_count,
+        package_root_count: package_roots.len(),
+        package_confidence: best_confidence.as_str().to_string(),
+        runner_status: runner_status.to_string(),
+        verify_command_count,
+        top_blocker,
+    })
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+pub(crate) fn workspace_typescript_repo_readiness(_root: &Path) -> Option<TypeScriptRepoReadiness> {
+    None
+}
+
+#[cfg(feature = "lang-typescript")]
+fn max_ts_package_confidence(
+    left: language::TsPackageConfidence,
+    right: language::TsPackageConfidence,
+) -> language::TsPackageConfidence {
+    if ts_package_confidence_rank(right) > ts_package_confidence_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+#[cfg(feature = "lang-typescript")]
+fn ts_package_confidence_rank(confidence: language::TsPackageConfidence) -> usize {
+    use language::TsPackageConfidence;
+    match confidence {
+        TsPackageConfidence::None => 0,
+        TsPackageConfidence::Low => 1,
+        TsPackageConfidence::Medium => 2,
+        TsPackageConfidence::High => 3,
+    }
+}
+
+#[cfg(feature = "lang-typescript")]
+fn display_readiness_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(feature = "lang-typescript")]
+fn top_typescript_readiness_blocker(
+    test_file_count: usize,
+    package_root_missing: usize,
+    framework_missing: usize,
+    runner_missing: usize,
+    package_manager_missing: usize,
+) -> Option<String> {
+    if test_file_count == 0 {
+        return Some("typescript_tests_not_detected".to_string());
+    }
+
+    [
+        (
+            "typescript_package_root_unresolved",
+            package_root_missing,
+            "package roots",
+        ),
+        (
+            "typescript_framework_hint_unresolved",
+            framework_missing,
+            "framework hints",
+        ),
+        (
+            "typescript_test_runner_unresolved",
+            runner_missing,
+            "test runners",
+        ),
+        (
+            "typescript_package_manager_unresolved",
+            package_manager_missing,
+            "package managers",
+        ),
+    ]
+    .into_iter()
+    .max_by(|(name_a, count_a, _), (name_b, count_b, _)| {
+        count_a.cmp(count_b).then_with(|| name_b.cmp(name_a))
+    })
+    .and_then(|(name, count, label)| {
+        (count > 0).then(|| format!("{name} ({count} {label} unresolved)"))
+    })
+}
+
 use crate::config::OraclePolicy;
 use crate::domain::{Finding, Summary};
 use std::collections::BTreeSet;
