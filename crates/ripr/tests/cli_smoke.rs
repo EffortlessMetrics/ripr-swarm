@@ -265,6 +265,288 @@ fn check_json_output_has_stable_contract_fields() {
     assert!(stdout.contains(r#""suggested_next_action""#));
 }
 
+// ── `check --suppression-policy` (#1441) ──
+
+fn write_suppression_policy(label: &str, text: &str) -> Result<PathBuf, String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let path = dir.join("ripr-suppressions.toml");
+    std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+#[test]
+fn check_json_suppression_policy_marks_findings_and_adjusts_summary() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let policy = write_suppression_policy(
+        "suppression-json",
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
+    )?;
+    let policy_arg = policy.display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--suppression-policy",
+        &policy_arg,
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("check JSON should parse: {err}\n{stdout}"))?;
+
+    let findings = value["findings"]
+        .as_array()
+        .ok_or("findings must be an array")?;
+    assert!(!findings.is_empty(), "sample diff must produce findings");
+    for finding in findings {
+        assert_eq!(
+            finding["suppressed"], true,
+            "every sample finding lives under the suppressed glob"
+        );
+        assert_eq!(finding["suppressed_by"], "crates/ripr/examples/sample/**");
+    }
+    assert_eq!(
+        value["summary"]["suppressed_by_policy"].as_u64(),
+        Some(findings.len() as u64)
+    );
+    // Per-class buckets count unsuppressed findings only.
+    assert_eq!(value["summary"]["weakly_exposed"].as_u64(), Some(0));
+    // `findings` stays the total rendered count.
+    assert_eq!(
+        value["summary"]["findings"].as_u64(),
+        Some(findings.len() as u64)
+    );
+    assert_eq!(value["suppression_policy"]["path"], policy_arg.as_str());
+    assert_eq!(
+        value["suppression_policy"]["warnings"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn check_human_suppression_policy_lists_suppressed_findings_compactly() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let policy = write_suppression_policy(
+        "suppression-human",
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n",
+    )?;
+    let policy_arg = policy.display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--suppression-policy",
+        &policy_arg,
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Suppressed by policy"),
+        "human output must disclose policy application: {stdout}"
+    );
+    assert!(stdout.contains("(selector: crates/ripr/examples/sample/**)"));
+    assert!(
+        !stdout.contains("Next step\n"),
+        "suppressed findings must not render detailed blocks: {stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn check_suppression_policy_missing_file_fails_closed() {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--suppression-policy",
+        "does/not/exist.toml",
+    ]);
+    assert_failure(&output);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read suppression policy"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let policy = write_suppression_policy(
+        "suppression-sarif",
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/**\"\nreason = \"unused\"\nowner = \"repo-owner\"\n",
+    )?;
+    let policy_arg = policy.display().to_string();
+
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--format",
+        "sarif",
+        "--suppression-policy",
+        &policy_arg,
+    ]);
+    assert_failure(&output);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--suppression-policy applies to the findings-based check formats"),
+        "stderr: {stderr}"
+    );
+    Ok(())
+}
+
+// ── `gate evaluate --exception-policy` (#1442) ──
+
+const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
+  "schema_version": "0.1",
+  "summary": {"unchanged_tests": true},
+  "comments": [],
+  "summary_only": [],
+  "suppressed": []
+}"#;
+
+fn write_exception_ledger(
+    dir: &std::path::Path,
+    review_after: &str,
+    expires: &str,
+) -> Result<PathBuf, String> {
+    let path = dir.join("quality-gate-exceptions.toml");
+    let ledger = format!(
+        "schema_version = 1\npolicy = \"quality-gate-exceptions\"\nstatus = \"active\"\ndue_review = \"fail\"\n\n[[exception]]\nid = \"total-burndown\"\nkind = \"temporary_burndown\"\nscope = \"ripr_plus_total\"\nowner = \"proof-lane\"\nreason = \"Pre-existing gaps predate the gate.\"\nfinal_target = \"unresolved total = 0\"\nevidence = \"target/receipts/quality/ripr-plus.json\"\nremoval_criteria = \"final mode requires zero\"\ncreated = \"2026-01-01\"\nreview_after = \"{review_after}\"\nexpires = \"{expires}\"\n"
+    );
+    std::fs::write(&path, ledger).map_err(|err| format!("write {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+#[test]
+fn gate_evaluate_exception_policy_active_ledger_reports_and_passes() -> Result<(), String> {
+    let dir = unique_temp_workspace("gate-exception-active");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write guidance: {err}"))?;
+    let ledger = write_exception_ledger(&dir, "9999-01-01", "9999-12-31")?;
+    let out = dir.join("gate-decision.json");
+
+    let output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--pr-guidance",
+        &guidance.display().to_string(),
+        "--exception-policy",
+        &ledger.display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
+    let value: serde_json::Value = serde_json::from_str(&decision)
+        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
+    assert_eq!(value["exception_policy"]["active_count"], 1);
+    assert_eq!(
+        value["exception_policy"]["violations"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_ne!(value["status"], "blocked");
+    Ok(())
+}
+
+#[test]
+fn gate_evaluate_exception_policy_expired_ledger_blocks_with_nonzero_exit() -> Result<(), String> {
+    let dir = unique_temp_workspace("gate-exception-expired");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write guidance: {err}"))?;
+    let ledger = write_exception_ledger(&dir, "2000-01-01", "2000-06-01")?;
+    let out = dir.join("gate-decision.json");
+
+    let output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--pr-guidance",
+        &guidance.display().to_string(),
+        "--exception-policy",
+        &ledger.display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_failure(&output);
+
+    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
+    let value: serde_json::Value = serde_json::from_str(&decision)
+        .map_err(|err| format!("gate decision should parse: {err}\n{decision}"))?;
+    assert_eq!(value["status"], "blocked");
+    assert!(
+        value["exception_policy"]["violations"]
+            .as_array()
+            .is_some_and(|violations| violations
+                .iter()
+                .any(|violation| violation["kind"] == "quality_exception_expired")),
+        "decision: {decision}"
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(), String> {
+    let dir = unique_temp_workspace("gate-exception-missing");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let guidance = dir.join("comments.json");
+    std::fs::write(&guidance, SMOKE_PR_GUIDANCE_JSON)
+        .map_err(|err| format!("write guidance: {err}"))?;
+    let out = dir.join("gate-decision.json");
+
+    let output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--pr-guidance",
+        &guidance.display().to_string(),
+        "--exception-policy",
+        &dir.join("does-not-exist.toml").display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_failure(&output);
+
+    let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
+    assert!(
+        decision.contains("failed to read exception policy"),
+        "decision: {decision}"
+    );
+    Ok(())
+}
+
 #[test]
 fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String> {
     let root = workspace_root().display().to_string();
@@ -4791,10 +5073,74 @@ fn pr_evidence_with_missing_artifacts_writes_error_packet() -> Result<(), String
 #[test]
 fn pr_evidence_unknown_arg_fails_clearly() {
     let output = run_ripr(&["pr-evidence", "--bogus"]);
-    assert!(!output.status.success(), "unknown arg must fail");
+    assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("unknown pr-evidence argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+// ── ripr impacted-evidence (item 8e: binary-first impacted evidence) ──
+
+#[test]
+fn impacted_evidence_help_exits_cleanly() {
+    let output = run_ripr(&["impacted-evidence", "--help"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--label"),
+        "help must mention --label:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--labels"),
+        "help must mention --labels:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--pr-evidence"),
+        "help must mention --pr-evidence:\n{stdout}"
+    );
+}
+
+#[test]
+fn impacted_evidence_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["impacted-evidence", "--bogus"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown impacted-evidence argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
+
+// ── ripr plus (binary-first RIPR+ repo receipt, composition-only) ──
+
+#[test]
+fn plus_help_exits_cleanly() {
+    let output = run_ripr(&["plus", "--help"]);
+    assert!(
+        output.status.success(),
+        "plus --help must succeed\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--repo-exposure-summary"),
+        "help must mention --repo-exposure-summary:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--gap-ledger"),
+        "help must mention --gap-ledger:\n{stdout}"
+    );
+}
+
+#[test]
+fn plus_unknown_arg_fails_clearly() {
+    let output = run_ripr(&["plus", "--bogus"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
         "error must name the unknown arg:\n{stderr}"
     );
 }

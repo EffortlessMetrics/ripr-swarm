@@ -1836,6 +1836,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut recommendation_calibration = None;
     let mut mutation_calibration = None;
     let mut baseline = None;
+    let mut exception_policy = None;
     let mut mode = output::gate::GateMode::VisibleOnly;
     let mut acknowledgement_labels = Vec::new();
     let mut out = PathBuf::from(output::gate::DEFAULT_GATE_OUT);
@@ -1902,6 +1903,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
                 i += 1;
                 baseline = Some(non_empty_path_arg(args, i, "--baseline", "gate")?);
             }
+            "--exception-policy" => {
+                i += 1;
+                exception_policy = Some(non_empty_path_arg(args, i, "--exception-policy", "gate")?);
+            }
             "--mode" => {
                 i += 1;
                 mode = output::gate::GateMode::parse(expect_value(args, i, "--mode")?)?;
@@ -1945,6 +1950,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             baseline,
             mode,
             acknowledgement_labels,
+            exception_policy,
         },
         out,
         out_md,
@@ -3394,6 +3400,14 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
                 i += 1;
                 input.perl_facts_path = Some(PathBuf::from(expect_value(args, i, "--perl-facts")?));
             }
+            "--suppression-policy" => {
+                i += 1;
+                input.suppression_policy = Some(PathBuf::from(expect_value(
+                    args,
+                    i,
+                    "--suppression-policy",
+                )?));
+            }
             "--help" | "-h" => {
                 help::print_check_help();
                 return Ok(());
@@ -3415,6 +3429,23 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err("check --worktree cannot be combined with --diff".to_string());
+    }
+    // #1441: --suppression-policy applies to the findings-based check
+    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
+    // finding_id channel, and badge/repo formats have their own suppression
+    // projections — silently ignoring the flag there would misreport policy
+    // application, so fail closed with a named limitation instead.
+    if input.suppression_policy.is_some()
+        && !matches!(
+            input.format,
+            OutputFormat::Human | OutputFormat::Json | OutputFormat::Github
+        )
+    {
+        return Err(
+            "--suppression-policy applies to the findings-based check formats (human, json, github); \
+             it is not yet supported for SARIF, badge, or repo formats"
+                .to_string(),
+        );
     }
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
@@ -3646,6 +3677,7 @@ fn run_diff_check_from_file(
         format: OutputFormat::Json,
         include_unchanged_tests: options.include_unchanged_tests,
         perl_facts_path: None,
+        suppression_policy: None,
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)
@@ -4738,6 +4770,21 @@ pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
     crate::app::pr_evidence::run_pr_evidence(args)
 }
 
+/// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
+/// Reads PR evidence + labels and emits routing decision JSON + Markdown.
+pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
+    crate::app::impacted_evidence::run_impacted_evidence(args)
+}
+
+/// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
+/// Composes the repo-wide RIPR+ quality-gate receipt from a pre-computed
+/// `repo-exposure-summary-json` or `--gap-ledger` artifact. The canonical
+/// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
+/// is artifact-composition-only and does not run an in-process full-repo scan.
+pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
+    crate::app::ripr_plus::run_ripr_plus(args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5694,6 +5741,7 @@ mod tests {
                     baseline: Some(PathBuf::from("target/ripr/reports/gate-baseline.json")),
                     mode: output::gate::GateMode::CalibratedGate,
                     acknowledgement_labels: vec!["custom-waive".to_string()],
+                    exception_policy: None,
                 },
                 out: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
@@ -5741,6 +5789,7 @@ mod tests {
                     baseline: None,
                     mode: output::gate::GateMode::VisibleOnly,
                     acknowledgement_labels: Vec::new(),
+                    exception_policy: None,
                 },
                 out: PathBuf::from(output::gate::DEFAULT_GATE_OUT),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),

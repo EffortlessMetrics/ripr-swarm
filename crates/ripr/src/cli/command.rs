@@ -32,6 +32,8 @@ pub(super) enum CliCommand {
     PrSummary(Vec<String>),
     Annotations(Vec<String>),
     PrEvidence(Vec<String>),
+    ImpactedEvidence(Vec<String>),
+    RiprPlus(Vec<String>),
 }
 
 impl CliCommand {
@@ -69,6 +71,8 @@ impl CliCommand {
             Some("pr-summary") => Ok(Self::PrSummary(command_args)),
             Some("annotations") => Ok(Self::Annotations(command_args)),
             Some("pr-evidence") => Ok(Self::PrEvidence(command_args)),
+            Some("impacted-evidence") => Ok(Self::ImpactedEvidence(command_args)),
+            Some("plus") => Ok(Self::RiprPlus(command_args)),
             Some(command) => Err(unknown_command_error(command)),
         }
     }
@@ -199,6 +203,11 @@ mod tests {
             (Some("pr-summary"), CliCommand::PrSummary(Vec::new())),
             (Some("annotations"), CliCommand::Annotations(Vec::new())),
             (Some("pr-evidence"), CliCommand::PrEvidence(Vec::new())),
+            (
+                Some("impacted-evidence"),
+                CliCommand::ImpactedEvidence(Vec::new()),
+            ),
+            (Some("plus"), CliCommand::RiprPlus(Vec::new())),
         ] {
             assert_eq!(CliCommand::from_parts(arg, Vec::new()), Ok(expected));
         }

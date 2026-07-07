@@ -6,9 +6,11 @@ pub(crate) mod annotations;
 mod check;
 mod context;
 mod explain;
+pub(crate) mod impacted_evidence;
 pub(crate) mod pr_evidence;
 pub(crate) mod pr_summary;
 pub(crate) mod receipt;
+pub(crate) mod ripr_plus;
 mod selector;
 
 pub use crate::output::format::OutputFormat;
@@ -60,6 +62,12 @@ pub struct CheckInput {
     /// limitation (no analysis). When `Some`, the adapter reads the packet
     /// and produces Findings + limitations from it.
     pub perl_facts_path: Option<PathBuf>,
+    /// Optional explicit suppression-policy file for this check run (#1441).
+    /// Relative paths resolve against `root`. When `Some`, exposure-gap
+    /// entries (by `finding_id` or `path` glob) mark matching findings as
+    /// suppressed in the output; a missing or malformed file fails the run.
+    /// When `None`, check output is unchanged.
+    pub suppression_policy: Option<PathBuf>,
 }
 
 impl Default for CheckInput {
@@ -72,6 +80,7 @@ impl Default for CheckInput {
             format: OutputFormat::Human,
             include_unchanged_tests: true,
             perl_facts_path: None,
+            suppression_policy: None,
         }
     }
 }
@@ -161,6 +170,11 @@ pub struct CheckOutput {
     /// mean the working-tree changes are covered — they were silently excluded
     /// from the analysis. See RIPR-SPEC-0112.
     pub unanalyzed_working_tree: bool,
+    /// Suppression-policy application outcome (#1441). `Some` only when the
+    /// caller passed `--suppression-policy`; findings named here stay in
+    /// `findings` (visible, marked suppressed by renderers) while the
+    /// per-class `summary` buckets count unsuppressed findings only.
+    pub suppression: Option<crate::output::suppressions::CheckSuppressionOutcome>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.
