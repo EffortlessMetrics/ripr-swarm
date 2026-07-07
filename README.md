@@ -32,21 +32,27 @@
 
 <!-- VS Marketplace install count is manually maintained. Refresh the count and date from publisher metrics whenever you check; do not use live VS Marketplace Shields routes. -->
 
-`ripr` reads a PR diff and tells your reviewers and coding agents which changed
-behavior the current tests *reach* but don't actually *check* — the question
-mutation testing answers, asked at draft time without running a single mutant.
-Where a test would not catch the change breaking, it routes one focused,
-test-only repair: what to assert, where, the command that verifies it, and a
-before/after receipt.
+**ripr shows your agents where tests are needed and which tests are too weak to trust — without running mutation testing.**
 
-## The first useful run
+The agent loop is one sentence:
 
 ```text
-one PR
--> one gap
--> one focused test
--> one before/after receipt
+gap → fix → verify
+   ripr names a gap (changed behavior no test actually checks)
+   the agent adds one focused test
+   ripr records a before/after receipt that the gap closed
 ```
+
+You work in five nouns. Everything else in this README and the reference docs
+expands on them:
+
+| Noun | One-line meaning |
+| --- | --- |
+| **gap** | a place the code needs a test (or an existing test is too weak) |
+| **card** | the per-gap unit an agent acts on — what to assert, where, and why the current proof is weak |
+| **packet** | the bundle of evidence and guidance for one change (a bounded, test-only work order) |
+| **verify** | re-check that a fix actually closed the gap |
+| **receipt** | the durable before/after proof of what was checked |
 
 ```bash
 cargo install ripr
@@ -56,6 +62,18 @@ ripr first-pr --root . --base origin/main --head HEAD
 That's the whole loop: ripr names the top repairable gap, you add one focused
 test outside ripr, and the receipt records whether the gap closed. `ripr.toml`
 is optional; the zero-config run is the intended first interface.
+
+## How ripr works (reference)
+
+> Internal vocabulary and capability detail live here and below. The first
+> screen above is all a new user or agent needs to start.
+
+`ripr` reads a PR diff and tells your reviewers and coding agents which changed
+behavior the current tests *reach* but don't actually *check* — the question
+mutation testing answers, asked at draft time without running a single mutant.
+Where a test would not catch the change breaking, it routes one focused,
+test-only repair: what to assert, where, the command that verifies it, and a
+before/after receipt.
 
 ## Where it fits
 
