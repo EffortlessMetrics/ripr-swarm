@@ -80,8 +80,9 @@ routing signal. A selected CX43, CPX42, or CX53 implementation job that exits
 75 from `ci-disk-guard` records `scratch_status=tempfail`; the hosted fallback
 then runs the same Rust command surface. The normalized
 `Ripr Rust Small Result` passes only when the selected implementation job
-succeeds or when the tempfail fallback succeeds. Compile, lint, test, policy,
-and product failures remain hard failures.
+succeeds or when the tempfail fallback succeeds; docs-only PRs still
+short-circuit the hosted fallback through `detect-docs-only`. Compile, lint,
+test, policy, and product failures remain hard failures.
 
 ## The delivery sequence
 

@@ -85255,6 +85255,31 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
         assert!(
             violations
                 .iter()
+                .any(|violation| { violation.contains("self-hosted scratch tempfail output") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("CX43 tempfail fallback predicate") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("CPX42 tempfail fallback predicate") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("CX53 tempfail fallback predicate") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("normalized tempfail fallback result") })
+        );
+        assert!(
+            violations
+                .iter()
                 .any(|violation| { violation.contains("normalized docs detection failure") })
         );
         assert!(
