@@ -81887,6 +81887,20 @@ TypeScript repair packet (advisory)
     }
 
     #[test]
+    fn perl_real_repo_eval_fixture_guard_reports_missing_root_files() -> Result<(), String> {
+        with_temp_cwd("perl-real-repo-eval-missing-root", |_| {
+            let mut violations = Vec::new();
+            super::validate_perl_real_repo_eval_fixture_corpus(&mut violations)?;
+            let report = violations.join("\n");
+
+            assert!(report.contains("missing fixtures/perl-real-repo-evals/SPEC.md"));
+            assert!(report.contains("missing fixtures/perl-real-repo-evals/corpus.json"));
+            assert!(report.contains("Perl real-repo eval corpus is missing"));
+            Ok(())
+        })
+    }
+
+    #[test]
     fn perl_real_repo_eval_fixture_guard_reports_contract_drift() -> Result<(), String> {
         let root = temp_dir("perl-real-repo-eval-invalid");
         let missing = root.join("missing.json");
@@ -81910,6 +81924,25 @@ TypeScript repair packet (advisory)
 "#,
         );
         super::validate_perl_real_repo_eval_fixture_corpus_at(&no_cases, &mut violations)?;
+
+        let empty_cases = root.join("empty-cases.json");
+        write(
+            &empty_cases,
+            r#"{
+  "kind": "perl_real_repo_eval_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "limits": [
+    "producer_required_on_path",
+    "no_five_repo_metrics",
+    "no_public_repair_packet_authority",
+    "no_support_tier_promotion"
+  ],
+  "cases": []
+}
+"#,
+        );
+        super::validate_perl_real_repo_eval_fixture_corpus_at(&empty_cases, &mut violations)?;
 
         let bad_corpus = root.join("bad-corpus.json");
         let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
@@ -81939,6 +81972,57 @@ TypeScript repair packet (advisory)
                     "evidence_source": "none",
                     "claim_boundary": [],
                     "reason": ""
+                },
+                {
+                    "id": "cpan_alpha_actionable_real_exporter_eval",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/dynamic_dispatch.diff",
+                    "oracle_shape": "dynamic_method_dispatch",
+                    "expected_outcome": "limited",
+                    "expected_classification": "exposed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::dynamic_method",
+                    "missing_discriminator": "not_applicable_dynamic_dispatch",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "receipt_expected": false,
+                    "harness_assertion": "asserts the limited outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "required id with wrong outcome"
+                },
+                {
+                    "id": "observed-bad-classification",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/boundary_change.diff",
+                    "oracle_shape": "exact_test_more_is",
+                    "expected_outcome": "already_observed",
+                    "expected_classification": "weakly_exposed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::calculate_discount",
+                    "missing_discriminator": "not_applicable_already_observed",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "harness_assertion": "asserts the observed outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "already observed case with wrong classification"
                 },
                 {
                     "id": "bad-case",
@@ -81975,6 +82059,7 @@ TypeScript repair packet (advisory)
         let report = violations.join("\n");
         assert!(report.contains("Perl real-repo eval corpus is missing"));
         assert!(report.contains("is missing cases array"));
+        assert!(report.contains("cases array must not be empty"));
         assert!(report.contains("kind must be perl_real_repo_eval_corpus"));
         assert!(report.contains("schema_version must be 0.1"));
         assert!(report.contains("spec must be RIPR-SPEC-0064"));
@@ -81991,8 +82076,11 @@ TypeScript repair packet (advisory)
         assert!(report.contains("evidence_source must cite PR #1491"));
         assert!(report.contains("Perl real-repo eval case bad-case is duplicated"));
         assert!(report.contains("actionable outcome must name a missing discriminator"));
+        assert!(report.contains("limited outcome must name a limitation classification"));
+        assert!(report.contains("already_observed outcome must expect exposed"));
+        assert!(report.contains("field receipt_expected must be present"));
         assert!(report.contains(
-            "Perl real-repo eval corpus is missing case cpan_alpha_actionable_real_exporter_eval"
+            "Perl real-repo eval case cpan_alpha_actionable_real_exporter_eval must have expected_outcome actionable, got limited"
         ));
         Ok(())
     }
