@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": ".",
+  "base": "origin/main",
+  "summary": {
+    "changed_perl_files": 1,
+    "probes": 1,
+    "findings": 1
+  },
+  "findings": [
+    {
+      "id": "perl:preview:discount-threshold",
+      "language": "perl",
+      "classification": "reachable_unrevealed",
+      "probe": {
+        "file": "lib/Pricing.pm",
+        "line": 42,
+        "family": "return_value"
+      },
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "perl_preview_card": {
+        "card_version": "perl_preview_card.v1",
+        "authority": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "missing_discriminator": "$amount == $threshold",
+        "suggested_test_file": "t/pricing.t",
+        "why_not_actionable": "Perl preview output is advisory until shared GapRecord packet authority is enabled."
+      }
+    }
+  ]
+}
