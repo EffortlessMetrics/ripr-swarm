@@ -561,8 +561,8 @@
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "reachable_unrevealed" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
