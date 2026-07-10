@@ -593,7 +593,7 @@ mod tests {
             ..RustIndex::default()
         };
         let probe = struct_field_probe(
-            "C:/repo/ub-review/src/gate_watchdog.rs",
+            "/repo/ub-review/src/gate_watchdog.rs",
             "pub(crate) state: GateWatchdogState",
         );
 
@@ -622,7 +622,7 @@ mod tests {
             ..RustIndex::default()
         };
         let probe = struct_field_probe(
-            "C:/repo/ripr/crates/core/src/state.rs",
+            "/repo/ripr/crates/core/src/state.rs",
             "pub(crate) state: State",
         );
 
