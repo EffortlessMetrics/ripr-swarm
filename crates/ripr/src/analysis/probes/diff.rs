@@ -38,30 +38,16 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
         if changed_line_owned_by_test(index, &changed.path, added.new_side_line) {
             continue;
         }
-        if let Some(classified) =
-            classify_changed_syntax(index, &changed.path, added.new_side_line, text)
-        {
-            for syntax_probe in classified {
-                probes.push(build_probe(
-                    &build_context,
-                    added,
-                    syntax_probe.family,
-                    nearby_removed_line(text, changed),
-                    Some(text.to_string()),
-                    Some(&syntax_probe.expression),
-                ));
-            }
-        } else {
-            for family in classify_changed_line(text) {
-                probes.push(build_probe(
-                    &build_context,
-                    added,
-                    family,
-                    nearby_removed_line(text, changed),
-                    Some(text.to_string()),
-                    None,
-                ));
-            }
+        let families = classify_changed_syntax(index, &changed.path, added.new_side_line, text)
+            .unwrap_or_else(|| classify_changed_line(text));
+        for family in families {
+            probes.push(build_probe(
+                &build_context,
+                added,
+                family,
+                nearby_removed_line(text, changed),
+                Some(text.to_string()),
+            ));
         }
     }
 
@@ -85,7 +71,6 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
                 removed,
                 family,
                 Some(text.to_string()),
-                None,
                 None,
             ));
         }
@@ -132,10 +117,8 @@ fn build_probe(
     family: ProbeFamily,
     before: Option<String>,
     after: Option<String>,
-    syntax_expression: Option<&str>,
 ) -> Probe {
-    let changed_text = changed_line.text.trim();
-    let expression = syntax_expression.unwrap_or(changed_text);
+    let text = changed_line.text.trim();
     let delta = delta_for_family(&family);
     // Use `new_side_line` for all index lookups and the SourceLocation: for
     // added lines this equals `line`; for removed lines it is the new-file
@@ -151,7 +134,7 @@ fn build_probe(
             find_owner_function(context.index, &context.changed.path, new_line)
                 .map(|function| function.id.clone())
         });
-    let norm_expr = normalize_expression(expression);
+    let norm_expr = normalize_expression(text);
     // Ordinal 1 here; post-hoc dedup in probes_for_file handles collisions.
     let id = diff_probe_id(
         &context.changed.path,
@@ -160,8 +143,8 @@ fn build_probe(
         &norm_expr,
         1,
     );
-    let expected_sinks = expected_sinks(expression, &family);
-    let required_oracles = required_oracles(expression, &family);
+    let expected_sinks = expected_sinks(text, &family);
+    let required_oracles = required_oracles(text, &family);
 
     Probe {
         id,
@@ -171,7 +154,7 @@ fn build_probe(
         delta,
         before,
         after,
-        expression: expression.to_string(),
+        expression: text.to_string(),
         expected_sinks,
         required_oracles,
     }
@@ -229,8 +212,7 @@ fn nearby_removed_line(added: &str, changed: &ChangedFile) -> Option<String> {
 mod tests {
     use super::super::super::diff::ChangedLine;
     use super::super::super::rust_index::{
-        FileFacts, FunctionFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_PREDICATE, ProbeShapeFact,
-        RustIndex,
+        FileFacts, FunctionFact, PROBE_SHAPE_PREDICATE, ProbeShapeFact, RustIndex,
     };
     use super::*;
     use crate::domain::SymbolId;
@@ -302,50 +284,6 @@ mod tests {
                 .iter()
                 .any(|sink| sink == "branch result")
         );
-    }
-
-    #[test]
-    fn probes_for_file_preserves_multiline_parser_expression() -> Result<(), String> {
-        let path = PathBuf::from("src/gate_watchdog.rs");
-        let changed = ChangedFile {
-            path: path.clone(),
-            added_lines: vec![ChangedLine {
-                line: 3,
-                new_side_line: 3,
-                text: "watchdog_reason(".to_string(),
-            }],
-            removed_lines: vec![],
-        };
-        let expression = "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)";
-        let index = RustIndex {
-            files: BTreeMap::from([(
-                path.clone(),
-                FileFacts {
-                    path,
-                    probe_shapes: vec![ProbeShapeFact {
-                        start_line: 3,
-                        end_line: 6,
-                        start_byte: 20,
-                        kind: PROBE_SHAPE_CALL_DELETION.to_string(),
-                        text: expression.to_string(),
-                    }],
-                    ..FileFacts::default()
-                },
-            )]),
-            ..RustIndex::default()
-        };
-
-        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
-        let probe = probes
-            .first()
-            .ok_or_else(|| "expected parser-backed multiline probe".to_string())?;
-        if probes.len() != 1
-            || probe.family != ProbeFamily::CallDeletion
-            || probe.expression != expression
-        {
-            return Err(format!("unexpected multiline probe: {probes:?}"));
-        }
-        Ok(())
     }
 
     #[test]
