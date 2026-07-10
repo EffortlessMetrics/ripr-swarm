@@ -2461,7 +2461,7 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     let json = std::fs::read_to_string(&out_json).map_err(|e| format!("read delta json: {e}"))?;
     assert!(json.contains("\"kind\": \"baseline_debt_delta\""));
     assert!(json.contains("\"still_present\": 1"));
-    assert!(json.contains("\"matched_by\": \"seam_id\""));
+    assert!(json.contains("\"matched_by\": \"canonical_gap_id\""));
     let md = std::fs::read_to_string(&out_md).map_err(|e| format!("read delta md: {e}"))?;
     assert!(md.contains("# RIPR Baseline Debt Delta"));
     assert!(md.contains("| Still present | 1 |"));
