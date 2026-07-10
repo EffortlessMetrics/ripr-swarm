@@ -1431,7 +1431,7 @@ mod tests {
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),
             location: SourceLocation::new(
-                PathBuf::from("C:/repo/ub-review/src/gate_watchdog.rs"),
+                PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
                 190,
                 1,
             ),
@@ -1490,7 +1490,7 @@ mod tests {
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),
             location: SourceLocation::new(
-                PathBuf::from("C:/repo/ub-review/src/gate_watchdog.rs"),
+                PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
                 190,
                 1,
             ),

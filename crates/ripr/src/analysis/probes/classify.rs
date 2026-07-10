@@ -192,7 +192,7 @@ mod tests {
 
         let expression = parser_expression_for_probe(
             &index,
-            Path::new("C:/repo/ub-review/src/gate_watchdog.rs"),
+            Path::new("/repo/ub-review/src/gate_watchdog.rs"),
             10,
             &ProbeFamily::CallDeletion,
             "watchdog_reason(",
