@@ -842,6 +842,7 @@ mod tests {
                 mode: AnalysisMode::Ready,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
+                perl_facts_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
