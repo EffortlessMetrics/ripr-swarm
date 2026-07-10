@@ -46,16 +46,17 @@ pub(crate) fn select_human_triage<'a>(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
-    let selected = output
-        .findings
-        .iter()
-        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
-        .min_by_key(|finding| triage_rank(finding));
-    let visible_findings = output
-        .findings
-        .iter()
-        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
-        .count();
+    let mut selected = None;
+    let mut visible_findings: usize = 0;
+    for finding in &output.findings {
+        if suppressed_ids.contains(finding.id.as_str()) {
+            continue;
+        }
+        visible_findings += 1;
+        if selected.is_none_or(|current| triage_rank(finding) < triage_rank(current)) {
+            selected = Some(finding);
+        }
+    }
     let state = selected.map_or_else(
         || {
             if output.no_scope_provided {
@@ -130,7 +131,7 @@ pub(crate) fn render_human_triage(
     out.push_str("  Machine data: rerun with --format json\n\n");
 }
 
-fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, String, usize) {
+fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path, usize) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -156,7 +157,7 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, String, usize) {
         u8::from(finding.related_tests.is_empty()),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
-        finding.probe.location.file.display().to_string(),
+        finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
 }
