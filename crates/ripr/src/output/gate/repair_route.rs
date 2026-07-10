@@ -133,8 +133,11 @@ fn gap_record_route_facts(record: &GapRecord) -> GateRouteFacts {
             .and_then(|route| route.assertion_shape.as_deref())
             .and_then(non_empty_str)
             .map(ToString::to_string),
-        verify_command: record.verification_commands.first().cloned(),
-        receipt_command: record.receipt_command.clone(),
+        verify_command: record
+            .verification_commands
+            .first()
+            .and_then(|command| non_empty(command)),
+        receipt_command: record.receipt_command.as_deref().and_then(non_empty),
         inspection_command: None,
     }
 }
@@ -499,6 +502,47 @@ mod tests {
                 .iter()
                 .any(|field| field == "seam_id"),
             "generic evidence identity must leave seam_id missing",
+        )
+    }
+
+    #[test]
+    fn blank_gap_record_commands_render_as_null_and_remain_missing() -> Result<(), String> {
+        let record = GapRecord {
+            verification_commands: vec!["   ".to_string()],
+            receipt_command: Some("\t".to_string()),
+            ..GapRecord::default()
+        };
+        let candidate = crate::output::gate::candidate_from_gap_record(&record);
+        let route = build_gate_repair_route(&candidate);
+        let rendered = crate::output::gate::presentation::repair_route_json(&route);
+        let limitation = route
+            .limitation
+            .as_ref()
+            .ok_or_else(|| "blank commands must keep the route limited".to_string())?;
+
+        require_equal(
+            rendered.get("verify_command"),
+            Some(&Value::Null),
+            "blank verify command",
+        )?;
+        require_equal(
+            rendered.get("receipt_command"),
+            Some(&Value::Null),
+            "blank receipt command",
+        )?;
+        require(
+            limitation
+                .missing_fields
+                .iter()
+                .any(|field| field == "verify_command"),
+            "blank verify command must be named missing",
+        )?;
+        require(
+            limitation
+                .missing_fields
+                .iter()
+                .any(|field| field == "receipt_command"),
+            "blank receipt command must be named missing",
         )
     }
 

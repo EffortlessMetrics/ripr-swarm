@@ -4844,6 +4844,7 @@ tests = [
   "crates/ripr/src/output/gate/repair_route.rs::tests::current_review_fixture_projects_complete_route_without_renderer_inference",
   "crates/ripr/src/output/gate/repair_route.rs::tests::same_line_seams_keep_distinct_producer_owned_inspection_commands",
   "crates/ripr/src/output/gate/repair_route.rs::tests::generic_gap_record_evidence_ids_do_not_become_seam_identity",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::blank_gap_record_commands_render_as_null_and_remain_missing",
   "crates/ripr/src/output/gate/repair_route.rs::tests::incomplete_route_is_advisory_only_and_renders_named_limitation",
   "xtask/src/verification_contracts.rs::check_verification_contracts"
 ]
@@ -6252,6 +6253,7 @@ name = "gate new_unsuppressed receipt field"
 spec = "docs/specs/RIPR-SPEC-0111-gate-new-unsuppressed-receipt.md"
 tests = [
   "crates/ripr/src/output/gate.rs::tests::new_unsuppressed_counts_advisory_policy_eligible_candidates_not_just_blocking",
+  "crates/ripr/src/output/gate.rs::tests::new_unsuppressed_excludes_advisory_candidates_with_incomplete_repair_routes",
   "crates/ripr/src/output/gate.rs::tests::new_unsuppressed_config_error_produces_null_basis_and_zero_count_with_reason",
 ]
 fixtures = [

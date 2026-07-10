@@ -860,12 +860,14 @@ fn compute_new_unsuppressed(
     // Count: decisions d where:
     //   - candidate_class_is_policy_eligible(d.static_class) is true, AND
     //   - d.decision ∈ {"blocking", "advisory"} (suppressed/acknowledged/not_applicable excluded), AND
+    //   - d.repair_route has no named limitation, AND
     //   - if basis=="baseline": d.is_baseline_new is true.
     let count = decisions
         .iter()
         .filter(|d| {
             candidate_class_is_policy_eligible(d.static_class.as_deref())
                 && matches!(d.decision.as_str(), "blocking" | "advisory")
+                && d.repair_route.limitation.is_none()
                 && (!use_baseline_basis || d.is_baseline_new)
         })
         .count();

@@ -232,7 +232,8 @@ absent, `limitation` is:
 ```
 
 The candidate then fails closed to advisory visibility and is not counted as a
-policy-eligible blocking candidate. The gate must not synthesize a seam ID from
+policy-eligible blocking candidate or in `new_unsuppressed.count`. The gate must
+not synthesize a seam ID from
 file/line, substitute a canonical gap ID for a seam ID, guess a test command,
 or expose an unsupported `ripr explain` spelling.
 Generic ordered `GapRecord.evidence_ids` entries are not seam identities. Until

@@ -2161,6 +2161,63 @@ fn new_unsuppressed_counts_advisory_policy_eligible_candidates_not_just_blocking
     Ok(())
 }
 
+#[test]
+fn new_unsuppressed_excludes_advisory_candidates_with_incomplete_repair_routes()
+-> Result<(), String> {
+    let dir = temp_dir("gate-incomplete-route-count")?;
+    let source = read_repo_fixture(Path::new(
+        "fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json",
+    ))?;
+    let mut guidance: Value = serde_json::from_str(&source)
+        .map_err(|err| format!("parse current PR-guidance fixture: {err}"))?;
+    let verify = guidance
+        .pointer_mut("/comments/0/llm_guidance/verify_command")
+        .ok_or_else(|| "current PR-guidance fixture lacks verify command".to_string())?;
+    *verify = Value::Null;
+    let guidance_text = serde_json::to_string_pretty(&guidance)
+        .map_err(|err| format!("render incomplete PR guidance: {err}"))?;
+    let guidance_path = write_temp_json(&dir, "comments.json", &guidance_text)?;
+    let mut input = fixture_input(GateMode::Acknowledgeable);
+    input.root = dir.clone();
+    input.pr_guidance = Some(
+        guidance_path
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+
+    let report = build_gate_decision_report(&input)?;
+    let decision = report
+        .decisions
+        .first()
+        .ok_or_else(|| "expected one incomplete gate decision".to_string())?;
+
+    if decision.decision != "advisory" {
+        return Err(format!(
+            "incomplete route must stay advisory, got {}",
+            decision.decision
+        ));
+    }
+    if decision
+        .repair_route
+        .limitation
+        .as_ref()
+        .map(|item| item.kind)
+        != Some("incomplete_repair_route")
+    {
+        return Err("incomplete route must name its limitation".to_string());
+    }
+    if report.new_unsuppressed.count != 0 {
+        return Err(format!(
+            "incomplete route must not count as new policy-eligible debt, got {}",
+            report.new_unsuppressed.count
+        ));
+    }
+
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
 /// `config_error` MUST produce `basis=null, count=0, reason=<disclosure>`.
 /// This is the fail-closed sentinel: count=0 on analysis failure must NOT
 /// look like a clean pass to a downstream thresholder.

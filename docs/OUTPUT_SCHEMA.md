@@ -7485,14 +7485,17 @@ where ALL of the following hold:
    (policy-eligible class).
 2. `d.decision ∈ {"blocking","advisory"}` — suppressed, acknowledged, and
    not_applicable candidates are EXCLUDED (they are handled or ineligible).
-3. If `basis == "baseline"`: additionally `d.is_baseline_new` is true. If
-   `basis == "diff"`: all candidates in 1+2 count (diff scope equals "new").
+3. `d.repair_route.limitation == null`. An advisory decision with
+   `incomplete_repair_route` is visible but is not policy-eligible debt for a
+   downstream threshold.
+4. If `basis == "baseline"`: additionally `d.is_baseline_new` is true. If
+   `basis == "diff"`: all candidates in 1+2+3 count (diff scope equals "new").
 
 CRITICAL: `count` INCLUDES policy-eligible `advisory` decisions. It is NOT
 equal to `summary.blocking`. In `visible-only` mode every eligible candidate is
 advisory (`blocking=0`) but `count` is the advisory candidate count. An external
-thresholder applies its own policy; `ripr` reports the candidate count
-regardless of its own blocking/advisory label.
+thresholder applies its own policy; `ripr` reports the complete-route candidate
+count regardless of its own blocking/advisory label.
 
 **`basis` values.**
 
