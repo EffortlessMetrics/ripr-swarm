@@ -469,4 +469,23 @@ mod spec_0106_tests {
             "no qualified variant — must return false"
         );
     }
+
+    #[test]
+    fn exact_comparison_ignores_string_contents_and_escapes() -> Result<(), String> {
+        for (condition, expected) in [
+            ("state == TerminalState::Pass", true),
+            ("state != TerminalState::Pending", true),
+            (r#"label.contains("==")"#, false),
+            (r#"label.contains("escaped \"!=\" text")"#, false),
+            ("ready = true", false),
+        ] {
+            let actual = contains_exact_comparison(condition);
+            if actual != expected {
+                return Err(format!(
+                    "comparison classification mismatch for {condition}: {actual}"
+                ));
+            }
+        }
+        Ok(())
+    }
 }

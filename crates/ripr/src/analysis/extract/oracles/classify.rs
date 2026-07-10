@@ -143,6 +143,16 @@ mod tests {
 
         for (text, expected_kind, expected_strength) in [
             (
+                "ensure!(matches!(result, Err(AuthError::Denied)), \"exact error\");",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            ),
+            (
+                "ensure!(matches!(value, Some(7)), \"exact option\");",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            ),
+            (
                 "ensure!(result.is_err(), \"expected failure\");",
                 OracleKind::BroadError,
                 OracleStrength::Weak,
@@ -151,6 +161,31 @@ mod tests {
                 "ensure!(result.is_ok(), \"expected success\");",
                 OracleKind::SmokeOnly,
                 OracleStrength::Smoke,
+            ),
+            (
+                "ensure!(result.is_some(), \"expected value\");",
+                OracleKind::SmokeOnly,
+                OracleStrength::Smoke,
+            ),
+            (
+                "ensure!(result.is_none(), \"expected absence\");",
+                OracleKind::SmokeOnly,
+                OracleStrength::Smoke,
+            ),
+            (
+                "ensure!(result.unwrap(), \"expected unwrap\");",
+                OracleKind::SmokeOnly,
+                OracleStrength::Smoke,
+            ),
+            (
+                "ensure!(result.expect(\"value\"), \"expected value\");",
+                OracleKind::SmokeOnly,
+                OracleStrength::Smoke,
+            ),
+            (
+                "ensure!(state != TerminalState::Pending, \"not pending\");",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
             ),
             (
                 "ensure!(ready, \"expected == ready\");",
