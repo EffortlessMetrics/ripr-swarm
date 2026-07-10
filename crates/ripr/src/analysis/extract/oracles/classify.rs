@@ -3,7 +3,7 @@ use crate::domain::{OracleKind, OracleStrength};
 use super::arguments::ensure_assertion_arguments;
 use super::patterns::{
     contains_exact_comparison, is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
-    is_custom_assertion_helper, is_duplicative_equality_assertion,
+    is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
     is_exact_error_variant_assertion, is_exact_value_assertion, is_mock_expectation_line,
     is_side_effect_observer_assertion, is_snapshot_assertion, is_whole_object_equality_assertion,
 };
@@ -104,7 +104,9 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             kind: OracleKind::BroadError,
             strength: OracleStrength::Weak,
         })
-    } else if is_exact_value_assertion(&condition) || contains_exact_comparison(&condition) {
+    } else if (is_exact_value_assertion(&condition) || contains_exact_comparison(&condition))
+        && !is_duplicative_comparison(&condition)
+    {
         Some(OracleClassification {
             kind: OracleKind::ExactValue,
             strength: OracleStrength::Strong,
@@ -189,6 +191,11 @@ mod tests {
             ),
             (
                 "ensure!(ready, \"expected == ready\");",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+            ),
+            (
+                "ensure!(rendered == rendered, \"self comparison\");",
                 OracleKind::RelationalCheck,
                 OracleStrength::Weak,
             ),
