@@ -56,8 +56,8 @@ test, reports exactly what was reused, and refuses to serve stale evidence.
 The public command will be:
 
 ```text
-ripr rerun --gap <canonical-gap-id> --gap-ledger <path> [--root <path>] [--out <path>]
-ripr rerun --changed-test <test-path-or-node> [--root <path>] [--out <path>]
+ripr rerun --gap <canonical-gap-id> --gap-ledger <path> [--before <path>] [--root <path>] [--out <path>]
+ripr rerun --changed-test <test-path-or-node> [--before <path>] [--root <path>] [--out <path>]
 ```
 
 Exactly one selector is required. `--gap` resolves the existing
@@ -66,6 +66,11 @@ an ID from rendered location or test text. `--changed-test` accepts a
 repository-relative test file or an unambiguous test node within that file.
 An absent, ambiguous, out-of-root, or stale selector is a named limitation,
 not a broad silent fallback.
+
+`--before` is an explicit prior rerun, repo-exposure, or compatible receipt
+artifact. When it is absent, the result is `current_state_only` and may not
+claim improved, closed, unchanged, or regressed movement. The command must not
+discover an ambient cache or report artifact as an implicit before state.
 
 The command writes one JSON and Markdown rerun receipt. It reuses only
 content-addressed fact layers whose keys still match. It recomputes the changed
@@ -86,12 +91,13 @@ Every result records:
 - whether a cold fallback occurred and why; and
 - whether the result is complete, limited, or unavailable.
 
-A content change to any selected test, selected production seam, configured
-oracle policy, test-intent file, suppression file, analyzer/cache schema, or
-selector ledger invalidates the affected facts. A corrupt or mismatched cache
-entry is ignored and named; it must never be rendered as a hit. A targeted
-result must not reuse a whole-workspace classification whose test evidence is
-stale.
+A content change to any selected test, selected production seam, Cargo manifest
+or lockfile, workspace membership or package graph, selected feature
+configuration, toolchain or analyzer configuration, configured oracle policy,
+test-intent file, suppression file, analyzer/cache schema, or selector ledger
+invalidates the affected facts. A corrupt or mismatched cache entry is ignored
+and named; it must never be rendered as a hit. A targeted result must not reuse
+a whole-workspace classification whose test evidence is stale.
 
 ### Identity and receipt continuity
 
@@ -102,9 +108,10 @@ returned affected item carries domain-supplied identity or an explicit
 unresolved-identity limitation. The renderer must not synthesize identity from
 file, line, expression, or test navigation.
 
-The receipt says whether the selected gap improved, closed, remained unchanged,
-regressed, or is limited. It is a static before/after result only; it does not
-assert runtime mutation behavior or correctness.
+With a valid explicit `--before` artifact, the receipt says whether the
+selected gap improved, closed, remained unchanged, regressed, or is limited.
+Without it, the receipt says `current_state_only`. It is a static result only;
+it does not assert runtime mutation behavior or correctness.
 
 ### Benchmark receipt
 
@@ -136,6 +143,7 @@ The benchmark does not justify a universal latency claim.
 - Fixture-backed tests pin `--gap` identity projection and `--changed-test`
   affected-seam selection.
 - Cache tests pin hit, selected-test invalidation, selected-production
+  invalidation, manifest/lockfile/package-graph/feature/toolchain/config
   invalidation, policy/intent/suppression invalidation, corrupt-entry fallback,
   and cold-fallback disclosure.
 - Contract tests pin required JSON fields, named limitations, identity/receipt
@@ -153,7 +161,8 @@ The benchmark does not justify a universal latency claim.
 - File-fact cache tests prove unchanged files hit, changed files miss, and a
   corrupt cache entry becomes a named cold fallback.
 - Receipt tests prove unchanged, improved, closed, regressed, and limited
-  outcomes preserve canonical identities without rendering a runtime claim.
+  outcomes preserve canonical identities without rendering a runtime claim;
+  no-`--before` runs stay current-state-only.
 - CLI contract tests prove selector exclusivity, required result fields, and
   out-of-root or ambiguous target diagnostics.
 
@@ -180,6 +189,9 @@ The benchmark does not justify a universal latency claim.
 5. A benchmark receipt reports cold and warm samples, p50/p95, cache state,
    runner class, revision, and exact commands without claiming those timings
    apply to every repository.
+6. A changed-test rerun without `--before` returns current classifications and
+   cache telemetry but names `current_state_only` rather than inventing movement
+   from a cache entry or an ambient report.
 
 ## Implementation Mapping
 
