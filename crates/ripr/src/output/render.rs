@@ -27,7 +27,8 @@ pub(crate) fn render_check_with_config(
     config: &RiprConfig,
 ) -> Result<String, String> {
     match format {
-        OutputFormat::Human => Ok(human::render_with_config(output, config)),
+        OutputFormat::Human => Ok(human::render_bounded_with_config(output, config)),
+        OutputFormat::HumanFull => Ok(human::render_full_with_config(output, config)),
         OutputFormat::Json => Ok(json::render_with_config(output, config)),
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
         OutputFormat::Sarif => {
@@ -175,7 +176,12 @@ fn detect_ts_full_repo_guidance(
         return None;
     }
 
-    Some(TsFullRepoGuidance { ts_file_count })
+    let readiness = analysis::workspace_typescript_repo_readiness(root)?;
+
+    Some(TsFullRepoGuidance {
+        ts_file_count,
+        readiness,
+    })
 }
 
 fn load_suppressions(

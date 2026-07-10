@@ -634,6 +634,8 @@ tests = [
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_report_buckets_seam_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_repo_exposure_json_parses_static_evidence",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_prefers_evidence_record_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_records_no_movement_reason",
   "crates/ripr/tests/cli_smoke.rs::outcome_prints_markdown_receipt_by_default",
@@ -727,6 +729,10 @@ outputs = [
   "fixtures/first_successful_pr/python-preview-gap/expected/outcome/strengthened.md",
   "fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.json",
   "fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.md",
+  "fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/after-check.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.md",
   "fixtures/first_successful_pr/python-return-gap/inputs/reports/before-check.json",
   "fixtures/first_successful_pr/python-return-gap/inputs/reports/after-check.json",
   "fixtures/first_successful_pr/python-return-gap/expected/outcome/closed.json",
@@ -2055,6 +2061,9 @@ tests = [
   "crates/ripr/src/output/typescript_preview_card.rs::tests::typescript_preview_card_projects_advisory_fields",
   "crates/ripr/src/output/typescript_preview_card.rs::tests::typescript_preview_card_keeps_mock_payload_advisory",
   "crates/ripr/src/output/typescript_preview_card.rs::tests::typescript_preview_card_names_static_limit",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/json/mod.rs::tests::finding_json_projects_typescript_preview_actionability",
   "crates/ripr/src/output/human.rs::tests::render_finding_includes_preview_actionability_without_raw_string_spam",
   "crates/ripr/src/output/sarif.rs::tests::sarif_preserves_preview_actionability_properties",
@@ -2090,6 +2099,7 @@ fixtures = [
   "fixtures/typescript_strict_actionability",
   "fixtures/typescript-preview-repair-loop",
   "fixtures/typescript-preview-false-actionable-audit",
+  "fixtures/first_successful_pr/typescript-preview-gap",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/mixed_rust_typescript_preview",
 ]
@@ -3438,6 +3448,7 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::gap_decision_ledger_reports_bad_or_missing_records_as_blocked",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::gap_decision_ledger_warns_on_unsafe_projection",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::gap_decision_ledger_derives_missing_output_contract_from_check_output_alignment",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
   "crates/ripr/src/cli/commands.rs::tests::reports_gap_ledger_requires_records_input",
   "crates/ripr/src/cli/commands.rs::tests::reports_gap_ledger_derives_repo_scoped_records_from_repo_exposure",
   "crates/ripr/src/cli/commands.rs::tests::reports_gap_ledger_derives_output_contract_gap_from_check_output",
@@ -3937,6 +3948,7 @@ outputs = [
   "fixtures/first_successful_pr/empty-diff/expected/start-here.md",
   "fixtures/first_successful_pr/output-contract-gap/expected/start-here.md",
   "fixtures/first_successful_pr/python-preview-gap/expected/start-here.md",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.md",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
   "fixtures/boundary_gap/expected/pr-review-front-panel/acknowledged/pr-review-front-panel.md",
   "fixtures/boundary_gap/expected/pr-review-front-panel/actionable/pr-review-front-panel.md",
@@ -4181,6 +4193,7 @@ tests = [
   "xtask::tests::dogfood_real_repair_attempt_rejects_movement_contradictions",
   "xtask::tests::dogfood_python_real_repo_eval_receipts_are_checked",
   "xtask::tests::first_successful_pr_corpus_reports_outcome_receipt_drift",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_python_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_python_return_value_fixture_matches_expected_receipts",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_python_exception_fixture_matches_expected_receipts",
@@ -4206,6 +4219,10 @@ fixtures = [
   "fixtures/first_successful_pr/python-preview-gap/expected/outcome/strengthened.md",
   "fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.json",
   "fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.md",
+  "fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/after-check.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.md",
   "fixtures/first_successful_pr/python-return-gap/inputs/reports/before-check.json",
   "fixtures/first_successful_pr/python-return-gap/inputs/reports/after-check.json",
   "fixtures/first_successful_pr/python-return-gap/expected/outcome/closed.json",
@@ -4708,6 +4725,7 @@ spec = "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md"
 tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_fact_packet_adapter_consumes_exact_return_fixture",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perllsp_exporter_fixture_is_consumed_without_actionable_gap_state",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::ingestion_accepts_canonical_and_compat_perl_fact_exporters",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_fact_packet_adapter_preserves_source_test_and_oracle_taxonomy",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_related_test_linking_classifies_reachability_and_revealability",
   "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_strict_actionability_requires_all_packet_and_context_fields",
@@ -4725,9 +4743,13 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_projects_perl_preview_card_properties",
   "crates/ripr/src/output/github.rs::tests::render_includes_perl_preview_card_guidance",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_perl_preview_card_becomes_markdown_advisory_gap_record",
+  "xtask/src/main.rs::tests::perl_lsp_facts_exporter_fixture_accepts_supported_producers",
+  "xtask/src/main.rs::tests::perl_real_repo_eval_fixture_corpus_is_valid",
+  "crates/ripr/tests/perl_two_binary_harness.rs::two_binary_proof_three_outcomes_against_real_perllsp",
 ]
 fixtures = [
   "fixtures/perl_lsp_facts_exporter",
+  "fixtures/perl-real-repo-evals",
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
@@ -4743,6 +4765,7 @@ outputs = [
   "docs/specs/README.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/proposals/RIPR-PROP-0018-perl-repair-routing-lane.md",
+  "docs/IMPLEMENTATION_CAMPAIGNS.md",
   "docs/adr/0018-perl-lsp-fact-substrate.md",
   "policy/doc-artifacts.toml",
   ".ripr/traceability.toml",
@@ -4750,6 +4773,7 @@ outputs = [
 metrics = [
   "perl_fact_packet_contract_preview_advisory",
   "perl_fact_packet_public_repair_packet_exclusions",
+  "language_adapter_perl_real_repo_eval_launchpoints",
 ]
 
 [[behavior]]
@@ -4832,6 +4856,9 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::tests::spec0068_card_carries_structured_related_test",
   "crates/ripr/src/output/review_comments.rs::tests::gap_record_related_test_projects_object_or_null",
   "crates/ripr/src/output/review_comments.rs::tests::working_set_card_emits_null_related_test_without_strong_test",
+  "crates/ripr/src/output/review_comments.rs::tests::spec0068_card_carries_oracle_kind_and_strength",
+  "crates/ripr/src/output/review_comments.rs::tests::working_set_card_reports_no_oracle_without_related_tests",
+  "crates/ripr/src/output/review_comments.rs::tests::working_set_card_projects_first_related_test_oracle_when_no_strong",
   "crates/ripr/src/output/review_comments.rs::tests::review_comments_gap_ledger_renders_only_eligible_repair_cards",
   "crates/ripr/src/cli/commands.rs::tests::review_comments_gap_ledger_writes_repair_cards_without_loading_diff",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::tests::inline_comment_publish_plan_uses_spec0068_inline_cap_token"
@@ -5282,6 +5309,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_snapshot_discriminator_emitted_for_snapshot_oracle",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_custom_matcher_emitted_for_unrecognised_matcher",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_custom_matcher_not_emitted_for_recognised_matcher",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_oracle_helper_gated_emitted_for_assertion_helper_wrapping_owner_call",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_oracle_based_not_emitted_for_heuristic_only_relation",
   # PR5: oracle metadata hardening
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_emitted_for_literal_expected_value",
@@ -5289,6 +5317,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_has_dynamic_matcher_arg_for_call_expression",
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_metadata_no_dynamic_flag_for_no_arg_matchers",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_table_case_emitted_for_table_dynamic_matcher_arg",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation",
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_confidence_high_when_strong_oracle_and_literal_expected",
   "crates/ripr/src/analysis/language/typescript/tests.rs::oracle_confidence_medium_when_strong_oracle_and_no_literal",
@@ -5300,7 +5329,20 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_imports_recognizes_commonjs_destructured_require",
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_imports_recognizes_re_export_form",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_emitted_for_cross_package_reference",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_not_emitted_for_same_package"
+  "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_not_emitted_for_same_package",
+  "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_counts_unique_kinds_per_finding",
+  "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_renders_json_and_markdown",
+  "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_blocks_on_malformed_check_output",
+  "crates/ripr/src/cli/commands.rs::tests::reports_ts_limitations_requires_check_output_input",
+  "crates/ripr/src/cli/commands.rs::tests::reports_ts_limitations_writes_json_and_markdown_reports",
+  "crates/ripr/src/output/typescript_false_actionable.rs::tests::false_actionable_audit_reports_zero_rate_for_safe_corpus",
+  "crates/ripr/src/output/typescript_false_actionable.rs::tests::false_actionable_audit_counts_packet_ready_and_complete_category",
+  "crates/ripr/src/output/typescript_false_actionable.rs::tests::false_actionable_audit_renders_json_and_markdown",
+  "crates/ripr/src/output/typescript_false_actionable.rs::tests::false_actionable_audit_blocks_on_malformed_corpus",
+  "crates/ripr/src/cli/commands.rs::tests::reports_ts_false_actionable_requires_corpus_input",
+  "crates/ripr/src/cli/commands.rs::tests::reports_ts_false_actionable_writes_json_and_markdown_reports",
+  "xtask/src/main.rs::tests::typescript_preview_false_actionable_audit_cases_are_checked",
+  "xtask/src/main.rs::tests::dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows"
 ]
 fixtures = [
   "fixtures/ts_pkg_discovery_single_package",
@@ -5311,11 +5353,13 @@ fixtures = [
   "fixtures/typescript_static_limit_taxonomy",
   "fixtures/typescript_jest_vitest_assertion_facts",
   "fixtures/typescript_limitation_custom_matcher",
+  "fixtures/typescript_oracle_helper_gated",
   # PR5: oracle metadata hardening (new fixture)
   "fixtures/typescript_dynamic_assertion_unresolved",
   # PR6: ownership hardening — package-local and CommonJS require
   "fixtures/typescript_monorepo_package_local",
-  "fixtures/typescript_commonjs_require"
+  "fixtures/typescript_commonjs_require",
+  "fixtures/typescript-preview-false-actionable-audit"
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/package.rs",
@@ -5325,15 +5369,24 @@ code = [
   "crates/ripr/src/analysis/language/typescript/types.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/output/typescript_preview_card.rs",
+  "crates/ripr/src/output/typescript_limitations.rs",
+  "crates/ripr/src/output/typescript_false_actionable.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands_options.rs",
+  "crates/ripr/src/cli/help/reports.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
-  "crates/ripr/src/analysis/language/typescript/owners.rs"
+  "crates/ripr/src/analysis/language/typescript/owners.rs",
+  "xtask/src/main.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0085-typescript-evidence-adapter-contract.md",
-  "docs/OUTPUT_SCHEMA.md"
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/CAPABILITY_MATRIX.md"
 ]
 metrics = [
-  "typescript_evidence_adapter_contract_status_proposed"
+  "typescript_evidence_adapter_contract_status_proposed",
+  "typescript_limitation_leaderboard_reports",
+  "language_adapter_typescript_false_actionable_audit"
 ]
 
 [[behavior]]
@@ -5367,6 +5420,7 @@ tests = [
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_verify_command_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_oracle_expected_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_dynamic_oracle_returns_none",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_named_typescript_limitation_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_wrong_category_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_no_related_tests_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_no_missing_discriminators_returns_none",
@@ -5374,11 +5428,16 @@ tests = [
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::canonical_gap_id_derives_from_finding_id",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::canonical_gap_id_normalizes_backslashes",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::receipt_command_is_ripr_outcome_shape",
-  "crates/ripr/src/output/typescript_packet_projection.rs::tests::must_not_change_includes_preview_clause_via_shared_function"
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::must_not_change_includes_preview_clause_via_shared_function",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_repair_packet_becomes_agent_packet_gap_record",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_fixture_synthesizes_receipt_write_for_packet",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts"
 ]
 fixtures = [
   # Complete-contract fixture (flips repair_packet_ready: true)
   "fixtures/ts_repair_packet_complete",
+  "fixtures/first_successful_pr/typescript-preview-gap",
   # Non-actionable fixtures (each pins a named failure family)
   "fixtures/ts_dynamic_oracle",
   "fixtures/ts_heuristic_relation",
@@ -5395,10 +5454,15 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md",
   "docs/OUTPUT_SCHEMA.md",
-  "docs/CAPABILITY_MATRIX.md"
+  "docs/CAPABILITY_MATRIX.md",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.md",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.json",
+  "fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.md"
 ]
 metrics = [
-  "typescript_actionable_repair_packet_contract_status_proposed"
+  "typescript_actionable_repair_packet_contract_status_proposed",
+  "language_adapter_typescript_gap_receipt_from_check_output"
 ]
 
 [[behavior]]
@@ -5407,6 +5471,8 @@ name = "TypeScript repair-packet surface projection"
 spec = "docs/specs/RIPR-SPEC-0088-typescript-repair-packet-projection.md"
 tests = [
   # Human surface — field-note and named limitation
+  "crates/ripr/src/app/explain.rs::tests::explain_finding_renders_typescript_actionable_packet_field_note",
+  "crates/ripr/src/app/explain.rs::tests::explain_finding_renders_typescript_blocked_packet_limitation",
   "crates/ripr/src/output/human/sections.rs::tests::typescript_repair_packet_field_note_renders_for_actionable_finding",
   "crates/ripr/src/output/human/sections.rs::tests::typescript_repair_packet_field_note_renders_limitation_for_blocked_finding",
   # JSON surface — typescript_repair_packet field
@@ -5427,6 +5493,7 @@ fixtures = [
   "fixtures/ts_already_observed"
 ]
 code = [
+  "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/preview_actionability.rs",
@@ -5458,6 +5525,8 @@ fixtures = [
   "fixtures/ts_full_repo_guidance"
 ]
 code = [
+  "crates/ripr/src/analysis/mod.rs",
+  "crates/ripr/src/analysis/language/mod.rs",
   "crates/ripr/src/output/repo_exposure.rs",
   "crates/ripr/src/output/render.rs",
   "crates/ripr/src/cli/commands.rs",
@@ -5465,11 +5534,15 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0089-ts-full-repo-guidance.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/CAPABILITY_MATRIX.md",
+  "fixtures/ts_full_repo_guidance/SPEC.md",
   "fixtures/ts_full_repo_guidance/expected/repo-exposure.json",
   "fixtures/ts_full_repo_guidance/expected/repo-exposure.md"
 ]
 metrics = [
-  "ts_full_repo_guidance_disclosure_named"
+  "ts_full_repo_guidance_disclosure_named",
+  "typescript_repo_readiness_card_emitted"
 ]
 
 [[behavior]]
@@ -6066,6 +6139,7 @@ fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-limited-empty-not-clean.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-no-scope-empty-not-clean.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/perl-preview-advisory-no-packet.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-unanalyzed-worktree-empty-not-clean.json",
   "fixtures/python_adversarial_buffer_token",
   "fixtures/python_adversarial_mock_call_not_value",
@@ -6483,4 +6557,46 @@ outputs = [
 ]
 metrics = [
   "ci_scratch_disk_free_space_after_gc",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0122"
+name = "bounded human check output"
+spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count",
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_does_not_select_exposed_over_non_exposed_repair",
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_missing_scope_as_start_here_state",
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_keeps_preview_language_in_preview_limited_state",
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_prefers_stable_gap_over_preview_with_route",
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_no_actionable_gap_when_all_findings_suppressed",
+  "crates/ripr/src/output/human.rs::tests::human_full_preserves_legacy_all_findings_output",
+  "crates/ripr/src/output/format.rs::tests::parses_human_full_aliases",
+  "crates/ripr/src/output/format.rs::tests::human_full_is_not_repo_scope",
+  "crates/ripr/src/cli/commands.rs::tests::repo_scope_format_with_base_emits_scope_warning",
+  "crates/ripr/src/cli/commands.rs::tests::repo_scope_format_with_diff_emits_scope_warning",
+  "crates/ripr/src/cli/commands.rs::tests::diff_json_with_base_does_not_emit_repo_scope_warning",
+  "crates/ripr/src/output/first_pr.rs::tests::first_pr_check_missing_packet_error_explains_validate_only_mode",
+  "crates/ripr/src/output/first_pr.rs::tests::first_pr_write_command_preserves_explicit_gap_ledger_only",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/output/first_pr.rs",
+  "crates/ripr/src/output/first_pr/options.rs",
+  "crates/ripr/src/output/format.rs",
+  "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/human/sections.rs",
+  "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/output/render.rs",
+  "xtask/src/main.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "bounded_human_line_count",
 ]

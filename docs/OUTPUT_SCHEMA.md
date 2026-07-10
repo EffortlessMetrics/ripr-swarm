@@ -34,6 +34,18 @@ not expose receipt commands, edit-boundary authority, or agent packets, and
 remains advisory review context rather than verify, receipt, gate, badge, or
 RIPR Zero authority.
 
+`ripr check --format human` is the bounded default terminal surface. It prints
+header and summary counts, then one `Start here:` triage block with a closed
+state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
+`missing_scope`), one selected finding digest when available, an omitted-finding
+count, and pointers to `--format human-full` and `--format json`.
+`ripr check --format human-full` (alias `text-full`) preserves the exhaustive
+per-finding human report. These human text formats do not change
+`schema_version`; the machine-readable contract remains `--format json`.
+Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
+`repo-sarif`, and `agent-seam-packets-json` warn on stderr when paired with
+`--base` or `--diff`, because those flags do not bound full-repo formats.
+
 ## Check Output
 
 `ripr check --json` emits:
@@ -673,6 +685,16 @@ The evidence-first fields are additive in schema `0.2`:
       `has_dynamic_matcher_arg = true` when the argument is not a resolvable
       literal. The limitation explains that the expected discriminator value
       cannot be statically resolved.
+    - `typescript_table_case_unresolved` — fired when an oracle-eligible
+      `test.each(...)` / `it.each(...)` table case uses a row-derived dynamic
+      matcher argument. The real producer uses table-call test extraction plus
+      `has_dynamic_matcher_arg = true`; the limitation explains that syntax-only
+      preview evidence cannot bind the row to a concrete expected value.
+    - `typescript_oracle_helper_gated` — fired when an oracle-eligible related
+      test calls an assertion-shaped helper around the changed owner call but no
+      direct supported assertion is extracted. The limitation explains that the
+      adapter cannot inspect the helper body or prove its oracle semantics from
+      the call site.
     - `typescript_target_unresolved` — fired (RIPR-SPEC-0085 §PR6) when a test
       in a different package references the owner by call name but is excluded by
       the package-local ownership filter. The real producer is
@@ -680,14 +702,174 @@ The evidence-first fields are additive in schema `0.2`:
       confirms the cross-package exclusion by comparing candidates with vs.
       without the package-local filter. Only emitted when `workspace_root` is
       `Some` (i.e. in production, not in unit tests without a workspace root).
-    Deferred (no producer yet, NOT emitted): `typescript_table_case_unresolved`,
-    `typescript_oracle_helper_gated`.
   - `typescript_limitation_sample: <name> at <file>:<line>` — additive; the
     `file:line` of the real AST evidence that triggered the named limitation.
   - `typescript_limitation_why: <name> — <why>` — additive; human-readable
     reason why the finding is not actionable for this limitation.
   - `typescript_limitation_repair_route: <name> → <route>` — additive; pointer
     to the analyzer backlog slice that would resolve this limitation.
+
+#### TypeScript Limitation Leaderboard Report
+
+`ripr reports ts-limitations --check-output <check.json>` writes advisory JSON
+and Markdown reports to:
+
+```text
+target/ripr/reports/typescript-limitations.json
+target/ripr/reports/typescript-limitations.md
+```
+
+The command reads an existing `ripr check --json` artifact. It does not rerun
+analysis, execute TypeScript tests, edit source, generate tests, call providers,
+run mutation testing, publish comments, change gates, or contribute badge
+authority.
+
+JSON fields:
+
+```json
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "typescript_limitation_leaderboard",
+  "status": "advisory",
+  "root": ".",
+  "generated_at": "unix_ms:1720000000000",
+  "inputs": {
+    "check_output": "target/ripr/reports/check.json"
+  },
+  "summary": {
+    "findings_total": 4,
+    "typescript_family_findings_total": 4,
+    "limitations_total": 12,
+    "distinct_limitations_total": 6,
+    "top_limitation_kind": "typescript_package_root_unresolved"
+  },
+  "limitations": [
+    {
+      "kind": "typescript_package_root_unresolved",
+      "count": 4,
+      "sources": ["typescript_package_limitation"],
+      "samples": [
+        {
+          "finding_id": "probe:src_dispatch.ts:typescript_preview:dd0f8848",
+          "language": "typescript",
+          "file": "src/dispatch.ts",
+          "line": 2
+        }
+      ]
+    }
+  ],
+  "warnings": [],
+  "limits": [
+    "Advisory TypeScript-family preview limitation counts only.",
+    "Counts come from explicit check JSON evidence; this report does not rerun analysis.",
+    "This report does not execute TypeScript tests, edit source, generate tests, call providers, change gates, or contribute badge authority."
+  ]
+}
+```
+
+- `status` is `advisory` when the supplied check output parsed, even when no
+  TypeScript-family limitation signals were found. It is `blocked` when the
+  artifact is missing, unreadable, malformed, or lacks a `findings` array.
+- `limitations[].kind` is counted once per finding per kind. Duplicate evidence
+  lines in the same finding do not inflate counts.
+- `sources[]` names where the limitation signal came from:
+  `typescript_limitation`, `typescript_package_limitation`, or
+  `static_limit_kind`. Static `missing_import_graph` and `mocked_module`
+  findings are normalized to the corresponding TypeScript named limitation
+  (`typescript_import_graph_unresolved` or `typescript_mock_only_observer`) so
+  the leaderboard groups equivalent signals together.
+  Other TypeScript-family `static_limit_kind` values keep their existing
+  static-limit vocabulary.
+  This normalization is for report grouping only and does not change check JSON.
+  It is not a support-tier, gate, badge, baseline, or RIPR Zero claim.
+  Samples are bounded to three findings per limitation kind and are examples,
+  not exhaustive proof.
+
+#### TypeScript False-Actionable Audit Report
+
+`ripr reports ts-false-actionable --corpus
+fixtures/typescript-preview-false-actionable-audit/corpus.json` writes
+advisory JSON and Markdown reports to:
+
+```text
+target/ripr/reports/typescript-false-actionable-audit.json
+target/ripr/reports/typescript-false-actionable-audit.md
+```
+
+The command reads an existing TypeScript-family preview audit corpus. It does
+not rerun analysis, execute TypeScript tests, edit source, generate tests, call
+providers, run mutation testing, publish comments, change gates, contribute
+badge/baseline/RIPR Zero authority, or promote support tiers.
+
+JSON fields:
+
+```json
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "typescript_false_actionable_audit",
+  "status": "advisory",
+  "root": ".",
+  "generated_at": "unix_ms:1720000000000",
+  "inputs": {
+    "corpus": "fixtures/typescript-preview-false-actionable-audit/corpus.json"
+  },
+  "summary": {
+    "cases_total": 14,
+    "must_remain_non_actionable_total": 14,
+    "repair_packet_ready_true_total": 0,
+    "actionable_gap_state_total": 0,
+    "complete_packet_category_total": 0,
+    "false_actionable_total": 0,
+    "false_actionable_denominator": 14,
+    "false_actionable_rate": 0.0,
+    "preview_boundary_violation_total": 0
+  },
+  "disposition_counts": [
+    { "value": "candidate_future_support", "count": 7 }
+  ],
+  "risk_class_counts": [
+    { "value": "mock interaction payload gap", "count": 1 }
+  ],
+  "cases": [
+    {
+      "id": "mock_interaction_without_payload_proof",
+      "language": "typescript",
+      "risk_class": "mock interaction payload gap",
+      "evidence_kind": "mock_interaction",
+      "disposition": "candidate_future_support",
+      "gap_state": "advisory",
+      "actionability_category": "incomplete_repair_packet",
+      "repair_packet_ready": false,
+      "must_remain_non_actionable": true,
+      "authority_boundary": "preview_advisory_only",
+      "false_actionable": false,
+      "source_fixture": "fixtures/typescript_jest_vitest_assertion_facts",
+      "source_finding_id": "probe:src_checkout.ts:typescript_preview:mock"
+    }
+  ],
+  "warnings": [],
+  "limits": [
+    "Advisory TypeScript-family preview audit metric only.",
+    "The false-actionable rate is computed from explicit audit corpus rows; this report does not rerun analysis or execute TypeScript tests.",
+    "This report does not edit source, generate tests, call providers, run mutation testing, change gates, contribute badge authority, or promote support tiers."
+  ]
+}
+```
+
+- `status` is `advisory` when the supplied corpus parsed. It is `blocked` when
+  the artifact is missing, unreadable, malformed, or not the expected
+  `typescript_preview_false_actionable_audit_corpus` shape.
+- `summary.false_actionable_total` counts audit rows marked
+  `must_remain_non_actionable` that also set `repair_packet_ready = true`,
+  `gap_state = "actionable"`, or
+  `actionability_category = "complete_repair_packet"`.
+- `summary.false_actionable_denominator` is the number of
+  `must_remain_non_actionable` rows, not all TypeScript findings.
+- The report is an audit over explicit preview rows. It is not evidence that
+  TypeScript support is usable alpha, gate eligible, badge eligible, baseline
+  eligible, RIPR Zero eligible, or runtime adequate.
 - Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5). ADDITIVE: do not change
   `oracle_kind`, `oracle_strength`, `static_limit_kind`, or `repair_packet_ready`.
   Emitted from the strongest oracle-eligible assertion across all oracle-eligible
@@ -814,12 +996,13 @@ The evidence-first fields are additive in schema `0.2`:
   forbidden files, receipt argv, PR, CI, LSP, swarm routing, badge authority,
   gate authority, or RIPR Zero authority in this slice.
 - `ripr reports gap-ledger --check-output <check.json>` can derive PR-local
-  Python `GapRecord` entries from findings that carry `python_repair_card`.
-  Those records are advisory preview inputs for `ripr agent packet
-  --gap-ledger ... --gap-id ... --json`; they preserve the canonical Python gap
-  ID, source anchor, suggested test location, verify command, stop conditions,
-  and preview authority boundary without rerunning analysis or claiming
-  before/after closure.
+  Python and TypeScript `GapRecord` entries from findings that carry
+  `python_repair_card` or `typescript_repair_packet`. Those records are
+  advisory preview inputs for `ripr agent packet --gap-ledger ... --gap-id ...
+  --json`; they preserve the canonical preview-language gap ID, source anchor,
+  suggested test location, verify command, stop conditions, and preview
+  authority boundary without rerunning analysis or claiming before/after
+  closure.
 - `canonical_gap_id` is an additive optional stable identity for a
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
@@ -1015,7 +1198,7 @@ Example:
 ```
 
 Scope: the flag applies to the findings-based check formats (`human`,
-`json`, `github`). Human output lists suppressed findings as compact
+`human-full`, `json`, `github`). Human output lists suppressed findings as compact
 one-liners instead of detailed blocks; GitHub-format output skips
 annotations for suppressed findings. SARIF keeps its existing
 `.ripr/suppressions.toml` `finding_id` suppression channel, and badge/repo
@@ -2126,22 +2309,42 @@ Field contract:
   truncated the inventory. Consumers must read `run_status` before
   treating counts as complete-repo totals. Added as an additive field
   within schema version `0.3` per RIPR-SPEC-0074.
-- `limitations[]` — present only when `run_status` is
-  `"seam_limit_applied"`. Each entry carries:
-  - `category` — `"repo_seam_limit_applied"`.
-  - `seams_analyzed` — number of seams that were classified.
-  - `seams_total` — total seams before truncation.
-  - `limit_source` — `"default"` when the cap came from the built-in
-    default (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`);
-    `"configured"` when `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly
-    set in the environment. Added as an additive field within schema
-    version `0.3` per RIPR-SPEC-0074 Slice B.
-  - `control` — the env var that triggered the limit:
-    `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`.
-  - `repair_route` — human-readable instructions. When `limit_source`
-    is `"default"`: set `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0` to analyze
-    all seams. When `limit_source` is `"configured"`: remove or raise
-    the env var.
+- `limitations[]` — present when repo exposure has a named run limitation or
+  guidance disclosure. Consumers must branch on `category`.
+  - `category: "repo_seam_limit_applied"` appears when `run_status` is
+    `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
+    `limit_source`, `control`, and `repair_route`. `limit_source` is
+    `"default"` when the cap came from the built-in default
+    (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
+    `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
+  - `category: "typescript_diff_first"` appears when a TS/JS-predominant
+    workspace has TS/JS files, no Rust files, and zero classified seams.
+    `run_status` remains `"complete"` because the Rust repo-exposure scan
+    completed. It carries `ts_file_count`, `repair_route`, and the optional
+    nested `typescript_readiness` object.
+  - `typescript_readiness.source` is
+    `"repo_exposure_typescript_readiness.v1"`.
+  - `typescript_readiness.authority_boundary` is
+    `"preview_advisory_only"`.
+  - `typescript_readiness.analysis_model` is `"diff_first"`.
+  - `typescript_readiness.source_file_count` is the count of TS/JS files not
+    detected as tests.
+  - `typescript_readiness.test_file_count` is the count of detected TS/JS test
+    files.
+  - `typescript_readiness.package_root_count` is the count of distinct package
+    roots resolved from detected TS/JS files.
+  - `typescript_readiness.package_confidence` is `none`, `low`, `medium`, or
+    `high`; it is the highest package discovery confidence across detected
+    TS/JS files.
+  - `typescript_readiness.runner_status` is `no_tests_detected`, `resolved`,
+    `partial`, or `unresolved`.
+  - `typescript_readiness.verify_command_count` is the number of detected test
+    files with a concrete verify command.
+  - `typescript_readiness.top_blocker` is the top missing readiness signal, or
+    `null`.
+  - `typescript_readiness.non_claims[]` states that the card does not emit
+    full-repo TypeScript seams, run TypeScript tests, or create gate/badge
+    authority.
 - `metrics` — totals plus a per-`SeamGripClass` count bucket. Keys mirror
   `SeamGripClass::as_str()`. The renderer emits all 11 buckets even when
   zero so consumers can plot stable bar charts.
@@ -5491,8 +5694,8 @@ The report is an advisory receipt for the targeted-test loop. It does not run
 analysis, mutation testing, SARIF policy, or badge generation; it only compares
 the two supplied static artifacts. Repo-exposure seams are matched by
 `seam_id`; check-output findings are matched by `canonical_gap_id`, which lets
-Python preview repair cards produce before/after receipts without a Python-only
-receipt command.
+Python repair cards and TypeScript repair packets produce before/after receipts
+without language-specific receipt commands.
 
 JSON shape:
 
@@ -5628,8 +5831,8 @@ JSON shape:
 }
 ```
 
-For check-output snapshots, `seam_id` is the canonical gap ID. A Python preview
-gap that moves from `weakly_exposed` to `exposed` is rendered as
+For check-output snapshots, `seam_id` is the canonical gap ID. A Python or
+TypeScript preview gap that moves from `weakly_exposed` to `exposed` is rendered as
 `weakly_gripped -> strongly_gripped` with `gap_movement = "closed"`. This is
 still static/advisory evidence: verify success and a closed gap movement are
 receipt signals, not runtime mutation proof or correctness proof.
@@ -5650,6 +5853,12 @@ receipts at
 `fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.json`,
 and
 `fixtures/first_successful_pr/python-preview-gap/expected/outcome/weakened.md`.
+The TypeScript preview packet receipt path is pinned by
+`fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json`,
+`fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/after-check.json`,
+`fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.json`,
+and
+`fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.md`.
 The non-boundary return-value receipt path is pinned by
 `fixtures/first_successful_pr/python-return-gap/inputs/reports/before-check.json`,
 `fixtures/first_successful_pr/python-return-gap/inputs/reports/after-check.json`,
@@ -6097,6 +6306,8 @@ JSON shape:
       },
       "kind": "predicate_boundary",
       "grip_class": "weakly_gripped",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
       "severity": "warning",
       "source_location": {
         "file": "src/pricing.rs",
@@ -6220,6 +6431,18 @@ Field contract:
   comment body instead of raw static classes. It carries gap kind, changed
   behavior when available, why the gap matters, the bounded repair route,
   evidence IDs, verification commands, source artifact, and authority boundary.
+- `comments[].oracle_kind` / `comments[].oracle_strength` - card-level oracle
+  facts (RIPR-SPEC-0068) projecting the representative related test's oracle
+  (the nearest strong related test, else the top-ranked related test). When no
+  related test observes the seam they degrade honestly to `oracle_kind =
+  "unknown"` / `oracle_strength = "none"`, never a fabricated observer. These
+  project the same oracle facts agent briefs and seam packets already carry;
+  the review card computes no oracle of its own. Working-set path. `oracle_kind`
+  is one of `"exact_value"`, `"exact_error_variant"`, `"whole_object_equality"`,
+  `"snapshot"`, `"relational_check"`, `"broad_error"`, `"smoke_only"`,
+  `"mock_expectation"`, `"unknown"`; `oracle_strength` is one of `"strong"`,
+  `"medium"`, `"weak"`, `"smoke"`, `"none"`, `"unknown"`. Enforced by
+  `spec0068_card_carries_oracle_kind_and_strength`.
 - `comments[].gap_state` - canonical actionability state per RIPR-SPEC-0061.
   Present on every card (working-set and gap-ledger paths). Values:
   `"actionable"`, `"static_limitation"`, `"already_observed"`,
@@ -10414,8 +10637,8 @@ map.
 `ripr first-pr` writes the first successful PR front-door packet from explicit
 existing RIPR artifacts. `cargo xtask first-pr` remains a repo-local wrapper
 over the same public command. The packet selects one top repairable PR-local
-stable Rust gap or preview Python gap when the gap decision ledger supplies
-one, or emits a bounded no-action or blocked recovery state. It does not rerun
+stable Rust gap or preview Python/TypeScript gap when the gap decision ledger
+supplies one, or emits a bounded no-action or blocked recovery state. It does not rerun
 hidden analysis, edit source, generate tests, call providers, run mutation
 testing, change gate policy, or change CI blocking.
 
@@ -10446,10 +10669,10 @@ target/ripr/reports/start-here.md
 When `--check-output` is supplied, `ripr first-pr` treats the saved check JSON
 as an explicit input artifact and materializes
 `target/ripr/reports/gap-decision-ledger.{json,md}` before selecting the
-start-here repair. This is the direct Python preview path for actionable
-`python_repair_card` records that already came from `ripr check`; it does not
-rerun hidden analysis, run tests, import Python code, generate tests, or change
-gate authority.
+start-here repair. This is the direct preview-language path for actionable
+`python_repair_card` records and `typescript_repair_packet` records that
+already came from `ripr check`; it does not rerun hidden analysis, run tests,
+import preview-language code, generate tests, or change gate authority.
 
 JSON shape:
 
@@ -10540,9 +10763,10 @@ Field contract:
   when a top gap is selected. Generated CI and report indexes should prefer the
   canonical gap id when present.
 - `selected.language` and `selected.language_status` keep stable Rust evidence
-  distinct from preview Python evidence when a top gap is selected. Preview
-  Python top gaps use `selected.output_state = "preview_limited"` and remain
-  advisory repair routing, not support-tier promotion.
+  distinct from preview Python and TypeScript evidence when a top gap is
+  selected. Preview top gaps use
+  `selected.output_state = "preview_limited"` and remain advisory repair
+  routing, not support-tier promotion.
 - `selected.current_evidence_strength`,
   `selected.missing_discriminator`, and `selected.focused_proof_intent`
   provide the one-screen recommendation contract. They are derived from typed
@@ -10582,8 +10806,9 @@ Field contract:
   records read-only front-door checks for root, Git worktree, base/head refs,
   diff presence, supported project marker, `ripr.toml` defaulting, output
   directory, and write/check mode. Supported project markers currently mean a
-  Cargo workspace or Python preview project root. Preflight does not create
-  analyzer facts and does not become gate authority.
+  Cargo workspace, Python preview project root, or TypeScript preview project
+  root. Preflight does not create analyzer facts and does not become gate
+  authority.
 - `inputs.check_output` is present only when `--check-output` was supplied.
   In that mode, the start-here packet can include a `check_output` artifact and
   the `gap_ledger` artifact is the ledger materialized from that saved check
@@ -12740,6 +12965,8 @@ fixtures/finding-alignment-dogfood/corpus.json
 fixtures/surface-projection-alignment/corpus.json
 fixtures/real-repair-attempts/corpus.json
 fixtures/python-real-repo-evals/corpus.json
+fixtures/typescript-preview-repair-loop/corpus.json
+fixtures/typescript-preview-false-actionable-audit/corpus.json
 fixtures/user-surface-projection-alignment/corpus.json
 fixtures/bun-ub-cross-language-dogfood/corpus.json
 ```
@@ -12795,6 +13022,19 @@ validity, concrete-discriminator and test-location coverage,
 false-actionable and crash rates, receipt closure rate, and unsupported
 limitation distribution. Eval cases with fewer than three ranked repair-card
 findings must include an explicit limit reason.
+The checked TypeScript-family preview repair-loop receipts are read from
+`fixtures/typescript-preview-repair-loop/` and preserve advisory preview
+boundaries for useful TypeScript/JavaScript routes, weak-oracle downgrades,
+static limitations, skipped incomplete-packet cases, checked complete-packet
+receipts, and packet-ready counts.
+The checked TypeScript false-actionable audit rows are read from
+`fixtures/typescript-preview-false-actionable-audit/`; dogfood projects
+`typescript_false_actionable_audit.summary.false_actionable_rate` from rows
+that must remain non-actionable and also reports packet-ready, actionable
+gap-state, complete-packet category, and preview-boundary violation rates. This
+section is advisory and does not create repair packets, gates, badge inputs,
+baselines, RIPR Zero input, generated tests, source edits, provider calls,
+mutation testing, or support-tier promotion.
 The checked Bun UB cross-language witness receipts are read from
 `fixtures/bun-ub-cross-language-dogfood/` and record the calibrated
 #31648-shaped known-good, stripped-resizable, maxByteLength mention-only,
@@ -13512,14 +13752,16 @@ agent packets when the evidence record already supplies a repair route and
 verification command.
 
 `ripr reports gap-ledger --check-output <path>` derives PR-local records from
-an existing check JSON `finding_alignment.items[]` section and actionable
-Python `findings[].python_repair_card` objects. Supported visible output text
+an existing check JSON `finding_alignment.items[]` section, actionable Python
+`findings[].python_repair_card` objects, and complete TypeScript
+`findings[].typescript_repair_packet` objects. Supported visible output text
 without a checked observer becomes `MissingOutputContract` with
 `repair_route.route_kind = "AddOutputGolden"` and
 `verification_commands = ["cargo xtask goldens check"]`. Actionable Python
-repair cards become preview-language records with bounded test edit surfaces,
-verify commands, and a synthesized `ripr outcome` command that compares the
-supplied before check JSON with `target/ripr/reports/after-check.json`.
+repair cards and complete TypeScript repair packets become preview-language
+records with bounded test edit surfaces, verify commands, and a synthesized
+`ripr outcome` command that compares the supplied before check JSON with
+`target/ripr/reports/after-check.json`.
 Python static-limit findings with `static_limit_kind` become report-only
 `StaticLimitation` records with `repairability = "analyzer_limitation"` and no
 agent-packet projection. Visibility-unknown presentation text and Python static
