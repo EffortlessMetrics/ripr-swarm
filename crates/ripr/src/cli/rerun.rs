@@ -164,9 +164,9 @@ fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, S
         return changed_test
             .strip_prefix(root)
             .map(PathBuf::from)
-            .map_err(|_| {
+            .map_err(|err| {
                 format!(
-                    "rerun changed test {} is outside root {}",
+                    "rerun changed test {} is outside root {}: {err}",
                     changed_test.display(),
                     root.display()
                 )
@@ -176,9 +176,11 @@ fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, S
 }
 
 fn resolve_output_path(root: &Path, out: &Path) -> PathBuf {
-    out.is_absolute()
-        .then(|| out.to_path_buf())
-        .unwrap_or_else(|| root.join(out))
+    if out.is_absolute() {
+        out.to_path_buf()
+    } else {
+        root.join(out)
+    }
 }
 
 fn display_path(path: &Path) -> String {
@@ -227,7 +229,7 @@ mod tests {
         TargetedRerunCache, TargetedRerunReport, TargetedRerunSeam, TargetedRerunSelector,
         parse_options, render_human,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -276,8 +278,8 @@ mod tests {
             "--out",
             "target/rerun.json",
         ]))?;
-        if options.root != PathBuf::from("workspace")
-            || options.changed_test != PathBuf::from("tests/pricing.rs")
+        if options.root.as_path() != Path::new("workspace")
+            || options.changed_test.as_path() != Path::new("tests/pricing.rs")
             || !options.json
             || options.out != Some(PathBuf::from("target/rerun.json"))
         {
