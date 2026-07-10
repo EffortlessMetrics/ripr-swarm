@@ -130,9 +130,12 @@ the object, field, same-file literal constant, bounded `+/-` integer offset,
 and source order are exact and unambiguous. The equality value and its adjacent
 integer boundaries must remain distinct. Other objects, other fields,
 similarly named constants, helper-only assignments, and opaque right-hand
-expressions must not be credited. An otherwise related test with an unsupported
-direct field assignment must stop as `field_assignment_value_unresolved`
-instead of receiving a repair recommendation that the analyzer cannot credit.
+expressions must not be credited. Assignments nested under control flow are not
+unconditional evidence, and an intervening explicit mutable borrow invalidates
+an earlier field value. An otherwise related test with an unsupported or
+invalidated direct field assignment must stop as
+`field_assignment_value_unresolved` instead of receiving a repair
+recommendation that the analyzer cannot credit.
 
 ## Test Mapping
 
@@ -151,6 +154,8 @@ Fixture coverage:
 - `given_similarly_named_constant_then_equality_boundary_stays_missing`
 - `given_assignment_only_in_unrelated_helper_or_test_then_value_is_not_credited`
 - `given_direct_field_assignment_with_opaque_rhs_then_names_field_assignment_limitation`
+- `given_control_flow_nested_field_assignment_then_boundary_value_is_not_credited`
+- `given_mutable_borrow_after_field_assignment_then_stale_value_is_not_credited`
 
 ## Implementation Mapping
 

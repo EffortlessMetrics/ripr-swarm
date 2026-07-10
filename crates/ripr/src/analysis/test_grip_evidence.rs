@@ -347,7 +347,7 @@ fn activate_evidence(
             )
         } else if field_assignment_value_unresolved {
             format!(
-                "Field assignment value is unresolved for seam `{}`; direct field writes only support literals and same-file literal constants with bounded +/- integer offsets",
+                "Field assignment value is unresolved for seam `{}`; direct field writes only support unconditional source-ordered assignments of literals and same-file literal constants with bounded +/- integer offsets and no intervening mutable borrow",
                 seam.expression()
                     .lines()
                     .next()

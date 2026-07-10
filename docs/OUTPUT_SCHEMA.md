@@ -2392,8 +2392,11 @@ Field contract:
   owner-call arguments across related tests. In addition to direct literals,
   Rust predicate boundaries may carry exact values from source-ordered direct
   field assignments whose right-hand side is a same-file literal constant or
-  that constant plus/minus a bounded integer offset. Other bare identifiers,
-  helper-derived values, and ambiguous field writes are intentionally excluded.
+  that constant plus/minus a bounded integer offset. The write must be an
+  unconditional function-body statement with no intervening explicit mutable
+  borrow before the owner call. Other bare identifiers, helper-derived values,
+  conditional writes, invalidated values, and ambiguous field writes are
+  intentionally excluded.
 - `seams[].missing_discriminators` — per-rule hypothesis strings (e.g.,
   the equality-boundary case for predicate seams). Empty when no rule
   fires.

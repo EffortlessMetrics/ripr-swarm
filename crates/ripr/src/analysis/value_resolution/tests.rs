@@ -654,3 +654,41 @@ fn field_assignment_values_fail_closed_for_unresolved_or_ambiguous_expressions()
     }
     Ok(())
 }
+
+#[test]
+fn field_assignment_control_flow_and_mutable_alias_guards_are_conservative() -> Result<(), String> {
+    let body = r#"fn test() {
+        file.body_model_version = SUPPORTED_VERSION;
+        if runtime_flag() {
+            file.body_model_version = SUPPORTED_VERSION;
+        }
+        mutate(&mut file);
+        mutate(& mut file);
+        mutate(&mut filename);
+    }"#;
+    let first = body
+        .find("file.body_model_version")
+        .ok_or_else(|| "top-level field assignment fixture must exist".to_string())?;
+    let nested = body
+        .rfind("file.body_model_version")
+        .ok_or_else(|| "nested field assignment fixture must exist".to_string())?;
+    if !is_unconditional_test_statement(body, first) {
+        return Err("function-body field assignment must remain eligible".to_string());
+    }
+    if is_unconditional_test_statement(body, nested) {
+        return Err("control-flow-nested field assignment must fail closed".to_string());
+    }
+    let borrow_positions = mutable_borrow_positions(body, 10);
+    let borrows = borrow_positions.get("file").cloned().unwrap_or_default();
+    if borrows.len() != 2 {
+        return Err(format!(
+            "exact mutable-borrow scan must accept whitespace and reject prefix matches: {borrows:?}"
+        ));
+    }
+    if borrow_positions.get("filename").map(Vec::len) != Some(1) {
+        return Err(format!(
+            "similarly prefixed mutable borrow must retain distinct identity: {borrow_positions:?}"
+        ));
+    }
+    Ok(())
+}

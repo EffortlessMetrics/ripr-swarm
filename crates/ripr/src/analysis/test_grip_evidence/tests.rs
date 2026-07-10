@@ -10147,6 +10147,97 @@ mod tests {
 }
 
 #[test]
+fn given_control_flow_nested_field_assignment_then_boundary_value_is_not_credited()
+-> Result<(), String> {
+    let evidence = field_constant_evidence(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime_flag() -> bool { true }
+
+    #[test]
+    fn conditional_assignment() {
+        let mut file = File { body_model_version: 0, other_version: 0 };
+        if runtime_flag() {
+            file.body_model_version = SUPPORTED_VERSION;
+        }
+        assert!(lower(&file));
+    }
+}
+"#,
+    )?;
+    if evidence
+        .observed_values
+        .iter()
+        .any(|fact| fact.value == "SUPPORTED_VERSION")
+    {
+        return Err(format!(
+            "control-flow-nested field assignment must not be unconditional evidence: {:?}",
+            evidence.observed_values
+        ));
+    }
+    if !evidence
+        .activate
+        .summary
+        .contains("Field assignment value is unresolved")
+    {
+        return Err(format!(
+            "conditional direct assignment must name its limitation: {}",
+            evidence.activate.summary
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_mutable_borrow_after_field_assignment_then_stale_value_is_not_credited()
+-> Result<(), String> {
+    let evidence = field_constant_evidence(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mutate(file: &mut File) {
+        file.body_model_version = 0;
+    }
+
+    #[test]
+    fn assignment_then_mutation() {
+        let mut file = File { body_model_version: 0, other_version: 0 };
+        file.body_model_version = SUPPORTED_VERSION;
+        mutate(&mut file);
+        assert!(lower(&file));
+    }
+}
+"#,
+    )?;
+    if evidence
+        .observed_values
+        .iter()
+        .any(|fact| fact.value == "SUPPORTED_VERSION")
+    {
+        return Err(format!(
+            "field value must be invalidated by a later mutable borrow: {:?}",
+            evidence.observed_values
+        ));
+    }
+    if !evidence
+        .activate
+        .summary
+        .contains("Field assignment value is unresolved")
+    {
+        return Err(format!(
+            "mutable-alias invalidation must name its limitation: {}",
+            evidence.activate.summary
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn iterator_boundary_operand_route_only_matches_iterator_loop_bindings() {
     for source in [
         "for (idx, value) in values.iter().enumerate() {",
