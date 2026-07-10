@@ -4789,6 +4789,55 @@ fn named_limitation_custom_matcher_not_emitted_for_recognised_matcher() -> Resul
     Ok(())
 }
 
+/// `typescript_oracle_helper_gated` fires when an oracle-eligible related test
+/// wraps the changed owner call in an assertion-shaped helper, but the
+/// syntax-first extractor finds no direct supported assertion to credit.
+#[test]
+fn named_limitation_oracle_helper_gated_emitted_for_assertion_helper_wrapping_owner_call()
+-> Result<(), String> {
+    let owner = test_owner("computePrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import { computePrice } from "../src/pricing";
+test("price is checked through helper", () => {
+  assertPriceBoundary(computePrice(10, 3), 20);
+});
+"#,
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.ts"),
+        2,
+        "    if (base >= 0) {",
+        &[owner],
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_oracle_helper_gated",
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation_sample: typescript_oracle_helper_gated at tests/pricing.test.ts:3",
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation_why: typescript_oracle_helper_gated — the test calls assertion helper `assertPriceBoundary(...)` around owner `computePrice`",
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation_repair_route: typescript_oracle_helper_gated → analysis/typescript-oracle-helper-resolution",
+    );
+    assert_eq!(finding.static_limit_kind, None);
+    assert!(!matches!(finding.class, ExposureClass::Exposed));
+    assert_evidence_lacks(&finding, "repair_packet_ready: true");
+    Ok(())
+}
+
 /// Heuristic-only (name/proximity) related tests must NOT trigger oracle-based
 /// named limitations, because heuristic relations are not oracle-eligible.
 #[test]
@@ -5220,6 +5269,10 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         &finding,
         "typescript_limitation: typescript_dynamic_assertion_unresolved",
     );
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_table_case_unresolved",
+    );
     assert_evidence_contains(
         &finding,
         "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at tests/clamp.test.ts:3",
@@ -5230,6 +5283,66 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
     assert_evidence_contains(&finding, "typescript_oracle_confidence: medium");
     // repair_packet_ready stays false
     assert_evidence_contains(&finding, "repair_route:");
+    Ok(())
+}
+
+/// `typescript_table_case_unresolved` limitation emitted when an oracle-eligible
+/// `test.each` / `it.each` table case uses a row-derived dynamic matcher arg.
+#[test]
+fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let test = TypeScriptTest {
+        name: "clamps table %#".to_string(),
+        local_name: "clamps table %#".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        body_text: "test.each([[ -5, 0 ]])(\"clamps table %#\", (value, expected) => {\nclamp(value, 0, 10);\nexpect(clamp(value, 0, 10)).toBe(expected);\n});".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(value, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            oracle_confidence: OracleConfidence::Medium,
+        }],
+        mocks_in_file: Vec::new(),
+        imports_in_file: Vec::new(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_table_case_unresolved",
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation_sample: typescript_table_case_unresolved at tests/clamp.test.ts:3",
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation_repair_route: typescript_table_case_unresolved",
+    );
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    assert_evidence_lacks(&finding, "repair_packet_ready: true");
     Ok(())
 }
 

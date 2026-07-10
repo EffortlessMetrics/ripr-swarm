@@ -16,6 +16,7 @@ use ripr::output::receipt_lifecycle::{
 };
 use ripr::output::start_here_state::{
     START_HERE_ACTIONABLE_GAP, START_HERE_CLEAN, START_HERE_MISSING_ARTIFACTS,
+    START_HERE_PREVIEW_LIMITED,
 };
 
 mod cache;
@@ -1169,6 +1170,19 @@ struct DogfoodPythonRepairRoutingQualitySummary {
     top_3_cases_with_ranked_capture: usize,
     full_top_3_capture_cases: usize,
     unsupported_limitation_distribution: Vec<(String, usize)>,
+    gate_status: String,
+    gate_reason: String,
+}
+
+#[derive(Debug, Default)]
+struct DogfoodTypescriptFalseActionableAuditSummary {
+    cases: usize,
+    must_remain_non_actionable: usize,
+    repair_packet_ready_true: usize,
+    actionable_gap_state: usize,
+    complete_packet_category: usize,
+    preview_boundary_violations: usize,
+    false_actionable: usize,
     gate_status: String,
     gate_reason: String,
 }
@@ -5519,6 +5533,7 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
                     | "perl_lsp_facts_exporter"
+                    | "perl-real-repo-evals"
                     | "python"
                     | "python-eval-sweep"
                     | "python-judged-pr-panel"
@@ -7496,7 +7511,35 @@ fn routed_rust_workflow_contract_violations(
         ),
         (
             "hosted fallback conditional job",
-            "if: needs.route.outputs.router_target == 'github'",
+            "needs.route.outputs.router_target == 'github'",
+        ),
+        (
+            "hosted fallback docs-detection guard",
+            "needs.detect-docs-only.result == 'success'",
+        ),
+        (
+            "self-hosted scratch tempfail output",
+            "scratch_status: ${{ steps.scratch.outputs.status }}",
+        ),
+        (
+            "CX43 tempfail fallback predicate",
+            "needs.rust-cx43.outputs.scratch_status == 'tempfail'",
+        ),
+        (
+            "CPX42 tempfail fallback predicate",
+            "needs.rust-cpx42.outputs.scratch_status == 'tempfail'",
+        ),
+        (
+            "CX53 tempfail fallback predicate",
+            "needs.rust-cx53.outputs.scratch_status == 'tempfail'",
+        ),
+        (
+            "normalized tempfail fallback result",
+            "disk-guard tempfailed; GitHub-hosted fallback succeeded",
+        ),
+        (
+            "normalized docs detection failure",
+            "docs-surface detection result was $DOCS_DETECT_RESULT",
         ),
         (
             "CX43 scratch free-space floor",
@@ -8019,6 +8062,7 @@ fn check_fixture_contracts() -> Result<(), String> {
     validate_editor_adoption_assurance_fixture_corpus(&mut violations)?;
     validate_editor_actionable_gap_queue_fixture_corpus(&mut violations)?;
     validate_perl_lsp_facts_exporter_fixture_corpus(&mut violations)?;
+    validate_perl_real_repo_eval_fixture_corpus(&mut violations)?;
     validate_python_project_detection_fixture_corpus(&mut violations)?;
     validate_first_successful_pr_fixture_corpus(&mut violations)?;
     validate_finding_alignment_dogfood_fixture_corpus(&mut violations)?;
@@ -8255,9 +8299,13 @@ fn validate_perl_lsp_facts_exporter_fixture_case(
     case_id: &str,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    if json_string_field(case, "exporter").as_deref() != Some("perl-lsp") {
+    let exporter = json_string_field(case, "exporter");
+    if !matches!(
+        exporter.as_deref(),
+        Some("perl-ripr-facts" | "perllsp" | "perl-lsp")
+    ) {
         violations.push(format!(
-            "perl-lsp facts exporter case {case_id} exporter must be perl-lsp"
+            "perl-lsp facts exporter case {case_id} exporter must be perl-ripr-facts, perllsp, or perl-lsp"
         ));
     }
     if json_string_field(case, "packet_schema").as_deref() != Some("ripr-perl-facts-v1") {
@@ -8324,14 +8372,15 @@ fn validate_perl_lsp_facts_exporter_fixture_case(
             "perl-lsp facts exporter case {case_id} packet schema_version must be ripr-perl-facts-v1"
         ));
     }
-    if packet
-        .get("producer")
-        .and_then(|producer| json_string_field(producer, "name"))
-        .as_deref()
-        != Some("perl-lsp")
-    {
+    if !matches!(
+        packet
+            .get("producer")
+            .and_then(|producer| json_string_field(producer, "name"))
+            .as_deref(),
+        Some("perl-ripr-facts" | "perllsp" | "perl-lsp")
+    ) {
         violations.push(format!(
-            "perl-lsp facts exporter case {case_id} packet producer.name must be perl-lsp"
+            "perl-lsp facts exporter case {case_id} packet producer.name must be perl-ripr-facts, perllsp, or perl-lsp"
         ));
     }
     if packet.get("canonical_gap_id").is_some() || packet.get("gap_state").is_some() {
@@ -8358,6 +8407,299 @@ fn validate_perl_lsp_facts_exporter_fixture_case(
                 "perl-lsp facts exporter case {case_id} file path {file_path} must be repo-relative"
             ));
         }
+    }
+
+    Ok(())
+}
+
+const PERL_REAL_REPO_EVAL_REQUIRED_CASES: &[(&str, &str)] = &[
+    ("cpan_alpha_actionable_real_exporter_eval", "actionable"),
+    (
+        "cpan_alpha_already_observed_real_exporter_eval",
+        "already_observed",
+    ),
+    ("cpan_alpha_dynamic_dispatch_real_exporter_eval", "limited"),
+];
+
+fn validate_perl_real_repo_eval_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
+    let root = Path::new("fixtures/perl-real-repo-evals");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "Perl real-repo eval fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+
+    let spec = root.join("SPEC.md");
+    if spec.exists() {
+        let spec_text = read_text_lossy(&spec)?;
+        if !spec_text
+            .lines()
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0064"))
+        {
+            violations.push(format!(
+                "{} is missing `Spec: RIPR-SPEC-0064`",
+                normalize_path(&spec)
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !has_markdown_heading(&spec_text, heading) {
+                violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
+            }
+        }
+    }
+
+    validate_perl_real_repo_eval_fixture_corpus_at(
+        Path::new(PERL_REAL_REPO_EVAL_CORPUS),
+        violations,
+    )
+}
+
+fn validate_perl_real_repo_eval_fixture_corpus_at(
+    path: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    if !path.exists() {
+        violations.push(format!(
+            "Perl real-repo eval corpus is missing {}",
+            normalize_path(path)
+        ));
+        return Ok(());
+    }
+
+    let corpus = match read_json_value(path) {
+        Ok(value) => value,
+        Err(err) => {
+            violations.push(err);
+            return Ok(());
+        }
+    };
+    if json_string_field(&corpus, "kind").as_deref() != Some("perl_real_repo_eval_corpus") {
+        violations.push(format!(
+            "{} kind must be perl_real_repo_eval_corpus",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "schema_version").as_deref() != Some("0.1") {
+        violations.push(format!(
+            "{} schema_version must be 0.1",
+            normalize_path(path)
+        ));
+    }
+    if json_string_field(&corpus, "spec").as_deref() != Some("RIPR-SPEC-0064") {
+        violations.push(format!(
+            "{} spec must be RIPR-SPEC-0064",
+            normalize_path(path)
+        ));
+    }
+
+    let limits = corpus
+        .get("limits")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    for required in [
+        "producer_required_on_path",
+        "no_five_repo_metrics",
+        "no_public_repair_packet_authority",
+        "no_support_tier_promotion",
+    ] {
+        if !limits.contains(required) {
+            violations.push(format!(
+                "{} limits is missing {required}",
+                normalize_path(path)
+            ));
+        }
+    }
+
+    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
+        violations.push(format!("{} is missing cases array", normalize_path(path)));
+        return Ok(());
+    };
+    if cases.is_empty() {
+        violations.push(format!(
+            "{} cases array must not be empty",
+            normalize_path(path)
+        ));
+    }
+
+    let mut seen = BTreeMap::new();
+    for case in cases {
+        let case_id = json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string());
+        let outcome =
+            json_string_field(case, "expected_outcome").unwrap_or_else(|| "unknown".to_string());
+        if seen.insert(case_id.clone(), outcome.clone()).is_some() {
+            violations.push(format!("Perl real-repo eval case {case_id} is duplicated"));
+        }
+        validate_perl_real_repo_eval_fixture_case(case, &case_id, violations)?;
+    }
+
+    for (case_id, expected_outcome) in PERL_REAL_REPO_EVAL_REQUIRED_CASES {
+        match seen.get(*case_id) {
+            Some(actual) if actual == expected_outcome => {}
+            Some(actual) => violations.push(format!(
+                "Perl real-repo eval case {case_id} must have expected_outcome {expected_outcome}, got {actual}"
+            )),
+            None => violations.push(format!(
+                "Perl real-repo eval corpus is missing case {case_id}"
+            )),
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_perl_real_repo_eval_fixture_case(
+    case: &Value,
+    case_id: &str,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    for field in [
+        "repo_shape",
+        "source_kind",
+        "source_ref",
+        "command",
+        "producer",
+        "packet_schema",
+        "diff",
+        "oracle_shape",
+        "expected_outcome",
+        "expected_classification",
+        "changed_owner",
+        "missing_discriminator",
+        "harness_assertion",
+        "evidence_source",
+        "reason",
+    ] {
+        let value = json_string_field(case, field).unwrap_or_else(|| "unknown".to_string());
+        if value.trim().is_empty() || value == "unknown" {
+            violations.push(format!(
+                "Perl real-repo eval case {case_id} field {field} must be present"
+            ));
+        }
+    }
+
+    if !matches!(
+        json_string_field(case, "source_kind").as_deref(),
+        Some("local_repo_fixture" | "external_repo" | "scratch_repo")
+    ) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} source_kind must be local_repo_fixture, external_repo, or scratch_repo"
+        ));
+    }
+    if !matches!(
+        json_string_field(case, "producer").as_deref(),
+        Some("perl-ripr-facts" | "perllsp" | "perl-lsp")
+    ) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} producer must be perl-ripr-facts, perllsp, or perl-lsp"
+        ));
+    }
+    if json_string_field(case, "packet_schema").as_deref() != Some("ripr-perl-facts-v1") {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} packet_schema must be ripr-perl-facts-v1"
+        ));
+    }
+    if !matches!(
+        json_string_field(case, "expected_outcome").as_deref(),
+        Some("actionable" | "already_observed" | "limited")
+    ) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} expected_outcome must be actionable, already_observed, or limited"
+        ));
+    }
+    if !json_string_field(case, "changed_owner").is_some_and(|owner| owner.starts_with("perl:")) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} changed_owner must use perl: identity"
+        ));
+    }
+    if !json_string_field(case, "command").is_some_and(|command| {
+        command.contains("cargo test -p ripr --features lang-perl --test perl_two_binary_harness")
+    }) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} command must run the perl_two_binary_harness"
+        ));
+    }
+    if !json_string_field(case, "diff").is_some_and(|diff| {
+        diff.starts_with("fixtures/perl_cpan_alpha/input/")
+            && (diff.ends_with(".diff") || diff.ends_with("diff.patch"))
+    }) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} diff must point at a perl_cpan_alpha diff"
+        ));
+    }
+
+    match json_string_field(case, "expected_outcome").as_deref() {
+        Some("actionable")
+            if json_string_field(case, "missing_discriminator")
+                .is_some_and(|value| value.starts_with("not_applicable")) =>
+        {
+            violations.push(format!(
+                "Perl real-repo eval case {case_id} actionable outcome must name a missing discriminator"
+            ));
+        }
+        Some("already_observed")
+            if json_string_field(case, "expected_classification").as_deref() != Some("exposed") =>
+        {
+            violations.push(format!(
+                "Perl real-repo eval case {case_id} already_observed outcome must expect exposed"
+            ));
+        }
+        Some("limited")
+            if !json_string_field(case, "expected_classification")
+                .is_some_and(|classification| classification.contains("limitation")) =>
+        {
+            violations.push(format!(
+                "Perl real-repo eval case {case_id} limited outcome must name a limitation classification"
+            ));
+        }
+        _ => {}
+    }
+
+    for field in [
+        "repair_packet_expected",
+        "agent_packet_expected",
+        "receipt_expected",
+    ] {
+        match json_bool_field(case, field) {
+            Some(false) => {}
+            Some(true) => violations.push(format!(
+                "Perl real-repo eval case {case_id} {field} must stay false before public Perl projection"
+            )),
+            None => violations.push(format!(
+                "Perl real-repo eval case {case_id} field {field} must be present"
+            )),
+        }
+    }
+
+    let claim_boundary = case
+        .get("claim_boundary")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    for required in [
+        "No >=5 real Perl repo evidence",
+        "No public repair-packet authority",
+        "No support-tier promotion",
+    ] {
+        if !claim_boundary.iter().any(|claim| claim.contains(required)) {
+            violations.push(format!(
+                "Perl real-repo eval case {case_id} claim_boundary must include {required}"
+            ));
+        }
+    }
+    if !json_string_field(case, "evidence_source").is_some_and(|source| source.contains("#1491")) {
+        violations.push(format!(
+            "Perl real-repo eval case {case_id} evidence_source must cite PR #1491"
+        ));
     }
 
     Ok(())
@@ -8434,6 +8776,7 @@ const EVIDENCE_QUALITY_BENCHMARK_REQUIRED_CONFIG_POLICY_CASES: &[&str] = &[
 
 const FINDING_ALIGNMENT_DOGFOOD_CORPUS: &str = "fixtures/finding-alignment-dogfood/corpus.json";
 const REAL_REPAIR_ATTEMPTS_CORPUS: &str = "fixtures/real-repair-attempts/corpus.json";
+const PERL_REAL_REPO_EVAL_CORPUS: &str = "fixtures/perl-real-repo-evals/corpus.json";
 const PYTHON_REAL_REPO_EVAL_CORPUS: &str = "fixtures/python-real-repo-evals/corpus.json";
 const SURFACE_PROJECTION_ALIGNMENT_CORPUS: &str =
     "fixtures/surface-projection-alignment/corpus.json";
@@ -8664,6 +9007,7 @@ const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] = &[
         "javascript_already_observed_unchanged",
         "already_observed_unchanged",
     ),
+    ("typescript_complete_boundary_packet_closed", "resolved"),
 ];
 
 const TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES: &[(&str, &str)] = &[
@@ -8784,6 +9128,11 @@ const TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES: &[(&str, &str)] 
         "candidate_future_support",
     ),
     ("module_initializer_ambiguity", "candidate_future_support"),
+    (
+        "oracle_helper_gated_named_limitation",
+        "candidate_future_support",
+    ),
+    ("table_case_named_limitation", "candidate_future_support"),
     ("mocked_module_limit", "named_static_limitation"),
     ("decorator_indirection_limit", "named_static_limitation"),
     ("dynamic_dispatch_limit", "named_static_limitation"),
@@ -8906,6 +9255,12 @@ const FIRST_SUCCESSFUL_PR_REQUIRED_CASES: &[(&str, &str, &str, &str)] = &[
         "actionable",
         "top_gap",
         START_HERE_ACTIONABLE_GAP,
+    ),
+    (
+        "typescript-preview-gap",
+        "actionable",
+        "top_gap",
+        START_HERE_PREVIEW_LIMITED,
     ),
     ("empty-diff", "no_action", "empty_diff", START_HERE_CLEAN),
     (
@@ -10353,9 +10708,9 @@ fn validate_typescript_preview_repair_loop_fixture_corpus_at(
                 .to_string(),
         );
     }
-    if packet_ready_cases > 0 {
+    if packet_ready_cases == 0 {
         violations.push(
-            "TypeScript preview repair-loop corpus must not claim complete repair packets yet"
+            "TypeScript preview repair-loop corpus must include a checked packet-ready advisory receipt"
                 .to_string(),
         );
     }
@@ -51400,6 +51755,56 @@ fn dogfood_python_repair_routing_quality_summary(
     summary
 }
 
+fn dogfood_typescript_false_actionable_audit_summary(
+    cases: &[TypeScriptPreviewFalseActionableAuditCase],
+) -> DogfoodTypescriptFalseActionableAuditSummary {
+    let mut summary = DogfoodTypescriptFalseActionableAuditSummary {
+        cases: cases.len(),
+        ..DogfoodTypescriptFalseActionableAuditSummary::default()
+    };
+
+    for case in cases {
+        if case.must_remain_non_actionable {
+            summary.must_remain_non_actionable += 1;
+        }
+        if case.repair_packet_ready {
+            summary.repair_packet_ready_true += 1;
+        }
+        if case.gap_state == "actionable" {
+            summary.actionable_gap_state += 1;
+        }
+        if case.actionability_category == "complete_repair_packet" {
+            summary.complete_packet_category += 1;
+        }
+        if case.authority_boundary != "preview_advisory_only" {
+            summary.preview_boundary_violations += 1;
+        }
+        if case.must_remain_non_actionable
+            && (case.repair_packet_ready
+                || case.gap_state == "actionable"
+                || case.actionability_category == "complete_repair_packet")
+        {
+            summary.false_actionable += 1;
+        }
+    }
+
+    if summary.cases == 0
+        || summary.must_remain_non_actionable != summary.cases
+        || summary.false_actionable > 0
+        || summary.preview_boundary_violations > 0
+    {
+        summary.gate_status = "review".to_string();
+        summary.gate_reason =
+            "TypeScript preview false-actionable audit is incomplete or noisy".to_string();
+    } else {
+        summary.gate_status = "pass".to_string();
+        summary.gate_reason =
+            "All checked TypeScript-family preview audit rows remain non-actionable".to_string();
+    }
+
+    summary
+}
+
 fn dogfood_python_eval_top_1_actionable_usable(run: &DogfoodPythonRealRepoEvalRun) -> bool {
     run.repair_card_present
         && run.usability == "usable"
@@ -55981,6 +56386,26 @@ fn dogfood_typescript_preview_repair_loop_run(
     if !scenario.repair_packet_ready && scenario.outcome == "resolved" {
         errors.push("repair_packet_ready=false must not claim resolved".to_string());
     }
+    if scenario.repair_packet_ready {
+        if scenario.gap_state != "actionable"
+            || scenario.actionability_category != "complete_repair_packet"
+        {
+            errors.push(
+                "repair_packet_ready=true requires actionable / complete_repair_packet".to_string(),
+            );
+        }
+        if scenario.outcome != "resolved" {
+            errors.push("repair_packet_ready=true requires outcome resolved".to_string());
+        }
+        if scenario.verify_result != "pass" {
+            errors.push("repair_packet_ready=true requires verify_result=pass".to_string());
+        }
+        if scenario.must_not_emit_repair_packet {
+            errors.push(
+                "repair_packet_ready=true cannot set must_not_emit_repair_packet".to_string(),
+            );
+        }
+    }
     if !typescript_preview_repair_loop_allowed_outcomes().contains(&scenario.outcome.as_str()) {
         errors.push(format!(
             "outcome must be a TypeScript preview repair-loop outcome, got {}",
@@ -56029,6 +56454,9 @@ fn dogfood_typescript_preview_repair_loop_run(
             "already_observed_unchanged must preserve already_observed / strong_oracle_observed"
                 .to_string(),
         );
+    }
+    if scenario.outcome == "resolved" {
+        dogfood_typescript_preview_repair_loop_check_closed_receipt(scenario, &mut errors);
     }
 
     dogfood_typescript_preview_repair_loop_check_source_fixture(scenario, &mut errors);
@@ -56216,6 +56644,34 @@ fn dogfood_typescript_preview_repair_loop_check_source_fixture(
             );
         }
     }
+    if scenario.repair_packet_ready {
+        if finding.get("typescript_repair_packet").is_none() {
+            errors.push(
+                "repair_packet_ready=true requires source typescript_repair_packet".to_string(),
+            );
+        }
+        if finding
+            .get("typescript_preview_card")
+            .and_then(|card| json_bool_field(card, "repair_packet_ready"))
+            != Some(true)
+        {
+            errors.push(
+                "repair_packet_ready=true requires source preview card repair_packet_ready=true"
+                    .to_string(),
+            );
+        }
+        if finding
+            .get("typescript_repair_packet")
+            .and_then(|packet| json_string_field(packet, "verify_command"))
+            .as_deref()
+            != Some(scenario.verify_command.as_str())
+        {
+            errors.push(
+                "repair_packet_ready=true requires verify_command to match source packet"
+                    .to_string(),
+            );
+        }
+    }
     if scenario.must_not_invent_verify_command {
         if json_string_array_field(finding, "evidence")
             .iter()
@@ -56237,7 +56693,19 @@ fn dogfood_typescript_preview_repair_loop_check_source_fixture(
             ));
         }
     }
-    if json_string_field(actionability, "why_not_actionable").as_deref()
+    if scenario.repair_packet_ready {
+        let source_why = json_string_field(actionability, "why_not_actionable").unwrap_or_default();
+        if !source_why.contains("complete repair packet")
+            || !scenario
+                .why_not_actionable
+                .contains("complete repair packet")
+        {
+            errors.push(
+                "packet-ready why_not_actionable must document the complete repair packet boundary"
+                    .to_string(),
+            );
+        }
+    } else if json_string_field(actionability, "why_not_actionable").as_deref()
         != Some(scenario.why_not_actionable.as_str())
     {
         errors.push("why_not_actionable must match source preview actionability".to_string());
@@ -56262,6 +56730,80 @@ fn typescript_preview_repair_loop_concrete_operator_command(value: &str) -> bool
         )
 }
 
+fn dogfood_typescript_preview_repair_loop_check_closed_receipt(
+    scenario: &DogfoodTypescriptPreviewRepairLoopScenario,
+    errors: &mut Vec<String>,
+) {
+    if !scenario.receipt_command.starts_with("ripr outcome ") {
+        errors.push("resolved TypeScript preview receipt must use ripr outcome".to_string());
+    }
+    let Some(receipt_ref) = scenario.raw_evidence_refs.iter().find(|reference| {
+        reference.starts_with(
+            "fixtures/first_successful_pr/typescript-preview-gap/expected/outcome/closed.json",
+        )
+    }) else {
+        errors.push(
+            "resolved TypeScript preview receipt must cite the closed outcome fixture".to_string(),
+        );
+        return;
+    };
+    let receipt_path = receipt_ref.split('#').next().unwrap_or(receipt_ref);
+    let receipt = match read_json_value(Path::new(receipt_path)) {
+        Ok(value) => value,
+        Err(err) => {
+            errors.push(format!(
+                "resolved TypeScript preview receipt is unavailable at {receipt_path}: {err}"
+            ));
+            return;
+        }
+    };
+    if json_string_field(&receipt, "status").as_deref() != Some("advisory") {
+        errors.push("resolved TypeScript preview receipt must stay advisory".to_string());
+    }
+    let closed = receipt
+        .get("summary")
+        .and_then(|summary| summary.get("gap_movement"))
+        .and_then(|movement| movement.get("closed"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if closed == 0 {
+        errors.push("resolved TypeScript preview receipt must close at least one gap".to_string());
+    }
+    let Some(expected_gap) =
+        typescript_preview_repair_loop_expected_gap_id(&scenario.source_finding_id)
+    else {
+        errors.push(format!(
+            "resolved TypeScript preview receipt cannot derive a canonical gap id from {}",
+            scenario.source_finding_id
+        ));
+        return;
+    };
+    let moved_contains_gap = receipt
+        .get("moved")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|movement| {
+            json_string_field(movement, "seam_id").as_deref() == Some(expected_gap.as_str())
+                && json_string_field(movement, "gap_movement").as_deref() == Some("closed")
+        });
+    if !moved_contains_gap {
+        errors.push(format!(
+            "resolved TypeScript preview receipt must close {expected_gap}"
+        ));
+    }
+}
+
+fn typescript_preview_repair_loop_expected_gap_id(source_finding_id: &str) -> Option<String> {
+    let mut parts = source_finding_id.rsplit(':');
+    let digest = parts.next()?.trim();
+    let family = parts.next()?.trim();
+    if digest.is_empty() || family.is_empty() {
+        return None;
+    }
+    Some(format!("gap:typescript:{family}:{digest}"))
+}
+
 fn dogfood_typescript_preview_repair_loop_expect_string(
     errors: &mut Vec<String>,
     value: &Value,
@@ -56283,6 +56825,7 @@ fn typescript_preview_repair_loop_allowed_outcomes() -> &'static [&'static str] 
         "static_limitation_recorded",
         "already_observed_unchanged",
         "intentionally_skipped",
+        "resolved",
     ]
 }
 
@@ -57980,6 +58523,11 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
     let python_no_action_eval_runs = inputs.python_no_action_eval_runs;
     let python_repair_quality =
         dogfood_python_repair_routing_quality_summary(python_real_repo_eval_runs);
+    let typescript_false_actionable_audit = dogfood_typescript_false_actionable_audit_summary(
+        &typescript_preview_false_actionable_audit_cases_at(&repo_rooted_fixture_path(
+            TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS,
+        )),
+    );
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
     let bun_ub_cross_language_runs = inputs.bun_ub_cross_language_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
@@ -58028,6 +58576,7 @@ fn dogfood_report_status(inputs: &DogfoodReportInputs<'_>) -> &'static str {
             .iter()
             .any(|run| !run.errors.is_empty())
         || python_repair_quality.gate_status != "pass"
+        || typescript_false_actionable_audit.gate_status != "pass"
         || typescript_preview_repair_loop_runs
             .iter()
             .any(|run| !run.errors.is_empty())
@@ -58659,10 +59208,10 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
         .filter(|run| run.repair_packet_ready)
         .count();
     body.push_str("## TypeScript Preview Repair-Loop Receipts\n\n");
-    body.push_str("These receipts pin TypeScript-family preview repair-loop evidence against checked fixture outputs. They record useful advisory routes, weak-oracle downgrades, static limitations, and skipped incomplete-packet cases without claiming TypeScript parity or complete repair packets.\n\n");
+    body.push_str("These receipts pin TypeScript-family preview repair-loop evidence against checked fixture outputs. They record useful advisory routes, weak-oracle downgrades, static limitations, skipped incomplete-packet cases, and checked complete-packet receipts without claiming TypeScript parity or support-tier promotion.\n\n");
     body.push_str("- Default CI blocking: no\n");
     body.push_str("- Preview authority: advisory\n");
-    body.push_str("- Repair packets: none until `repair_packet_ready` is true\n");
+    body.push_str("- Repair packets: advisory only when `repair_packet_ready` is true\n");
     body.push_str("- Receipt input: `fixtures/typescript-preview-repair-loop/corpus.json`\n");
     body.push_str(&format!(
         "- Cases: {}; TypeScript: {}; JavaScript: {}; static limitations: {}; weak-oracle downgrades: {}; skipped: {}; packet-ready: {}\n\n",
@@ -58777,6 +59326,56 @@ fn dogfood_report_markdown(inputs: &DogfoodReportInputs<'_>) -> String {
             ));
         }
     }
+    let typescript_false_actionable_cases = typescript_preview_false_actionable_audit_cases_at(
+        &repo_rooted_fixture_path(TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS),
+    );
+    let typescript_false_actionable_audit =
+        dogfood_typescript_false_actionable_audit_summary(&typescript_false_actionable_cases);
+    body.push_str("## TypeScript False-Actionable Audit\n\n");
+    body.push_str("This advisory audit is computed from the checked TypeScript-family preview false-actionable corpus. It measures whether rows that must remain non-actionable have accidentally become repair-packet-ready, actionable, or complete-packet-shaped. It does not rerun analysis, execute TypeScript tests, edit source, generate tests, call providers, run mutation testing, change gates, contribute badge/baseline/RIPR Zero authority, or promote support tiers.\n\n");
+    body.push_str("- Default CI blocking: no\n");
+    body.push_str("- Preview authority: advisory\n");
+    body.push_str(&format!(
+        "- Audit input: `{}`\n",
+        TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS
+    ));
+    body.push_str(&format!(
+        "- Quality gate: `{}` - {}\n",
+        markdown_cell(&typescript_false_actionable_audit.gate_status),
+        markdown_cell(&typescript_false_actionable_audit.gate_reason)
+    ));
+    body.push_str(&format!(
+        "- False actionable: {} / {} checked rows\n",
+        typescript_false_actionable_audit.false_actionable,
+        typescript_false_actionable_audit.must_remain_non_actionable
+    ));
+    body.push_str(&format!(
+        "- Repair-packet-ready violations: {}; actionable gap-state violations: {}; complete-packet category violations: {}; preview-boundary violations: {}\n\n",
+        typescript_false_actionable_audit.repair_packet_ready_true,
+        typescript_false_actionable_audit.actionable_gap_state,
+        typescript_false_actionable_audit.complete_packet_category,
+        typescript_false_actionable_audit.preview_boundary_violations
+    ));
+    body.push_str(
+        "| Case | Language | Disposition | Gap state | Actionability | False actionable |\n",
+    );
+    body.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    for case in &typescript_false_actionable_cases {
+        let false_actionable = case.must_remain_non_actionable
+            && (case.repair_packet_ready
+                || case.gap_state == "actionable"
+                || case.actionability_category == "complete_repair_packet");
+        body.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | {} |\n",
+            markdown_cell(&case.name),
+            markdown_cell(&case.language),
+            markdown_cell(&case.disposition),
+            markdown_cell(&case.gap_state),
+            markdown_cell(&case.actionability_category),
+            if false_actionable { "yes" } else { "no" }
+        ));
+    }
+    body.push('\n');
     let bun_ub_dogfood_total = bun_ub_cross_language_runs.len();
     let bun_ub_dogfood_discriminated = bun_ub_cross_language_runs
         .iter()
@@ -60200,6 +60799,11 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         dogfood_python_static_limit_eval_distribution(python_static_limit_eval_runs);
     let python_no_action_distribution =
         dogfood_python_no_action_eval_distribution(python_no_action_eval_runs);
+    let typescript_false_actionable_cases = typescript_preview_false_actionable_audit_cases_at(
+        &repo_rooted_fixture_path(TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS),
+    );
+    let typescript_false_actionable_audit =
+        dogfood_typescript_false_actionable_audit_summary(&typescript_false_actionable_cases);
     let typescript_preview_repair_loop_runs = inputs.typescript_preview_repair_loop_runs;
     let bun_ub_cross_language_runs = inputs.bun_ub_cross_language_runs;
     let user_surface_projection_runs = inputs.user_surface_projection_runs;
@@ -60919,6 +61523,145 @@ fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
         body.push_str("        \"errors\": [");
         write_json_string_array(&mut body, &run.errors);
         body.push_str("]\n      }");
+    }
+    body.push_str("\n    ]\n  },\n  \"typescript_false_actionable_audit\": {\n");
+    body.push_str("    \"default_ci_blocking\": false,\n");
+    body.push_str("    \"preview_authority\": \"advisory\",\n");
+    body.push_str(&format!(
+        "    \"input\": \"{}\",\n",
+        json_escape(TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_CORPUS)
+    ));
+    body.push_str(&format!(
+        "    \"quality_gate\": {{ \"status\": \"{}\", \"reason\": \"{}\" }},\n",
+        json_escape(&typescript_false_actionable_audit.gate_status),
+        json_escape(&typescript_false_actionable_audit.gate_reason)
+    ));
+    body.push_str("    \"summary\": {\n");
+    body.push_str(&format!(
+        "      \"cases\": {},\n",
+        typescript_false_actionable_audit.cases
+    ));
+    body.push_str(&format!(
+        "      \"must_remain_non_actionable\": {},\n",
+        typescript_false_actionable_audit.must_remain_non_actionable
+    ));
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "false_actionable_rate",
+        typescript_false_actionable_audit.false_actionable,
+        typescript_false_actionable_audit.must_remain_non_actionable,
+        false,
+        "audit row that must remain non-actionable became packet-ready, actionable, or complete-packet-shaped",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "repair_packet_ready_violation_rate",
+        typescript_false_actionable_audit.repair_packet_ready_true,
+        typescript_false_actionable_audit.cases,
+        false,
+        "preview audit row reported repair_packet_ready=true",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "actionable_gap_state_violation_rate",
+        typescript_false_actionable_audit.actionable_gap_state,
+        typescript_false_actionable_audit.cases,
+        false,
+        "preview audit row reported gap_state=actionable",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "complete_packet_category_violation_rate",
+        typescript_false_actionable_audit.complete_packet_category,
+        typescript_false_actionable_audit.cases,
+        false,
+        "preview audit row reported actionability_category=complete_repair_packet",
+    );
+    dogfood_push_python_quality_ratio_json(
+        &mut body,
+        "preview_boundary_violation_rate",
+        typescript_false_actionable_audit.preview_boundary_violations,
+        typescript_false_actionable_audit.cases,
+        false,
+        "preview audit row did not keep authority_boundary=preview_advisory_only",
+    );
+    body.push_str(
+        "      \"limits\": [\"advisory TypeScript-family preview audit only\", \"does not rerun analysis or execute TypeScript tests\", \"does not create repair packets, gates, badge inputs, baselines, RIPR Zero input, generated tests, source edits, provider calls, mutation testing, or support-tier promotion\"]\n",
+    );
+    body.push_str("    },\n    \"cases\": [\n");
+    for (index, case) in typescript_false_actionable_cases.iter().enumerate() {
+        if index > 0 {
+            body.push_str(",\n");
+        }
+        let false_actionable = case.must_remain_non_actionable
+            && (case.repair_packet_ready
+                || case.gap_state == "actionable"
+                || case.actionability_category == "complete_repair_packet");
+        body.push_str("      {\n");
+        body.push_str(&format!(
+            "        \"name\": \"{}\",\n",
+            json_escape(&case.name)
+        ));
+        body.push_str(&format!(
+            "        \"source_fixture\": \"{}\",\n",
+            json_escape(&case.source_fixture)
+        ));
+        body.push_str(&format!(
+            "        \"source_finding_id\": \"{}\",\n",
+            json_escape(&case.source_finding_id)
+        ));
+        body.push_str(&format!(
+            "        \"language\": \"{}\",\n",
+            json_escape(&case.language)
+        ));
+        body.push_str(&format!(
+            "        \"risk_class\": \"{}\",\n",
+            json_escape(&case.risk_class)
+        ));
+        body.push_str(&format!(
+            "        \"disposition\": \"{}\",\n",
+            json_escape(&case.disposition)
+        ));
+        body.push_str(&format!(
+            "        \"gap_state\": \"{}\",\n",
+            json_escape(&case.gap_state)
+        ));
+        body.push_str(&format!(
+            "        \"actionability_category\": \"{}\",\n",
+            json_escape(&case.actionability_category)
+        ));
+        body.push_str(&format!(
+            "        \"static_limit_kind\": {},\n",
+            json_optional_string(case.static_limit_kind.as_deref())
+        ));
+        body.push_str(&format!(
+            "        \"repair_packet_ready\": {},\n",
+            case.repair_packet_ready
+        ));
+        body.push_str(&format!(
+            "        \"must_remain_non_actionable\": {},\n",
+            case.must_remain_non_actionable
+        ));
+        body.push_str(&format!(
+            "        \"authority_boundary\": \"{}\",\n",
+            json_escape(&case.authority_boundary)
+        ));
+        body.push_str(&format!(
+            "        \"false_actionable\": {},\n",
+            false_actionable
+        ));
+        body.push_str(&format!(
+            "        \"repair_route\": \"{}\",\n",
+            json_escape(&case.repair_route)
+        ));
+        body.push_str("        \"non_claims\": [");
+        write_json_string_array(&mut body, &case.non_claims);
+        body.push_str("],\n");
+        body.push_str(&format!(
+            "        \"reason\": \"{}\"\n",
+            json_escape(&case.reason)
+        ));
+        body.push_str("      }");
     }
     body.push_str("\n    ]\n  },\n  \"bun_ub_cross_language_witnesses\": {\n");
     body.push_str("    \"default_ci_blocking\": false,\n");
@@ -67150,6 +67893,12 @@ fn is_known_campaign_command(command: &str) -> bool {
     if let Some(rest) = trimmed.strip_prefix("cargo xtask ") {
         let command_name = rest.split_whitespace().next().unwrap_or_default();
         return known_xtask_command(command_name);
+    }
+    if let Some(rest) = trimmed.strip_prefix("cargo-allow ") {
+        let command_name = rest.split_whitespace().next().unwrap_or_default();
+        return matches!(command_name, "doctor" | "check" | "worklist")
+            && rest.contains("--profile spec-system")
+            && rest.contains("--config .allow/profiles/spec-system.toml");
     }
     trimmed.starts_with("cargo fmt")
         || trimmed.starts_with("cargo check")
@@ -81067,6 +81816,57 @@ TypeScript repair packet (advisory)
     }
 
     #[test]
+    fn perl_lsp_facts_exporter_fixture_accepts_supported_producers() -> Result<(), String> {
+        with_temp_cwd("perl-lsp-facts-exporter-producer-names", |root| {
+            for producer in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+                let packet = root.join(format!("{producer}.json"));
+                let packet_json = serde_json::to_string_pretty(&serde_json::json!({
+                    "schema_version": "ripr-perl-facts-v1",
+                    "producer": {"name": producer},
+                    "files": [{"path": "lib/App.pm"}]
+                }))
+                .map_err(|err| err.to_string())?;
+                write(&packet, &packet_json);
+
+                let corpus = root.join(format!("{producer}-corpus.json"));
+                let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
+                    "kind": "perl_lsp_facts_exporter_corpus",
+                    "schema_version": "0.1",
+                    "spec": "RIPR-SPEC-0064",
+                    "cases": [
+                        {
+                            "id": producer,
+                            "exporter": producer,
+                            "packet_schema": "ripr-perl-facts-v1",
+                            "authority_boundary": "preview_advisory_only",
+                            "must_not_claim": [
+                                "ripr_check_executes_perl_lsp",
+                                "canonical_gap_id_emitted_by_perl_lsp",
+                                "gap_state_emitted_by_perl_lsp",
+                                "repair_packet_ready",
+                                "default_gate_authority",
+                                "public_badge_contribution",
+                                "support_tier_promotion"
+                            ],
+                            "expected_packet": packet
+                        }
+                    ]
+                }))
+                .map_err(|err| err.to_string())?;
+                write(&corpus, &corpus_json);
+
+                let mut violations = Vec::new();
+                super::validate_perl_lsp_facts_exporter_fixture_corpus_at(
+                    &corpus,
+                    &mut violations,
+                )?;
+                assert_eq!(violations, Vec::<String>::new());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
     fn perl_lsp_facts_exporter_fixture_guard_reports_missing_root_files() -> Result<(), String> {
         with_temp_cwd("perl-lsp-facts-exporter-missing-root", |_| {
             let mut violations = Vec::new();
@@ -81203,7 +82003,7 @@ TypeScript repair packet (advisory)
         assert!(report.contains("kind must be perl_lsp_facts_exporter_corpus"));
         assert!(report.contains("schema_version must be 0.1"));
         assert!(report.contains("spec must be RIPR-SPEC-0064"));
-        assert!(report.contains("exporter must be perl-lsp"));
+        assert!(report.contains("exporter must be perl-ripr-facts, perllsp, or perl-lsp"));
         assert!(report.contains("packet_schema must be ripr-perl-facts-v1"));
         assert!(report.contains("authority_boundary must be preview_advisory_only"));
         assert!(report.contains("must_not_claim is missing ripr_check_executes_perl_lsp"));
@@ -81211,11 +82011,234 @@ TypeScript repair packet (advisory)
         assert!(report.contains("missing packet"));
         assert!(report.contains("perl-lsp facts exporter case bad-packet is duplicated"));
         assert!(report.contains("packet schema_version must be ripr-perl-facts-v1"));
-        assert!(report.contains("packet producer.name must be perl-lsp"));
+        assert!(
+            report.contains("packet producer.name must be perl-ripr-facts, perllsp, or perl-lsp")
+        );
         assert!(report.contains("packet must not emit RIPR-derived gap state"));
         assert!(report.contains("file fact is missing path"));
         assert!(report.contains("must be repo-relative"));
         assert!(report.contains("packet is missing files array"));
+        Ok(())
+    }
+
+    fn perl_real_repo_eval_corpus_path() -> Result<PathBuf, String> {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+        Ok(repo_root.join("fixtures/perl-real-repo-evals/corpus.json"))
+    }
+
+    #[test]
+    fn perl_real_repo_eval_fixture_corpus_is_valid() -> Result<(), String> {
+        with_repo_cwd(|| {
+            let corpus = perl_real_repo_eval_corpus_path()?;
+            let mut violations = Vec::new();
+            super::validate_perl_real_repo_eval_fixture_corpus_at(&corpus, &mut violations)?;
+            assert_eq!(violations, Vec::<String>::new());
+
+            let mut root_violations = Vec::new();
+            super::validate_perl_real_repo_eval_fixture_corpus(&mut root_violations)?;
+            assert_eq!(root_violations, Vec::<String>::new());
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn perl_real_repo_eval_fixture_guard_reports_missing_root_files() -> Result<(), String> {
+        with_temp_cwd("perl-real-repo-eval-missing-root", |_| {
+            let mut violations = Vec::new();
+            super::validate_perl_real_repo_eval_fixture_corpus(&mut violations)?;
+            let report = violations.join("\n");
+
+            assert!(report.contains("missing fixtures/perl-real-repo-evals/SPEC.md"));
+            assert!(report.contains("missing fixtures/perl-real-repo-evals/corpus.json"));
+            assert!(report.contains("Perl real-repo eval corpus is missing"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn perl_real_repo_eval_fixture_guard_reports_contract_drift() -> Result<(), String> {
+        let root = temp_dir("perl-real-repo-eval-invalid");
+        let missing = root.join("missing.json");
+        let mut violations = Vec::new();
+        super::validate_perl_real_repo_eval_fixture_corpus_at(&missing, &mut violations)?;
+
+        let no_cases = root.join("no-cases.json");
+        write(
+            &no_cases,
+            r#"{
+  "kind": "perl_real_repo_eval_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "limits": [
+    "producer_required_on_path",
+    "no_five_repo_metrics",
+    "no_public_repair_packet_authority",
+    "no_support_tier_promotion"
+  ]
+}
+"#,
+        );
+        super::validate_perl_real_repo_eval_fixture_corpus_at(&no_cases, &mut violations)?;
+
+        let empty_cases = root.join("empty-cases.json");
+        write(
+            &empty_cases,
+            r#"{
+  "kind": "perl_real_repo_eval_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "limits": [
+    "producer_required_on_path",
+    "no_five_repo_metrics",
+    "no_public_repair_packet_authority",
+    "no_support_tier_promotion"
+  ],
+  "cases": []
+}
+"#,
+        );
+        super::validate_perl_real_repo_eval_fixture_corpus_at(&empty_cases, &mut violations)?;
+
+        let bad_corpus = root.join("bad-corpus.json");
+        let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
+            "kind": "wrong",
+            "schema_version": "0.2",
+            "spec": "RIPR-SPEC-9999",
+            "limits": [],
+            "cases": [
+                {
+                    "id": "bad-case",
+                    "repo_shape": "",
+                    "source_kind": "wrong",
+                    "source_ref": "",
+                    "command": "cargo test -p ripr",
+                    "producer": "wrong",
+                    "packet_schema": "wrong",
+                    "diff": "fixtures/perl_cpan_alpha/input/not-a-diff.txt",
+                    "oracle_shape": "",
+                    "expected_outcome": "wrong",
+                    "expected_classification": "",
+                    "changed_owner": "python:wrong",
+                    "missing_discriminator": "not_applicable_wrong",
+                    "repair_packet_expected": true,
+                    "agent_packet_expected": true,
+                    "receipt_expected": true,
+                    "harness_assertion": "",
+                    "evidence_source": "none",
+                    "claim_boundary": [],
+                    "reason": ""
+                },
+                {
+                    "id": "cpan_alpha_actionable_real_exporter_eval",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/dynamic_dispatch.diff",
+                    "oracle_shape": "dynamic_method_dispatch",
+                    "expected_outcome": "limited",
+                    "expected_classification": "exposed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::dynamic_method",
+                    "missing_discriminator": "not_applicable_dynamic_dispatch",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "receipt_expected": false,
+                    "harness_assertion": "asserts the limited outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "required id with wrong outcome"
+                },
+                {
+                    "id": "observed-bad-classification",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/boundary_change.diff",
+                    "oracle_shape": "exact_test_more_is",
+                    "expected_outcome": "already_observed",
+                    "expected_classification": "weakly_exposed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::calculate_discount",
+                    "missing_discriminator": "not_applicable_already_observed",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "harness_assertion": "asserts the observed outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "already observed case with wrong classification"
+                },
+                {
+                    "id": "bad-case",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/diff.patch",
+                    "oracle_shape": "weak_test_more_ok",
+                    "expected_outcome": "actionable",
+                    "expected_classification": "reachable_unrevealed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::calculate_discount",
+                    "missing_discriminator": "not_applicable_wrong",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "receipt_expected": false,
+                    "harness_assertion": "asserts the actionable outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "duplicate case"
+                }
+            ]
+        }))
+        .map_err(|err| err.to_string())?;
+        write(&bad_corpus, &corpus_json);
+        super::validate_perl_real_repo_eval_fixture_corpus_at(&bad_corpus, &mut violations)?;
+
+        let report = violations.join("\n");
+        assert!(report.contains("Perl real-repo eval corpus is missing"));
+        assert!(report.contains("is missing cases array"));
+        assert!(report.contains("cases array must not be empty"));
+        assert!(report.contains("kind must be perl_real_repo_eval_corpus"));
+        assert!(report.contains("schema_version must be 0.1"));
+        assert!(report.contains("spec must be RIPR-SPEC-0064"));
+        assert!(report.contains("limits is missing no_public_repair_packet_authority"));
+        assert!(report.contains("source_kind must be local_repo_fixture"));
+        assert!(report.contains("producer must be perl-ripr-facts"));
+        assert!(report.contains("packet_schema must be ripr-perl-facts-v1"));
+        assert!(report.contains("expected_outcome must be actionable"));
+        assert!(report.contains("changed_owner must use perl: identity"));
+        assert!(report.contains("command must run the perl_two_binary_harness"));
+        assert!(report.contains("diff must point at a perl_cpan_alpha diff"));
+        assert!(report.contains("repair_packet_expected must stay false"));
+        assert!(report.contains("claim_boundary must include No public repair-packet authority"));
+        assert!(report.contains("evidence_source must cite PR #1491"));
+        assert!(report.contains("Perl real-repo eval case bad-case is duplicated"));
+        assert!(report.contains("actionable outcome must name a missing discriminator"));
+        assert!(report.contains("limited outcome must name a limitation classification"));
+        assert!(report.contains("already_observed outcome must expect exposed"));
+        assert!(report.contains("field receipt_expected must be present"));
+        assert!(report.contains(
+            "Perl real-repo eval case cpan_alpha_actionable_real_exporter_eval must have expected_outcome actionable, got limited"
+        ));
         Ok(())
     }
 
@@ -84827,6 +85850,8 @@ jobs:
           echo rust-medium rust-16gb rust-large
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
     env:
       CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -84840,6 +85865,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
     env:
       CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -84853,6 +85880,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
     env:
       CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -84865,12 +85894,23 @@ jobs:
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-github:
-    if: needs.route.outputs.router_target == 'github'
+    if: >-
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'github' ||
+      needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cx53.outputs.scratch_status == 'tempfail'
     steps:
       - name: Proof route dry-run (advisory)
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
   result:
     name: Ripr Rust Small Result
+    env:
+      DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
+      CX43_SCRATCH_STATUS: ${{ needs.rust-cx43.outputs.scratch_status }}
+    steps:
+      - run: echo "disk-guard tempfailed; GitHub-hosted fallback succeeded"
+      - run: echo "docs-surface detection result was $DOCS_DETECT_RESULT"
 "#;
         let settings = r#"
 repository:
@@ -84938,6 +85978,41 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             violations
                 .iter()
                 .any(|violation| { violation.contains("slurped idle runner query") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("hosted fallback docs-detection guard") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("self-hosted scratch tempfail output") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("CX43 tempfail fallback predicate") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("CPX42 tempfail fallback predicate") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("CX53 tempfail fallback predicate") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("normalized tempfail fallback result") })
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("normalized docs detection failure") })
         );
         assert!(
             violations
@@ -86590,6 +87665,21 @@ commands = [
         ));
         assert!(is_known_campaign_command("cargo xtask dogfood"));
         assert!(is_known_campaign_command("cargo test --workspace"));
+        assert!(is_known_campaign_command(
+            "cargo-allow doctor --profile spec-system --config .allow/profiles/spec-system.toml --format json"
+        ));
+        assert!(is_known_campaign_command(
+            "cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit --format json"
+        ));
+        assert!(is_known_campaign_command(
+            "cargo-allow worklist --profile spec-system --config .allow/profiles/spec-system.toml --format json"
+        ));
+        assert!(!is_known_campaign_command(
+            "cargo-allow audit --profile spec-system --config .allow/profiles/spec-system.toml"
+        ));
+        assert!(!is_known_campaign_command(
+            "cargo-allow check --profile spec-system"
+        ));
         assert!(!is_known_campaign_command("cargo xtask missing-command"));
         assert!(!is_known_campaign_command(""));
 
@@ -87672,6 +88762,8 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(markdown.contains("Top-3 actionable precision: 3 / 3 ranked findings"));
         assert!(markdown.contains("Full top-3 capture cases: 1 / 1 evals"));
         assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
+        assert!(markdown.contains("TypeScript False-Actionable Audit"));
+        assert!(markdown.contains("False actionable: 0 / 14 checked rows"));
         assert!(markdown.contains("Bun UB Cross-Language Witness Receipts"));
         assert!(markdown.contains("bun_blob_31648_known_good"));
         assert!(markdown.contains("User Surface Projection Alignment Receipts"));
@@ -87705,6 +88797,7 @@ fn exact_owner_call_has_external_expected_value() {
         assert!(json.contains("\"agent_packet_present\": false"));
         assert!(json.contains("\"gap_movement\": \"no_receipt\""));
         assert!(json.contains("\"typescript_preview_repair_loop\""));
+        assert!(json.contains("\"typescript_false_actionable_audit\""));
         assert!(json.contains("\"bun_ub_cross_language_witnesses\""));
         assert!(json.contains("\"repair_route_quality_metrics_improved\""));
         assert!(json.contains("\"tiny_controlled_pytest_boundary_receipt\""));
@@ -88035,6 +89128,53 @@ fn exact_owner_call_has_external_expected_value() {
                 .get("outcome")
                 .and_then(Value::as_str),
             Some("proof_improved")
+        );
+        let typescript_false_actionable_audit = value
+            .get("typescript_false_actionable_audit")
+            .ok_or_else(|| "typescript_false_actionable_audit section missing".to_string())?;
+        assert_eq!(
+            typescript_false_actionable_audit["quality_gate"]["status"],
+            serde_json::Value::from("pass")
+        );
+        let typescript_false_actionable_summary = typescript_false_actionable_audit
+            .get("summary")
+            .ok_or_else(|| "typescript_false_actionable_audit summary missing".to_string())?;
+        assert_eq!(
+            typescript_false_actionable_summary
+                .get("cases")
+                .and_then(Value::as_u64),
+            Some(14)
+        );
+        assert_eq!(
+            typescript_false_actionable_summary
+                .get("false_actionable_rate")
+                .and_then(|value| value.get("count"))
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            typescript_false_actionable_summary
+                .get("false_actionable_rate")
+                .and_then(|value| value.get("checked"))
+                .and_then(Value::as_u64),
+            Some(14)
+        );
+        assert_eq!(
+            typescript_false_actionable_summary
+                .get("repair_packet_ready_violation_rate")
+                .and_then(|value| value.get("count"))
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        let typescript_false_actionable_cases = typescript_false_actionable_audit
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "typescript_false_actionable_audit cases missing".to_string())?;
+        assert_eq!(typescript_false_actionable_cases.len(), 14);
+        assert!(
+            typescript_false_actionable_cases.iter().all(|case| {
+                case.get("false_actionable").and_then(Value::as_bool) == Some(false)
+            })
         );
         let bun_ub_cross_language = value
             .get("bun_ub_cross_language_witnesses")
@@ -92160,10 +93300,15 @@ fn exact_owner_call_has_external_expected_value() {
                 "TypeScript preview repair-loop receipts should include a weak-oracle downgrade"
             );
             assert!(
-                scenarios
-                    .iter()
-                    .all(|scenario| !scenario.repair_packet_ready),
-                "TypeScript preview repair-loop receipts should not claim complete repair packets yet"
+                scenarios.iter().any(|scenario| {
+                    scenario.name == "typescript_complete_boundary_packet_closed"
+                        && scenario.repair_packet_ready
+                        && scenario.gap_state == "actionable"
+                        && scenario.actionability_category == "complete_repair_packet"
+                        && scenario.outcome == "resolved"
+                        && scenario.verify_result == "pass"
+                }),
+                "TypeScript preview repair-loop receipts should include the closed complete advisory packet"
             );
             assert!(
                 scenarios.iter().any(|scenario| {
@@ -92673,6 +93818,29 @@ fn exact_owner_call_has_external_expected_value() {
                 );
             }
 
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows()
+    -> Result<(), String> {
+        with_repo_cwd(|| {
+            let cases = super::typescript_preview_false_actionable_audit_cases();
+            let summary = super::dogfood_typescript_false_actionable_audit_summary(&cases);
+            assert_eq!(summary.gate_status, "pass");
+            assert_eq!(summary.cases, 14);
+            assert_eq!(summary.must_remain_non_actionable, 14);
+            assert_eq!(summary.false_actionable, 0);
+            assert_eq!(summary.repair_packet_ready_true, 0);
+
+            let mut noisy_cases = cases;
+            noisy_cases[0].repair_packet_ready = true;
+            let noisy_summary =
+                super::dogfood_typescript_false_actionable_audit_summary(&noisy_cases);
+            assert_eq!(noisy_summary.gate_status, "review");
+            assert_eq!(noisy_summary.false_actionable, 1);
+            assert_eq!(noisy_summary.repair_packet_ready_true, 1);
             Ok(())
         })
     }
