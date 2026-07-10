@@ -3,6 +3,7 @@ use super::related_tests::*;
 use super::*;
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
+use crate::analysis::seams::SeamGripClass;
 
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
     let adapter = RaRustSyntaxAdapter;
@@ -10642,4 +10643,326 @@ fn oracle_kind_matches_seam_kind_side_effect_accepts_only_mock_expectation() {
             "{effect_seam:?} must reject ExactErrorVariant"
         );
     }
+}
+
+fn constructor_field_evidence(
+    production: &str,
+    test_path: &str,
+    test_source: &str,
+    field: &str,
+) -> Result<(TestGripEvidence, SeamGripClass), String> {
+    let production_path = PathBuf::from("crates/parser/src/hir/lower.rs");
+    let files = vec![
+        (production_path.clone(), production),
+        (PathBuf::from(test_path), test_source),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[production_path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::FieldConstruction
+                && record_field_name(seam.expression()) == Some(field.trim_end_matches(':'))
+        })
+        .ok_or_else(|| format!("field-construction seam for `{field}` must be inventoried"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    Ok((evidence, class))
+}
+
+const CONSTRUCTOR_FIELD_PRODUCTION: &str = r#"
+pub struct HirLet {
+    pub name: String,
+    pub storage: String,
+}
+
+fn lower_statement(name: String, storage: String) -> HirLet {
+    HirLet {
+        name: name,
+        storage: storage,
+    }
+}
+
+pub fn lower_body(name: String, storage: String) -> HirLet {
+    let _unrelated = name.len();
+    lower_statement(name, storage)
+}
+
+pub fn lower_ast(name: String, storage: String) -> HirLet {
+    let _also_unrelated = storage.is_empty();
+    lower_body(name, storage)
+}
+"#;
+
+#[test]
+fn same_crate_constructor_caller_with_exact_field_assertion_is_strongly_gripped()
+-> Result<(), String> {
+    let (evidence, class) = constructor_field_evidence(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/lower.rs",
+        r#"
+#[test]
+fn lower_body_preserves_storage() {
+    let statement = lower_ast("item".to_string(), "our".to_string());
+    assert_eq!(statement.storage, "our");
+}
+"#,
+        "storage",
+    )?;
+
+    assert_eq!(class, SeamGripClass::StronglyGripped);
+    assert_eq!(evidence.activate.state, StageState::Yes);
+    assert_eq!(evidence.discriminate.state, StageState::Yes);
+    assert!(
+        evidence.related_tests.iter().any(|test| {
+            test.test_name == "lower_body_preserves_storage"
+                && test.relation_reason == RelationReason::HelperOwnerCall
+        }),
+        "same-crate constructor caller must link the exact-field observer to the owner"
+    );
+    Ok(())
+}
+
+#[test]
+fn same_crate_constructor_caller_with_wrong_field_assertion_stays_weak() -> Result<(), String> {
+    let (evidence, class) = constructor_field_evidence(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/lower.rs",
+        r#"
+#[test]
+fn lower_body_only_checks_name() {
+    let statement = lower_ast("item".to_string(), "our".to_string());
+    assert_eq!(statement.name, "item", "storage should survive");
+}
+"#,
+        "storage",
+    )?;
+
+    assert_ne!(class, SeamGripClass::StronglyGripped);
+    assert_ne!(evidence.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn unrelated_constructor_with_same_field_name_does_not_link_to_owner() -> Result<(), String> {
+    let production = format!(
+        "{CONSTRUCTOR_FIELD_PRODUCTION}\n\
+         pub fn build_other(storage: String) -> HirLet {{\n\
+             HirLet {{ name: \"other\".to_string(), storage: storage }}\n\
+         }}\n"
+    );
+    let (evidence, class) = constructor_field_evidence(
+        &production,
+        "crates/parser/tests/lower.rs",
+        r#"
+#[test]
+fn other_constructor_preserves_storage() {
+    let statement = build_other("our".to_string());
+    assert_eq!(statement.storage, "our");
+}
+"#,
+        "storage",
+    )?;
+
+    assert_ne!(class, SeamGripClass::StronglyGripped);
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn ambiguous_same_crate_constructor_name_names_a_static_limitation() -> Result<(), String> {
+    let lower_path = PathBuf::from("crates/parser/src/hir/lower.rs");
+    let other_path = PathBuf::from("crates/parser/src/other/lower.rs");
+    let test_path = PathBuf::from("crates/parser/tests/lower.rs");
+    let files = vec![
+        (
+            lower_path.clone(),
+            r#"
+pub struct HirLet { pub storage: String }
+fn lower_statement(storage: String) -> HirLet {
+    HirLet { storage: storage }
+}
+pub fn lower_ast(storage: String) -> HirLet {
+    lower_statement(storage)
+}
+"#,
+        ),
+        (
+            other_path,
+            r#"
+pub struct OtherLet { pub storage: String }
+fn lower_expression(storage: String) -> OtherLet {
+    OtherLet { storage: storage }
+}
+pub fn lower_ast(storage: String) -> OtherLet {
+    lower_expression(storage)
+}
+"#,
+        ),
+        (
+            test_path,
+            r#"
+#[test]
+fn lower_ast_preserves_storage() {
+    let statement = lower_ast("our".to_string());
+    assert_eq!(statement.storage, "our");
+}
+"#,
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[lower_path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::FieldConstruction && seam.expression().starts_with("storage:")
+        })
+        .ok_or_else(|| "storage field seam must be inventoried".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+
+    assert_eq!(evidence.activate.state, StageState::Unknown);
+    assert!(
+        evidence
+            .activate
+            .summary
+            .contains("constructor_field_owner_ambiguous"),
+        "ambiguous same-name constructor callers must name the limitation: {}",
+        evidence.activate.summary
+    );
+    assert_ne!(
+        crate::analysis::seam_classification::classify_seam(seam, &evidence),
+        SeamGripClass::StronglyGripped
+    );
+    Ok(())
+}
+
+#[test]
+fn same_file_constructor_caller_with_exact_field_assertion_is_strongly_gripped()
+-> Result<(), String> {
+    let path = PathBuf::from("crates/parser/src/hir/lower.rs");
+    let source = r#"
+pub struct HirLet { pub storage: String }
+fn lower_statement(storage: String) -> HirLet {
+    HirLet { storage: storage }
+}
+pub fn lower_body(storage: String) -> HirLet {
+    lower_statement(storage)
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lower_body_preserves_storage() {
+        let statement = super::lower_body("our".to_string());
+        assert_eq!(statement.storage, "our");
+    }
+}
+"#;
+    let index = index_from_files(&[(path.clone(), source)])?;
+    let seams = inventory_seams_from_index(&[path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::FieldConstruction && seam.expression().starts_with("storage:")
+        })
+        .ok_or_else(|| "storage field seam must be inventoried".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+
+    assert_eq!(
+        crate::analysis::seam_classification::classify_seam(seam, &evidence),
+        SeamGripClass::StronglyGripped
+    );
+    assert_eq!(evidence.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn assertion_only_unrelated_test_does_not_activate_constructor_field_seam() -> Result<(), String> {
+    let (evidence, class) = constructor_field_evidence(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/unrelated.rs",
+        r#"
+#[test]
+fn unrelated_value_has_storage() {
+    let unrelated = HirLet { name: "item".to_string(), storage: "our".to_string() };
+    assert_eq!(unrelated.storage, "our");
+}
+"#,
+        "storage",
+    )?;
+
+    assert_eq!(evidence.activate.state, StageState::Unknown);
+    assert_ne!(class, SeamGripClass::StronglyGripped);
+    Ok(())
+}
+
+#[test]
+fn constructor_field_fixtures_pin_exact_field_credit_and_sibling_rejection() -> Result<(), String> {
+    let positive = constructor_field_evidence(
+        include_str!("../../../../../fixtures/rust_constructor_field_observation/input/src/lib.rs"),
+        "crates/parser/tests/lower.rs",
+        include_str!(
+            "../../../../../fixtures/rust_constructor_field_observation/input/tests/lower.rs"
+        ),
+        "storage",
+    )?;
+    let sibling = constructor_field_evidence(
+        include_str!(
+            "../../../../../fixtures/rust_constructor_field_wrong_field_observer/input/src/lib.rs"
+        ),
+        "crates/parser/tests/lower.rs",
+        include_str!(
+            "../../../../../fixtures/rust_constructor_field_wrong_field_observer/input/tests/lower.rs"
+        ),
+        "storage",
+    )?;
+
+    assert_eq!(positive.1, SeamGripClass::StronglyGripped);
+    assert_eq!(positive.0.discriminate.state, StageState::Yes);
+    assert_ne!(sibling.1, SeamGripClass::StronglyGripped);
+    assert_eq!(sibling.0.discriminate.state, StageState::Weak);
+    Ok(())
+}
+
+#[test]
+fn renamed_record_pattern_field_binding_is_credited_to_constructor_seam() -> Result<(), String> {
+    let (evidence, class) = constructor_field_evidence(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/lower.rs",
+        r#"
+#[test]
+fn lower_ast_preserves_storage() {
+    let HirLet { storage: actual_storage, .. } =
+        lower_ast("item".to_string(), "our".to_string());
+    assert_eq!(actual_storage, "our");
+}
+"#,
+        "storage",
+    )?;
+
+    assert_eq!(class, SeamGripClass::StronglyGripped);
+    assert_eq!(evidence.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn same_named_local_without_record_pattern_does_not_observe_constructor_field() -> Result<(), String>
+{
+    let (evidence, class) = constructor_field_evidence(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/lower.rs",
+        r#"
+#[test]
+fn lower_ast_has_unrelated_storage_local() {
+    let storage = "our";
+    let statement = lower_ast("item".to_string(), "local".to_string());
+    assert_eq!(storage, "our");
+    assert_eq!(statement.name, "item");
+}
+"#,
+        "storage",
+    )?;
+
+    assert_ne!(class, SeamGripClass::StronglyGripped);
+    assert_eq!(evidence.discriminate.state, StageState::Weak);
+    Ok(())
 }

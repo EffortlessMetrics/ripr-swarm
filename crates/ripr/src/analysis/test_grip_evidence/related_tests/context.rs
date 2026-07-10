@@ -27,6 +27,8 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) assertion_tokens: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) helper_owner_call_names: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) target_affinity_owner_call_names: BTreeSet<String>,
+    pub(in crate::analysis::test_grip_evidence) ambiguous_target_affinity_owner_call_names:
+        BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) code_lines: Vec<String>,
     pub(in crate::analysis::test_grip_evidence) value_facts:
         OnceCell<crate::analysis::value_resolution::ValueEnvFacts>,
@@ -51,6 +53,8 @@ impl<'a> CompactGripContext<'a> {
             production_helper_owner_calls_by_package(&helper_owner_calls_by_file);
         let target_affinity_production_owner_calls_by_package =
             target_affinity_production_owner_calls_by_package(index);
+        let ambiguous_target_affinity_owner_calls_by_package =
+            ambiguous_target_affinity_owner_calls_by_package(index);
         let target_affinity_production_owner_calls_by_module_path =
             target_affinity_production_owner_calls_by_module_path(index);
         let module_import_aliases_by_file = module_import_aliases_by_file(index);
@@ -112,6 +116,13 @@ impl<'a> CompactGripContext<'a> {
                         local_function_names,
                     ),
                 );
+                let ambiguous_target_affinity_owner_call_names =
+                    helper_owner_call_names_from_production_helpers(
+                        test,
+                        &call_names,
+                        &ambiguous_target_affinity_owner_calls_by_package,
+                        local_function_names,
+                    );
                 target_affinity_owner_call_names.extend(
                     helper_owner_call_names_from_same_file_unit_production_helpers(
                         test,
@@ -159,6 +170,7 @@ impl<'a> CompactGripContext<'a> {
                     assertion_tokens,
                     helper_owner_call_names,
                     target_affinity_owner_call_names,
+                    ambiguous_target_affinity_owner_call_names,
                     code_lines,
                     value_facts: OnceCell::new(),
                 }
@@ -497,6 +509,40 @@ pub(in crate::analysis::test_grip_evidence) fn production_helper_owner_calls_by_
 pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_calls_by_package(
     index: &RustIndex,
 ) -> HelperOwnerCallsByPackage {
+    target_affinity_production_owner_call_sets_by_package(index)
+        .into_iter()
+        .filter_map(|(package, helper_sets)| {
+            let helpers = helper_sets
+                .into_iter()
+                .filter_map(|(helper_name, owner_sets)| {
+                    common_helper_owner_calls(helper_name, owner_sets)
+                })
+                .collect::<HelperOwnerCallsByName>();
+            (!helpers.is_empty()).then_some((package, helpers))
+        })
+        .collect()
+}
+
+pub(in crate::analysis::test_grip_evidence) fn ambiguous_target_affinity_owner_calls_by_package(
+    index: &RustIndex,
+) -> HelperOwnerCallsByPackage {
+    target_affinity_production_owner_call_sets_by_package(index)
+        .into_iter()
+        .filter_map(|(package, helper_sets)| {
+            let helpers = helper_sets
+                .into_iter()
+                .filter_map(|(helper_name, owner_sets)| {
+                    ambiguous_helper_owner_calls(helper_name, owner_sets)
+                })
+                .collect::<HelperOwnerCallsByName>();
+            (!helpers.is_empty()).then_some((package, helpers))
+        })
+        .collect()
+}
+
+fn target_affinity_production_owner_call_sets_by_package(
+    index: &RustIndex,
+) -> BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> {
     let function_names_by_file = local_function_names_by_file(index);
     let imported_module_aliases_by_file = module_import_aliases_by_file(index);
     let direct_function_import_aliases_by_file = direct_function_import_aliases_by_file(index);
@@ -537,17 +583,6 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_
             .push(owner_calls);
     }
     by_package
-        .into_iter()
-        .filter_map(|(package, helper_sets)| {
-            let helpers = helper_sets
-                .into_iter()
-                .filter_map(|(helper_name, owner_sets)| {
-                    common_helper_owner_calls(helper_name, owner_sets)
-                })
-                .collect::<HelperOwnerCallsByName>();
-            (!helpers.is_empty()).then_some((package, helpers))
-        })
-        .collect()
 }
 
 pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_calls_by_module_path(
@@ -1687,6 +1722,27 @@ pub(in crate::analysis::test_grip_evidence) fn common_helper_owner_calls(
         }
     }
     Some((helper_name, common))
+}
+
+pub(in crate::analysis::test_grip_evidence) fn ambiguous_helper_owner_calls(
+    helper_name: String,
+    owner_sets: Vec<BTreeSet<String>>,
+) -> Option<(String, BTreeSet<String>)> {
+    if owner_sets.len() < 2 {
+        return None;
+    }
+    let common = owner_sets
+        .iter()
+        .skip(1)
+        .fold(owner_sets[0].clone(), |common, owner_set| {
+            common.intersection(owner_set).cloned().collect()
+        });
+    let ambiguous = owner_sets
+        .into_iter()
+        .flatten()
+        .filter(|owner| !common.contains(owner))
+        .collect::<BTreeSet<_>>();
+    (!ambiguous.is_empty()).then_some((helper_name, ambiguous))
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
