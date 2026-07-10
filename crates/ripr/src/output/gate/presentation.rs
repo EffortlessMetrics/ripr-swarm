@@ -457,15 +457,40 @@ mod tests {
     #[test]
     fn production_caller_target_markdown_preserves_explicit_location() -> Result<(), String> {
         let mut rendered = String::new();
-        let target = GateRepairTarget::ProductionCaller {
-            owner: "foo::dispatch".to_string(),
-            file: Some("crates/foo/src/lib.rs".to_string()),
-            line: Some(88),
-        };
+        let targets = [
+            GateRepairTarget::ProductionCaller {
+                owner: "foo::dispatch".to_string(),
+                file: Some("crates/foo/src/lib.rs".to_string()),
+                line: Some(88),
+            },
+            GateRepairTarget::ProductionCaller {
+                owner: "foo::dispatch_file_only".to_string(),
+                file: Some("crates/foo/src/lib.rs".to_string()),
+                line: None,
+            },
+            GateRepairTarget::ProductionCaller {
+                owner: "foo::dispatch_line_only".to_string(),
+                file: None,
+                line: Some(89),
+            },
+            GateRepairTarget::ProductionCaller {
+                owner: "foo::dispatch_without_location".to_string(),
+                file: None,
+                line: None,
+            },
+        ];
 
-        push_repair_target(&mut rendered, Some(&target));
+        for target in &targets {
+            push_repair_target(&mut rendered, Some(target));
+        }
+        push_repair_target(&mut rendered, None);
 
-        let expected = "  - Production caller: `foo::dispatch` at `crates/foo/src/lib.rs:88`\n";
+        let expected = concat!(
+            "  - Production caller: `foo::dispatch` at `crates/foo/src/lib.rs:88`\n",
+            "  - Production caller: `foo::dispatch_file_only` at `crates/foo/src/lib.rs`\n",
+            "  - Production caller: `foo::dispatch_line_only` at line `89`\n",
+            "  - Production caller: `foo::dispatch_without_location`\n",
+        );
         if rendered == expected {
             Ok(())
         } else {
