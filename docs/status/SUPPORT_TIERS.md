@@ -36,8 +36,8 @@ surface. The active RIPR execution manifest remains outside cargo-allow's
 native active-goal validator until upstream compatibility issue
 `EffortlessMetrics/cargo-allow#2119` is resolved. The table's fixed vocabulary
 and shape are a transitional projection tracked by
-`EffortlessMetrics/cargo-allow#2120`; they are not a second product-claim
-authority.
+`EffortlessMetrics/cargo-allow#2120`. This projection does not create a second
+product-claim authority.
 
 | Surface | Tier | Claim | Proof command | Notes |
 | --- | --- | --- | --- | --- |
