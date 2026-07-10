@@ -6,7 +6,7 @@ Reason:
 RIPR-SPEC-0067: refresh CLI-backed gate adoption receipts and pin a self-contained blocking repair route
 
 Command:
-`cargo test -p xtask dogfood_blocking_gate_report_is_self_contained -- --exact --test-threads=1`
+`cargo test -p xtask tests::dogfood_blocking_gate_report_is_self_contained -- --exact --test-threads=1`
 
 Updated:
 - `expected/gate-adoption/{visible-only,acknowledged,baseline-aware,baseline-new-gap,calibrated-gate}/gate-decision.json`
