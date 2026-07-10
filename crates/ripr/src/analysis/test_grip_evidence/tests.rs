@@ -10238,6 +10238,48 @@ mod tests {
 }
 
 #[test]
+fn given_mutable_borrow_before_field_assignment_then_later_value_is_credited() -> Result<(), String>
+{
+    let evidence = field_constant_evidence(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mutate(file: &mut File) {
+        file.body_model_version = 0;
+    }
+
+    #[test]
+    fn mutation_then_assignment() {
+        let mut file = File { body_model_version: 0, other_version: 0 };
+        mutate(&mut file);
+        file.body_model_version = SUPPORTED_VERSION;
+        assert!(lower(&file));
+    }
+}
+"#,
+    )?;
+    if !evidence
+        .observed_values
+        .iter()
+        .any(|fact| fact.value == "SUPPORTED_VERSION")
+    {
+        return Err(format!(
+            "a later exact assignment must supersede an earlier mutable borrow: {:?}",
+            evidence.observed_values
+        ));
+    }
+    if !evidence.missing_discriminators.is_empty() {
+        return Err(format!(
+            "the later exact assignment should satisfy the equality boundary: {:?}",
+            evidence.missing_discriminators
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn iterator_boundary_operand_route_only_matches_iterator_loop_bindings() {
     for source in [
         "for (idx, value) in values.iter().enumerate() {",

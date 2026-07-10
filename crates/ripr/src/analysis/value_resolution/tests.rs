@@ -692,3 +692,72 @@ fn field_assignment_control_flow_and_mutable_alias_guards_are_conservative() -> 
     }
     Ok(())
 }
+
+#[test]
+fn mutable_borrow_before_assignment_does_not_invalidate_the_later_value() -> Result<(), String> {
+    let mut facts = ValueEnvFacts::default();
+    facts.local_binding_positions.insert(
+        "file".to_string(),
+        vec![SourcePosition { line: 1, column: 0 }],
+    );
+    facts.field_assignment_invalidations.insert(
+        "file".to_string(),
+        vec![SourcePosition { line: 2, column: 0 }],
+    );
+    facts.field_assignments.insert(
+        ("file".to_string(), "body_model_version".to_string()),
+        vec![FieldAssignmentBinding {
+            position: SourcePosition { line: 3, column: 0 },
+            values: vec!["SUPPORTED_VERSION".to_string()],
+        }],
+    );
+    let seam = predicate_seam();
+    let env = ValueEnv::new(&seam, &facts);
+    let actual = env.resolve_at("file.body_model_version", 4);
+    let expected = vec![(
+        "SUPPORTED_VERSION".to_string(),
+        ValueContext::FunctionArgument,
+    )];
+    if actual != expected {
+        return Err(format!(
+            "a mutation before the selected assignment must not invalidate its value: {actual:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn invalidated_field_assignment_does_not_fall_back_to_a_stale_struct_value() -> Result<(), String> {
+    let mut facts = ValueEnvFacts::default();
+    facts.local_binding_positions.insert(
+        "file".to_string(),
+        vec![SourcePosition { line: 1, column: 0 }],
+    );
+    facts.struct_field_bindings.insert(
+        "file".to_string(),
+        StructFieldBinding {
+            position: SourcePosition { line: 1, column: 0 },
+            fields: BTreeMap::from([("body_model_version".to_string(), "0".to_string())]),
+        },
+    );
+    facts.field_assignments.insert(
+        ("file".to_string(), "body_model_version".to_string()),
+        vec![FieldAssignmentBinding {
+            position: SourcePosition { line: 2, column: 0 },
+            values: vec!["SUPPORTED_VERSION".to_string()],
+        }],
+    );
+    facts.field_assignment_invalidations.insert(
+        "file".to_string(),
+        vec![SourcePosition { line: 3, column: 0 }],
+    );
+    let seam = predicate_seam();
+    let env = ValueEnv::new(&seam, &facts);
+    let actual = env.resolve_at("file.body_model_version", 4);
+    if !actual.is_empty() {
+        return Err(format!(
+            "an invalidated field assignment must block stale struct fallback: {actual:?}"
+        ));
+    }
+    Ok(())
+}

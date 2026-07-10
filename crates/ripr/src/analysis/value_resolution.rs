@@ -220,13 +220,12 @@ impl<'a> ValueEnv<'a> {
         let Some((object, field)) = field_projection(arg) else {
             return false;
         };
-        let Some((local_binding, assignment)) =
-            self.field_assignment_candidate_at(object, field, call_position)
+        let Some(assignment) = self.field_assignment_candidate_at(object, field, call_position)
         else {
             return false;
         };
         assignment.values.is_empty()
-            || self.field_assignment_is_invalidated(object, local_binding, call_position)
+            || self.field_assignment_is_invalidated(object, assignment.position, call_position)
     }
 
     fn resolve_at_position(
@@ -271,8 +270,12 @@ impl<'a> ValueEnv<'a> {
             return vec![(expr.to_string(), ValueContext::FunctionArgument)];
         }
         if let Some((object, field)) = field_projection(expr)
-            && let Some(assignment) = self.field_assignment_at(object, field, call_position)
+            && let Some(assignment) =
+                self.field_assignment_candidate_at(object, field, call_position)
         {
+            if self.field_assignment_is_invalidated(object, assignment.position, call_position) {
+                return Vec::new();
+            }
             return assignment
                 .values
                 .iter()
@@ -330,26 +333,12 @@ impl<'a> ValueEnv<'a> {
         Vec::new()
     }
 
-    fn field_assignment_at(
-        &self,
-        object: &str,
-        field: &str,
-        call_position: SourcePosition,
-    ) -> Option<&FieldAssignmentBinding> {
-        let (local_binding, assignment) =
-            self.field_assignment_candidate_at(object, field, call_position)?;
-        if self.field_assignment_is_invalidated(object, local_binding, call_position) {
-            return None;
-        }
-        Some(assignment)
-    }
-
     fn field_assignment_candidate_at(
         &self,
         object: &str,
         field: &str,
         call_position: SourcePosition,
-    ) -> Option<(SourcePosition, &FieldAssignmentBinding)> {
+    ) -> Option<&FieldAssignmentBinding> {
         let local_binding = self
             .facts
             .local_binding_positions
@@ -368,13 +357,13 @@ impl<'a> ValueEnv<'a> {
                     && assignment.position.at_or_before(call_position)
             })
             .max_by_key(|assignment| (assignment.position.line, assignment.position.column))?;
-        Some((local_binding, assignment))
+        Some(assignment)
     }
 
     fn field_assignment_is_invalidated(
         &self,
         object: &str,
-        local_binding: SourcePosition,
+        assignment_position: SourcePosition,
         call_position: SourcePosition,
     ) -> bool {
         self.facts
@@ -382,7 +371,8 @@ impl<'a> ValueEnv<'a> {
             .get(object)
             .is_some_and(|positions| {
                 positions.iter().any(|position| {
-                    local_binding.at_or_before(*position) && position.at_or_before(call_position)
+                    assignment_position.at_or_before(*position)
+                        && position.at_or_before(call_position)
                 })
             })
     }
