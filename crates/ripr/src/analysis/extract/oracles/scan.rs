@@ -242,10 +242,15 @@ fn is_assertion_line(line: &str) -> bool {
 }
 
 fn is_line_scanned_oracle(line: &str) -> bool {
-    is_custom_assertion_helper(line)
-        || is_side_effect_observer_assertion(line)
-        || is_mock_expectation_line(line)
-        || contains_macro_invocation(line, "ensure!")
+    !is_function_signature(line)
+        && (is_custom_assertion_helper(line)
+            || is_side_effect_observer_assertion(line)
+            || is_mock_expectation_line(line)
+            || contains_macro_invocation(line, "ensure!"))
+}
+
+fn is_function_signature(line: &str) -> bool {
+    line.contains('(') && line.contains('{') && line.split_whitespace().any(|token| token == "fn")
 }
 
 #[cfg(test)]
@@ -272,6 +277,31 @@ mod spec_0106_scan_tests {
             || fact.strength != crate::domain::OracleStrength::Strong
         {
             return Err(format!("unexpected multiline ensure oracle: {facts:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn line_scanner_does_not_consume_expect_named_function_body() -> Result<(), String> {
+        let facts = extract_line_scanned_oracles(
+            r#"fn expect_metric_recorded() {
+    ensure!(
+        state == TerminalState::Pass,
+        "terminal state must match"
+    );
+}"#,
+            10,
+        );
+        let fact = facts
+            .first()
+            .ok_or_else(|| "expected nested ensure oracle".to_string())?;
+        if facts.len() != 1
+            || fact.line != 11
+            || fact.kind != OracleKind::ExactValue
+            || fact.strength != crate::domain::OracleStrength::Strong
+            || fact.text.contains("fn expect_metric_recorded")
+        {
+            return Err(format!("unexpected expect-named scan result: {facts:?}"));
         }
         Ok(())
     }
