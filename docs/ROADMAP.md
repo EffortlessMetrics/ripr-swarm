@@ -481,12 +481,13 @@ editor changes, no generated tests, no mutation execution, no default CI
 blocking, no automatic config or baseline mutation, and no preview evidence
 promotion.
 
-## Current Operating Sequence: 0.9.0 Release and Evidence-To-Repair Routing
+## Historical Operating Sequence: 0.9.0 Release and Evidence-To-Repair Routing
 
-This section is the bridge between the closed campaign history above and the
-next product era. It records where the repo is, the end state the next era
-targets, and the only sanctioned path between them, so a maintainer or agent
-can resume this work from repository artifacts instead of chat history.
+This section records the release-era bridge that preceded the current product
+campaign. Rust 0.10.0 is now current, so its post-0.9.0 activation condition is
+historical rather than execution authority. Current Rust work is selected by
+`.ripr/goals/active.toml` and
+[RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md).
 
 ### Where the repo is
 
