@@ -40,7 +40,7 @@ The agent loop is a simple three-step flow:
 
 ```text
 gap → fix → verify
-   ripr names a gap (changed behavior no test actually checks)
+   ripr names a gap (changed behavior lacks a focused assertion or discriminator)
    the agent adds one focused test
    ripr records whether the gap improved, closed, or still needs attention
 ```
@@ -108,6 +108,8 @@ draft-time question between them.
 
 ## Example output
 
+Illustrative bounded `ripr check --format human` output (paths shortened):
+
 ```text
 Start here:
   State: top_gap
@@ -120,6 +122,7 @@ Start here:
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence:
     - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 12 more evidence line(s) hidden
 
 Hidden:
