@@ -10710,16 +10710,24 @@ fn lower_body_preserves_storage() {
         "storage",
     )?;
 
-    assert_eq!(class, SeamGripClass::StronglyGripped);
-    assert_eq!(evidence.activate.state, StageState::Yes);
-    assert_eq!(evidence.discriminate.state, StageState::Yes);
-    assert!(
-        evidence.related_tests.iter().any(|test| {
-            test.test_name == "lower_body_preserves_storage"
-                && test.relation_reason == RelationReason::HelperOwnerCall
-        }),
-        "same-crate constructor caller must link the exact-field observer to the owner"
-    );
+    if class != SeamGripClass::StronglyGripped
+        || evidence.activate.state != StageState::Yes
+        || evidence.discriminate.state != StageState::Yes
+    {
+        return Err(format!(
+            "exact constructor field observer must be strongly gripped: class={class:?}, activate={:?}, discriminate={:?}",
+            evidence.activate.state, evidence.discriminate.state
+        ));
+    }
+    if !evidence.related_tests.iter().any(|test| {
+        test.test_name == "lower_body_preserves_storage"
+            && test.relation_reason == RelationReason::HelperOwnerCall
+    }) {
+        return Err(
+            "same-crate constructor caller must link the exact-field observer to the owner"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -10738,8 +10746,12 @@ fn lower_body_only_checks_name() {
         "storage",
     )?;
 
-    assert_ne!(class, SeamGripClass::StronglyGripped);
-    assert_ne!(evidence.discriminate.state, StageState::Yes);
+    if class == SeamGripClass::StronglyGripped || evidence.discriminate.state == StageState::Yes {
+        return Err(format!(
+            "a sibling-field assertion must stay weak: class={class:?}, discriminate={:?}",
+            evidence.discriminate.state
+        ));
+    }
     Ok(())
 }
 
@@ -10764,8 +10776,12 @@ fn other_constructor_preserves_storage() {
         "storage",
     )?;
 
-    assert_ne!(class, SeamGripClass::StronglyGripped);
-    assert_ne!(evidence.activate.state, StageState::Yes);
+    if class == SeamGripClass::StronglyGripped || evidence.activate.state == StageState::Yes {
+        return Err(format!(
+            "an unrelated constructor must not activate the selected owner: class={class:?}, activate={:?}",
+            evidence.activate.state
+        ));
+    }
     Ok(())
 }
 
@@ -10820,19 +10836,22 @@ fn lower_ast_preserves_storage() {
         .ok_or_else(|| "storage field seam must be inventoried".to_string())?;
     let evidence = evidence_for_seam(seam, &index);
 
-    assert_eq!(evidence.activate.state, StageState::Unknown);
-    assert!(
-        evidence
+    if evidence.activate.state != StageState::Unknown
+        || !evidence
             .activate
             .summary
-            .contains("constructor_field_owner_ambiguous"),
-        "ambiguous same-name constructor callers must name the limitation: {}",
-        evidence.activate.summary
-    );
-    assert_ne!(
-        crate::analysis::seam_classification::classify_seam(seam, &evidence),
-        SeamGripClass::StronglyGripped
-    );
+            .contains("constructor_field_owner_ambiguous")
+    {
+        return Err(format!(
+            "ambiguous same-name constructor callers must name an unknown limitation: state={:?}, summary={}",
+            evidence.activate.state, evidence.activate.summary
+        ));
+    }
+    if crate::analysis::seam_classification::classify_seam(seam, &evidence)
+        == SeamGripClass::StronglyGripped
+    {
+        return Err("ambiguous constructor ownership must not be strongly gripped".to_string());
+    }
     Ok(())
 }
 
@@ -10867,11 +10886,13 @@ mod tests {
         .ok_or_else(|| "storage field seam must be inventoried".to_string())?;
     let evidence = evidence_for_seam(seam, &index);
 
-    assert_eq!(
-        crate::analysis::seam_classification::classify_seam(seam, &evidence),
-        SeamGripClass::StronglyGripped
-    );
-    assert_eq!(evidence.discriminate.state, StageState::Yes);
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    if class != SeamGripClass::StronglyGripped || evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "same-file exact field observer must be strongly gripped: class={class:?}, discriminate={:?}",
+            evidence.discriminate.state
+        ));
+    }
     Ok(())
 }
 
@@ -10890,8 +10911,12 @@ fn unrelated_value_has_storage() {
         "storage",
     )?;
 
-    assert_eq!(evidence.activate.state, StageState::Unknown);
-    assert_ne!(class, SeamGripClass::StronglyGripped);
+    if evidence.activate.state != StageState::Unknown || class == SeamGripClass::StronglyGripped {
+        return Err(format!(
+            "assertion-only unrelated test must stay unlinked: class={class:?}, activate={:?}",
+            evidence.activate.state
+        ));
+    }
     Ok(())
 }
 
@@ -10916,10 +10941,16 @@ fn constructor_field_fixtures_pin_exact_field_credit_and_sibling_rejection() -> 
         "storage",
     )?;
 
-    assert_eq!(positive.1, SeamGripClass::StronglyGripped);
-    assert_eq!(positive.0.discriminate.state, StageState::Yes);
-    assert_ne!(sibling.1, SeamGripClass::StronglyGripped);
-    assert_eq!(sibling.0.discriminate.state, StageState::Weak);
+    if positive.1 != SeamGripClass::StronglyGripped
+        || positive.0.discriminate.state != StageState::Yes
+        || sibling.1 == SeamGripClass::StronglyGripped
+        || sibling.0.discriminate.state != StageState::Weak
+    {
+        return Err(format!(
+            "constructor fixtures must credit the exact field and reject the sibling: positive_class={:?}, positive_discriminate={:?}, sibling_class={:?}, sibling_discriminate={:?}",
+            positive.1, positive.0.discriminate.state, sibling.1, sibling.0.discriminate.state
+        ));
+    }
     Ok(())
 }
 
@@ -10939,8 +10970,12 @@ fn lower_ast_preserves_storage() {
         "storage",
     )?;
 
-    assert_eq!(class, SeamGripClass::StronglyGripped);
-    assert_eq!(evidence.discriminate.state, StageState::Yes);
+    if class != SeamGripClass::StronglyGripped || evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "renamed record binding must retain exact-field observation: class={class:?}, discriminate={:?}",
+            evidence.discriminate.state
+        ));
+    }
     Ok(())
 }
 
@@ -10962,7 +10997,11 @@ fn lower_ast_has_unrelated_storage_local() {
         "storage",
     )?;
 
-    assert_ne!(class, SeamGripClass::StronglyGripped);
-    assert_eq!(evidence.discriminate.state, StageState::Weak);
+    if class == SeamGripClass::StronglyGripped || evidence.discriminate.state != StageState::Weak {
+        return Err(format!(
+            "same-named local without record binding must stay weak: class={class:?}, discriminate={:?}",
+            evidence.discriminate.state
+        ));
+    }
     Ok(())
 }
