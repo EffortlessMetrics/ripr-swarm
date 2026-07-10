@@ -34,13 +34,15 @@
 
 **ripr shows your agents where tests are needed and which tests are too weak to trust — without running mutation testing.**
 
+## The first useful run
+
 The agent loop is a simple three-step flow:
 
 ```text
 gap → fix → verify
    ripr names a gap (changed behavior no test actually checks)
    the agent adds one focused test
-   ripr records a before/after receipt that the gap closed
+   ripr records whether the gap improved, closed, or still needs attention
 ```
 
 You work in five key terms. Everything else in this README and the reference
@@ -59,9 +61,13 @@ cargo install ripr
 ripr first-pr --root . --base origin/main --head HEAD
 ```
 
-That's the whole loop: ripr names the top repairable gap, you add one focused
-test outside ripr, and the receipt records whether the gap closed. `ripr.toml`
-is optional; the zero-config run is the intended first interface.
+For a direct PR-diff check, `ripr check --base origin/main --format human`
+starts with one bounded `Start here:` route: a named state, one selected gap or
+safe next action, the omitted-finding count, and explicit pointers to
+`--format human-full` for exhaustive evidence and `--format json` for machine
+data. That's the whole loop: ripr names the top repairable gap, you add one
+focused test outside ripr, and the receipt records the observed movement.
+`ripr.toml` is optional; the zero-config run is the intended first interface.
 
 ## How ripr works (reference)
 
@@ -103,25 +109,23 @@ draft-time question between them.
 ## Example output
 
 ```text
-WARNING src/pricing.rs:88
+Start here:
+  State: top_gap
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  File: src/lib.rs:2
+  Static exposure: weakly_exposed (warning, confidence 0.92)
+  Changed behavior: if amount >= discount_threshold {
+  Missing discriminator: Missing discriminator value: amount == discount_threshold
+  Related test: tests/pricing.rs:4 below_threshold_has_no_discount
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
+  Evidence:
+    - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+    - 12 more evidence line(s) hidden
 
-Static exposure: weakly_exposed
-Probe: predicate
-
-Changed behavior:
-  if amount >= discount_threshold {
-
-Evidence:
-  Reachability:     related tests found
-  Infection:        changed predicate can alter branch behavior
-  Propagation:      branch appears to influence returned total
-  Revealability:    tests assert returned values, but no equality-boundary case was found
-
-Gap:
-  No detected test input for amount == discount_threshold.
-
-Recommended next step:
-  Add below, equal, and above-threshold tests with exact assertions.
+Hidden:
+  0 lower-priority finding(s) omitted from default human output.
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
 ```
 
 The wording is intentionally conservative: static analysis identifies evidence
