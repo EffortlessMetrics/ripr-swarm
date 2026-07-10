@@ -609,3 +609,48 @@ fn allowed_builder_method_names_includes_required_discriminator_tokens() {
     assert!(allowed.contains("amount"));
     assert!(allowed.contains("discount_threshold"));
 }
+
+#[test]
+fn field_assignment_named_constant_values_are_exact_and_bounded() -> Result<(), String> {
+    let constants = BTreeMap::from([("SUPPORTED_VERSION".to_string(), "1".to_string())]);
+    for (expression, expected) in [
+        ("SUPPORTED_VERSION", vec!["SUPPORTED_VERSION".to_string()]),
+        ("SUPPORTED_VERSION - 1", vec!["0".to_string()]),
+        ("SUPPORTED_VERSION + 1", vec!["2".to_string()]),
+    ] {
+        let actual = resolve_field_assignment_values(expression, &constants);
+        if actual != expected {
+            return Err(format!(
+                "unexpected field-assignment resolution for {expression}: {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn field_assignment_values_fail_closed_for_unresolved_or_ambiguous_expressions()
+-> Result<(), String> {
+    let constants = BTreeMap::from([
+        ("SUPPORTED_VERSION".to_string(), "1".to_string()),
+        ("SUPPORTED_VERSION_COPY".to_string(), "1".to_string()),
+    ]);
+    if resolve_field_assignment_values("SUPPORTED_VERSION_COPY", &constants)
+        != vec!["SUPPORTED_VERSION_COPY".to_string()]
+    {
+        return Err("similarly named constants must preserve their exact identity".to_string());
+    }
+    for expression in [
+        "UNDECLARED_VERSION",
+        "supported_version()",
+        "SUPPORTED_VERSION + offset",
+        "SUPPORTED_VERSION * 2",
+    ] {
+        if !resolve_field_assignment_values(expression, &constants).is_empty() {
+            return Err(format!(
+                "unsupported field-assignment expression must stay unresolved: {expression}"
+            ));
+        }
+    }
+    Ok(())
+}
