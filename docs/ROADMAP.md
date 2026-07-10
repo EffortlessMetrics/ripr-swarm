@@ -497,9 +497,10 @@ historical rather than execution authority. Current Rust work is selected by
   RIPR-SPEC-0073 pin repo badge, PR gate, PR review cards, LSP/agent
   feedback, downstream review consumers, TypeScript/Bun evidence, large-repo
   diff-first operation, and receipts/outcomes/route quality.
-- [RIPR-PLAN-0061](../plans/use-case-specs/implementation-plan.md) sequences
-  the implementation work items for that spine. Active goals route through
-  that plan; this roadmap section does not create ready work items.
+- [RIPR-PLAN-0061](../plans/use-case-specs/implementation-plan.md) was the
+  release-era implementation sequence for that spine. It is historical;
+  [RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) and the active
+  goal select current Rust work.
 - The post-freeze merge wave has been drained: the valid PRs deferred at
   freeze time were merged or closed with exact supersession citations.
 - The [0.9.0 swarm freeze note](handoffs/2026-06-05-0.9.0-swarm-freeze.md)
@@ -560,10 +561,10 @@ not fail.
 | R4 | Back-sync source `main` into swarm `main` with a merge commit. | Version and changelog parity restored (swarm `crates/ripr/Cargo.toml` still carries `0.7.0`; the `0.8.0` bump was source-side only); ahead/behind accounting works for future releases. This step is mandatory, not optional cleanup. |
 | R5 | Post-release cleanup sweep. | Stale worktrees, branches, stashes, `target/ripr` cache growth, generated reports, temp files, orphaned local processes, and rescue leftovers are removed; trunk is ready for implementation work. |
 
-### Phase I: implement from RIPR-PLAN-0061
+### Historical Phase I: implement from RIPR-PLAN-0061
 
-After R5, implementation resumes only through the active goal manifest
-routed at [RIPR-PLAN-0061](../plans/use-case-specs/implementation-plan.md),
+At release-planning time, implementation was to resume only through the active
+goal manifest routed at [RIPR-PLAN-0061](../plans/use-case-specs/implementation-plan.md),
 in the plan's own sequence: review file-and-line navigation, badge
 projection of canonical actionability and runtime status, advisory PR gate
 evidence delta, the first useful LSP action, downstream consumer export,
