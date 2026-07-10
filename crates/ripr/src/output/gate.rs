@@ -449,8 +449,9 @@ fn gate_decision(
         calibration_for_candidate(candidate, recommendation_calibration);
     let mutation_calibration = calibration_for_candidate(candidate, mutation_calibration);
     let eligible = candidate_is_policy_eligible(candidate);
-    let baseline_identity = baseline_identity(candidate);
-    let is_baseline_new = !baseline_identity_candidates(candidate)
+    let identity_candidates = baseline_identity_candidates(candidate);
+    let baseline_identity = identity_candidates.first().cloned();
+    let is_baseline_new = !identity_candidates
         .iter()
         .any(|identity| baseline.identities.contains(identity));
     let acknowledgement_label = acknowledgement_label(policy, labels);

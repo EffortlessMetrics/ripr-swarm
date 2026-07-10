@@ -1154,11 +1154,10 @@ fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value: Option<&Va
             .and_then(|guidance| string_field(guidance, "command"))
             .unwrap_or("ripr agent brief --root . --seam-id <id> --json");
         lines.push(format!("- `{seam_id}` @ `{source_location}`: {reason}"));
-        if let Some(canonical_gap_id) =
-            string_field(item, "canonical_gap_id").filter(|value| !value.trim().is_empty())
-        {
-            lines.push(format!("  - canonical_gap_id: `{canonical_gap_id}`"));
-        }
+        let canonical_gap_id = string_field(item, "canonical_gap_id")
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("null");
+        lines.push(format!("  - canonical_gap_id: `{canonical_gap_id}`"));
         lines.push(format!("  - state: `{state}`"));
         if let Some(route) = repair_route_kind(item) {
             lines.push(format!("  - repair_route: `{route}`"));
@@ -3069,6 +3068,11 @@ mod tests {
         assert!(
             card.get("canonical_gap_id").is_some_and(Value::is_null),
             "card must name missing domain identity as null: {card:?}"
+        );
+        let markdown = render_markdown(&working_set, &seams);
+        assert!(
+            markdown.contains("canonical_gap_id: `null`"),
+            "Markdown must name the missing domain identity explicitly: {markdown}"
         );
         Ok(())
     }
