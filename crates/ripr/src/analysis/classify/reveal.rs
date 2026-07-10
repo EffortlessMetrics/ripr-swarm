@@ -195,7 +195,8 @@ fn analyze_related_assertions(
     // that pins a different variant of the same error type cannot spuriously
     // match this probe. RIPR-SPEC-0106 (Part B).
     let error_path_variant = if matches!(probe.family, ProbeFamily::ErrorPath) {
-        error_path_variant_token(analysis_expression)
+        error_path_variant_token(&probe.expression)
+            .or_else(|| error_path_variant_token(analysis_expression))
     } else {
         None
     };
@@ -1744,6 +1745,36 @@ mod tests {
         assert!(
             !discriminate.summary.contains("observation_unverified"),
             "variant-confirmed oracle must NOT emit observation_unverified: got `{}`",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn error_path_parser_context_cannot_replace_emitted_probe_variant() {
+        let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
+        let test = test_with_assertions(
+            "too_long_is_exact",
+            vec![oracle(
+                "assert_eq!(err, ParseError::TooLong(12));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+
+        let (_observe, discriminate, _related) = reveal_evidence_with_expression(
+            &probe,
+            "Err(ParseError::SiblingVariant)",
+            &[(&test, RelationReason::DirectOwnerCall)],
+        );
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the emitted exact variant remains authoritative when parser context resolves a sibling"
+        );
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "variant fallback must preserve exact-error confirmation: got `{}`",
             discriminate.summary
         );
     }
