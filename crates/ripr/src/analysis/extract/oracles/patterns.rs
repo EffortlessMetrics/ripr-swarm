@@ -223,6 +223,30 @@ pub(super) fn is_exact_value_assertion(line: &str) -> bool {
         || line.contains("matches!")
 }
 
+pub(super) fn contains_exact_comparison(condition: &str) -> bool {
+    let mut chars = condition.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '=' | '!' if matches!(chars.peek(), Some('=')) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 pub(super) fn is_mock_expectation_line(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     let has_expectation_call = lower.contains("expect_") && lower.contains('(');
