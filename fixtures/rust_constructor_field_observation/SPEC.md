@@ -5,8 +5,8 @@ Spec: RIPR-SPEC-0005
 ## Given
 
 A same-crate test calls `lower_ast`, which delegates through `lower_body` to
-the private `lower_statement` constructor owner. The test destructures
-`HirLet { storage, .. }` and asserts that exact changed field binding.
+the private `lower_statement` constructor owner. The test asserts the exact
+changed field through `statement.storage`.
 
 ## When
 

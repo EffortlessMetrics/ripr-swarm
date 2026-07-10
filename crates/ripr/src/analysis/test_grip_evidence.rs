@@ -556,9 +556,11 @@ fn has_ambiguous_constructor_field_owner(
         && indexed
             .ambiguous_target_affinity_owner_call_names
             .contains(owner_name)
-        && indexed.test.assertions.iter().any(|oracle| {
-            field_construction_oracle_matches_seam_field_in_test(seam, oracle, &indexed.test.body)
-        })
+        && indexed
+            .test
+            .assertions
+            .iter()
+            .any(|oracle| field_construction_oracle_matches_seam_field(seam, &oracle.text))
 }
 
 fn observed_argument_selection(
@@ -1326,7 +1328,7 @@ fn discriminate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvid
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
-            if oracle_discriminates_seam_in_test(seam, oracle, test)
+            if oracle_discriminates_seam(seam, oracle)
                 && oracle.strength.rank() > best_matching.rank()
             {
                 best_matching = oracle.strength.clone();
@@ -1392,41 +1394,6 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     error_variant_oracle_matches_seam_variant(seam, &oracle.text)
 }
 
-fn oracle_discriminates_seam_in_test(
-    seam: &RepoSeam,
-    oracle: &super::facts::OracleFact,
-    test: &TestSummary,
-) -> bool {
-    if oracle_discriminates_seam(seam, oracle) {
-        return true;
-    }
-    field_construction_oracle_matches_seam_field_in_test(seam, oracle, &test.body)
-}
-
-fn field_construction_oracle_matches_seam_field_in_test(
-    seam: &RepoSeam,
-    oracle: &super::facts::OracleFact,
-    test_body: &str,
-) -> bool {
-    if seam.kind() != SeamKind::FieldConstruction || !oracle_kind_matches_seam(seam, &oracle.kind) {
-        return false;
-    }
-    if field_construction_oracle_matches_seam_field(seam, &oracle.text) {
-        return true;
-    }
-    use crate::analysis::seams::RequiredDiscriminator;
-    let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
-        return false;
-    };
-    let Some(field_name) = record_field_name(field) else {
-        return false;
-    };
-    let oracle_tokens = extract_identifier_tokens(&strip_comments_and_strings(&oracle.text));
-    record_pattern_bindings_for_field(test_body, field_name)
-        .iter()
-        .any(|binding| oracle_tokens.contains(binding))
-}
-
 fn field_construction_oracle_matches_seam_field(seam: &RepoSeam, oracle_text: &str) -> bool {
     use crate::analysis::seams::RequiredDiscriminator;
 
@@ -1475,53 +1442,6 @@ fn code_contains_record_field(code: &str, field: &str) -> bool {
         let after = code[start + field.len()..].trim_start();
         after.starts_with(':')
     })
-}
-
-fn record_pattern_bindings_for_field(test_body: &str, field: &str) -> BTreeSet<String> {
-    let code = test_body
-        .lines()
-        .map(strip_comments_and_strings)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut bindings = BTreeSet::new();
-    for (start, _) in code.match_indices(field) {
-        let before = code[..start].chars().next_back();
-        let after_index = start + field.len();
-        let after_boundary = code[after_index..].chars().next();
-        if before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-            || after_boundary.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        {
-            continue;
-        }
-        let Some(open) = code[..start].rfind('{') else {
-            continue;
-        };
-        let statement_start = code[..open].rfind(';').map_or(0, |index| index + 1);
-        if !code[statement_start..open].contains("let ") {
-            continue;
-        }
-        let Some(close_offset) = code[after_index..].find('}') else {
-            continue;
-        };
-        let close = after_index + close_offset;
-        if !code[close + 1..].trim_start().starts_with('=') {
-            continue;
-        }
-        let after_field = code[after_index..].trim_start();
-        if let Some(binding_text) = after_field.strip_prefix(':') {
-            let binding = binding_text
-                .trim_start()
-                .chars()
-                .take_while(|ch| *ch == '_' || ch.is_ascii_alphanumeric())
-                .collect::<String>();
-            if !binding.is_empty() {
-                bindings.insert(binding);
-            }
-        } else if after_field.starts_with(',') || after_field.starts_with('}') {
-            bindings.insert(field.to_string());
-        }
-    }
-    bindings
 }
 
 /// Returns true when the oracle text structurally pins the same error variant
@@ -1921,7 +1841,7 @@ fn best_oracle(test: &TestSummary, seam: &RepoSeam) -> (OracleKind, OracleStreng
         {
             best_kind = oracle.kind.clone();
         }
-        if oracle_discriminates_seam_in_test(seam, oracle, test)
+        if oracle_discriminates_seam(seam, oracle)
             && oracle.strength.rank() > best_matching_strength.rank()
         {
             best_matching_strength = oracle.strength.clone();

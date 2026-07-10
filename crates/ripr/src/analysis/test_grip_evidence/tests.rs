@@ -11385,7 +11385,8 @@ fn constructor_field_fixtures_pin_exact_field_credit_and_sibling_rejection() -> 
 }
 
 #[test]
-fn renamed_record_pattern_field_binding_is_credited_to_constructor_seam() -> Result<(), String> {
+fn renamed_record_pattern_field_binding_stays_weak_without_owner_value_flow() -> Result<(), String>
+{
     let (evidence, class) = constructor_field_evidence(
         CONSTRUCTOR_FIELD_PRODUCTION,
         "crates/parser/tests/lower.rs",
@@ -11400,9 +11401,37 @@ fn lower_ast_preserves_storage() {
         "storage",
     )?;
 
-    if class != SeamGripClass::StronglyGripped || evidence.discriminate.state != StageState::Yes {
+    if class == SeamGripClass::StronglyGripped || evidence.discriminate.state != StageState::Weak {
         return Err(format!(
-            "renamed record binding must retain exact-field observation: class={class:?}, discriminate={:?}",
+            "renamed record binding must stay weak without owner value flow: class={class:?}, discriminate={:?}",
+            evidence.discriminate.state
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_record_pattern_binding_does_not_observe_constructor_field() -> Result<(), String> {
+    let (evidence, class) = constructor_field_evidence(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/lower.rs",
+        r#"
+struct Other { storage: String }
+
+#[test]
+fn unrelated_pattern_has_storage() {
+    let Other { storage: actual_storage } = Other { storage: "other".to_string() };
+    let statement = lower_ast("item".to_string(), "our".to_string());
+    assert_eq!(actual_storage, "other");
+    assert_eq!(statement.name, "item");
+}
+"#,
+        "storage",
+    )?;
+
+    if class == SeamGripClass::StronglyGripped || evidence.discriminate.state != StageState::Weak {
+        return Err(format!(
+            "unrelated record pattern must not observe the constructor field: class={class:?}, discriminate={:?}",
             evidence.discriminate.state
         ));
     }

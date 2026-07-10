@@ -169,8 +169,11 @@ all of these conditions hold:
 
 An assertion on a sibling field, a same-named field reached through another
 constructor owner, an unrelated test, or a token present only in prose does not
-discriminate the seam. When a same-name caller can lead to multiple owners and
-no narrower path resolves the owner, activation remains unknown and the
+discriminate the seam. A destructured field asserted later only through a local
+binding also stays weak unless producer evidence can link that binding to the
+selected constructor result; token agreement alone is not value flow. When a
+same-name caller can lead to multiple owners and no narrower path resolves the
+owner, activation remains unknown and the
 evidence record names `constructor_field_owner_ambiguous` with repair route
 `analysis/constructor-field-observation`. RIPR must not choose one owner or
 promote the seam from the ambiguous path.
