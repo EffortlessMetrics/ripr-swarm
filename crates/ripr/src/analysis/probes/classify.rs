@@ -3,12 +3,18 @@ use super::family::family_for_probe_shape;
 use crate::domain::ProbeFamily;
 use std::path::Path;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClassifiedSyntaxProbe {
+    pub family: ProbeFamily,
+    pub expression: String,
+}
+
 pub fn classify_changed_syntax(
     index: &RustIndex,
     file: &Path,
     line: usize,
     changed_text: &str,
-) -> Option<Vec<ProbeFamily>> {
+) -> Option<Vec<ClassifiedSyntaxProbe>> {
     let facts = index.files.get(file)?;
     let mut families = facts
         .probe_shapes
@@ -18,13 +24,24 @@ pub fn classify_changed_syntax(
                 && line <= shape.end_line
                 && shape_contains_changed_text(&shape.text, changed_text)
         })
-        .filter_map(|shape| family_for_probe_shape(&shape.kind))
+        .filter_map(|shape| {
+            family_for_probe_shape(&shape.kind).map(|family| ClassifiedSyntaxProbe {
+                family,
+                expression: shape.text.clone(),
+            })
+        })
         .collect::<Vec<_>>();
     if families.is_empty() {
         return None;
     }
-    families.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    families.dedup_by(|a, b| a.as_str() == b.as_str());
+    families.sort_by(|a, b| {
+        a.family
+            .as_str()
+            .cmp(b.family.as_str())
+            .then(a.expression.len().cmp(&b.expression.len()))
+            .then(a.expression.cmp(&b.expression))
+    });
+    families.dedup_by(|a, b| a.family == b.family);
     Some(families)
 }
 
@@ -95,7 +112,13 @@ mod tests {
         };
 
         let families = classify_changed_syntax(&index, &path, 3, "amount >= threshold;");
-        assert_eq!(families, Some(vec![ProbeFamily::Predicate]));
+        assert_eq!(
+            families,
+            Some(vec![ClassifiedSyntaxProbe {
+                family: ProbeFamily::Predicate,
+                expression: "if amount >= threshold {".to_string(),
+            }])
+        );
     }
 
     #[test]
@@ -121,5 +144,52 @@ mod tests {
 
         let families = classify_changed_syntax(&index, &path, 4, "return total");
         assert_eq!(families, None);
+    }
+
+    #[test]
+    fn classify_changed_syntax_keeps_one_most_specific_shape_per_family() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    probe_shapes: vec![
+                        ProbeShapeFact {
+                            start_line: 3,
+                            end_line: 3,
+                            start_byte: 20,
+                            kind: crate::analysis::rust_index::PROBE_SHAPE_CALL_DELETION
+                                .to_string(),
+                            text: "inner()".to_string(),
+                        },
+                        ProbeShapeFact {
+                            start_line: 3,
+                            end_line: 3,
+                            start_byte: 14,
+                            kind: crate::analysis::rust_index::PROBE_SHAPE_CALL_DELETION
+                                .to_string(),
+                            text: "outer(inner())".to_string(),
+                        },
+                    ],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let classified = classify_changed_syntax(&index, &path, 3, "inner()")
+            .ok_or_else(|| "expected nested call classification".to_string())?;
+        if classified
+            != vec![ClassifiedSyntaxProbe {
+                family: ProbeFamily::CallDeletion,
+                expression: "inner()".to_string(),
+            }]
+        {
+            return Err(format!(
+                "unexpected nested call classification: {classified:?}"
+            ));
+        }
+        Ok(())
     }
 }
