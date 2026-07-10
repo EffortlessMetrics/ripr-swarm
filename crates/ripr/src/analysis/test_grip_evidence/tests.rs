@@ -10856,6 +10856,73 @@ fn lower_ast_preserves_storage() {
 }
 
 #[test]
+fn ambiguous_same_named_caller_and_owner_across_modules_stays_limited() -> Result<(), String> {
+    let lower_path = PathBuf::from("crates/parser/src/hir/lower.rs");
+    let other_path = PathBuf::from("crates/parser/src/other/lower.rs");
+    let test_path = PathBuf::from("crates/parser/tests/lower.rs");
+    let files = vec![
+        (
+            lower_path.clone(),
+            r#"
+pub struct HirLet { pub storage: String }
+fn lower_statement(storage: String) -> HirLet {
+    HirLet { storage: storage }
+}
+pub fn lower_ast(storage: String) -> HirLet {
+    lower_statement(storage)
+}
+"#,
+        ),
+        (
+            other_path,
+            r#"
+pub struct OtherLet { pub storage: String }
+fn lower_statement(storage: String) -> OtherLet {
+    OtherLet { storage: storage }
+}
+pub fn lower_ast(storage: String) -> OtherLet {
+    lower_statement(storage)
+}
+"#,
+        ),
+        (
+            test_path,
+            r#"
+#[test]
+fn lower_ast_preserves_storage() {
+    let statement = lower_ast("our".to_string());
+    assert_eq!(statement.storage, "our");
+}
+"#,
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[lower_path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::FieldConstruction && seam.expression().starts_with("storage:")
+        })
+        .ok_or_else(|| "storage field seam must be inventoried".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+
+    if evidence.activate.state != StageState::Unknown
+        || !evidence
+            .activate
+            .summary
+            .contains("constructor_field_owner_ambiguous")
+        || class == SeamGripClass::StronglyGripped
+    {
+        return Err(format!(
+            "same-named caller and owner across modules must stay limited: class={class:?}, activate={:?}, summary={}",
+            evidence.activate.state, evidence.activate.summary
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn same_file_constructor_caller_with_exact_field_assertion_is_strongly_gripped()
 -> Result<(), String> {
     let path = PathBuf::from("crates/parser/src/hir/lower.rs");

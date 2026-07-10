@@ -117,9 +117,8 @@ impl<'a> CompactGripContext<'a> {
                     ),
                 );
                 let ambiguous_target_affinity_owner_call_names =
-                    helper_owner_call_names_from_production_helpers(
+                    ambiguous_owner_call_names_from_production_helpers(
                         test,
-                        &call_names,
                         &ambiguous_target_affinity_owner_calls_by_package,
                         local_function_names,
                     );
@@ -1731,17 +1730,7 @@ pub(in crate::analysis::test_grip_evidence) fn ambiguous_helper_owner_calls(
     if owner_sets.len() < 2 {
         return None;
     }
-    let common = owner_sets
-        .iter()
-        .skip(1)
-        .fold(owner_sets[0].clone(), |common, owner_set| {
-            common.intersection(owner_set).cloned().collect()
-        });
-    let ambiguous = owner_sets
-        .into_iter()
-        .flatten()
-        .filter(|owner| !common.contains(owner))
-        .collect::<BTreeSet<_>>();
+    let ambiguous = owner_sets.into_iter().flatten().collect::<BTreeSet<_>>();
     (!ambiguous.is_empty()).then_some((helper_name, ambiguous))
 }
 
@@ -1921,6 +1910,40 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_prod
         .filter_map(|helper_name| package_helpers.get(helper_name))
         .flat_map(|owner_names| owner_names.iter().cloned())
         .collect()
+}
+
+pub(in crate::analysis::test_grip_evidence) fn ambiguous_owner_call_names_from_production_helpers(
+    test: &TestSummary,
+    production_helpers: &HelperOwnerCallsByPackage,
+    local_function_names: Option<&BTreeSet<String>>,
+) -> BTreeSet<String> {
+    let Some(package) = package_scope(&test.file) else {
+        return BTreeSet::new();
+    };
+    let Some(package_helpers) = production_helpers.get(&package) else {
+        return BTreeSet::new();
+    };
+    test.calls
+        .iter()
+        .filter(|call| {
+            !local_function_names.is_some_and(|names| names.contains(&call.name))
+                && call_text_contains_unqualified_named_call(&call.text, &call.name)
+        })
+        .filter_map(|call| package_helpers.get(&call.name))
+        .flat_map(|owner_names| owner_names.iter().cloned())
+        .collect()
+}
+
+fn call_text_contains_unqualified_named_call(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        if before
+            .is_some_and(|ch| ch == ':' || ch == '.' || ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return false;
+        }
+        text[start + name.len()..].trim_start().starts_with('(')
+    })
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same_file_unit_production_helpers(

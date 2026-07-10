@@ -298,6 +298,8 @@ fn activate_evidence(
 
     let state = if related.is_empty() {
         StageState::No
+    } else if ambiguous_constructor_field_owner {
+        StageState::Unknown
     } else if !observed.is_empty()
         || direct_value_insensitive_owner_call
         || helper_value_insensitive_owner_call
@@ -318,7 +320,11 @@ fn activate_evidence(
         } else {
             Confidence::Low
         },
-        if !observed.is_empty() {
+        if ambiguous_constructor_field_owner {
+            format!(
+                "constructor_field_owner_ambiguous: exact field observer found, but same-crate caller linkage to owner `{owner_name}` is ambiguous"
+            )
+        } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
                 observed.len(),
@@ -342,10 +348,6 @@ fn activate_evidence(
                     .lines()
                     .next()
                     .unwrap_or(seam.expression())
-            )
-        } else if ambiguous_constructor_field_owner {
-            format!(
-                "constructor_field_owner_ambiguous: exact field observer found, but same-crate caller linkage to owner `{owner_name}` is ambiguous"
             )
         } else if boundary_activation_operands_unresolved && !related.is_empty() {
             boundary_activation_operands_unresolved_summary(seam, index, owner_name)
@@ -1006,6 +1008,8 @@ fn compact_activate_evidence(
             .any(|indexed| has_ambiguous_constructor_field_owner(indexed, seam, owner_name));
     let state = if related.is_empty() {
         StageState::No
+    } else if ambiguous_constructor_field_owner {
+        StageState::Unknown
     } else if direct_owner_call {
         StageState::Yes
     } else {
@@ -1027,7 +1031,7 @@ fn compact_activate_evidence(
     };
     let stage = StageEvidence::new(
         state.clone(),
-        if direct_owner_call {
+        if direct_owner_call && !ambiguous_constructor_field_owner {
             Confidence::Medium
         } else {
             Confidence::Low
