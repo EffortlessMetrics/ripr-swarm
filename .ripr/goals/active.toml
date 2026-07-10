@@ -87,10 +87,9 @@ commands = ["cargo test -p ripr review_comments -- --test-threads=1", "cargo xta
 
 [[work_item]]
 id = "review/canonical-working-set-id"
-status = "blocked"
+status = "ready"
 branch = "output/canonical-working-set-id"
 stackable = false
-blocked_by = ["review/card-oracle-projection"]
 acceptance = "Project canonical domain gap identity onto working-set cards without renderer synthesis; absent identity fails closed or names the packet limitation."
 commands = ["cargo xtask check-output-contracts", "cargo xtask check-traceability", "cargo xtask check-pr"]
 

@@ -5457,7 +5457,7 @@ gaps, targeted reruns, and receipt-backed route-quality closeout.
 | `output/bounded-start-here` | done | #1489 merged: bounded human output and `human-full` are on main. |
 | `docs/first-screen-agent-loop` | ready | Refresh and land or supersede #1487 now that bounded behavior is on main. |
 | `review/card-oracle-projection` | done | #1483 merged with explicit representative-oracle semantics. |
-| `review/canonical-working-set-id` | blocked | Carry domain-supplied canonical identity onto working-set cards. |
+| `review/canonical-working-set-id` | ready | Carry domain-supplied canonical identity onto working-set cards; its card-oracle dependency has shipped. |
 | `gate/exact-repair-route` | blocked | Close #1440 with a self-explanatory failure-time repair packet. |
 | `gate/concrete-targeted-mutation` | blocked | Close #1425 with a concrete route or named no-safe-candidate limitation. |
 | `analysis/field-constant-observation` | blocked | Close #1423 with conservative positive and adversarial coverage. |
