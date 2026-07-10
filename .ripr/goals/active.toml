@@ -1,5 +1,11 @@
 # Selected 2026-07-09 after reconciling the completed 0.9.0 release with the
 # stale use-case-spec-spine manifest. This campaign owns the Rust repair loop.
+#
+# Spec-system authority: cargo-allow's advisory spec-system profile owns
+# structural artifact governance and its ledger. RIPR xtask executes product
+# proof; it must not become a second structural graph authority. The sole RIPR
+# active manifest remains excluded from cargo-allow native validation until
+# cargo-allow #2119 can preserve this execution dialect without duplication.
 id = "rust-one-shot-evidence-to-repair"
 title = "Rust One-Shot Evidence-to-Repair Product Closure"
 status = "active"
@@ -31,12 +37,29 @@ non_goals = [
 ]
 
 [[work_item]]
+id = "control-plane/cargo-allow-spec-system-adoption"
+status = "done"
+branch = "codex/control-plane-rust-one-shot-goal"
+stackable = true
+acceptance = "Add the owned advisory cargo-allow spec-system profile and ledger, register the existing proposal/spec/support-tier/new-plan graph, and record doctor/audit/worklist evidence without creating a second active-goal source."
+commands = ["cargo-allow doctor --profile spec-system --config .allow/profiles/spec-system.toml --format json --output target/cargo-allow/spec-system-doctor.json", "cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit --format json --output target/cargo-allow/spec-system.json", "cargo-allow worklist --profile spec-system --config .allow/profiles/spec-system.toml --format json --output target/cargo-allow/spec-system-worklist.json"]
+
+[[work_item]]
 id = "control-plane/rust-one-shot-goal"
 status = "done"
 branch = "codex/control-plane-rust-one-shot-goal"
 stackable = true
 acceptance = "Replace stale post-0.9.0 use-case-spec-spine execution state with this campaign, a reconciled plan, issues, dependencies, proof commands, non-goals, and closeout criteria. No production behavior change."
 commands = ["cargo xtask goals next", "cargo xtask check-goals", "cargo xtask check-doc-index", "cargo xtask check-pr-shape"]
+
+[[work_item]]
+id = "control-plane/cargo-allow-active-goal-dialect"
+status = "blocked"
+branch = "control-plane/cargo-allow-active-goal-dialect"
+stackable = false
+blocked_by = ["control-plane/cargo-allow-spec-system-adoption"]
+acceptance = "cargo-allow validates RIPR's sole active-goal source without duplication, execution-metadata loss, or weakened strict native validation. Blocked on cargo-allow issue #2119 or a separately approved RIPR manifest migration."
+commands = ["cargo-allow doctor --profile spec-system --config .allow/profiles/spec-system.toml --format json --output target/cargo-allow/spec-system-doctor.json", "cargo-allow worklist --profile spec-system --config .allow/profiles/spec-system.toml --format json --output target/cargo-allow/spec-system-worklist.json"]
 
 [[work_item]]
 id = "output/bounded-start-here"

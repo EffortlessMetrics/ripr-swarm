@@ -5087,7 +5087,9 @@ gaps, targeted reruns, and receipt-backed route-quality closeout.
 
 | Work item | Status | Summary |
 | --- | --- | --- |
+| `control-plane/cargo-allow-spec-system-adoption` | done | Add advisory cargo-allow profile/ledger and doctor, audit, and worklist evidence without a second active goal. |
 | `control-plane/rust-one-shot-goal` | done | Replace the stale release-era active manifest and execution plan with Campaign 32. |
+| `control-plane/cargo-allow-active-goal-dialect` | blocked | Blocked on cargo-allow #2119 or a separately approved RIPR manifest migration. |
 | `output/bounded-start-here` | ready | Refresh and land or supersede #1489, including bounded human output and `human-full`. |
 | `docs/first-screen-agent-loop` | blocked | Refresh and land or supersede #1487 only after bounded behavior lands. |
 | `review/card-oracle-projection` | ready | Refresh and land or supersede #1483 with explicit representative-oracle semantics. |

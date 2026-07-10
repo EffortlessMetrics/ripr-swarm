@@ -17,11 +17,28 @@ This supersedes RIPR-PLAN-0061 as the active execution sequence. Its accepted
 contracts remain useful historical source, but its pending statuses and
 maintainer-fixed order are not the current queue.
 
+## Spec-system authority
+
+Cargo-allow's opt-in `spec-system` profile is the authoritative structural
+validator for governed artifact paths, kinds, lifecycle states, and graph links.
+RIPR xtask remains the repo-facing proof executor and may invoke cargo-allow,
+but must not independently reimplement the same graph rules. Every campaign
+control-plane PR records cargo-allow doctor, audit, and worklist outputs.
+
+The profile is advisory while its findings are made low-noise. The sole RIPR
+execution manifest at `.ripr/goals/active.toml` is deliberately not enforced
+until cargo-allow issue #2119 can validate its dialect without creating a second
+active goal or discarding execution metadata. The installed cargo-allow 0.1.8
+requires `--config .allow/profiles/spec-system.toml` for this owned profile;
+cargo-allow issue #2117 tracks the owned-versus-legacy default-path friction.
+
 ## Reconciled sequence
 
 | Order | Work item | Dependency | Evidence |
 | ---: | --- | --- | --- |
-| 0 | `control-plane/rust-one-shot-goal` | — | goals/doc/plan checks |
+| 0A | `control-plane/cargo-allow-spec-system-adoption` | — | cargo-allow doctor, audit, and worklist artifacts |
+| 0B | `control-plane/rust-one-shot-goal` | 0A | goals/doc/plan checks and structural indexing |
+| 0C | `control-plane/cargo-allow-active-goal-dialect` | 0A | blocked on cargo-allow #2119 or separately approved migration |
 | 1A | `output/bounded-start-here` | 0 | human/human-full fixtures and output contracts |
 | 1B | `docs/first-screen-agent-loop` | 1A | README/doc checks |
 | 2A | `review/card-oracle-projection` | 0 | review-card schema and traceability checks |
