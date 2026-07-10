@@ -1,4 +1,5 @@
 use super::super::rust_index::{OracleFact, TestSummary, extract_identifier_tokens};
+use super::rust_string_literals;
 use crate::domain::*;
 
 #[cfg(test)]
@@ -110,6 +111,11 @@ fn is_effect_family(family: &ProbeFamily) -> bool {
     matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
 }
 
+fn effect_target_tokens(expression: &str) -> Vec<String> {
+    let target_end = expression.find(['(', '=']).unwrap_or(expression.len());
+    extract_identifier_tokens(&expression[..target_end])
+}
+
 /// Returns true when `assertion` is a genuine **effect observer** that
 /// kind-matches an effect seam: a mock/expectation, a snapshot, or a
 /// whole-object equality capturing the resulting state. This is intentionally
@@ -165,7 +171,16 @@ fn analyze_related_assertions(
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> RevealAssertionAnalysis {
-    let probe_tokens = extract_identifier_tokens(analysis_expression);
+    let probe_tokens = if is_effect_family(&probe.family) {
+        effect_target_tokens(analysis_expression)
+    } else {
+        extract_identifier_tokens(analysis_expression)
+    };
+    let effect_literals = if is_effect_family(&probe.family) {
+        rust_string_literals(analysis_expression)
+    } else {
+        Vec::new()
+    };
     // For MatchArm: collect variant-only tokens (post-`::`) for the specificity
     // check. Qualifier tokens (e.g. the type name before `::`) are excluded so
     // that a sibling-arm assertion sharing the qualifier cannot spuriously
@@ -210,8 +225,9 @@ fn analyze_related_assertions(
             continue;
         }
         for assertion in &test.assertions {
-            let (matched, has_token_match) = assertion_matches_probe_detail(
+            let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &probe_tokens,
+                &effect_literals,
                 &match_arm_variants,
                 error_path_variant.as_deref(),
                 &probe.family,
@@ -320,8 +336,9 @@ fn error_path_variant_token(expression: &str) -> Option<String> {
 /// qualifier token, but only the variant token (`TooLarge`) is specific.
 /// Without `error_path_variant` (probe has no qualified variant), falls back
 /// to the standard `token_match` behavior.
-fn assertion_matches_probe_detail(
+fn assertion_matches_probe_detail_with_literals(
     probe_tokens: &[String],
+    effect_literals: &[String],
     match_arm_variants: &[String],
     error_path_variant: Option<&str>,
     family: &ProbeFamily,
@@ -331,6 +348,10 @@ fn assertion_matches_probe_detail(
     let token_match = probe_tokens
         .iter()
         .any(|token| token.len() > 3 && assertion.text.contains(token.as_str()));
+    let effect_literal_match = !effect_literals.is_empty()
+        && rust_string_literals(&assertion.text)
+            .iter()
+            .any(|literal| effect_literals.contains(literal));
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -339,7 +360,7 @@ fn assertion_matches_probe_detail(
             .iter()
             .any(|v| v.len() > 3 && assertion.text.contains(v.as_str()))
     } else {
-        token_match
+        token_match || effect_literal_match
     };
     // For ErrorPath probes with ExactErrorVariant assertions: restrict `matched`
     // to require the probe's specific variant token, not just the qualifier.
@@ -354,8 +375,28 @@ fn assertion_matches_probe_detail(
         // Probe has no parseable variant: falls through to standard match below.
     }
     let family_match = oracle_matches_family(family, assertion);
-    let matched = token_match || family_match || assertion_count == 1;
+    let matched = token_match || effect_literal_match || family_match || assertion_count == 1;
     (matched, has_token_match)
+}
+
+#[cfg(test)]
+fn assertion_matches_probe_detail(
+    probe_tokens: &[String],
+    match_arm_variants: &[String],
+    error_path_variant: Option<&str>,
+    family: &ProbeFamily,
+    assertion: &OracleFact,
+    assertion_count: usize,
+) -> (bool, bool) {
+    assertion_matches_probe_detail_with_literals(
+        probe_tokens,
+        &[],
+        match_arm_variants,
+        error_path_variant,
+        family,
+        assertion,
+        assertion_count,
+    )
 }
 
 fn finalize_related_tests(mut related: Vec<RelatedTest>) -> Vec<RelatedTest> {

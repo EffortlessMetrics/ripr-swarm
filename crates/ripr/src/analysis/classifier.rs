@@ -1458,6 +1458,72 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn parser_argument_identifier_does_not_confirm_call_effect() -> Result<(), String> {
+        let owner = function("src/gate_watchdog.rs", "classify_gate_watchdog");
+        let owner_id = owner.id.clone();
+        let path = PathBuf::from("src/gate_watchdog.rs");
+        let assertion = "ensure!(reason.receipt == receipt);";
+        let index = RustIndex {
+            functions: vec![owner],
+            tests: vec![test_with_oracle(
+                "src/tests/gate_watchdog_tests.rs",
+                "classify_gate_watchdog_preserves_receipt",
+                "classify_gate_watchdog(&input)",
+                oracle_fact(assertion, OracleKind::ExactValue, OracleStrength::Strong),
+            )],
+            files: BTreeMap::from([(
+                path,
+                FileFacts {
+                    path: PathBuf::from("src/gate_watchdog.rs"),
+                    probe_shapes: vec![ProbeShapeFact {
+                        start_line: 190,
+                        end_line: 194,
+                        start_byte: 1_024,
+                        kind: PROBE_SHAPE_CALL_DELETION.to_string(),
+                        text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".to_string(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+        };
+        let probe = Probe {
+            id: ProbeId("probe:watchdog-reason".to_string()),
+            location: SourceLocation::new(
+                PathBuf::from("C:/repo/ub-review/src/gate_watchdog.rs"),
+                190,
+                1,
+            ),
+            owner: Some(owner_id),
+            family: ProbeFamily::CallDeletion,
+            delta: DeltaKind::Effect,
+            before: None,
+            after: Some("watchdog_reason(".to_string()),
+            expression: "watchdog_reason(".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+
+        let finding = classify_probe(&probe, &index);
+        if finding.class != ExposureClass::WeaklyExposed {
+            return Err(format!(
+                "argument identifier falsely confirmed call effect: {finding:?}"
+            ));
+        }
+        if !finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("observation_unverified")
+        {
+            return Err(format!(
+                "missing observation boundary for argument-only oracle: {finding:?}"
+            ));
+        }
+        Ok(())
+    }
+
     fn function(file: &str, name: &str) -> FunctionSummary {
         FunctionSummary {
             id: SymbolId(format!("{file}::{name}")),
