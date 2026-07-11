@@ -426,6 +426,7 @@ mod tests {
                 path.clone(),
                 FileFacts {
                     path: path.clone(),
+                    source: format!("{expression};"),
                     functions: vec![FunctionFact {
                         id: SymbolId("gate_watchdog::classify".to_string()),
                         name: "classify".to_string(),
@@ -442,7 +443,7 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 10,
                         end_line: 13,
-                        start_byte: 100,
+                        start_byte: 0,
                         kind: PROBE_SHAPE_CALL_DELETION.to_string(),
                         text: expression.to_string(),
                     }],
