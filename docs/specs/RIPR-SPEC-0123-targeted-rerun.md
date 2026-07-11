@@ -90,7 +90,10 @@ identities plus their file, owner, and static classification fields. A mismatch
 is named as `full_pipeline_parity_mismatch` and fails the targeted result closed
 into a
 `limited` state. The full inventory is deliberately opt-in because it can be
-expensive; omitting the flag does not imply parity was checked.
+expensive; omitting the flag does not imply parity was checked. If the full
+inventory is seam-capped, the result is instead limited with
+`full_pipeline_parity_incomplete`, because an absent seam may be outside the
+analyzed prefix rather than a true mismatch.
 
 ### Cache correctness and disclosure
 

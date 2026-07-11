@@ -154,11 +154,11 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
             gap_ledger,
         } => rerun_gap(&input.root, &config, &canonical_gap_id, &gap_ledger)?,
     };
-    if let Some(before) = options.before.as_deref() {
-        apply_before(&mut report, before);
-    }
     if options.check_parity {
         apply_full_pipeline_parity(&mut report, &input.root, &config)?;
+    }
+    if let Some(before) = options.before.as_deref() {
+        apply_before(&mut report, before);
     }
     let rendered = if options.json {
         serde_json::to_string_pretty(&report)
@@ -641,7 +641,7 @@ fn apply_full_pipeline_parity(
     if report.state == "limited" {
         return Ok(());
     }
-    let (full, _) = inventory_classified_seams_at_with_config(root, config)?;
+    let (full, limit_info) = inventory_classified_seams_at_with_config(root, config)?;
     let full_by_id = full
         .iter()
         .map(seam_from)
@@ -661,7 +661,7 @@ fn apply_full_pipeline_parity(
         .count();
     let matched = report.seams.len().saturating_sub(mismatches);
     report.parity = Some(TargetedRerunParity {
-        state: if mismatches == 0 {
+        state: if limit_info.is_none() && mismatches == 0 {
             "matched"
         } else {
             "limited"
@@ -669,7 +669,16 @@ fn apply_full_pipeline_parity(
         selected_seam_count: report.seams.len(),
         matched_seam_count: matched,
     });
-    if mismatches > 0 {
+    if let Some(limit_info) = limit_info {
+        report.state = "limited";
+        report.limitation = Some(TargetedRerunLimitation {
+            kind: "full_pipeline_parity_incomplete",
+            message: format!(
+                "full pipeline analyzed {} of {} seams under the configured limit; parity is inconclusive",
+                limit_info.analyzed, limit_info.total
+            ),
+        });
+    } else if mismatches > 0 {
         report.state = "limited";
         report.limitation = Some(TargetedRerunLimitation {
             kind: "full_pipeline_parity_mismatch",
