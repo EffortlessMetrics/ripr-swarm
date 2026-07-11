@@ -680,7 +680,7 @@ fn limited_report(
         "limited",
         selector,
         TargetedRerunCache {
-            schema_version: crate::analysis::seam_cache::CACHE_SCHEMA_VERSION,
+            schema_version: crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION,
             reuse_state: "not_run",
             file_fact_status: "not_run".to_string(),
             hits: 0,
@@ -724,7 +724,7 @@ fn cache_from(
         recomputation_reasons.push("file_fact_store_error".to_string());
     }
     TargetedRerunCache {
-        schema_version: crate::analysis::seam_cache::CACHE_SCHEMA_VERSION,
+        schema_version: crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION,
         reuse_state: if cache.misses == 0 && cache.corrupt_ignored == 0 {
             "reused_file_facts"
         } else if cache.hits == 0 {
@@ -945,7 +945,7 @@ mod tests {
             ["selected_test_scope_recomputed"],
         );
         if reused.reuse_state != "reused_file_facts"
-            || reused.schema_version != crate::analysis::seam_cache::CACHE_SCHEMA_VERSION
+            || reused.schema_version != crate::analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION
             || reused.recomputation_reasons != vec!["selected_test_scope_recomputed"]
         {
             return Err(format!("unexpected reused cache disclosure: {reused:?}"));
