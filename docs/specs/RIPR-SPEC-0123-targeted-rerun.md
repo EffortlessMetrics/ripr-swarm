@@ -142,9 +142,10 @@ targeted rerun never uses network access or ambient Cargo metadata as an
 implicit fact source. Graph statuses are `complete`, `limited`, or
 `unavailable`. Before-state comparison names graph changes as
 `input_changed:package_graph_provenance` or
-`input_changed:feature_graph_provenance`, and parity fails closed when
-required local graph provenance is unavailable or differs between targeted and
-full inputs.
+`input_changed:feature_graph_provenance` or
+`input_changed:external_dependency_graph_provenance`, and parity fails closed
+when required local graph provenance is unavailable or differs between
+targeted and full inputs.
 
 A content change to any selected test, selected production seam, Cargo manifest
 or lockfile, workspace membership or package graph, selected feature

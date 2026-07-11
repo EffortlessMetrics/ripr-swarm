@@ -14479,8 +14479,9 @@ facts with `complete`, `limited`, or `unavailable` statuses. External
 dependency metadata is explicitly unavailable because targeted rerun does not
 use network or ambient Cargo metadata. Graph changes are named as
 `input_changed:package_graph_provenance` or
-`input_changed:feature_graph_provenance`; parity fails closed when required
-local graph provenance is unavailable.
+`input_changed:feature_graph_provenance` or
+`input_changed:external_dependency_graph_provenance`; parity fails closed when
+required local graph provenance is unavailable.
 
 Pass `--check-parity` to request an explicit full-inventory comparison. The
 optional `parity` object reports `matched` only when every selected seam has
