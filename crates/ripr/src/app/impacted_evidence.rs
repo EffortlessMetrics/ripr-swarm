@@ -605,7 +605,10 @@ mod tests {
                         "command": "cargo mutants --file \"src/lib.rs\"",
                         "expected_observation": "boundary test observes operator flip"
                     }],
-                    "limitations": []
+                    "limitations": [{
+                        "kind": "no_safe_candidate",
+                        "message": "helper dispatch remains static limitation"
+                    }]
                 }
             }
         });
@@ -625,6 +628,26 @@ mod tests {
         assert_eq!(
             packet["summary"]["targeted_mutation_route"]["candidates"][0]["command"],
             "cargo mutants --file \"src/lib.rs\""
+        );
+        let markdown = render_impacted_evidence_markdown(&packet);
+        assert!(markdown.contains("cargo mutants --file"));
+        assert!(markdown.contains("helper dispatch remains static limitation"));
+        fs::write(
+            &input,
+            br#"{"summary":{"ripr_severe_gap":true,"requires_targeted_mutation":true}}"#,
+        )
+        .map_err(|err| format!("rewrite {}: {err}", input.display()))?;
+        let fallback = impacted_evidence_packet(
+            &repo,
+            &ImpactedEvidenceOptions {
+                pr_evidence: "target/ripr/pr/repo-exposure.json".to_string(),
+                labels: Vec::new(),
+                check: false,
+            },
+        );
+        assert_eq!(
+            fallback["summary"]["targeted_mutation_route"]["status"],
+            "static_limitation"
         );
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
