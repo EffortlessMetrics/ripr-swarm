@@ -221,8 +221,31 @@ fn build_probe(
 // coordinate that stays consistent for removed and added lines alike even
 // when an earlier hunk in the same file shifted the old/new line counters
 // apart from each other.
+//
+// A single `abs_diff <= 1` check is not enough for a multi-line replacement
+// block (`-a\n-b\n-c\n+x\n+y\n+z`): the diff parser assigns every removed
+// line in a contiguous run the SAME `new_side_line` (it only advances on `+`
+// or context lines), while the added lines in the paired run advance one per
+// line. So `z` (the third added line) sits 2 away from the shared removed
+// coordinate even though it belongs to the same replacement. Widen the
+// window to the start of the added line's contiguous run so every removed
+// line in a same-shaped run is still considered adjacent to every added line
+// in the paired run.
 fn lines_are_adjacent(removed_new_side_line: usize, added_new_side_line: usize) -> bool {
     removed_new_side_line.abs_diff(added_new_side_line) <= 1
+}
+
+fn added_run_start(added_new_side_line: usize, changed: &ChangedFile) -> usize {
+    let mut start = added_new_side_line;
+    while start > 0
+        && changed
+            .added_lines
+            .iter()
+            .any(|line| line.new_side_line == start - 1)
+    {
+        start -= 1;
+    }
+    start
 }
 
 fn has_matching_added_line(
@@ -233,7 +256,10 @@ fn has_matching_added_line(
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
         && changed.added_lines.iter().any(|line| {
-            if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line) {
+            let run_start = added_run_start(line.new_side_line, changed);
+            if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
+                && !lines_are_adjacent(removed_line.new_side_line, run_start)
+            {
                 return false;
             }
             let added_families = classify_changed_line(line.text.trim());
@@ -253,14 +279,21 @@ fn nearby_removed_line(
     changed: &ChangedFile,
 ) -> Option<String> {
     let added_tokens = extract_identifier_tokens(added);
-    // Only consider removed lines adjacent to this added line. Falling back
-    // to *any* removed line in the file (regardless of hunk or position)
-    // previously produced a `before` value taken from an unrelated hunk
-    // whenever no removed line shared a token with the added line.
+    // Only consider removed lines adjacent to this added line, or to the
+    // start of the added line's contiguous run (see `added_run_start`) so a
+    // multi-line replacement block still pairs its later added lines with
+    // the removed lines it replaced. Falling back to *any* removed line in
+    // the file (regardless of hunk or position) previously produced a
+    // `before` value taken from an unrelated hunk whenever no removed line
+    // shared a token with the added line.
+    let run_start = added_run_start(added_new_side_line, changed);
     let nearby = changed
         .removed_lines
         .iter()
-        .filter(|line| lines_are_adjacent(line.new_side_line, added_new_side_line))
+        .filter(|line| {
+            lines_are_adjacent(line.new_side_line, added_new_side_line)
+                || lines_are_adjacent(line.new_side_line, run_start)
+        })
         .collect::<Vec<_>>();
     nearby
         .iter()
@@ -711,6 +744,72 @@ mod tests {
         );
         if let Some(inserted) = inserted {
             assert_eq!(inserted.before, Some("if legacy_flag {".to_string()));
+        }
+    }
+
+    // Regression: in a multi-line replacement block (`-a -b -c +x +y +z`),
+    // every removed line in the run shares the SAME `new_side_line` (the
+    // diff parser only advances it on `+`/context lines), while the added
+    // lines advance one per line. A naive `abs_diff <= 1` window around a
+    // single added line therefore loses the removed context entirely for
+    // the later added lines in the run (e.g. the third). The later added
+    // lines must still recover `before` context from the same block instead
+    // of getting `None`.
+    #[test]
+    fn probes_for_file_pairs_third_added_line_of_multiline_replacement() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![
+                ChangedLine {
+                    line: 10,
+                    new_side_line: 10,
+                    text: "if flag_one_updated {".to_string(),
+                },
+                ChangedLine {
+                    line: 11,
+                    new_side_line: 11,
+                    text: "if flag_two_updated {".to_string(),
+                },
+                ChangedLine {
+                    line: 12,
+                    new_side_line: 12,
+                    text: "if flag_three_updated {".to_string(),
+                },
+            ],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 10,
+                    new_side_line: 10,
+                    text: "if flag_one {".to_string(),
+                },
+                ChangedLine {
+                    line: 11,
+                    new_side_line: 10,
+                    text: "if flag_two {".to_string(),
+                },
+                ChangedLine {
+                    line: 12,
+                    new_side_line: 10,
+                    text: "if flag_three {".to_string(),
+                },
+            ],
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+
+        let third = probes
+            .iter()
+            .find(|probe| probe.expression == "if flag_three_updated {");
+        assert!(
+            third.is_some(),
+            "expected a probe for the third added line, got {probes:?}"
+        );
+        if let Some(third) = third {
+            assert!(
+                third.before.is_some(),
+                "the third added line in a multi-line replacement must recover \
+                 `before` context from its own block, not None"
+            );
         }
     }
 
