@@ -1,7 +1,7 @@
 //! `cargo xtask targeted-rerun-benchmark` — a bounded, receipt-backed
 //! cold/full versus targeted-rerun benchmark for SPEC-0123.
 
-use crate::run::{capture_output_with_timeout, run};
+use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -464,12 +464,9 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn git_revision() -> String {
-    std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
+    run_output("git", &["rev-parse", "HEAD"])
         .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .map(|output| output.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unavailable".to_string())
 }
@@ -481,12 +478,9 @@ fn runner_class() -> String {
 }
 
 fn analyzer_version(binary: &Path) -> String {
-    std::process::Command::new(binary)
-        .arg("--version")
-        .output()
+    run_output_owned(&binary.display().to_string(), &["--version".to_string()])
         .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .map(|output| output.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unavailable".to_string())
 }
