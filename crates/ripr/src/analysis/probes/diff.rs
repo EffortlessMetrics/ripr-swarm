@@ -68,7 +68,7 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    nearby_removed_line(&canonical_text, changed),
+                    nearby_removed_line(shape.start_line, &canonical_text, changed),
                     Some(canonical_text),
                 ));
             }
@@ -80,7 +80,7 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
                     &build_context,
                     added,
                     shape.family,
-                    nearby_removed_line(text, changed),
+                    nearby_removed_line(added.new_side_line, text, changed),
                     Some(text.to_string()),
                 ));
             }
@@ -91,7 +91,7 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
                 &build_context,
                 added,
                 family,
-                nearby_removed_line(text, changed),
+                nearby_removed_line(added.new_side_line, text, changed),
                 Some(text.to_string()),
             ));
         }
@@ -215,6 +215,16 @@ fn build_probe(
     }
 }
 
+// A removed line and an added line are considered a plausible pairing only
+// when their new-file coordinates are adjacent. Compare `new_side_line` (not
+// `line`, the old-side coordinate) on both sides: `new_side_line` is the
+// coordinate that stays consistent for removed and added lines alike even
+// when an earlier hunk in the same file shifted the old/new line counters
+// apart from each other.
+fn lines_are_adjacent(removed_new_side_line: usize, added_new_side_line: usize) -> bool {
+    removed_new_side_line.abs_diff(added_new_side_line) <= 1
+}
+
 fn has_matching_added_line(
     removed_line: &ChangedLine,
     removed_family: &ProbeFamily,
@@ -223,12 +233,7 @@ fn has_matching_added_line(
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
         && changed.added_lines.iter().any(|line| {
-            // Compare new-side positions: `removed_line.new_side_line` is the
-            // new-file coordinate of the removed line; `line.new_side_line`
-            // (== `line.line` for added lines) is the added line's new-file
-            // coordinate.  Using old-side `removed_line.line` would give wrong
-            // proximity when earlier hunks shifted the coordinate systems.
-            if removed_line.new_side_line.abs_diff(line.new_side_line) > 1 {
+            if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line) {
                 return false;
             }
             let added_families = classify_changed_line(line.text.trim());
@@ -242,10 +247,22 @@ fn has_matching_added_line(
         })
 }
 
-fn nearby_removed_line(added: &str, changed: &ChangedFile) -> Option<String> {
+fn nearby_removed_line(
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+) -> Option<String> {
     let added_tokens = extract_identifier_tokens(added);
-    changed
+    // Only consider removed lines adjacent to this added line. Falling back
+    // to *any* removed line in the file (regardless of hunk or position)
+    // previously produced a `before` value taken from an unrelated hunk
+    // whenever no removed line shared a token with the added line.
+    let nearby = changed
         .removed_lines
+        .iter()
+        .filter(|line| lines_are_adjacent(line.new_side_line, added_new_side_line))
+        .collect::<Vec<_>>();
+    nearby
         .iter()
         .find(|line| {
             let removed_tokens = extract_identifier_tokens(&line.text);
@@ -254,13 +271,8 @@ fn nearby_removed_line(added: &str, changed: &ChangedFile) -> Option<String> {
                     .iter()
                     .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+        .or_else(|| nearby.first())
         .map(|line| line.text.trim().to_string())
-        .or_else(|| {
-            changed
-                .removed_lines
-                .first()
-                .map(|line| line.text.trim().to_string())
-        })
 }
 
 #[cfg(test)]
@@ -663,6 +675,50 @@ mod tests {
             probes[0].after,
             Some("if amount >= threshold {".to_string())
         );
+    }
+
+    // Regression: an added line with no removed counterpart nearby must not
+    // borrow `before` from an unrelated removed line elsewhere in the file.
+    #[test]
+    fn probes_for_file_does_not_attribute_unrelated_hunk_as_before_context() {
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 3,
+                    text: "if amount >= threshold {".to_string(),
+                },
+                ChangedLine {
+                    line: 50,
+                    new_side_line: 50,
+                    text: "events.notify(user_id);".to_string(),
+                },
+            ],
+            removed_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "if amount > threshold {".to_string(),
+            }],
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+
+        let inserted = probes
+            .iter()
+            .find(|probe| probe.expression == "events.notify(user_id);");
+        assert!(
+            inserted.is_some(),
+            "expected a probe for the pure insertion, got {probes:?}"
+        );
+        if let Some(inserted) = inserted {
+            assert_eq!(
+                inserted.before, None,
+                "a pure insertion far from any removed line must not borrow \
+                 an unrelated hunk's removed text as `before`"
+            );
+        }
     }
 
     #[test]
