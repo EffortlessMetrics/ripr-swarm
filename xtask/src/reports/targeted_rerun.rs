@@ -30,6 +30,7 @@ pub(crate) fn targeted_rerun_benchmark(args: &[String]) -> Result<(), String> {
     run("cargo", &["build", "-p", "ripr"])?;
 
     let cache_dir = benchmark_cache_dir();
+    let _cache_guard = CacheDirGuard::new(cache_dir.clone());
     clear_cache(&cache_dir)?;
     let envs = [(CACHE_ENV, cache_dir.to_string_lossy().into_owned())];
     let timeout = Duration::from_millis(options.timeout_ms);
@@ -95,7 +96,6 @@ pub(crate) fn targeted_rerun_benchmark(args: &[String]) -> Result<(), String> {
         .map_err(|err| format!("serialize targeted rerun benchmark: {err}"))?;
     crate::write_report("targeted-rerun-benchmark.json", &format!("{json_text}\n"))?;
     crate::write_report("targeted-rerun-benchmark.md", &benchmark_markdown(&report))?;
-    let _ = fs::remove_dir_all(&cache_dir);
     println!("Wrote target/ripr/reports/targeted-rerun-benchmark.json");
     println!("Wrote target/ripr/reports/targeted-rerun-benchmark.md");
     Ok(())
@@ -354,7 +354,8 @@ fn build_report(
         && all_pass(cold_full)
         && all_pass(cold_targeted)
         && all_pass(warm_targeted)
-        && all_pass(invalidation);
+        && all_pass(invalidation)
+        && all_pass(parity);
     json!({
         "schema_version": SCHEMA_VERSION,
         "tool": "ripr",
@@ -460,6 +461,22 @@ fn clear_cache(cache_dir: &Path) -> Result<(), String> {
     }
     fs::create_dir_all(cache_dir)
         .map_err(|err| format!("create benchmark cache {}: {err}", cache_dir.display()))
+}
+
+struct CacheDirGuard {
+    path: PathBuf,
+}
+
+impl CacheDirGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for CacheDirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 fn clear_env_cache(envs: &[(&str, String)]) -> Result<(), String> {
@@ -575,5 +592,23 @@ mod tests {
         };
         assert_eq!(percentile(&series.samples, 50), 20);
         assert_eq!(percentile(&series.samples, 95), 30);
+    }
+
+    #[test]
+    fn all_pass_rejects_empty_or_failed_series() {
+        assert!(!all_pass(&Series::default()));
+        let mut series = Series {
+            samples: vec![Sample {
+                status: "pass",
+                duration_ms: 1,
+                cache_reuse_state: None,
+                selected_seam_count: None,
+                parity_state: Some("matched".to_string()),
+                detail: None,
+            }],
+        };
+        assert!(all_pass(&series));
+        series.samples[0].status = "fail";
+        assert!(!all_pass(&series));
     }
 }
