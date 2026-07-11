@@ -14419,6 +14419,15 @@ evidence only and does not execute tests or mutations. Test-node, detailed
 invalidation-reason, full-pipeline parity, and benchmark receipt surfaces remain
 specified by [RIPR-SPEC-0123](specs/RIPR-SPEC-0123-targeted-rerun.md).
 
+For a `--gap` receipt, the ledger may carry an explicit nullable `seam_id`
+beside its behavioral `canonical_gap_id`. RIPR uses that typed producer-owned
+identity only to retain the selected source seam when it becomes strongly
+gripped and no longer produces a current canonical gap. Generic `evidence_ids`
+remain generic references and are never interpreted by position as seam IDs.
+When static evidence changes between incomparable same-rank classes, movement
+is `limited` with `movement_indeterminate` rather than being mislabeled as an
+incompatible before artifact.
+
 ## Stability Rules
 
 Output contract values are registered in `policy/output_contracts.txt`.

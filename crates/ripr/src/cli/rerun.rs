@@ -350,12 +350,17 @@ fn rerun_gap(
             &changed_owner_names,
         )?;
         add_cache_stats(&mut cache, &inventory.file_fact_cache);
+        let scoped_record_seam_ids = seam_ids_for_scope(&records, &scope);
         let scope_seams = inventory
             .classified
             .iter()
             .filter(|entry| {
-                canonical_gap_identity(entry)
-                    .is_some_and(|identity| identity.id == canonical_gap_id)
+                entry_matches_selected_gap(
+                    canonical_gap_identity(entry).map(|identity| identity.id),
+                    entry.seam.id().as_str(),
+                    canonical_gap_id,
+                    &scoped_record_seam_ids,
+                )
             })
             .collect::<Vec<_>>();
         if scope_seams.is_empty() {
@@ -372,7 +377,7 @@ fn rerun_gap(
             continue;
         }
         for entry in scope_seams {
-            let seam = seam_from(entry);
+            let seam = seam_from_with_selected_gap(entry, canonical_gap_id);
             seams.entry(seam.seam_id.clone()).or_insert(seam);
         }
     }
@@ -395,6 +400,41 @@ fn rerun_gap(
         None,
         scope_limitations,
     ))
+}
+
+fn entry_matches_selected_gap(
+    current_canonical_gap_id: Option<String>,
+    seam_id: &str,
+    selected_canonical_gap_id: &str,
+    selected_seam_ids: &BTreeSet<String>,
+) -> bool {
+    current_canonical_gap_id.as_deref() == Some(selected_canonical_gap_id)
+        || selected_seam_ids.contains(seam_id)
+}
+
+fn seam_ids_for_scope(records: &[(usize, GapRecord)], scope: &GapRerunScope) -> BTreeSet<String> {
+    records
+        .iter()
+        .filter_map(|(_, record)| {
+            let anchor = record.anchor.as_ref()?;
+            let file = anchor.file.as_deref()?.trim();
+            if file.is_empty() {
+                return None;
+            }
+            let owner = anchor
+                .owner
+                .as_deref()
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+                .map(str::to_string);
+            (GapRerunScope {
+                file: PathBuf::from(file),
+                owner,
+            } == *scope)
+                .then(|| record.seam_id.clone())
+                .flatten()
+        })
+        .collect()
 }
 
 fn resolve_gap_records(
@@ -606,6 +646,12 @@ fn apply_before(report: &mut TargetedRerunReport, before: &Path) {
                 before_seam_count: movement.before_seam_count,
                 matched_seam_count: movement.matched_seam_count,
             });
+            if let Some(message) = movement.limitation {
+                report.limitation = Some(TargetedRerunLimitation {
+                    kind: "movement_indeterminate",
+                    message,
+                });
+            }
             report.authority_boundary = "static before/after evidence only; movement does not establish runtime mutation behavior, correctness, coverage adequacy, or complete test quality";
         }
         Err(err) => set_before_limitation(report, "before_artifact_incompatible", err),
@@ -676,6 +722,15 @@ fn seam_from(entry: &crate::analysis::ClassifiedSeam) -> TargetedRerunSeam {
         owner: entry.seam.owner().to_string(),
         static_class: entry.class.as_str().to_string(),
     }
+}
+
+fn seam_from_with_selected_gap(
+    entry: &crate::analysis::ClassifiedSeam,
+    canonical_gap_id: &str,
+) -> TargetedRerunSeam {
+    let mut seam = seam_from(entry);
+    seam.canonical_gap_id = Some(canonical_gap_id.to_string());
+    seam
 }
 
 fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, String> {
@@ -791,10 +846,12 @@ fn render_human(report: &TargetedRerunReport) -> String {
 mod tests {
     use super::{
         RerunSelector, TargetedRerunCache, TargetedRerunMovement, TargetedRerunReport,
-        TargetedRerunSeam, TargetedRerunSelector, parse_options, render_human, resolve_gap_records,
-        route_from_gap_records, same_root, scopes_from_gap_records,
+        TargetedRerunSeam, TargetedRerunSelector, entry_matches_selected_gap, parse_options,
+        render_human, resolve_gap_records, route_from_gap_records, same_root,
+        scopes_from_gap_records,
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -841,6 +898,20 @@ mod tests {
             parse_options(&args(&["--gap", "gap:example"])),
             Err("rerun --gap requires --gap-ledger <path>".to_string())
         );
+    }
+
+    #[test]
+    fn canonical_gap_selection_retains_explicit_seam_after_gap_identity_closes()
+    -> Result<(), String> {
+        let selected = BTreeSet::from(["seam:price".to_string()]);
+        if !entry_matches_selected_gap(None, "seam:price", "gap:price", &selected)
+            || entry_matches_selected_gap(None, "seam:other", "gap:price", &selected)
+        {
+            return Err(
+                "explicit ledger seam identity did not constrain closed-gap selection".to_string(),
+            );
+        }
+        Ok(())
     }
 
     #[test]

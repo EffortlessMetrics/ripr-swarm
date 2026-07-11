@@ -74,6 +74,7 @@ pub(crate) struct TargetedRerunMovement {
     pub(crate) state: &'static str,
     pub(crate) before_seam_count: usize,
     pub(crate) matched_seam_count: usize,
+    pub(crate) limitation: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,13 +238,19 @@ pub(crate) fn targeted_rerun_movement_from_json(
                     state: "regressed",
                     before_seam_count: before_by_id.len(),
                     matched_seam_count: current_by_id.len(),
+                    limitation: None,
                 });
             }
             _ => {
-                return Err(format!(
-                    "selected seam_id `{seam_id}` has unsupported static movement `{}`",
-                    movement.gap_movement
-                ));
+                return Ok(TargetedRerunMovement {
+                    state: "limited",
+                    before_seam_count: before_by_id.len(),
+                    matched_seam_count: current_by_id.len(),
+                    limitation: Some(format!(
+                        "selected seam_id `{seam_id}` changed from {} to {} without an ordered static movement",
+                        movement.before, movement.after
+                    )),
+                });
             }
         }
     }
@@ -257,6 +264,7 @@ pub(crate) fn targeted_rerun_movement_from_json(
         },
         before_seam_count: before_by_id.len(),
         matched_seam_count: current_by_id.len(),
+        limitation: None,
     })
 }
 
@@ -2118,7 +2126,7 @@ mod tests {
     }
 
     #[test]
-    fn targeted_rerun_movement_refuses_unclassified_change() {
+    fn targeted_rerun_movement_names_same_rank_change_as_limited() -> Result<(), String> {
         let current = vec![TargetedRerunStaticSeam {
             seam_id: "seam:price".to_string(),
             seam_kind: "predicate_boundary".to_string(),
@@ -2126,11 +2134,14 @@ mod tests {
             line: 42,
             static_class: "static_unknown".to_string(),
         }];
-        let result = targeted_rerun_movement_from_json(
+        let movement = targeted_rerun_movement_from_json(
             r#"{"schema_version":"ripr-targeted-rerun-v1","seams":[{"seam_id":"seam:price","file":"src/pricing.rs","line":42,"static_class":"unknown"}]}"#,
             &current,
-        );
-        assert!(matches!(result, Err(message) if message.contains("unsupported static movement")));
+        )?;
+        if movement.state != "limited" || movement.limitation.is_none() {
+            return Err(format!("expected named limited movement, got {movement:?}"));
+        }
+        Ok(())
     }
 
     fn targeted_static_seam(id: &str, grip_class: &str) -> StaticSeamRecord {
