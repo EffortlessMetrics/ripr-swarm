@@ -77,7 +77,7 @@ file-fact cache reset and records `recomputed_file_facts`.
 This closes only the benchmark-receipt slice. Broader input invalidation
 attribution, test-node selectors, and full campaign closeout remain pending;
 the active `perf/targeted-rerun` item stays open until those requirements are
-proven.
+demonstrated.
 
 ## Gate route dogfood status (2026-07-10)
 
