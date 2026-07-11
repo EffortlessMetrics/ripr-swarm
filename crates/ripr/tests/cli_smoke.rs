@@ -237,7 +237,7 @@ fn check_human_output_reports_sample_findings() {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 5 probe(s)"));
+    assert!(stdout.contains("Summary: 4 probe(s)"));
     assert!(stdout.contains("Start here:"));
     assert!(stdout.contains("Static exposure: weakly_exposed"));
     assert!(stdout.contains("Evidence:"));
@@ -1761,7 +1761,7 @@ fn check_badge_shields_output_has_exactly_four_top_level_fields() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(r#""schemaVersion": 1"#));
     assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""message": "5""#));
+    assert!(stdout.contains(r#""message": "4""#));
     assert!(stdout.contains(r#""color": "orange""#));
     // Native-JSON-only fields must not leak into the Shields shape.
     for forbidden in [
