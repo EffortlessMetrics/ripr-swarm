@@ -41,6 +41,10 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
         }
         let parser_shapes =
             parser_probe_shapes_for_changed_line(index, &changed.path, added.new_side_line, text);
+        let parser_shapes = parser_shapes
+            .into_iter()
+            .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
+            .collect::<Vec<_>>();
         let canonical_shapes = parser_shapes
             .iter()
             .filter(|shape| {

@@ -342,16 +342,14 @@ fn extract_parser_probe_shapes(
     {
         let range = call_expr.syntax().text_range();
         let call_text = slice_text(text, range.start(), range.end());
-        if call_is_standalone_statement(call_expr.syntax()) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                PROBE_SHAPE_CALL_DELETION,
-                range.start(),
-                range.end(),
-            );
-        }
+        push_probe_shape(
+            &mut shapes,
+            line_index,
+            text,
+            PROBE_SHAPE_CALL_DELETION,
+            range.start(),
+            range.end(),
+        );
         if has_return_value_text(&call_text) && !call_is_argument(&call_expr) {
             push_probe_shape(
                 &mut shapes,
@@ -381,16 +379,14 @@ fn extract_parser_probe_shapes(
     {
         let range = method_call.syntax().text_range();
         let method_text = slice_text(text, range.start(), range.end());
-        if call_is_standalone_statement(method_call.syntax()) {
-            push_probe_shape(
-                &mut shapes,
-                line_index,
-                text,
-                PROBE_SHAPE_CALL_DELETION,
-                range.start(),
-                range.end(),
-            );
-        }
+        push_probe_shape(
+            &mut shapes,
+            line_index,
+            text,
+            PROBE_SHAPE_CALL_DELETION,
+            range.start(),
+            range.end(),
+        );
         if method_call
             .name_ref()
             .is_some_and(|name| is_effect_call_name(&name.syntax().text().to_string()))
@@ -571,19 +567,6 @@ fn call_is_argument(call: &ast::CallExpr) -> bool {
     call.syntax()
         .parent()
         .and_then(ast::ArgList::cast)
-        .is_some()
-}
-
-fn call_is_standalone_statement(node: &ra_ap_syntax::SyntaxNode) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    if ast::ExprStmt::cast(parent.clone()).is_some() {
-        return true;
-    }
-    ast::TryExpr::cast(parent)
-        .and_then(|wrapper| wrapper.syntax().parent())
-        .and_then(ast::ExprStmt::cast)
         .is_some()
 }
 
@@ -1028,43 +1011,6 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
 
         if return_shapes != ["Ok(Some(value))"] {
             return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn ra_adapter_emits_call_deletion_only_for_standalone_calls() -> Result<(), Box<dyn Error>> {
-        let root = temp_dir("ra_standalone_call_deletion")?;
-        fs::create_dir_all(root.join("src"))?;
-        write_manifest(&root)?;
-        fs::write(
-            root.join("src/lib.rs"),
-            r#"
-fn read() -> Result<String, ()> { Ok(String::new()) }
-fn consume(_: Vec<u8>) {}
-
-pub fn probe() -> Result<(), ()> {
-    read()?;
-    let value = read()?;
-    consume(Vec::new());
-    if value.trim().is_empty() {}
-    Ok(())
-}
-"#,
-        )?;
-
-        let adapter = RaRustSyntaxAdapter;
-        let text = fs::read_to_string(root.join("src/lib.rs"))?;
-        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
-        let call_shapes = facts
-            .probe_shapes
-            .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_CALL_DELETION)
-            .map(|shape| shape.text.as_str())
-            .collect::<Vec<_>>();
-
-        if call_shapes != ["read()", "consume(Vec::new())"] {
-            return Err(format!("unexpected call-deletion probe shapes: {call_shapes:?}").into());
         }
         Ok(())
     }

@@ -125,6 +125,7 @@ fn has_call_shape(text: &str) -> bool {
         && !text.contains("assert")
         && !has_return_shape(text)
         && !starts_with_binding_or_control(text)
+        && !text.trim_end().ends_with(',')
         && call_prefix_is_named(text)
 }
 
@@ -306,6 +307,7 @@ mod tests {
             "if let Some(value) = selected {",
             "(GateState::Pending, None)",
             "Ok(())",
+            "Vec::new(),",
         ] {
             let families = classify_changed_line(text);
             if families.contains(&ProbeFamily::CallDeletion) {
