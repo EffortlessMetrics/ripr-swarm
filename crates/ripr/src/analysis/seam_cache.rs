@@ -41,7 +41,7 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
@@ -702,26 +702,27 @@ impl RepoFileFactCache {
         }
     }
 
-    /// Return whether a prior envelope for this path exists under a different
-    /// content key. A missing current entry is a cold miss; only this older
-    /// same-path evidence justifies calling it content invalidation.
-    pub(crate) fn has_prior_version(&self, key: &RepoFileFactCacheKey) -> bool {
-        let current = self.entry_path(key);
+    /// Snapshot paths with valid cached envelopes before a build starts. The
+    /// caller uses this set for O(1) miss attribution and deliberately does not
+    /// observe entries created during the same build.
+    pub(crate) fn known_file_paths(&self) -> HashSet<PathBuf> {
+        let mut paths = HashSet::new();
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return false;
+            return paths;
         };
-        entries.flatten().any(|entry| {
+        for entry in entries.flatten() {
             let path = entry.path();
-            if path == current || path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                return false;
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
             }
             let Ok(bytes) = std::fs::read(path) else {
-                return false;
+                continue;
             };
-            codec::decode_file_facts(&bytes)
-                .map(|envelope| envelope.file_path == key.file_path)
-                .unwrap_or(false)
-        })
+            if let Ok(envelope) = codec::decode_file_facts(&bytes) {
+                paths.insert(envelope.file_path);
+            }
+        }
+        paths
     }
 
     pub(crate) fn store_file_facts(
@@ -1786,7 +1787,7 @@ mod tests {
         cache
             .store_file_facts(&original_key, &facts)
             .map_err(|err| format!("store original file facts: {err}"))?;
-        if !cache.has_prior_version(&changed_key) {
+        if !cache.known_file_paths().contains(&path) {
             return Err("changed content should identify a prior same-path version".to_string());
         }
 
