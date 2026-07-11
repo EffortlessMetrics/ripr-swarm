@@ -6679,12 +6679,18 @@ tests = [
   "crates/ripr/src/cli/rerun.rs::tests::rerun_gap_requires_explicit_ledger",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_parses_gap_selector_with_explicit_ledger",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_parses_changed_test_json_output",
+  "crates/ripr/src/cli/rerun.rs::tests::rerun_parses_explicit_before_artifact",
   "crates/ripr/src/cli/rerun.rs::tests::human_rerun_report_names_current_state_only_boundary",
+  "crates/ripr/src/cli/rerun.rs::tests::human_rerun_report_names_explicit_static_movement",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_records_preserve_multiple_anchored_scopes",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_duplicate_projection_deduplicates_scope_and_commands",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_conflicting_receipt_commands_remain_explicit",
   "crates/ripr/src/cli/rerun.rs::tests::failed_root_canonicalizations_do_not_compare_equal",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_rerun_movement_uses_explicit_rerun_before_artifact",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_rerun_movement_rejects_before_without_selected_seam",
+  "crates/ripr/src/output/outcome/mod.rs::tests::targeted_rerun_movement_refuses_unclassified_change",
   "crates/ripr/tests/cli_smoke.rs::rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger",
+  "crates/ripr/tests/cli_smoke.rs::rerun_changed_test_uses_explicit_before_receipt_for_static_movement",
   "crates/ripr/tests/cli_smoke.rs::rerun_gap_groups_multiple_current_seams",
 ]
 fixtures = [
@@ -6693,6 +6699,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/cli/rerun.rs",
+  "crates/ripr/src/output/outcome/mod.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0123-targeted-rerun.md",
