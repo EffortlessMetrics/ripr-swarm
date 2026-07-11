@@ -36,34 +36,51 @@ pub(crate) fn targeted_rerun_benchmark(args: &[String]) -> Result<(), String> {
 
     let cold_full = run_series(&binary, &root, &envs, timeout, options.samples, true)?;
     clear_cache(&cache_dir)?;
-    let cold_targeted = run_targeted_series(
-        &binary,
-        &root,
-        &options,
-        &envs,
+    let cold_targeted = run_targeted_series(&TargetedSeriesConfig {
+        binary: &binary,
+        root: &root,
+        options: &options,
+        envs: &envs,
         timeout,
-        options.samples,
-        true,
-        false,
-    )?;
-    let warm_targeted = run_targeted_series(
-        &binary,
-        &root,
-        &options,
-        &envs,
+        samples: options.samples,
+        clear_each: true,
+        check_parity: false,
+    })?;
+    let warm_targeted = run_targeted_series(&TargetedSeriesConfig {
+        binary: &binary,
+        root: &root,
+        options: &options,
+        envs: &envs,
         timeout,
-        options.samples,
-        false,
-        false,
-    )?;
+        samples: options.samples,
+        clear_each: false,
+        check_parity: false,
+    })?;
 
     // A deliberate cache reset is the registered invalidation case. It proves
     // that a targeted rerun does not silently report a hit after its fact
     // store has been invalidated.
     clear_cache(&cache_dir)?;
-    let invalidation =
-        run_targeted_series(&binary, &root, &options, &envs, timeout, 1, false, false)?;
-    let parity = run_targeted_series(&binary, &root, &options, &envs, timeout, 1, false, true)?;
+    let invalidation = run_targeted_series(&TargetedSeriesConfig {
+        binary: &binary,
+        root: &root,
+        options: &options,
+        envs: &envs,
+        timeout,
+        samples: 1,
+        clear_each: false,
+        check_parity: false,
+    })?;
+    let parity = run_targeted_series(&TargetedSeriesConfig {
+        binary: &binary,
+        root: &root,
+        options: &options,
+        envs: &envs,
+        timeout,
+        samples: 1,
+        clear_each: false,
+        check_parity: true,
+    })?;
 
     let report = build_report(
         &root,
@@ -202,35 +219,41 @@ fn run_series(
     Ok(series)
 }
 
-fn run_targeted_series(
-    binary: &Path,
-    root: &Path,
-    options: &Options,
-    envs: &[(&str, String)],
+struct TargetedSeriesConfig<'a> {
+    binary: &'a Path,
+    root: &'a Path,
+    options: &'a Options,
+    envs: &'a [(&'a str, String)],
     timeout: Duration,
     samples: usize,
     clear_each: bool,
     check_parity: bool,
-) -> Result<Series, String> {
+}
+
+fn run_targeted_series(config: &TargetedSeriesConfig<'_>) -> Result<Series, String> {
     let mut series = Series::default();
-    for _ in 0..samples {
-        if clear_each {
-            clear_env_cache(envs)?;
+    for _ in 0..config.samples {
+        if config.clear_each {
+            clear_env_cache(config.envs)?;
         }
         let mut args = vec![
             "rerun".to_string(),
             "--root".to_string(),
-            root.display().to_string(),
+            config.root.display().to_string(),
             "--changed-test".to_string(),
-            options.changed_test.clone(),
+            config.options.changed_test.clone(),
             "--json".to_string(),
         ];
-        if check_parity {
+        if config.check_parity {
             args.push("--check-parity".to_string());
         }
-        series
-            .samples
-            .push(run_sample(binary, &args, envs, timeout, true)?);
+        series.samples.push(run_sample(
+            config.binary,
+            &args,
+            config.envs,
+            config.timeout,
+            true,
+        )?);
     }
     Ok(series)
 }
@@ -244,7 +267,7 @@ fn run_sample(
 ) -> Result<Sample, String> {
     let envs = envs
         .iter()
-        .map(|(name, value)| (name.as_ref(), value.as_str()))
+        .map(|(name, value)| (*name, value.as_str()))
         .collect::<Vec<_>>();
     let binary_text = binary.display().to_string();
     let output = capture_output_with_timeout(
@@ -501,7 +524,10 @@ mod tests {
 
     #[test]
     fn parse_options_requires_root_and_changed_test() -> Result<(), String> {
-        let err = parse_options(&[]).expect_err("missing benchmark inputs must fail");
+        let err = match parse_options(&[]) {
+            Ok(_) => return Err("missing benchmark inputs unexpectedly succeeded".to_string()),
+            Err(err) => err,
+        };
         assert!(err.contains("missing --root"));
         let options = parse_options(&[
             "--root".to_string(),
