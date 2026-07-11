@@ -2,20 +2,20 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/infect_wildcard_discard/input
 
-Summary: 2 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 2 unknown
+Summary: 2 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 1 unknown
 
 Start here:
-  State: static_limited
-  Safe next action: inspect the named static limitation before treating this as repair-ready.
+  State: top_gap
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
   File: fixtures/infect_wildcard_discard/input/src/lib.rs:2
-  Static exposure: infection_unknown (warning, confidence 0.66)
-  Changed behavior: let _ = compute_fee(amount * 9);
-  Missing discriminator: Changed value is bound to a discard pattern; it cannot infect a sink
+  Static exposure: weakly_exposed (warning, confidence 0.92)
+  Changed behavior: compute_fee(amount * 9)
+  Missing discriminator: No strong discriminator was detected
   Related test: tests/process_tests.rs:4 process_returns_amount_unchanged
-  Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
+  Next step: Strengthen the related assertion so it discriminates the changed behavior.
   Evidence:
     - reach yes: Related tests appear to reach process: process_returns_amount_unchanged
-    - infection unknown: Changed value is bound to a discard pattern; it cannot infect a sink
+    - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more evidence line(s) hidden
 
 Hidden:
