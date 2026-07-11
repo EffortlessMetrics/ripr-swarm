@@ -71,15 +71,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending
-
-Reason:
-canonical call expression establishes call-effect propagation while wildcard-discarded output remains weakly observed
-
-Command:
-`cargo xtask goldens bless infect_wildcard_discard --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

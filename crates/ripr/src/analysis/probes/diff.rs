@@ -58,17 +58,18 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
                     continue;
                 }
                 emitted_parser_shapes.push(key);
+                let canonical_text = canonical_probe_text(text, shape.text);
                 let canonical_line = ChangedLine {
                     line: shape.start_line,
                     new_side_line: shape.start_line,
-                    text: shape.text.to_string(),
+                    text: canonical_text.clone(),
                 };
                 probes.push(build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    nearby_removed_line(shape.text, changed),
-                    Some(shape.text.to_string()),
+                    nearby_removed_line(&canonical_text, changed),
+                    Some(canonical_text),
                 ));
             }
             continue;
@@ -126,6 +127,15 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
     dedup_probe_ids(&mut probes);
 
     probes
+}
+
+fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
+    let changed_head = changed_head.trim();
+    if changed_head.starts_with("let _ =") {
+        changed_head.to_string()
+    } else {
+        parser_expression.to_string()
+    }
 }
 
 /// Scan `probes` in order; for any id that appears more than once, rewrite the
@@ -446,6 +456,47 @@ mod tests {
             return Err(format!(
                 "isolated field edit borrowed unchanged outer shape: {probe:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn probes_for_file_preserves_wildcard_discard_head() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let changed_text = "let _ = compute_fee(amount * 9);";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 4,
+                new_side_line: 4,
+                text: changed_text.to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    probe_shapes: vec![ProbeShapeFact {
+                        start_line: 4,
+                        end_line: 4,
+                        start_byte: 40,
+                        kind: PROBE_SHAPE_CALL_DELETION.to_string(),
+                        text: "compute_fee(amount * 9)".to_string(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let Some(probe) = probes.first() else {
+            return Err("expected wildcard-discard call probe".to_string());
+        };
+        if probe.expression != changed_text {
+            return Err(format!("wildcard discard context was erased: {probe:?}"));
         }
         Ok(())
     }
