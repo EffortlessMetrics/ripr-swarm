@@ -1072,6 +1072,70 @@ mod tests {
     }
 
     #[test]
+    fn targeted_mutation_route_covers_operator_variants_and_fail_closed_inputs() {
+        let mut findings = vec![
+            (">=", ">"),
+            ("<=", "<"),
+            ("==", "!="),
+            ("!=", "=="),
+            (">", ">="),
+            ("<", "<=")
+        ]
+        .into_iter()
+        .map(|(operator, _)| {
+            json!({
+                "classification": "weakly_exposed",
+                "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": format!("value {operator} limit")}
+            })
+        })
+        .collect::<Vec<_>>();
+        findings.push(json!({
+            "classification": "weakly_exposed",
+            "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": "value >= limit"}
+        }));
+        findings.push(json!({
+            "classification": "weakly_exposed",
+            "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 9, "expression": "publish(value)"}
+        }));
+        findings.push(json!({"classification": "weakly_exposed"}));
+        findings.push(json!({
+            "classification": "weakly_exposed",
+            "probe": {"family": "predicate", "line": 10, "expression": "value >= limit"}
+        }));
+        findings.push(json!({
+            "classification": "weakly_exposed",
+            "probe": {"family": "predicate", "file": "src/lib.rs", "expression": "value >= limit"}
+        }));
+        findings.push(json!({
+            "classification": "weakly_exposed",
+            "probe": {"family": "predicate", "file": "src/lib.rs", "line": 11, "expression": "value + limit"}
+        }));
+        let route = targeted_mutation_route(&json!({"findings": findings}), true);
+        assert_eq!(route["status"], "candidate");
+        assert_eq!(route["candidates"].as_array().map(Vec::len), Some(6));
+        assert_eq!(route["limitations"].as_array().map(Vec::len), Some(5));
+    }
+
+    #[test]
+    fn markdown_renders_targeted_mutation_candidate_and_limitation() {
+        let packet = pr_evidence_packet(
+            &options(),
+            &["src/lib.rs".to_string()],
+            &json!({
+                "summary": {"weakly_exposed": 1, "reachable_unrevealed": 0, "no_static_path": 0},
+                "findings": [
+                    {"classification": "weakly_exposed", "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": "value >= limit"}},
+                    {"classification": "weakly_exposed", "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 9, "expression": "publish(value)"}}
+                ]
+            }),
+        );
+        let markdown = render_pr_evidence_markdown(&packet);
+        assert!(markdown.contains("route: `candidate`"));
+        assert!(markdown.contains("cargo mutants --file"));
+        assert!(markdown.contains("no safe concrete mutation candidate"));
+    }
+
+    #[test]
     fn packet_without_check_summary_is_incomplete_and_warns() {
         let packet = pr_evidence_packet(&options(), &[], &json!({}));
         assert_eq!(packet["status"], "incomplete");
