@@ -6714,6 +6714,7 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0123-targeted-rerun.md",
   "docs/OUTPUT_SCHEMA.md",
+  "docs/handoffs/2026-07-11-targeted-rerun-benchmark.md",
 ]
 metrics = [
   "targeted_rerun_warm_p50_ms",
