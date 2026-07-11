@@ -714,35 +714,6 @@ fn validate_targeted_mutation_route(summary: &Map<String, Value>, violations: &m
             ));
         }
     }
-    if let Some(candidates) = route.get("candidates").and_then(Value::as_array) {
-        for (index, candidate) in candidates.iter().enumerate() {
-            let Some(candidate) = candidate.as_object() else {
-                violations.push(format!(
-                    "summary.targeted_mutation_route.candidates[{index}] is not an object"
-                ));
-                continue;
-            };
-            for key in [
-                "file",
-                "kind",
-                "from",
-                "to",
-                "command",
-                "expected_observation",
-            ] {
-                if !candidate.get(key).is_some_and(Value::is_string) {
-                    violations.push(format!(
-                        "summary.targeted_mutation_route.candidates[{index}].{key} is missing or not a string"
-                    ));
-                }
-            }
-            if !candidate.get("line").is_some_and(Value::is_u64) {
-                violations.push(format!(
-                    "summary.targeted_mutation_route.candidates[{index}].line is missing or not a non-negative integer"
-                ));
-            }
-        }
-    }
 }
 
 fn expect_string(packet: &Value, key: &str, expected: &str, violations: &mut Vec<String>) {
@@ -1140,6 +1111,10 @@ mod tests {
         let packet = pr_evidence_packet(&options(), &[], &json!({}));
         assert_eq!(packet["status"], "incomplete");
         assert_eq!(packet["warnings"][0]["kind"], "invalid_json");
+        assert_eq!(
+            packet["summary"]["targeted_mutation_route"]["status"],
+            "not_required"
+        );
     }
 
     #[test]
