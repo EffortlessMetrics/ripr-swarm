@@ -1736,8 +1736,9 @@ fn check_badge_json_output_has_native_badge_shape() {
     assert!(stdout.contains(r#""unsuppressed_exposure_gaps""#));
     assert!(stdout.contains(r#""duplicate_activation_and_oracle_shape": 0"#));
     assert!(!stdout.contains(r#""schemaVersion""#));
-    // The sample diff has 5 weakly_exposed findings; the badge headline reflects them.
-    assert!(stdout.contains(r#""message": "5""#));
+    // The sample diff has 4 weakly_exposed findings after nested call shapes are
+    // excluded; the badge headline reflects the surviving semantic probes.
+    assert!(stdout.contains(r#""message": "4""#));
     assert!(stdout.contains(r#""status": "warn""#));
     assert!(stdout.contains(r#""color": "orange""#));
 }
