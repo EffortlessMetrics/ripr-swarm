@@ -7,6 +7,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::output::gap_decision_ledger::{GapRecord, parse_gap_record_source_json};
 use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -37,6 +38,8 @@ struct TargetedRerunReport {
     route: Option<TargetedRerunRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
     limitation: Option<TargetedRerunLimitation>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    scope_limitations: Vec<TargetedRerunScopeLimitation>,
     authority_boundary: &'static str,
 }
 
@@ -49,6 +52,10 @@ struct TargetedRerunSelector {
     canonical_gap_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     gap_ledger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_record_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recomputed_scope_count: Option<usize>,
     selected_test_count: usize,
     direct_call_names: Vec<String>,
 }
@@ -76,14 +83,28 @@ struct TargetedRerunSeam {
 #[derive(Serialize)]
 struct TargetedRerunRoute {
     verify_commands: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     receipt_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_command_conflict: Option<TargetedRerunLimitation>,
 }
 
 #[derive(Serialize)]
 struct TargetedRerunLimitation {
     kind: &'static str,
     message: String,
+}
+
+#[derive(Serialize)]
+struct TargetedRerunScopeLimitation {
+    kind: &'static str,
+    record_index: usize,
+    message: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct GapRerunScope {
+    file: PathBuf,
+    owner: Option<String>,
 }
 
 pub(super) fn run(args: &[String]) -> Result<(), String> {
@@ -206,6 +227,8 @@ fn rerun_changed_test(
             changed_test: Some(display_path(&changed_test)),
             canonical_gap_id: None,
             gap_ledger: None,
+            matched_record_count: None,
+            recomputed_scope_count: None,
             selected_test_count: inventory.selected_test_count,
             direct_call_names: inventory.direct_call_names,
         },
@@ -213,6 +236,7 @@ fn rerun_changed_test(
         seams_from(&inventory.classified),
         None,
         None,
+        Vec::new(),
     ))
 }
 
@@ -226,11 +250,13 @@ fn rerun_gap(
     // relative path is resolved from the invocation directory, not from
     // `--root`; only `--out` is rooted under the selected workspace.
     let gap_ledger = gap_ledger.to_path_buf();
-    let selector = TargetedRerunSelector {
+    let mut selector = TargetedRerunSelector {
         kind: "canonical_gap",
         changed_test: None,
         canonical_gap_id: Some(canonical_gap_id.to_string()),
         gap_ledger: Some(display_path(&gap_ledger)),
+        matched_record_count: Some(0),
+        recomputed_scope_count: Some(0),
         selected_test_count: 0,
         direct_call_names: Vec::new(),
     };
@@ -269,8 +295,8 @@ fn rerun_gap(
             ),
         ));
     }
-    let record = match resolve_gap_record(source.records, canonical_gap_id) {
-        Ok(record) => record,
+    let records = match resolve_gap_records(source.records, canonical_gap_id) {
+        Ok(records) => records,
         Err(limitation) => {
             return Ok(limited_report(
                 selector,
@@ -279,86 +305,223 @@ fn rerun_gap(
             ));
         }
     };
-    let Some(anchor) = record.anchor.as_ref() else {
-        return Ok(limited_report(
+    selector.matched_record_count = Some(records.len());
+    let (scopes, mut scope_limitations) = scopes_from_gap_records(&records);
+    selector.recomputed_scope_count = Some(scopes.len());
+    if scopes.is_empty() {
+        return Ok(limited_report_with_scope_limitations(
             selector,
             "canonical_gap_unresolved",
-            format!("gap ledger record `{canonical_gap_id}` has no source anchor"),
+            format!("no anchored scope is available for canonical gap `{canonical_gap_id}`"),
+            scope_limitations,
         ));
-    };
-    let Some(file) = anchor
-        .file
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(limited_report(
-            selector,
-            "canonical_gap_unresolved",
-            format!("gap ledger record `{canonical_gap_id}` has no anchored file"),
-        ));
-    };
-    let changed_files = vec![PathBuf::from(file)];
-    let changed_owner_names = anchor.owner.iter().cloned().collect::<Vec<_>>();
-    let inventory = inventory_diff_scoped_classified_seams_at_with_config(
-        root,
-        config,
-        &changed_files,
-        &changed_owner_names,
-    )?;
-    let seams = inventory
-        .classified
-        .iter()
-        .filter(|entry| {
-            canonical_gap_identity(entry).is_some_and(|identity| identity.id == canonical_gap_id)
-        })
-        .collect::<Vec<_>>();
+    }
+
+    let mut cache = crate::analysis::seam_cache::FileFactCacheStats::default();
+    let mut seams = BTreeMap::<String, TargetedRerunSeam>::new();
+    for scope in scopes {
+        let changed_files = vec![scope.file.clone()];
+        let changed_owner_names = scope.owner.iter().cloned().collect::<Vec<_>>();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            root,
+            config,
+            &changed_files,
+            &changed_owner_names,
+        )?;
+        add_cache_stats(&mut cache, &inventory.file_fact_cache);
+        let scope_seams = inventory
+            .classified
+            .iter()
+            .filter(|entry| {
+                canonical_gap_identity(entry)
+                    .is_some_and(|identity| identity.id == canonical_gap_id)
+            })
+            .collect::<Vec<_>>();
+        if scope_seams.is_empty() {
+            for record_index in record_indexes_for_scope(&records, &scope) {
+                scope_limitations.push(TargetedRerunScopeLimitation {
+                    kind: "gap_scope_unresolved",
+                    record_index,
+                    message: format!(
+                        "anchored scope {} no longer contains canonical gap `{canonical_gap_id}`",
+                        display_scope(&scope)
+                    ),
+                });
+            }
+            continue;
+        }
+        for entry in scope_seams {
+            let seam = seam_from(entry);
+            seams.entry(seam.seam_id.clone()).or_insert(seam);
+        }
+    }
     if seams.is_empty() {
-        return Ok(limited_report(
+        return Ok(limited_report_with_scope_limitations(
             selector,
             "canonical_gap_unresolved",
             format!(
                 "no current seam matched canonical gap `{canonical_gap_id}` from the supplied ledger"
             ),
+            scope_limitations,
         ));
     }
     Ok(report(
         "current_state_only",
         selector,
-        cache_from(&inventory.file_fact_cache),
-        seams_from_refs(&seams),
-        Some(TargetedRerunRoute {
-            verify_commands: record.verification_commands,
-            receipt_command: record.receipt_command,
-        }),
+        cache_from(&cache),
+        seams.into_values().collect(),
+        Some(route_from_gap_records(&records)),
         None,
+        scope_limitations,
     ))
 }
 
-fn resolve_gap_record(
+fn resolve_gap_records(
     records: Vec<GapRecord>,
     canonical_gap_id: &str,
-) -> Result<GapRecord, TargetedRerunLimitation> {
-    let mut matches = records
+) -> Result<Vec<(usize, GapRecord)>, TargetedRerunLimitation> {
+    let matches = records
         .into_iter()
-        .filter(|record| record.canonical_gap_id == canonical_gap_id)
+        .enumerate()
+        .filter(|(_, record)| record.canonical_gap_id == canonical_gap_id)
         .collect::<Vec<_>>();
-    match matches.len() {
-        0 => Err(TargetedRerunLimitation {
+    if matches.is_empty() {
+        Err(TargetedRerunLimitation {
             kind: "canonical_gap_unresolved",
             message: format!("no gap ledger record has canonical_gap_id `{canonical_gap_id}`"),
-        }),
-        1 => Ok(matches.remove(0)),
-        count => Err(TargetedRerunLimitation {
-            kind: "canonical_gap_ambiguous",
-            message: format!(
-                "{count} gap ledger records have canonical_gap_id `{canonical_gap_id}`"
-            ),
-        }),
+        })
+    } else {
+        Ok(matches)
+    }
+}
+
+fn scopes_from_gap_records(
+    records: &[(usize, GapRecord)],
+) -> (BTreeSet<GapRerunScope>, Vec<TargetedRerunScopeLimitation>) {
+    let mut scopes = BTreeSet::new();
+    let mut limitations = Vec::new();
+    for (record_index, record) in records {
+        let Some(anchor) = record.anchor.as_ref() else {
+            limitations.push(TargetedRerunScopeLimitation {
+                kind: "gap_anchor_unresolved",
+                record_index: *record_index,
+                message: "gap ledger record has no source anchor".to_string(),
+            });
+            continue;
+        };
+        let Some(file) = anchor
+            .file
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            limitations.push(TargetedRerunScopeLimitation {
+                kind: "gap_anchor_unresolved",
+                record_index: *record_index,
+                message: "gap ledger record has no anchored file".to_string(),
+            });
+            continue;
+        };
+        scopes.insert(GapRerunScope {
+            file: PathBuf::from(file),
+            owner: anchor
+                .owner
+                .as_deref()
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+                .map(str::to_string),
+        });
+    }
+    (scopes, limitations)
+}
+
+fn record_indexes_for_scope(records: &[(usize, GapRecord)], scope: &GapRerunScope) -> Vec<usize> {
+    records
+        .iter()
+        .filter_map(|(record_index, record)| {
+            let anchor = record.anchor.as_ref()?;
+            let file = anchor.file.as_deref()?.trim();
+            if file.is_empty() {
+                return None;
+            }
+            let owner = anchor
+                .owner
+                .as_deref()
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+                .map(str::to_string);
+            (GapRerunScope {
+                file: PathBuf::from(file),
+                owner,
+            } == *scope)
+                .then_some(*record_index)
+        })
+        .collect()
+}
+
+fn route_from_gap_records(records: &[(usize, GapRecord)]) -> TargetedRerunRoute {
+    let verify_commands = stable_unique(
+        records
+            .iter()
+            .flat_map(|(_, record)| record.verification_commands.iter().cloned()),
+    );
+    let receipt_commands = stable_unique(records.iter().filter_map(|(_, record)| {
+        record
+            .receipt_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(str::to_string)
+    }));
+    let receipt_command = (receipt_commands.len() == 1).then(|| receipt_commands[0].clone());
+    let receipt_command_conflict = (receipt_commands.len() > 1).then(|| TargetedRerunLimitation {
+        kind: "receipt_command_conflict",
+        message: format!(
+            "{} distinct receipt commands were supplied by matching gap ledger records",
+            receipt_commands.len()
+        ),
+    });
+    TargetedRerunRoute {
+        verify_commands,
+        receipt_command,
+        receipt_command_conflict,
+    }
+}
+
+fn stable_unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    values
+        .into_iter()
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn add_cache_stats(
+    target: &mut crate::analysis::seam_cache::FileFactCacheStats,
+    source: &crate::analysis::seam_cache::FileFactCacheStats,
+) {
+    target.hits += source.hits;
+    target.misses += source.misses;
+    target.corrupt_ignored += source.corrupt_ignored;
+    target.stores += source.stores;
+    target.store_errors += source.store_errors;
+}
+
+fn display_scope(scope: &GapRerunScope) -> String {
+    match scope.owner.as_deref() {
+        Some(owner) => format!("{}::{owner}", display_path(&scope.file)),
+        None => display_path(&scope.file),
     }
 }
 
 fn same_root(root: &Path, ledger_root: &Path) -> bool {
-    std::fs::canonicalize(root).ok() == std::fs::canonicalize(ledger_root).ok()
+    match (
+        std::fs::canonicalize(root),
+        std::fs::canonicalize(ledger_root),
+    ) {
+        (Ok(root), Ok(ledger_root)) => root == ledger_root,
+        _ => false,
+    }
 }
 
 fn report(
@@ -368,6 +531,7 @@ fn report(
     seams: Vec<TargetedRerunSeam>,
     route: Option<TargetedRerunRoute>,
     limitation: Option<TargetedRerunLimitation>,
+    scope_limitations: Vec<TargetedRerunScopeLimitation>,
 ) -> TargetedRerunReport {
     TargetedRerunReport {
         schema_version: "ripr-targeted-rerun-v1",
@@ -377,6 +541,7 @@ fn report(
         seams,
         route,
         limitation,
+        scope_limitations,
         authority_boundary: "static evidence only; no before snapshot was supplied, so gap movement is not inferred",
     }
 }
@@ -400,7 +565,19 @@ fn limited_report(
         Vec::new(),
         None,
         Some(TargetedRerunLimitation { kind, message }),
+        Vec::new(),
     )
+}
+
+fn limited_report_with_scope_limitations(
+    selector: TargetedRerunSelector,
+    kind: &'static str,
+    message: String,
+    scope_limitations: Vec<TargetedRerunScopeLimitation>,
+) -> TargetedRerunReport {
+    let mut report = limited_report(selector, kind, message);
+    report.scope_limitations = scope_limitations;
+    report
 }
 
 fn cache_from(cache: &crate::analysis::seam_cache::FileFactCacheStats) -> TargetedRerunCache {
@@ -416,10 +593,6 @@ fn cache_from(cache: &crate::analysis::seam_cache::FileFactCacheStats) -> Target
 
 fn seams_from(entries: &[crate::analysis::ClassifiedSeam]) -> Vec<TargetedRerunSeam> {
     entries.iter().map(seam_from).collect()
-}
-
-fn seams_from_refs(entries: &[&crate::analysis::ClassifiedSeam]) -> Vec<TargetedRerunSeam> {
-    entries.iter().map(|entry| seam_from(entry)).collect()
 }
 
 fn seam_from(entry: &crate::analysis::ClassifiedSeam) -> TargetedRerunSeam {
@@ -496,6 +669,12 @@ fn render_human(report: &TargetedRerunReport) -> String {
     if let Some(gap_ledger) = report.selector.gap_ledger.as_deref() {
         lines.push(format!("Gap ledger: {gap_ledger}"));
     }
+    if let Some(matched_record_count) = report.selector.matched_record_count {
+        lines.push(format!("Matched ledger records: {matched_record_count}"));
+    }
+    if let Some(recomputed_scope_count) = report.selector.recomputed_scope_count {
+        lines.push(format!("Recomputed scopes: {recomputed_scope_count}"));
+    }
     lines.extend(report.seams.iter().map(|seam| {
         format!(
             "  - [{}] {}:{} {} ({})",
@@ -509,11 +688,23 @@ fn render_human(report: &TargetedRerunReport) -> String {
         if let Some(receipt_command) = route.receipt_command.as_deref() {
             lines.push(format!("Receipt: {receipt_command}"));
         }
+        if let Some(conflict) = route.receipt_command_conflict.as_ref() {
+            lines.push(format!(
+                "Route limitation ({}): {}",
+                conflict.kind, conflict.message
+            ));
+        }
     }
     if let Some(limitation) = report.limitation.as_ref() {
         lines.push(format!(
             "Limitation ({}): {}",
             limitation.kind, limitation.message
+        ));
+    }
+    for limitation in &report.scope_limitations {
+        lines.push(format!(
+            "Scope limitation #{} ({}): {}",
+            limitation.record_index, limitation.kind, limitation.message
         ));
     }
     lines.push(format!("Boundary: {}", report.authority_boundary));
@@ -524,12 +715,37 @@ fn render_human(report: &TargetedRerunReport) -> String {
 mod tests {
     use super::{
         RerunSelector, TargetedRerunCache, TargetedRerunReport, TargetedRerunSeam,
-        TargetedRerunSelector, parse_options, render_human,
+        TargetedRerunSelector, parse_options, render_human, resolve_gap_records,
+        route_from_gap_records, same_root, scopes_from_gap_records,
     };
+    use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
     use std::path::{Path, PathBuf};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn gap_record(
+        canonical_gap_id: &str,
+        file: Option<&str>,
+        owner: Option<&str>,
+        verification_commands: &[&str],
+        receipt_command: Option<&str>,
+    ) -> GapRecord {
+        GapRecord {
+            canonical_gap_id: canonical_gap_id.to_string(),
+            anchor: file.map(|file| GapAnchor {
+                file: Some(file.to_string()),
+                owner: owner.map(str::to_string),
+                ..GapAnchor::default()
+            }),
+            verification_commands: verification_commands
+                .iter()
+                .map(|command| (*command).to_string())
+                .collect(),
+            receipt_command: receipt_command.map(str::to_string),
+            ..GapRecord::default()
+        }
     }
 
     #[test]
@@ -549,6 +765,125 @@ mod tests {
             parse_options(&args(&["--gap", "gap:example"])),
             Err("rerun --gap requires --gap-ledger <path>".to_string())
         );
+    }
+
+    #[test]
+    fn canonical_gap_records_preserve_multiple_anchored_scopes() -> Result<(), String> {
+        let canonical_gap_id = "gap:shared";
+        let records = resolve_gap_records(
+            vec![
+                gap_record(
+                    canonical_gap_id,
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &[],
+                    None,
+                ),
+                gap_record(
+                    canonical_gap_id,
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &[],
+                    None,
+                ),
+                gap_record(
+                    canonical_gap_id,
+                    Some("src/lib.rs"),
+                    Some("crate::validate"),
+                    &[],
+                    None,
+                ),
+            ],
+            canonical_gap_id,
+        )
+        .map_err(|limitation| limitation.message)?;
+        let (scopes, limitations) = scopes_from_gap_records(&records);
+        if records.len() != 3 || scopes.len() != 2 || !limitations.is_empty() {
+            return Err(format!(
+                "expected three grouped records and two scopes, got records={} scopes={} limitations={}",
+                records.len(),
+                scopes.len(),
+                limitations.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_gap_duplicate_projection_deduplicates_scope_and_commands() -> Result<(), String> {
+        let canonical_gap_id = "gap:shared";
+        let record = gap_record(
+            canonical_gap_id,
+            Some("src/lib.rs"),
+            Some("crate::price"),
+            &["cargo test price", "cargo test price"],
+            Some("ripr receipt write --gap gap:shared"),
+        );
+        let records = resolve_gap_records(vec![record.clone(), record], canonical_gap_id)
+            .map_err(|limitation| limitation.message)?;
+        let (scopes, limitations) = scopes_from_gap_records(&records);
+        let route = route_from_gap_records(&records);
+        if scopes.len() != 1
+            || !limitations.is_empty()
+            || route.verify_commands != vec!["cargo test price".to_string()]
+            || route.receipt_command.as_deref() != Some("ripr receipt write --gap gap:shared")
+            || route.receipt_command_conflict.is_some()
+        {
+            return Err("duplicate gap-record projection was not stably deduplicated".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_gap_conflicting_receipt_commands_remain_explicit() -> Result<(), String> {
+        let records = resolve_gap_records(
+            vec![
+                gap_record(
+                    "gap:shared",
+                    Some("src/lib.rs"),
+                    Some("crate::price"),
+                    &["cargo test price"],
+                    Some("ripr receipt write --gap gap:shared --route one"),
+                ),
+                gap_record(
+                    "gap:shared",
+                    Some("src/lib.rs"),
+                    Some("crate::validate"),
+                    &["cargo test validate", "cargo test price"],
+                    Some("ripr receipt write --gap gap:shared --route two"),
+                ),
+            ],
+            "gap:shared",
+        )
+        .map_err(|limitation| limitation.message)?;
+        let route = route_from_gap_records(&records);
+        if route.verify_commands
+            != vec![
+                "cargo test price".to_string(),
+                "cargo test validate".to_string(),
+            ]
+            || route.receipt_command.is_some()
+            || route
+                .receipt_command_conflict
+                .as_ref()
+                .map(|limitation| limitation.kind)
+                != Some("receipt_command_conflict")
+        {
+            return Err(format!(
+                "conflicting receipt command route was not explicit: {:?}",
+                route.receipt_command
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failed_root_canonicalizations_do_not_compare_equal() -> Result<(), String> {
+        let missing = Path::new("target/ripr/missing-rerun-root");
+        if same_root(missing, missing) {
+            return Err("two failed root canonicalizations compared equal".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -614,6 +949,8 @@ mod tests {
                 changed_test: Some("tests/pricing.rs".to_string()),
                 canonical_gap_id: None,
                 gap_ledger: None,
+                matched_record_count: None,
+                recomputed_scope_count: None,
                 selected_test_count: 1,
                 direct_call_names: vec!["discounted_total".to_string()],
             },
@@ -635,6 +972,7 @@ mod tests {
             }],
             route: None,
             limitation: None,
+            scope_limitations: Vec::new(),
             authority_boundary: "static evidence only; no before snapshot was supplied, so gap movement is not inferred",
         };
         let rendered = render_human(&report);

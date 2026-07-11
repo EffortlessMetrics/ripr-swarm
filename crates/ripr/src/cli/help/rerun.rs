@@ -12,11 +12,12 @@ Options:
   --out PATH           Write the report to a file instead of stdout.
 
 The changed-test selector recomputes only seams owned by uniquely resolved
-functions directly called from the selected test file. The gap selector resolves
-one canonical identity from the supplied ledger, scopes recomputation to its
-anchored file/owner, and returns only current seams with that same domain ID.
-Missing, ambiguous, stale, or root-mismatched ledger selections become named
-limitations; RIPR never scans unrelated seams as a fallback.
+functions directly called from the selected test file. The gap selector groups
+every supplied ledger record with that canonical identity, scopes recomputation
+to each unique anchored file/owner, and returns only current seams with that
+same domain ID. Missing, stale, anchorless, or root-mismatched ledger selections
+become named limitations; a stale record does not hide other current scopes.
+RIPR never scans unrelated seams as a fallback.
 
 Both selectors reuse valid per-file facts.
 Without a --before snapshot it reports current_state_only and never infers

@@ -14371,15 +14371,25 @@ returns only seams owned by uniquely resolved functions directly called from
 that file.
 
 For a gap selector, `selector.kind` is `canonical_gap`, with
-`canonical_gap_id` and `gap_ledger`. RIPR resolves exactly one existing ledger
-record by its domain-supplied canonical ID, scopes recomputation to that
-record's source anchor, and returns only current seams carrying the same
-canonical ID. The optional `route` projects the record's existing
-`verify_commands` and `receipt_command`; it does not manufacture either command.
+`canonical_gap_id` and `gap_ledger`. RIPR resolves every existing ledger record
+with that domain-supplied canonical ID: one canonical gap may legitimately have
+several seam records. `matched_record_count` names that group and
+`recomputed_scope_count` names its stable-deduplicated `file`/`owner` scopes.
+RIPR recomputes each scope, returns only current seams carrying the requested
+canonical ID, and deduplicates them by `seam_id`.
 
-Missing, ambiguous, root-mismatched, anchorless, or no-longer-current gap
-selectors emit `state: "limited"`, an empty `seams` array, and a named
-`limitation` such as `canonical_gap_unresolved`, `canonical_gap_ambiguous`, or
+The optional `route` stable-deduplicates existing `verify_commands` across the
+matching records. It emits a singular `receipt_command` only when exactly one
+distinct non-empty command exists; otherwise that field is explicit JSON
+`null`. Multiple commands keep the rerun evidence and emit
+`route.receipt_command_conflict` rather than choosing one arbitrarily. Neither
+command is manufactured.
+
+Anchorless or no-longer-current records appear in `scope_limitations` with their
+matching-record index and do not hide other current scopes. The overall result
+is `limited` only when no current scope resolves. Missing, root-mismatched, or
+otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
+and a named `limitation` such as `canonical_gap_unresolved` or
 `stale_gap_ledger`. They never fall back to an unrelated workspace scan.
 
 Both selectors reuse valid file facts but recompute the selected evidence. A
