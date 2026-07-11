@@ -1,6 +1,6 @@
 # Targeted rerun benchmark receipt
 
-Recorded for `RIPR-SPEC-0123` on commit `5a266472c26e230d86e1b5982e7191b7b3c652b5`.
+Recorded for `RIPR-SPEC-0123` on commit `dbb56ae2683ed9276d68f299fee3ad02882ca484`.
 
 Command:
 
@@ -8,7 +8,7 @@ Command:
 cargo xtask targeted-rerun-benchmark \
   --root benchmarks/targeted_rerun_benchmark/input \
   --changed-test tests/targeted.rs \
-  --samples 3 \
+  --samples 5 \
   --timeout-ms 120000
 ```
 
@@ -20,11 +20,11 @@ Measured receipt (`target/ripr/reports/targeted-rerun-benchmark.json`):
 
 | Measure | Result |
 | --- | ---: |
-| Cold full p50 | 1,309 ms |
-| Cold full p95 | 1,518 ms |
-| Warm targeted p50 | 104 ms |
-| Warm targeted p95 | 205 ms |
-| Cold-to-warm p50 speedup | 12.5865x |
+| Cold full p50 | 1,307 ms |
+| Cold full p95 | 1,409 ms |
+| Warm targeted p50 | 204 ms |
+| Warm targeted p95 | 208 ms |
+| Cold-to-warm p50 speedup | 6.4069x |
 | Warm p50 target | 30,000 ms |
 | Parity | `matched` |
 | Explicit invalidation | `recomputed_file_facts` after cache reset |
