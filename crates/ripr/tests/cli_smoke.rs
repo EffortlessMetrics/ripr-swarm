@@ -2766,6 +2766,164 @@ fn rerun_changed_test_emits_current_state_only_for_boundary_gap_fixture() -> Res
 }
 
 #[test]
+fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.to_string_lossy().into_owned();
+    let changed = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--json",
+    ]);
+    assert_success(&changed);
+    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
+        .map_err(|err| format!("parse changed-test rerun JSON: {err}"))?;
+    let seam = changed_json["seams"]
+        .as_array()
+        .and_then(|seams| seams.first())
+        .ok_or_else(|| "changed-test rerun emitted no seam".to_string())?;
+    let canonical_gap_id = seam["canonical_gap_id"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks canonical_gap_id".to_string())?;
+    let file = seam["file"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks file".to_string())?;
+    let owner = seam["owner"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks owner".to_string())?;
+
+    let ledger_dir = unique_temp_workspace("rerun-gap-ledger");
+    std::fs::create_dir_all(&ledger_dir)
+        .map_err(|err| format!("create ledger dir {}: {err}", ledger_dir.display()))?;
+    let ledger = ledger_dir.join("gap-ledger.json");
+    let ledger_json = serde_json::json!({
+        "kind": "gap_decision_ledger",
+        "root": root_arg,
+        "records": [{
+            "canonical_gap_id": canonical_gap_id,
+            "anchor": { "file": file, "owner": owner },
+            "verification_commands": ["cargo test -p pricing boundary"],
+            "receipt_command": "ripr outcome --before before.json --after after.json"
+        }]
+    });
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&ledger_json)
+            .map_err(|err| format!("serialize gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write gap ledger {}: {err}", ledger.display()))?;
+    let ledger_arg = ledger.to_string_lossy().into_owned();
+
+    let selected = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ]);
+    assert_success(&selected);
+    let selected_json: serde_json::Value = serde_json::from_slice(&selected.stdout)
+        .map_err(|err| format!("parse gap rerun JSON: {err}"))?;
+    if selected_json["state"] != "current_state_only"
+        || selected_json["selector"]["kind"] != "canonical_gap"
+        || selected_json["selector"]["canonical_gap_id"] != canonical_gap_id
+        || selected_json["seams"].as_array().is_none_or(Vec::is_empty)
+        || selected_json["route"]["verify_commands"][0] != "cargo test -p pricing boundary"
+    {
+        return Err(format!(
+            "unexpected canonical gap rerun report: {selected_json}"
+        ));
+    }
+
+    let unresolved = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--gap",
+        "gap:missing",
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ]);
+    assert_success(&unresolved);
+    let unresolved_json: serde_json::Value = serde_json::from_slice(&unresolved.stdout)
+        .map_err(|err| format!("parse unresolved gap rerun JSON: {err}"))?;
+    if unresolved_json["state"] != "limited"
+        || unresolved_json["limitation"]["kind"] != "canonical_gap_unresolved"
+        || unresolved_json["seams"] != serde_json::json!([])
+    {
+        return Err(format!(
+            "unexpected unresolved gap rerun report: {unresolved_json}"
+        ));
+    }
+
+    let mut ambiguous_ledger = ledger_json.clone();
+    ambiguous_ledger["records"]
+        .as_array_mut()
+        .ok_or_else(|| "constructed gap ledger is missing records array".to_string())?
+        .push(ledger_json["records"][0].clone());
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&ambiguous_ledger)
+            .map_err(|err| format!("serialize ambiguous gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write ambiguous gap ledger {}: {err}", ledger.display()))?;
+    let ambiguous = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ]);
+    assert_success(&ambiguous);
+    let ambiguous_json: serde_json::Value = serde_json::from_slice(&ambiguous.stdout)
+        .map_err(|err| format!("parse ambiguous gap rerun JSON: {err}"))?;
+    if ambiguous_json["state"] != "limited"
+        || ambiguous_json["limitation"]["kind"] != "canonical_gap_ambiguous"
+    {
+        return Err(format!(
+            "unexpected ambiguous gap rerun report: {ambiguous_json}"
+        ));
+    }
+
+    let mut stale_ledger = ledger_json;
+    stale_ledger["root"] = serde_json::json!(ledger_dir.join("other-root"));
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&stale_ledger)
+            .map_err(|err| format!("serialize stale gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write stale gap ledger {}: {err}", ledger.display()))?;
+    let stale = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ]);
+    assert_success(&stale);
+    let stale_json: serde_json::Value = serde_json::from_slice(&stale.stdout)
+        .map_err(|err| format!("parse stale gap rerun JSON: {err}"))?;
+    if stale_json["state"] != "limited" || stale_json["limitation"]["kind"] != "stale_gap_ledger" {
+        return Err(format!("unexpected stale gap rerun report: {stale_json}"));
+    }
+
+    let _ = std::fs::remove_dir_all(&ledger_dir);
+    Ok(())
+}
+
+#[test]
 fn pilot_accepts_python_project_without_ripr_config() -> Result<(), String> {
     let root = workspace_root().join("fixtures/python/basic");
     let out_dir = unique_temp_workspace("pilot-python-basic");
