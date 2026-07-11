@@ -222,7 +222,10 @@ fn rerun_gap(
     canonical_gap_id: &str,
     gap_ledger: &Path,
 ) -> Result<TargetedRerunReport, String> {
-    let gap_ledger = resolve_output_path(root, gap_ledger);
+    // The ledger is an explicit input artifact. Like other CLI inputs, a
+    // relative path is resolved from the invocation directory, not from
+    // `--root`; only `--out` is rooted under the selected workspace.
+    let gap_ledger = gap_ledger.to_path_buf();
     let selector = TargetedRerunSelector {
         kind: "canonical_gap",
         changed_test: None,
@@ -355,11 +358,6 @@ fn resolve_gap_record(
 }
 
 fn same_root(root: &Path, ledger_root: &Path) -> bool {
-    let ledger_root = if ledger_root.is_absolute() {
-        ledger_root.to_path_buf()
-    } else {
-        root.join(ledger_root)
-    };
     std::fs::canonicalize(root).ok() == std::fs::canonicalize(ledger_root).ok()
 }
 

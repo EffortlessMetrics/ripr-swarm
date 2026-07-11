@@ -2767,16 +2767,16 @@ fn rerun_changed_test_emits_current_state_only_for_boundary_gap_fixture() -> Res
 
 #[test]
 fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
-    let root_arg = root.to_string_lossy().into_owned();
-    let changed = run_ripr(&[
+    let root_arg = "fixtures/boundary_gap/input";
+    let changed = run_ripr_in_workspace(&[
         "rerun",
         "--root",
-        &root_arg,
+        root_arg,
         "--changed-test",
         "tests/pricing.rs",
         "--json",
-    ]);
+    ])
+    .map_err(|err| format!("run changed-test rerun: {err}"))?;
     assert_success(&changed);
     let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
         .map_err(|err| format!("parse changed-test rerun JSON: {err}"))?;
@@ -2794,7 +2794,11 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
         .as_str()
         .ok_or_else(|| "changed-test rerun seam lacks owner".to_string())?;
 
-    let ledger_dir = unique_temp_workspace("rerun-gap-ledger");
+    let ledger_dir = workspace_root().join("target").join(format!(
+        "rerun-gap-ledger-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&ledger_dir)
         .map_err(|err| format!("create ledger dir {}: {err}", ledger_dir.display()))?;
     let ledger = ledger_dir.join("gap-ledger.json");
@@ -2814,18 +2818,23 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
             .map_err(|err| format!("serialize gap ledger: {err}"))?,
     )
     .map_err(|err| format!("write gap ledger {}: {err}", ledger.display()))?;
-    let ledger_arg = ledger.to_string_lossy().into_owned();
+    let ledger_arg = ledger
+        .strip_prefix(workspace_root())
+        .map_err(|err| format!("make ledger path relative to workspace: {err}"))?
+        .to_string_lossy()
+        .into_owned();
 
-    let selected = run_ripr(&[
+    let selected = run_ripr_in_workspace(&[
         "rerun",
         "--root",
-        &root_arg,
+        root_arg,
         "--gap",
         canonical_gap_id,
         "--gap-ledger",
         &ledger_arg,
         "--json",
-    ]);
+    ])
+    .map_err(|err| format!("run canonical gap rerun: {err}"))?;
     assert_success(&selected);
     let selected_json: serde_json::Value = serde_json::from_slice(&selected.stdout)
         .map_err(|err| format!("parse gap rerun JSON: {err}"))?;
@@ -2840,16 +2849,17 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
         ));
     }
 
-    let unresolved = run_ripr(&[
+    let unresolved = run_ripr_in_workspace(&[
         "rerun",
         "--root",
-        &root_arg,
+        root_arg,
         "--gap",
         "gap:missing",
         "--gap-ledger",
         &ledger_arg,
         "--json",
-    ]);
+    ])
+    .map_err(|err| format!("run unresolved gap rerun: {err}"))?;
     assert_success(&unresolved);
     let unresolved_json: serde_json::Value = serde_json::from_slice(&unresolved.stdout)
         .map_err(|err| format!("parse unresolved gap rerun JSON: {err}"))?;
@@ -2873,16 +2883,17 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
             .map_err(|err| format!("serialize ambiguous gap ledger: {err}"))?,
     )
     .map_err(|err| format!("write ambiguous gap ledger {}: {err}", ledger.display()))?;
-    let ambiguous = run_ripr(&[
+    let ambiguous = run_ripr_in_workspace(&[
         "rerun",
         "--root",
-        &root_arg,
+        root_arg,
         "--gap",
         canonical_gap_id,
         "--gap-ledger",
         &ledger_arg,
         "--json",
-    ]);
+    ])
+    .map_err(|err| format!("run ambiguous gap rerun: {err}"))?;
     assert_success(&ambiguous);
     let ambiguous_json: serde_json::Value = serde_json::from_slice(&ambiguous.stdout)
         .map_err(|err| format!("parse ambiguous gap rerun JSON: {err}"))?;
@@ -2902,16 +2913,17 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
             .map_err(|err| format!("serialize stale gap ledger: {err}"))?,
     )
     .map_err(|err| format!("write stale gap ledger {}: {err}", ledger.display()))?;
-    let stale = run_ripr(&[
+    let stale = run_ripr_in_workspace(&[
         "rerun",
         "--root",
-        &root_arg,
+        root_arg,
         "--gap",
         canonical_gap_id,
         "--gap-ledger",
         &ledger_arg,
         "--json",
-    ]);
+    ])
+    .map_err(|err| format!("run stale gap rerun: {err}"))?;
     assert_success(&stale);
     let stale_json: serde_json::Value = serde_json::from_slice(&stale.stdout)
         .map_err(|err| format!("parse stale gap rerun JSON: {err}"))?;
