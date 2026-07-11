@@ -1,6 +1,6 @@
 # Targeted rerun benchmark receipt
 
-Recorded for `RIPR-SPEC-0123` on commit `ca7ec99253c556643d604e105325506e4bd37e23`.
+Recorded for `RIPR-SPEC-0123` on commit `cb3a698717371c435caa40c3c0455dde83879d85`.
 
 Command:
 
@@ -20,11 +20,11 @@ Measured receipt (`target/ripr/reports/targeted-rerun-benchmark.json`):
 
 | Measure | Result |
 | --- | ---: |
-| Cold full p50 | 707 ms |
-| Cold full p95 | 722 ms |
-| Warm targeted p50 | 104 ms |
-| Warm targeted p95 | 104 ms |
-| Cold-to-warm p50 speedup | 6.7981x |
+| Cold full p50 | 1,407 ms |
+| Cold full p95 | 1,448 ms |
+| Warm targeted p50 | 205 ms |
+| Warm targeted p95 | 205 ms |
+| Cold-to-warm p50 speedup | 6.8634x |
 | Warm p50 target | 30,000 ms |
 | Parity | `matched` |
 | Explicit invalidation | `recomputed_file_facts` after cache reset |
