@@ -349,7 +349,7 @@ fn render_impacted_evidence_markdown(packet: &Value) -> String {
             .and_then(Value::as_object)
         {
             out.push_str(&format!(
-                "- candidate: `{}`:{} `{}` {} -> {}\n- command: `{}`\n",
+                "- candidate: `{}`:{} {} -> {}\n- command: `{}`\n",
                 md_escape(
                     candidate
                         .get("file")
@@ -357,14 +357,8 @@ fn render_impacted_evidence_markdown(packet: &Value) -> String {
                         .unwrap_or("unknown")
                 ),
                 candidate.get("line").and_then(Value::as_u64).unwrap_or(0),
-                md_escape(
-                    candidate
-                        .get("kind")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown")
-                ),
-                md_escape(candidate.get("from").and_then(Value::as_str).unwrap_or("?")),
-                md_escape(candidate.get("to").and_then(Value::as_str).unwrap_or("?")),
+                candidate.get("from").and_then(Value::as_str).unwrap_or("?"),
+                candidate.get("to").and_then(Value::as_str).unwrap_or("?"),
                 md_escape(
                     candidate
                         .get("command")

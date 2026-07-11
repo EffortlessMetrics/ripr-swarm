@@ -860,7 +860,7 @@ fn render_targeted_mutation_route(out: &mut String, route: Option<&Value>) {
                 continue;
             };
             out.push_str(&format!(
-                "- candidate: `{}`:{} `{}` {} -> {}\n  command: `{}`\n  expected: {}\n",
+                "- candidate: `{}`:{} {} -> {}\n- command: `{}`\n- expected: {}\n",
                 md_escape(
                     candidate
                         .get("file")
@@ -868,14 +868,8 @@ fn render_targeted_mutation_route(out: &mut String, route: Option<&Value>) {
                         .unwrap_or("unknown")
                 ),
                 candidate.get("line").and_then(Value::as_u64).unwrap_or(0),
-                md_escape(
-                    candidate
-                        .get("kind")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown")
-                ),
-                md_escape(candidate.get("from").and_then(Value::as_str).unwrap_or("?")),
-                md_escape(candidate.get("to").and_then(Value::as_str).unwrap_or("?")),
+                candidate.get("from").and_then(Value::as_str).unwrap_or("?"),
+                candidate.get("to").and_then(Value::as_str).unwrap_or("?"),
                 md_escape(
                     candidate
                         .get("command")
