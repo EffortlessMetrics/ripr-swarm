@@ -677,6 +677,43 @@ mod tests {
         );
     }
 
+    // Regression: an added line adjacent to a removed line that shares no
+    // identifier token must still fall back to that *nearby* removed line
+    // (not `None`, and not an unrelated line from elsewhere in the file).
+    #[test]
+    fn probes_for_file_falls_back_to_nearby_removed_line_without_token_match() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "if enabled {".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "if legacy_flag {".to_string(),
+            }],
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+
+        // No shared token means the removed line isn't deduped as this added
+        // line's replacement (see `has_matching_added_line`), so it also
+        // surfaces as its own probe; both are expected here.
+        assert_eq!(probes.len(), 2);
+        let inserted = probes
+            .iter()
+            .find(|probe| probe.expression == "if enabled {");
+        assert!(
+            inserted.is_some(),
+            "expected a probe for the added line, got {probes:?}"
+        );
+        if let Some(inserted) = inserted {
+            assert_eq!(inserted.before, Some("if legacy_flag {".to_string()));
+        }
+    }
+
     // Regression: an added line with no removed counterpart nearby must not
     // borrow `before` from an unrelated removed line elsewhere in the file.
     #[test]
