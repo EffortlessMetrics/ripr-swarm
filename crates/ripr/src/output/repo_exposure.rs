@@ -1414,6 +1414,13 @@ mod tests {
         );
         classified.evidence.related_tests[0].file =
             std::path::PathBuf::from(r"crates\faultline-app\tests\integration.rs");
+        classified.evidence.related_tests[0].test_target = Some(
+            crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                "below_threshold_has_no_discount",
+                std::path::Path::new(r"crates\faultline-app\tests\integration.rs"),
+                5,
+            ),
+        );
 
         let json = render_repo_exposure_json(&[classified], None, None);
         let value: serde_json::Value = serde_json::from_str(&json)

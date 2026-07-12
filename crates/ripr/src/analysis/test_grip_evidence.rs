@@ -78,12 +78,12 @@ pub(crate) struct RelatedTestGrip {
 /// display it, but may not reconstruct it from a path, name, or line tuple.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TestTargetEvidence {
-    pub(crate) symbol_id: SymbolId,
-    pub(crate) file: PathBuf,
-    pub(crate) line: usize,
-    pub(crate) test_kind: TestKind,
-    pub(crate) relation: RelationReason,
-    pub(crate) provenance: TestTargetProvenance,
+    symbol_id: SymbolId,
+    file: PathBuf,
+    line: usize,
+    test_kind: TestKind,
+    relation: RelationReason,
+    provenance: TestTargetProvenance,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +99,29 @@ pub(crate) enum TestTargetProvenance {
     RustIndexFunction,
     #[cfg(test)]
     FixtureOnly,
+}
+
+impl TestTargetEvidence {
+    pub(crate) fn from_index(
+        symbol_id: SymbolId,
+        file: PathBuf,
+        line: usize,
+        test_kind: TestKind,
+        relation: RelationReason,
+    ) -> Self {
+        Self {
+            symbol_id,
+            file,
+            line,
+            test_kind,
+            relation,
+            provenance: TestTargetProvenance::RustIndexFunction,
+        }
+    }
+
+    pub(crate) fn symbol_id(&self) -> &SymbolId {
+        &self.symbol_id
+    }
 }
 
 #[cfg(test)]
@@ -1895,18 +1918,17 @@ fn test_target_evidence(
     let function = file.functions.iter().find(|function| {
         function.is_test && function.name == test.name && function.start_line == test.start_line
     })?;
-    Some(TestTargetEvidence {
-        symbol_id: function.id.clone(),
-        file: function.file.clone(),
-        line: function.start_line,
-        test_kind: if function.file == seam.file() {
+    Some(TestTargetEvidence::from_index(
+        function.id.clone(),
+        function.file.clone(),
+        function.start_line,
+        if function.file == seam.file() {
             TestKind::InlineUnit
         } else {
             TestKind::Integration
         },
         relation,
-        provenance: TestTargetProvenance::RustIndexFunction,
-    })
+    ))
 }
 
 fn best_oracle(test: &TestSummary, seam: &RepoSeam) -> (OracleKind, OracleStrength) {

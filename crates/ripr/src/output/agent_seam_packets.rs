@@ -1784,7 +1784,7 @@ fn related_test_target_identity(
     };
     (
         RecommendedTestTargetKind::ExistingTest,
-        Some(target.symbol_id.0.clone()),
+        Some(target.symbol_id().0.clone()),
     )
 }
 
