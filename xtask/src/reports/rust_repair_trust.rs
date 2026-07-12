@@ -568,8 +568,51 @@ fn markdown_report(report: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::build_report;
-    use serde_json::json;
+    use super::{build_report, markdown_report};
+    use serde_json::{Value, json};
+
+    fn valid_attempt(
+        attempt_id: &str,
+        repository: &str,
+        gap: &str,
+        attempt_number: u64,
+        movement: &str,
+        limitations: Vec<&str>,
+    ) -> Value {
+        json!({
+            "attempt_id": attempt_id,
+            "repository": repository,
+            "analyzed_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "canonical_gap_id": gap,
+            "seam_id": format!("seam:{attempt_id}"),
+            "file_line": "src/lib.rs:10",
+            "changed_behavior": "changed call effect",
+            "missing_discriminator": "test observes the effect",
+            "related_test_or_production_caller": "tests::observes_effect",
+            "focused_test_intent": "assert the changed effect",
+            "before_receipt": format!("target/receipts/{attempt_id}-before.json"),
+            "repair_intent": "add one focused test-only assertion",
+            "verification_command": "cargo test -p fixture tests::observes_effect",
+            "verification_result": "passed",
+            "targeted_rerun_command": "cargo xtask targeted-rerun --gap {gap}",
+            "receipt_command": "cargo xtask rust-repair-trust-report",
+            "inspection_command": "git diff --check",
+            "after_receipt": format!("target/receipts/{attempt_id}-after.json"),
+            "claim_boundary": "static route evidence only",
+            "attempt_number": attempt_number,
+            "changed_test_files": ["tests/observes_effect.rs"],
+            "allowed_edit_surface": ["tests/observes_effect.rs"],
+            "limitations": limitations,
+            "source_refs": ["pr:1", "receipt:before", "receipt:after"],
+            "movement": movement,
+            "test_only": true,
+            "production_files_changed": false,
+            "false_actionability": attempt_number == 3,
+            "known_impossible_recommendation": attempt_number == 4,
+            "parity_failure": attempt_number == 5,
+            "artifact_archaeology": attempt_number == 6
+        })
+    }
 
     #[test]
     fn empty_corpus_is_limited_and_preserves_missing_denominators() -> Result<(), String> {
@@ -634,6 +677,73 @@ mod tests {
         }
         if report["scorecard"]["missing_route_fields"]["seam_id"] != 1 {
             return Err("missing route fields must be counted by field".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn complete_corpus_scores_metrics_and_markdown_with_explicit_denominators() -> Result<(), String>
+    {
+        let repositories = [
+            "EffortlessMetrics/ripr-swarm",
+            "EffortlessMetrics/perl-lsp-swarm",
+            "EffortlessMetrics/ub-review",
+        ];
+        let mut cases = Vec::new();
+        for index in 0..20u64 {
+            let repository = repositories[(index as usize) % repositories.len()];
+            let movement = match index % 5 {
+                0 => "improved",
+                1 => "closed",
+                2 => "unchanged",
+                3 => "regressed",
+                _ => "limited",
+            };
+            let limitations = if index == 7 {
+                vec!["call_presence_effect_observer_unresolved"]
+            } else if index == 8 {
+                vec!["selected_scope_parity_unknown"]
+            } else {
+                Vec::new()
+            };
+            cases.push(valid_attempt(
+                &format!("attempt-{index}"),
+                repository,
+                &format!("gap:behavior-{}", index % 3),
+                (index % 3) + 1,
+                movement,
+                limitations,
+            ));
+        }
+        let mut corpus: Value = serde_json::from_str(include_str!(
+            "../../../metrics/rust-repair-trust/corpus.json"
+        ))
+        .map_err(|error| format!("parse corpus fixture: {error}"))?;
+        corpus["cases"] = Value::Array(cases);
+
+        let report = build_report(&corpus);
+        if report.get("status").and_then(Value::as_str) != Some("complete") {
+            return Err(format!("complete corpus did not complete: {report}"));
+        }
+        if report.get("eligible_attempt_count").and_then(Value::as_u64) != Some(20) {
+            return Err("complete corpus must count all 20 eligible attempts".to_string());
+        }
+        if report["scorecard"]["limitation_frequency_denominator"] != 20 {
+            return Err("limitation frequency must expose the attempt denominator".to_string());
+        }
+        if report["scorecard"]["call_presence_limitation_frequency_numerator"] != 1 {
+            return Err("CallPresence limitation frequency must count its numerator".to_string());
+        }
+        if report["scorecard"]["one_attempt_improvement_denominator"] != 3 {
+            return Err(
+                "one-attempt improvement must expose the gap-group denominator".to_string(),
+            );
+        }
+        let markdown = markdown_report(&report);
+        if !markdown.contains("CallPresence limitation frequency")
+            || !markdown.contains("Status: `complete`")
+        {
+            return Err("Markdown must expose complete status and CallPresence metric".to_string());
         }
         Ok(())
     }
