@@ -1653,9 +1653,31 @@ pub(crate) struct CandidateValue {
     pub(crate) reason: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecommendedTestTargetKind {
+    ExistingTest,
+    NewInlineTestModule,
+    NewIntegrationTest,
+    ProductionFallback,
+    Unresolved,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecommendedTestSource {
+    RelatedTestEvidence,
+    InferredSourceModuleTests,
+    InferredIntegrationTests,
+    ProductionFallback,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecommendedTest {
     pub(crate) name: String,
     pub(crate) file: String,
+    pub(crate) target_kind: RecommendedTestTargetKind,
+    pub(crate) symbol_id: Option<String>,
+    pub(crate) source: RecommendedTestSource,
     pub(crate) reason: String,
 }
 
@@ -1702,6 +1724,9 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         return RecommendedTest {
             name: "not_applicable".to_string(),
             file: "not_applicable".to_string(),
+            target_kind: RecommendedTestTargetKind::Unresolved,
+            symbol_id: None,
+            source: RecommendedTestSource::Unresolved,
             reason: format!(
                 "cross-language target is unresolved; route to `{}` before suggesting a test target",
                 CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE
@@ -1709,27 +1734,98 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         };
     }
     if let Some(test) = nearest_strong_test_to_imitate(entry.seam.kind(), &entry.evidence) {
+        let (target_kind, symbol_id) = related_test_target_identity(entry, test);
         return RecommendedTest {
             name,
             file: display_path(&test.file),
+            target_kind,
+            symbol_id,
+            source: recommended_test_source_for_target_kind(target_kind),
             reason: "place the new targeted test next to the nearest strong related test"
                 .to_string(),
         };
     }
     if let Some(test) = entry.evidence.related_tests.first() {
+        let (target_kind, symbol_id) = related_test_target_identity(entry, test);
         return RecommendedTest {
             name,
             file: display_path(&test.file),
+            target_kind,
+            symbol_id,
+            source: recommended_test_source_for_target_kind(target_kind),
             reason: "place the new targeted test next to the highest-confidence related test"
                 .to_string(),
         };
     }
+    let (file, target_kind, source) = inferred_test_target(entry.seam.file(), owner_short);
     RecommendedTest {
         name,
-        file: inferred_test_file(entry.seam.file(), owner_short),
+        file,
+        target_kind,
+        symbol_id: None,
+        source,
         reason: "no related test file was visible; inferred from the production seam file"
             .to_string(),
     }
+}
+
+fn related_test_target_identity(
+    entry: &ClassifiedSeam,
+    test: &RelatedTestGrip,
+) -> (RecommendedTestTargetKind, Option<String>) {
+    let production_file = display_path(entry.seam.file());
+    let test_file = display_path(&test.file);
+    let is_test_target = test_file == production_file || is_test_target_path(&test.file);
+    let symbol_id = is_test_target
+        .then(|| {
+            (!test.test_name.trim().is_empty() && test.line > 0)
+                .then(|| format!("test:{test_file}:{}:{}", test.line, test.test_name.trim()))
+        })
+        .flatten();
+    let target_kind = if symbol_id.is_some() {
+        RecommendedTestTargetKind::ExistingTest
+    } else if is_test_target {
+        RecommendedTestTargetKind::Unresolved
+    } else {
+        RecommendedTestTargetKind::ProductionFallback
+    };
+    (target_kind, symbol_id)
+}
+
+fn recommended_test_source_for_target_kind(
+    target_kind: RecommendedTestTargetKind,
+) -> RecommendedTestSource {
+    match target_kind {
+        RecommendedTestTargetKind::ExistingTest => RecommendedTestSource::RelatedTestEvidence,
+        RecommendedTestTargetKind::ProductionFallback => RecommendedTestSource::ProductionFallback,
+        RecommendedTestTargetKind::Unresolved => RecommendedTestSource::Unresolved,
+        RecommendedTestTargetKind::NewInlineTestModule => {
+            RecommendedTestSource::InferredSourceModuleTests
+        }
+        RecommendedTestTargetKind::NewIntegrationTest => {
+            RecommendedTestSource::InferredIntegrationTests
+        }
+    }
+}
+
+fn is_test_target_path(path: &std::path::Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    normalized.starts_with("tests/")
+        || normalized.contains("/tests/")
+        || file_name == "tests.rs"
+        || stem.ends_with("_test")
+        || stem.ends_with("_tests")
+        || path
+            .components()
+            .any(|component| component.as_os_str() == "test")
 }
 
 pub(crate) fn navigation_only_external_target_for(
@@ -1838,16 +1934,32 @@ fn test_name_suffix_for(kind: SeamKind) -> &'static str {
     }
 }
 
-fn inferred_test_file(file: &std::path::Path, owner_short: &str) -> String {
+fn inferred_test_target(
+    file: &std::path::Path,
+    owner_short: &str,
+) -> (String, RecommendedTestTargetKind, RecommendedTestSource) {
     if let Some(module_tests) = existing_source_module_test_file(file) {
-        return module_tests;
+        return (
+            module_tests,
+            RecommendedTestTargetKind::NewInlineTestModule,
+            RecommendedTestSource::InferredSourceModuleTests,
+        );
     }
     let stem = file
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .unwrap_or(owner_short);
-    format!("tests/{}_tests.rs", snake_case_token(stem))
+    (
+        format!("tests/{}_tests.rs", snake_case_token(stem)),
+        RecommendedTestTargetKind::NewIntegrationTest,
+        RecommendedTestSource::InferredIntegrationTests,
+    )
+}
+
+#[cfg(test)]
+fn inferred_test_file(file: &std::path::Path, owner_short: &str) -> String {
+    inferred_test_target(file, owner_short).0
 }
 
 fn existing_source_module_test_file(file: &std::path::Path) -> Option<String> {
@@ -3880,6 +3992,78 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn recommended_test_target_provenance_distinguishes_test_identity_from_path() {
+        let mut entry = weakly_gripped_classified();
+
+        let integration = recommended_test_for(&entry);
+        assert_eq!(
+            integration.target_kind,
+            RecommendedTestTargetKind::ExistingTest
+        );
+        assert!(integration.symbol_id.is_some());
+
+        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
+        let inline = recommended_test_for(&entry);
+        assert_eq!(inline.target_kind, RecommendedTestTargetKind::ExistingTest);
+        assert!(inline.symbol_id.is_some());
+
+        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing_helper.rs");
+        let production_fallback = recommended_test_for(&entry);
+        assert_eq!(
+            production_fallback.target_kind,
+            RecommendedTestTargetKind::ProductionFallback
+        );
+        assert!(production_fallback.symbol_id.is_none());
+        assert_eq!(
+            production_fallback.source,
+            RecommendedTestSource::ProductionFallback
+        );
+
+        entry.evidence.related_tests.clear();
+        let inferred = recommended_test_for(&entry);
+        assert_eq!(
+            inferred.target_kind,
+            RecommendedTestTargetKind::NewIntegrationTest
+        );
+
+        let explicit_inline = RecommendedTest {
+            name: "discounted_total_inline_boundary".to_string(),
+            file: "src/pricing.rs".to_string(),
+            target_kind: RecommendedTestTargetKind::NewInlineTestModule,
+            symbol_id: None,
+            source: RecommendedTestSource::RelatedTestEvidence,
+            reason: "producer explicitly selected an inline test module".to_string(),
+        };
+        assert_eq!(
+            explicit_inline.target_kind,
+            RecommendedTestTargetKind::NewInlineTestModule
+        );
+
+        let binding = RepoSeam::new(
+            "src/jsc/Blob.rs",
+            "Blob::from_js_without_defer_gc",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "array_buffer.shared || array_buffer.resizable",
+            RequiredDiscriminator::BoundaryValue {
+                description: "array_buffer.shared || array_buffer.resizable".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let unresolved = recommended_test_for(&classified_with(
+            binding,
+            SeamGripClass::Ungripped,
+            Vec::new(),
+        ));
+        assert_eq!(
+            unresolved.target_kind,
+            RecommendedTestTargetKind::Unresolved
+        );
+        assert_eq!(unresolved.file, "not_applicable");
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::agent::loop_commands::{
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::CanonicalGapIdentity;
-use crate::analysis::seams::{SeamGripClass, SeamKind};
+use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
@@ -32,8 +32,8 @@ pub(crate) const CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE: &str =
 const MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY: &str = "missing_discriminator_evidence";
 const MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE: &str =
     "analysis/producer-evidence-discriminator";
-const SAME_FILE_TEST_TARGET_CATEGORY: &str = "test_target_same_as_production_seam";
-const SAME_FILE_TEST_TARGET_REPAIR_ROUTE: &str = "analysis/test-target-resolution";
+const TEST_TARGET_PROVENANCE_CATEGORY: &str = "test_target_provenance_unresolved";
+const TEST_TARGET_PROVENANCE_REPAIR_ROUTE: &str = "analysis/test-target-resolution";
 
 const MAX_RELATED_TESTS_PER_EVIDENCE_RECORD: usize = 8;
 const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json";
@@ -447,10 +447,10 @@ pub(crate) fn actionability_for(
     let candidate_values = !candidate_values_for(entry, missing_records).is_empty();
     let assertion_shape = !static_limited && entry.class.is_headline_eligible();
     let related_test = !entry.evidence.related_tests.is_empty();
-    let recommended_test_target =
-        assertion_shape && has_distinct_test_target(entry, recommended_test);
+    let recommended_test_target = assertion_shape && has_safe_test_target(recommended_test);
     let verification_command = assertion_shape;
     let missing_discriminator = !missing_records.is_empty();
+    let producer_route_complete = producer_route_evidence_complete(entry, missing_records);
 
     let (class, reason) = if static_limited {
         (
@@ -462,15 +462,12 @@ pub(crate) fn actionability_for(
             "not_policy_relevant",
             "seam is already gripped or intentionally non-actionable under current policy",
         )
-    } else if !missing_discriminator {
-        (
-            "static_limitation",
-            "producer-owned evidence does not identify a concrete missing discriminator",
-        )
+    } else if !producer_route_complete {
+        ("static_limitation", producer_route_limitation_reason(entry))
     } else if !recommended_test_target {
         (
             "static_limitation",
-            "the suggested test target resolves to the production seam and cannot be safely selected",
+            "the producer did not identify a test-owned target node; the suggested target may resolve to production code",
         )
     } else if related_test && weak_related_oracle(entry) {
         (
@@ -1100,17 +1097,16 @@ pub(crate) fn static_limitations_for(
     }
 
     // A related test or an assertion template is not enough to produce a
-    // repair packet. The producer must name the discriminator that the test
-    // needs to observe; otherwise the route is only a plausible suggestion.
+    // repair packet. The producer must supply the exact evidence required by
+    // this seam family; the renderer never invents a discriminator or sink.
     if entry.class.is_headline_eligible()
         && !is_static_limited(entry)
-        && missing_discriminator_records_for(entry).is_empty()
+        && !producer_route_evidence_complete(entry, &missing_discriminator_records_for(entry))
     {
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "discriminate".to_string(),
             state: "unknown".to_string(),
-            reason: "producer-owned evidence does not identify a concrete missing discriminator"
-                .to_string(),
+            reason: producer_route_limitation_reason(entry).to_string(),
             category: MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY.to_string(),
             repair_route: MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE.to_string(),
         });
@@ -1118,25 +1114,99 @@ pub(crate) fn static_limitations_for(
 
     if entry.class.is_headline_eligible()
         && !is_static_limited(entry)
-        && !has_distinct_test_target(entry, recommended_test)
+        && !has_safe_test_target(recommended_test)
     {
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "repair_target".to_string(),
             state: "unknown".to_string(),
-            reason: "the suggested test target resolves to the production seam and cannot be safely selected"
+            reason: "the producer did not identify a test-owned target node; the suggested target may resolve to production code"
                 .to_string(),
-            category: SAME_FILE_TEST_TARGET_CATEGORY.to_string(),
-            repair_route: SAME_FILE_TEST_TARGET_REPAIR_ROUTE.to_string(),
+            category: TEST_TARGET_PROVENANCE_CATEGORY.to_string(),
+            repair_route: TEST_TARGET_PROVENANCE_REPAIR_ROUTE.to_string(),
         });
     }
 
     limitations
 }
 
-fn has_distinct_test_target(entry: &ClassifiedSeam, recommended: &RecommendedTest) -> bool {
-    !recommended.file.is_empty()
-        && recommended.file != "not_applicable"
-        && recommended.file != display_path(entry.seam.file())
+fn has_safe_test_target(recommended: &RecommendedTest) -> bool {
+    let target_is_typed = match recommended.target_kind {
+        crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest => {
+            recommended.symbol_id.is_some()
+        }
+        crate::output::agent_seam_packets::RecommendedTestTargetKind::NewInlineTestModule
+        | crate::output::agent_seam_packets::RecommendedTestTargetKind::NewIntegrationTest => true,
+        crate::output::agent_seam_packets::RecommendedTestTargetKind::ProductionFallback
+        | crate::output::agent_seam_packets::RecommendedTestTargetKind::Unresolved => false,
+    };
+    target_is_typed && !recommended.file.is_empty() && recommended.file != "not_applicable"
+}
+
+fn producer_route_evidence_complete(
+    entry: &ClassifiedSeam,
+    missing_records: &[crate::output::agent_seam_packets::MissingRecord],
+) -> bool {
+    match entry.seam.kind() {
+        // These families currently receive their route discriminator from the
+        // producer's missing-discriminator facts. Keep the renderer from
+        // manufacturing a value, field, arm, or variant hypothesis.
+        SeamKind::PredicateBoundary
+        | SeamKind::ErrorVariant
+        | SeamKind::ReturnValue
+        | SeamKind::FieldConstruction
+        | SeamKind::MatchArm => !missing_records.is_empty(),
+        // Effect routes do not need a conventional value discriminator. They
+        // do need an exact sink, a direct owner relation, and an observing
+        // mock/observer chain supplied by the producer.
+        SeamKind::SideEffect => effect_route_evidence_complete(entry),
+        SeamKind::CallPresence => call_presence_route_evidence_complete(entry),
+    }
+}
+
+fn effect_route_evidence_complete(entry: &ClassifiedSeam) -> bool {
+    let RequiredDiscriminator::Effect { sink } = entry.seam.required_discriminator() else {
+        return false;
+    };
+    !sink.trim().is_empty()
+        && entry.seam.expected_sink() == ExpectedSink::SideEffect
+        && direct_observing_test_chain_complete(entry)
+}
+
+fn call_presence_route_evidence_complete(entry: &ClassifiedSeam) -> bool {
+    let RequiredDiscriminator::CallSite { target } = entry.seam.required_discriminator() else {
+        return false;
+    };
+    !target.trim().is_empty()
+        && entry.seam.expected_sink() == ExpectedSink::SideEffect
+        && direct_observing_test_chain_complete(entry)
+}
+
+fn direct_observing_test_chain_complete(entry: &ClassifiedSeam) -> bool {
+    let stages_are_complete = [
+        &entry.evidence.reach,
+        &entry.evidence.activate,
+        &entry.evidence.propagate,
+        &entry.evidence.observe,
+        &entry.evidence.discriminate,
+    ]
+    .iter()
+    .all(|stage| stage.state == StageState::Yes);
+    stages_are_complete
+        && entry.evidence.related_tests.iter().any(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall
+                && test.oracle_kind == OracleKind::MockExpectation
+        })
+}
+
+fn producer_route_limitation_reason(entry: &ClassifiedSeam) -> &'static str {
+    match entry.seam.kind() {
+        SeamKind::SideEffect | SeamKind::CallPresence => {
+            "producer-owned evidence does not identify the exact effect sink and observing test chain required for this seam family"
+        }
+        _ => {
+            "producer-owned evidence does not identify a concrete missing discriminator for this seam family"
+        }
+    }
 }
 
 fn push_stage_limitation(
@@ -1218,7 +1288,7 @@ fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'stati
 fn static_limitation_repair_route(category: &str) -> &'static str {
     match category {
         MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY => MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE,
-        SAME_FILE_TEST_TARGET_CATEGORY => SAME_FILE_TEST_TARGET_REPAIR_ROUTE,
+        TEST_TARGET_PROVENANCE_CATEGORY => TEST_TARGET_PROVENANCE_REPAIR_ROUTE,
         "activation_owner_call_absent" => "analysis/owner-call-absence-triage",
         "activation_owner_call_absent_call_presence_target_affinity" => {
             "analysis/call-presence-target-affinity-owner-call-tracing"
@@ -1954,9 +2024,35 @@ mod tests {
     }
 
     #[test]
-    fn evidence_record_fails_closed_when_test_target_is_the_production_seam() {
+    fn evidence_record_accepts_same_file_inline_unit_test_target() {
         let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        assert_eq!(record.actionability.class, "actionable_assertion_upgrade");
+        assert_eq!(json["canonical_item"]["gap_state"], "actionable");
+        assert_ne!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(
+            recommended_test_for(&entry).target_kind,
+            crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
+        );
+        assert!(
+            !json["static_limitations"]
+                .as_array()
+                .is_some_and(|limitations| {
+                    limitations
+                        .iter()
+                        .any(|limitation| limitation["category"] == TEST_TARGET_PROVENANCE_CATEGORY)
+                })
+        );
+    }
+
+    #[test]
+    fn evidence_record_fails_closed_for_production_helper_test_target() {
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing_helper.rs");
 
         let record = evidence_record_for(&entry, None);
         let json = evidence_record_json_value(&record);
@@ -1970,9 +2066,128 @@ mod tests {
                 .is_some_and(|limitations| {
                     limitations
                         .iter()
-                        .any(|limitation| limitation["category"] == SAME_FILE_TEST_TARGET_CATEGORY)
+                        .any(|limitation| limitation["category"] == TEST_TARGET_PROVENANCE_CATEGORY)
                 })
         );
+    }
+
+    #[test]
+    fn test_target_without_symbol_identity_is_unresolved() {
+        let recommended = RecommendedTest {
+            name: "discounted_total_boundary".to_string(),
+            file: "src/pricing.rs".to_string(),
+            target_kind: crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest,
+            symbol_id: None,
+            source: crate::output::agent_seam_packets::RecommendedTestSource::RelatedTestEvidence,
+            reason: "same file but no producer-owned test node".to_string(),
+        };
+
+        assert!(!has_safe_test_target(&recommended));
+    }
+
+    #[test]
+    fn producer_route_matrix_uses_family_specific_evidence() {
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let predicate_missing = missing_discriminator_records_for(&entry);
+        assert!(producer_route_evidence_complete(&entry, &predicate_missing));
+
+        for (kind, required) in [
+            (
+                SeamKind::ErrorVariant,
+                RequiredDiscriminator::ErrorVariant {
+                    variant: "PricingError::Threshold".to_string(),
+                },
+            ),
+            (
+                SeamKind::ReturnValue,
+                RequiredDiscriminator::ReturnValue {
+                    description: "discounted total".to_string(),
+                },
+            ),
+            (
+                SeamKind::FieldConstruction,
+                RequiredDiscriminator::FieldValue {
+                    field: "total".to_string(),
+                },
+            ),
+            (
+                SeamKind::MatchArm,
+                RequiredDiscriminator::MatchArmTaken {
+                    arm: "Pricing::Discounted".to_string(),
+                },
+            ),
+        ] {
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                kind,
+                42,
+                88,
+                "changed behavior",
+                required,
+                ExpectedSink::ReturnValue,
+            );
+            entry.evidence.seam_id = entry.seam.id().clone();
+            entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+                value: "producer-owned fact".to_string(),
+                reason: "exact family evidence".to_string(),
+                flow_sink: None,
+            }];
+            assert!(producer_route_evidence_complete(
+                &entry,
+                &missing_discriminator_records_for(&entry)
+            ));
+            entry.evidence.missing_discriminators.clear();
+            assert!(!producer_route_evidence_complete(
+                &entry,
+                &missing_discriminator_records_for(&entry)
+            ));
+        }
+
+        for kind in [SeamKind::SideEffect, SeamKind::CallPresence] {
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                kind,
+                42,
+                88,
+                "effect_or_call",
+                if kind == SeamKind::SideEffect {
+                    RequiredDiscriminator::Effect {
+                        sink: "pricing event sink".to_string(),
+                    }
+                } else {
+                    RequiredDiscriminator::CallSite {
+                        target: "pricing::record_discount".to_string(),
+                    }
+                },
+                ExpectedSink::SideEffect,
+            );
+            entry.evidence.seam_id = entry.seam.id().clone();
+            entry.evidence.missing_discriminators.clear();
+            entry.evidence.related_tests[0].file = PathBuf::from("tests/pricing.rs");
+            entry.evidence.related_tests[0].oracle_kind = OracleKind::MockExpectation;
+            entry.evidence.related_tests[0].relation_reason = RelationReason::DirectOwnerCall;
+            for stage_evidence in [
+                &mut entry.evidence.reach,
+                &mut entry.evidence.activate,
+                &mut entry.evidence.propagate,
+                &mut entry.evidence.observe,
+                &mut entry.evidence.discriminate,
+            ] {
+                *stage_evidence = stage(StageState::Yes, "producer-owned complete route");
+            }
+            assert!(producer_route_evidence_complete(
+                &entry,
+                &missing_discriminator_records_for(&entry)
+            ));
+            entry.evidence.observe = stage(StageState::Weak, "effect sink unresolved");
+            assert!(!producer_route_evidence_complete(
+                &entry,
+                &missing_discriminator_records_for(&entry)
+            ));
+            entry.evidence.observe = stage(StageState::Yes, "producer-owned complete route");
+        }
     }
 
     #[test]
