@@ -12,6 +12,8 @@ use crate::domain::{OracleKind, OracleStrength, StageState};
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
+const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
+const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RepairRouteState {
@@ -52,33 +54,50 @@ pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadi
 }
 
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
-    let required = vec![format!(
-        "producer discriminator: {}",
+    let discriminator_evidence = format!(
+        "{PRODUCER_DISCRIMINATOR_EVIDENCE}: {}",
         seam.required_discriminator().as_str()
-    )];
+    );
+    let required = vec![
+        discriminator_evidence.clone(),
+        SAFE_TEST_TARGET_EVIDENCE.to_string(),
+    ];
     let has_discriminator = !evidence.missing_discriminators.is_empty();
-    let state = if has_discriminator {
+    let selected_test_target = existing_test_target(evidence, false);
+    // A related test without an indexed target is not interchangeable with an
+    // explicit new-test proposal. Keep that distinction in the authority:
+    // output may project a proposal only when the producer supplied no related
+    // test node at all.
+    let has_safe_target = selected_test_target.is_some() || evidence.related_tests.is_empty();
+    let state = if has_discriminator && has_safe_target {
         RepairRouteState::Ready
     } else {
         RepairRouteState::StaticLimitation
     };
-    let present_evidence = if has_discriminator {
-        vec!["producer-owned missing discriminator fact".to_string()]
-    } else {
-        Vec::new()
-    };
+    let mut present_evidence = Vec::new();
+    if has_discriminator {
+        present_evidence.push(discriminator_evidence.clone());
+    }
+    if has_safe_target {
+        present_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
+    }
+    let mut missing_evidence = Vec::new();
+    if !has_discriminator {
+        missing_evidence.push(discriminator_evidence);
+    }
+    if !has_safe_target {
+        missing_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
+    }
     RepairRouteReadiness {
         state,
         seam_id: String::new(),
         canonical_gap_id: None,
         required_evidence: required,
         present_evidence,
-        missing_evidence: has_discriminator
-            .then(Vec::new)
-            .unwrap_or_else(|| vec!["producer-owned missing discriminator fact".to_string()]),
-        test_target: existing_test_target(evidence, false),
+        missing_evidence,
+        test_target: selected_test_target,
         proposed_oracle: Some(oracle_for_seam(seam.kind())),
-        current_oracle: current_oracle(evidence, false),
+        current_oracle: current_oracle(evidence, false, true),
         authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
 }
@@ -208,13 +227,18 @@ fn existing_test_target(
         .and_then(|test| test.test_target.clone())
 }
 
-fn current_oracle(evidence: &TestGripEvidence, require_direct_owner: bool) -> Option<OracleKind> {
+fn current_oracle(
+    evidence: &TestGripEvidence,
+    require_direct_owner: bool,
+    require_test_target: bool,
+) -> Option<OracleKind> {
     evidence
         .related_tests
         .iter()
         .find(|test| {
-            !require_direct_owner
-                || test.relation_reason == crate::domain::RelationReason::DirectOwnerCall
+            (!require_direct_owner
+                || test.relation_reason == crate::domain::RelationReason::DirectOwnerCall)
+                && (!require_test_target || test.test_target.is_some())
         })
         .map(|test| test.oracle_kind.clone())
 }

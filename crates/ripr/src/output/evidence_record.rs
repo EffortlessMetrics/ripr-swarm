@@ -2138,6 +2138,27 @@ mod tests {
             );
         }
 
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "producer-owned fact".to_string(),
+            reason: "exact family evidence".to_string(),
+            flow_sink: None,
+        }];
+        entry.evidence.related_tests[0].test_target = None;
+        entry.class = classify_seam(&entry.seam, &entry.evidence);
+        let missing_target = repair_route_readiness(&entry);
+        assert_eq!(missing_target.state, RepairRouteState::StaticLimitation);
+        assert!(
+            missing_target
+                .missing_evidence
+                .iter()
+                .any(|evidence| evidence == "safe test target")
+        );
+        entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
+            "below_threshold_has_no_discount",
+            "tests/pricing_tests.rs",
+            12,
+        ));
+
         for kind in [SeamKind::SideEffect, SeamKind::CallPresence] {
             entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
                 "below_threshold_has_no_discount",
