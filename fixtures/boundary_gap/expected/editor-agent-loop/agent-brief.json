@@ -27,10 +27,6 @@
       },
       "candidate_values": [
         {
-          "reason": "predicate uses an equality-bearing operator; tests should exercise the boundary case",
-          "value": "input that hits the boundary: amount >= discount_threshold"
-        },
-        {
           "reason": "observed values do not include the equality-boundary case for this predicate",
           "value": "discount_threshold (equality boundary)"
         }
@@ -48,10 +44,6 @@
       "headline_eligible": true,
       "line": 2,
       "missing_discriminators": [
-        {
-          "reason": "predicate uses an equality-bearing operator; tests should exercise the boundary case",
-          "value": "input that hits the boundary: amount >= discount_threshold"
-        },
         {
           "reason": "observed values do not include the equality-boundary case for this predicate",
           "value": "discount_threshold (equality boundary)"
