@@ -3,7 +3,7 @@ use super::related_tests::*;
 use super::*;
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
-use crate::analysis::seams::SeamGripClass;
+use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass};
 
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
     let adapter = RaRustSyntaxAdapter;
@@ -1783,6 +1783,7 @@ mod tests {
         .ok_or_else(|| "expected producer-owned inline test target".to_string())?;
     assert_eq!(inline_target.file, prod);
     assert_eq!(inline_target.test_kind, TestKind::InlineUnit);
+    assert_eq!(inline_target.relation, RelationReason::DirectOwnerCall);
     assert_eq!(
         inline_target.provenance,
         TestTargetProvenance::RustIndexFunction
@@ -1832,10 +1833,69 @@ fn discounted_total_integration_boundary() {
         .ok_or_else(|| "expected producer-owned integration test target".to_string())?;
     assert_eq!(integration_target.file, integration_path);
     assert_eq!(integration_target.test_kind, TestKind::Integration);
+    assert_eq!(integration_target.relation, RelationReason::DirectOwnerCall);
     assert_eq!(
         integration_target.provenance,
         TestTargetProvenance::RustIndexFunction
     );
+    Ok(())
+}
+
+#[test]
+fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), String> {
+    let file = PathBuf::from("src/pricing.rs");
+    let function = FunctionSummary {
+        id: SymbolId("rust:src/pricing.rs::discounted_total_helper".to_string()),
+        name: "discounted_total_helper".to_string(),
+        file: file.clone(),
+        start_line: 10,
+        end_line: 12,
+        body: "fn discounted_total_helper() {}".to_string(),
+        calls: Vec::new(),
+        returns: Vec::new(),
+        literals: Vec::new(),
+        is_test: false,
+        attrs: Vec::new(),
+    };
+    let test = TestSummary {
+        name: "discounted_total_helper".to_string(),
+        file: file.clone(),
+        start_line: 10,
+        end_line: 12,
+        body: function.body.clone(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: Vec::new(),
+    };
+    let mut index = RustIndex::default();
+    index.files.insert(
+        file.clone(),
+        crate::analysis::facts::FileFacts {
+            path: file.clone(),
+            functions: vec![function],
+            tests: vec![test.clone()],
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            probe_shapes: Vec::new(),
+            source: "fn discounted_total_helper() {}".to_string(),
+        },
+    );
+    let seam = RepoSeam::new(
+        "src/pricing.rs",
+        "pricing::discounted_total",
+        SeamKind::PredicateBoundary,
+        9,
+        10,
+        "amount >= threshold",
+        RequiredDiscriminator::BoundaryValue {
+            description: "amount == threshold".to_string(),
+        },
+        ExpectedSink::ReturnValue,
+    );
+
+    assert!(test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall,).is_none());
     Ok(())
 }
 

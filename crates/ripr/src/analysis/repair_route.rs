@@ -4,9 +4,14 @@
 //! one safe test-only repair. Output projections consume this result; they do
 //! not infer test identity, effect sinks, or missing observations themselves.
 
+use super::seam_classification::ClassifiedSeam;
 use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
+use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, StageState};
+
+pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
+    "analysis/producer-owned-repair-route-readiness";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RepairRouteState {
@@ -18,26 +23,32 @@ pub(crate) enum RepairRouteState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RepairRouteReadiness {
     pub(crate) state: RepairRouteState,
+    pub(crate) seam_id: String,
+    pub(crate) canonical_gap_id: Option<String>,
     pub(crate) required_evidence: Vec<String>,
     pub(crate) present_evidence: Vec<String>,
     pub(crate) missing_evidence: Vec<String>,
     pub(crate) test_target: Option<TestTargetEvidence>,
     pub(crate) proposed_oracle: Option<OracleKind>,
     pub(crate) current_oracle: Option<OracleKind>,
+    pub(crate) authority_boundary: &'static str,
 }
 
-pub(crate) fn repair_route_readiness(
-    seam: &RepoSeam,
-    evidence: &TestGripEvidence,
-) -> RepairRouteReadiness {
-    match seam.kind() {
+pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadiness {
+    let seam = &entry.seam;
+    let evidence = &entry.evidence;
+    let mut readiness = match seam.kind() {
         SeamKind::PredicateBoundary
         | SeamKind::ErrorVariant
         | SeamKind::ReturnValue
         | SeamKind::FieldConstruction
         | SeamKind::MatchArm => value_route_readiness(seam, evidence),
         SeamKind::SideEffect | SeamKind::CallPresence => effect_route_readiness(seam, evidence),
-    }
+    };
+    readiness.seam_id = seam.id().as_str().to_string();
+    readiness.canonical_gap_id = canonical_gap_identity(entry).map(|identity| identity.id);
+    readiness.authority_boundary = REPAIR_ROUTE_AUTHORITY_BOUNDARY;
+    readiness
 }
 
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
@@ -58,6 +69,8 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     };
     RepairRouteReadiness {
         state,
+        seam_id: String::new(),
+        canonical_gap_id: None,
         required_evidence: required,
         present_evidence,
         missing_evidence: has_discriminator
@@ -66,6 +79,7 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
         test_target: existing_test_target(evidence, false),
         proposed_oracle: Some(oracle_for_seam(seam.kind())),
         current_oracle: current_oracle(evidence, false),
+        authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
 }
 
@@ -160,12 +174,15 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
 
     RepairRouteReadiness {
         state,
+        seam_id: String::new(),
+        canonical_gap_id: None,
         required_evidence,
         present_evidence,
         missing_evidence,
         test_target,
         proposed_oracle: Some(OracleKind::MockExpectation),
         current_oracle: current,
+        authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
 }
 

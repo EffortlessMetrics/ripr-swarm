@@ -82,6 +82,7 @@ pub(crate) struct TestTargetEvidence {
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
     pub(crate) test_kind: TestKind,
+    pub(crate) relation: RelationReason,
     pub(crate) provenance: TestTargetProvenance,
 }
 
@@ -118,6 +119,7 @@ impl TestTargetEvidence {
             } else {
                 TestKind::InlineUnit
             },
+            relation: RelationReason::DirectOwnerCall,
             provenance: TestTargetProvenance::FixtureOnly,
         }
     }
@@ -1872,7 +1874,7 @@ fn related_test_grip(
         test_name: test.name.clone(),
         file: test.file.clone(),
         line: test.start_line,
-        test_target: test_target_evidence(index, seam, test),
+        test_target: test_target_evidence(index, seam, test, reason),
         oracle_kind: kind,
         oracle_strength: strength,
         evidence_summary: summary,
@@ -1885,6 +1887,7 @@ fn test_target_evidence(
     index: &RustIndex,
     seam: &RepoSeam,
     test: &TestSummary,
+    relation: RelationReason,
 ) -> Option<TestTargetEvidence> {
     let file = index.files.get(&test.file)?;
     let function = file.functions.iter().find(|function| {
@@ -1899,6 +1902,7 @@ fn test_target_evidence(
         } else {
             TestKind::Integration
         },
+        relation,
         provenance: TestTargetProvenance::RustIndexFunction,
     })
 }

@@ -453,7 +453,7 @@ pub(crate) fn actionability_for(
     let recommended_test_target = assertion_shape && has_safe_test_target(recommended_test);
     let verification_command = assertion_shape;
     let missing_discriminator = !missing_records.is_empty();
-    let route_readiness = repair_route_readiness(&entry.seam, &entry.evidence);
+    let route_readiness = repair_route_readiness(entry);
 
     let (class, reason) = if static_limited {
         (
@@ -1109,7 +1109,7 @@ pub(crate) fn static_limitations_for(
     // A related test or an assertion template is not enough to produce a
     // repair packet. The producer-owned readiness result is the authority;
     // this layer only projects its missing facts.
-    let route_readiness = repair_route_readiness(&entry.seam, &entry.evidence);
+    let route_readiness = repair_route_readiness(entry);
     if entry.class.is_headline_eligible()
         && !is_static_limited(entry)
         && route_readiness.state == RepairRouteState::StaticLimitation
@@ -2071,10 +2071,17 @@ mod tests {
     #[test]
     fn producer_route_matrix_uses_family_specific_evidence() {
         let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let readiness = repair_route_readiness(&entry);
+        assert_eq!(readiness.seam_id, entry.seam.id().as_str());
+        assert!(readiness.canonical_gap_id.is_some());
         assert_eq!(
-            repair_route_readiness(&entry.seam, &entry.evidence).state,
-            RepairRouteState::Ready
+            readiness.authority_boundary,
+            crate::analysis::repair_route::REPAIR_ROUTE_AUTHORITY_BOUNDARY
         );
+        assert!(!readiness.required_evidence.is_empty());
+        assert!(!readiness.present_evidence.is_empty());
+        assert!(readiness.missing_evidence.is_empty());
+        assert_eq!(readiness.state, RepairRouteState::Ready);
 
         for (kind, required) in [
             (
@@ -2120,13 +2127,13 @@ mod tests {
             }];
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
-                repair_route_readiness(&entry.seam, &entry.evidence).state,
+                repair_route_readiness(&entry).state,
                 RepairRouteState::Ready
             );
             entry.evidence.missing_discriminators.clear();
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
-                repair_route_readiness(&entry.seam, &entry.evidence).state,
+                repair_route_readiness(&entry).state,
                 RepairRouteState::StaticLimitation
             );
         }
@@ -2163,26 +2170,34 @@ mod tests {
             entry.evidence.observe = stage(StageState::Weak, "missing effect observation");
             entry.evidence.discriminate = stage(StageState::Weak, "missing effect discriminator");
             entry.class = classify_seam(&entry.seam, &entry.evidence);
-            let readiness = repair_route_readiness(&entry.seam, &entry.evidence);
+            let readiness = repair_route_readiness(&entry);
             assert_eq!(
                 readiness.state,
                 RepairRouteState::Ready,
                 "unexpected effect readiness: {readiness:?}"
             );
 
+            entry.evidence.related_tests[0].relation_reason = RelationReason::HelperOwnerCall;
+            entry.class = classify_seam(&entry.seam, &entry.evidence);
+            assert_eq!(
+                repair_route_readiness(&entry).state,
+                RepairRouteState::StaticLimitation
+            );
+            entry.evidence.related_tests[0].relation_reason = RelationReason::DirectOwnerCall;
+
             entry.evidence.observe = stage(StageState::Yes, "strong effect observation");
             entry.evidence.discriminate = stage(StageState::Yes, "strong effect discriminator");
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(entry.class, SeamGripClass::StronglyGripped);
             assert_eq!(
-                repair_route_readiness(&entry.seam, &entry.evidence).state,
+                repair_route_readiness(&entry).state,
                 RepairRouteState::AlreadyGripped
             );
 
             entry.evidence.related_tests[0].test_target = None;
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
-                repair_route_readiness(&entry.seam, &entry.evidence).state,
+                repair_route_readiness(&entry).state,
                 RepairRouteState::StaticLimitation
             );
         }

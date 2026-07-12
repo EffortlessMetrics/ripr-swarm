@@ -736,7 +736,7 @@ fn normalize_queue_receipt_movement(movement: &str) -> String {
 /// action, while prose-only guidance remains hidden.
 pub(crate) fn suggested_assertion_for_classified_seam(entry: &ClassifiedSeam) -> Option<String> {
     if !entry.class.is_headline_eligible()
-        || repair_route_readiness(&entry.seam, &entry.evidence).state != RepairRouteState::Ready
+        || repair_route_readiness(entry).state != RepairRouteState::Ready
     {
         return None;
     }
@@ -1376,8 +1376,7 @@ fn is_actionable_entry(entry: &ClassifiedSeam) -> bool {
 
 fn task_for(entry: &ClassifiedSeam) -> &'static str {
     if matches!(entry.class, SeamGripClass::Opaque)
-        || repair_route_readiness(&entry.seam, &entry.evidence).state
-            == RepairRouteState::StaticLimitation
+        || repair_route_readiness(entry).state == RepairRouteState::StaticLimitation
     {
         "inspect_static_limitation"
     } else {
