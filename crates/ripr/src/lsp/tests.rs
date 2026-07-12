@@ -7,8 +7,8 @@ use super::config::LspAnalysisConfig;
 use super::diagnostics::{
     DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
     canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
-    diagnostic_refresh_plan, diagnostic_severity_for_class, take_all_uris,
-    workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
+    diagnostic_refresh_plan, diagnostic_severity_for_class, finding_diagnostics_by_uri,
+    take_all_uris, workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
     workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
@@ -4441,6 +4441,47 @@ fn canonical_group_mixed_classes_are_detected_without_promotion() {
     assert!(!canonical_group_has_mixed_classes(std::slice::from_ref(
         &sample_finding()
     )));
+}
+
+#[test]
+fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -> Result<(), String>
+{
+    let mut first = sample_finding();
+    first.canonical_gap = Some(sample_canonical_gap());
+    let mut second = first.clone();
+    second.id = "probe:pricing:89:predicate".to_string();
+    second.probe.id = ProbeId(second.id.clone());
+    second.probe.location.line = 89;
+    second.class = ExposureClass::StaticUnknown;
+    let config = LspAnalysisConfig::default();
+    let grouped = finding_diagnostics_by_uri(
+        Path::new("/workspace"),
+        &[first, second],
+        config.repo_config().severity(),
+        true,
+    )?;
+    let diagnostics = grouped.values().flatten().collect::<Vec<_>>();
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].severity,
+        Some(DiagnosticSeverity::INFORMATION)
+    );
+    assert_eq!(
+        diagnostics[0]
+            .data
+            .as_ref()
+            .and_then(|data| data["raw_signal_count"].as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        diagnostics[0]
+            .data
+            .as_ref()
+            .and_then(|data| data["canonical_limitation"].as_str()),
+        Some("mixed_static_classes")
+    );
+    Ok(())
 }
 
 fn sample_finding() -> Finding {

@@ -296,6 +296,49 @@ pub(super) fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> boo
         > 1
 }
 
+pub(super) fn finding_diagnostics_by_uri(
+    root: &Path,
+    findings: &[Finding],
+    severity: &SeverityConfig,
+    is_full_run: bool,
+) -> Result<BTreeMap<Uri, Vec<Diagnostic>>, String> {
+    let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
+    for (primary, raw_findings) in canonical_finding_groups(findings) {
+        let path = absolute_finding_path(root, &primary);
+        let uri = file_uri_for_path(&path)?;
+        let mut diagnostic = diagnostic_for_finding_with_config(root, &primary, severity);
+        if primary.canonical_gap.is_some() {
+            add_canonical_group_data(root, &mut diagnostic, &primary, &raw_findings);
+            if canonical_group_has_mixed_classes(&raw_findings) {
+                diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
+                diagnostic.message = format!(
+                    "{}; canonical group contains mixed static classes; inspect raw findings",
+                    diagnostic.message
+                );
+                if let Some(data) = diagnostic
+                    .data
+                    .as_mut()
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    data.insert(
+                        "canonical_limitation".to_string(),
+                        serde_json::json!("mixed_static_classes"),
+                    );
+                }
+            }
+        }
+        // Policy: clamp advisory findings to INFORMATION (never WARNING).
+        // Also downgrade WARNING to INFORMATION when run is not "full".
+        if diagnostic.severity == Some(DiagnosticSeverity::WARNING)
+            && (finding_is_advisory(&primary) || !is_full_run)
+        {
+            diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
+        }
+        grouped.entry(uri).or_default().push(diagnostic);
+    }
+    Ok(grouped)
+}
+
 /// Return a root-independent digest of a canonical diagnostic payload.
 ///
 /// Navigation URIs remain absolute in the LSP wire payload, but the cache
@@ -457,41 +500,12 @@ pub(super) fn workspace_diagnostics_with_config(
     );
     let is_full_run = run_status == "full";
 
-    let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
-    for (primary, raw_findings) in canonical_finding_groups(&findings) {
-        let path = absolute_finding_path(&root, &primary);
-        let uri = file_uri_for_path(&path)?;
-        let mut diagnostic =
-            diagnostic_for_finding_with_config(&root, &primary, config.repo_config().severity());
-        if primary.canonical_gap.is_some() {
-            add_canonical_group_data(&root, &mut diagnostic, &primary, &raw_findings);
-            if canonical_group_has_mixed_classes(&raw_findings) {
-                diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
-                diagnostic.message = format!(
-                    "{}; canonical group contains mixed static classes; inspect raw findings",
-                    diagnostic.message
-                );
-                if let Some(data) = diagnostic
-                    .data
-                    .as_mut()
-                    .and_then(serde_json::Value::as_object_mut)
-                {
-                    data.insert(
-                        "canonical_limitation".to_string(),
-                        serde_json::json!("mixed_static_classes"),
-                    );
-                }
-            }
-        }
-        // Policy: clamp advisory findings to INFORMATION (never WARNING).
-        // Also downgrade WARNING to INFORMATION when run is not "full".
-        if diagnostic.severity == Some(DiagnosticSeverity::WARNING)
-            && (finding_is_advisory(&primary) || !is_full_run)
-        {
-            diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
-        }
-        grouped.entry(uri).or_default().push(diagnostic);
-    }
+    let mut grouped = finding_diagnostics_by_uri(
+        &root,
+        &findings,
+        config.repo_config().severity(),
+        is_full_run,
+    )?;
 
     // Repo seam evidence diagnostics. Enabled by built-in defaults for the
     // saved-workspace editor model; explicit LSP options or repo policy can
