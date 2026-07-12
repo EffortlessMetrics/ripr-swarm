@@ -4453,7 +4453,12 @@ mod tests {
                 ExpectedSink::OutputField,
             ),
             SeamGripClass::WeaklyGripped,
-            Vec::new(),
+            vec![related_test_with(
+                "build_quote",
+                OracleKind::ExactValue,
+                OracleStrength::Weak,
+                crate::analysis::test_grip_evidence::RelationConfidence::High,
+            )],
         );
         let mut field = field;
         field.evidence.missing_discriminators = vec![MissingDiscriminatorFact {

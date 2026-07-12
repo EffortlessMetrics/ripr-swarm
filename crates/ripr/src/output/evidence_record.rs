@@ -10,7 +10,9 @@ use crate::agent::loop_commands::{
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::CanonicalGapIdentity;
-use crate::analysis::repair_route::{RepairRouteState, repair_route_readiness};
+use crate::analysis::repair_route::{
+    RepairRouteState, RepairTargetSelection, repair_route_readiness,
+};
 use crate::analysis::seams::{SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
@@ -452,48 +454,47 @@ pub(crate) fn actionability_for(
     let verification_command = assertion_shape;
     let missing_discriminator = !missing_records.is_empty();
     let route_readiness = repair_route_readiness(entry);
-    let recommended_test_target =
-        route_readiness.test_target.is_some() || entry.evidence.related_tests.is_empty();
+    let recommended_test_target = matches!(
+        route_readiness.target_selection,
+        RepairTargetSelection::Existing(_) | RepairTargetSelection::Proposed(_)
+    );
 
     let (class, reason) = if static_limited {
         (
             "static_limitation",
             "static evidence is opaque or unknown for this seam",
         )
-    } else if !entry.class.is_headline_eligible() {
-        (
-            "not_policy_relevant",
-            "seam is already gripped or intentionally non-actionable under current policy",
-        )
-    } else if route_readiness.state == RepairRouteState::StaticLimitation {
-        (
-            "static_limitation",
-            route_readiness
-                .missing_evidence
-                .first()
-                .map(String::as_str)
-                .unwrap_or("producer-owned repair-route evidence is incomplete"),
-        )
-    } else if related_test && weak_related_oracle(entry) {
-        (
-            "actionable_assertion_upgrade",
-            "related tests reach the seam but still miss a concrete discriminator",
-        )
-    } else if related_test {
-        (
-            "actionable_related_test_extension",
-            "extend the nearest related test with the missing discriminator",
-        )
-    } else if missing_discriminator || candidate_values {
-        (
-            "actionable_focused_test",
-            "write a focused test for the missing discriminator",
-        )
     } else {
-        (
-            "needs_human_design",
-            "RIPR does not yet have enough concrete repair context for this seam",
-        )
+        match route_readiness.state {
+            RepairRouteState::PolicyExcluded | RepairRouteState::AlreadyGripped => (
+                "not_policy_relevant",
+                "seam is already gripped or intentionally non-actionable under current policy",
+            ),
+            RepairRouteState::StaticLimitation => (
+                "static_limitation",
+                route_readiness
+                    .missing_evidence
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("producer-owned repair-route evidence is incomplete"),
+            ),
+            RepairRouteState::Ready if related_test && weak_related_oracle(entry) => (
+                "actionable_assertion_upgrade",
+                "related tests reach the seam but still miss a concrete discriminator",
+            ),
+            RepairRouteState::Ready if related_test => (
+                "actionable_related_test_extension",
+                "extend the nearest related test with the missing discriminator",
+            ),
+            RepairRouteState::Ready if missing_discriminator || candidate_values => (
+                "actionable_focused_test",
+                "write a focused test for the missing discriminator",
+            ),
+            RepairRouteState::Ready => (
+                "needs_human_design",
+                "RIPR does not yet have enough concrete repair context for this seam",
+            ),
+        }
     };
 
     EvidenceRecordActionability {
@@ -1707,7 +1708,9 @@ fn presentation_text_json(presentation_text: &EvidenceRecordPresentationText) ->
 mod tests {
     use super::*;
     use crate::analysis::classify_seam;
-    use crate::analysis::repair_route::{RepairRouteState, repair_route_readiness};
+    use crate::analysis::repair_route::{
+        RepairRouteState, RepairTargetSelection, repair_route_readiness,
+    };
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{
         RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
@@ -2076,6 +2079,20 @@ mod tests {
         assert!(!readiness.present_evidence.is_empty());
         assert!(readiness.missing_evidence.is_empty());
         assert_eq!(readiness.state, RepairRouteState::Ready);
+        assert!(matches!(
+            readiness.target_selection,
+            RepairTargetSelection::Existing(_)
+        ));
+
+        entry.evidence.missing_discriminators[0].value = "unrelated evidence".to_string();
+        entry.class = classify_seam(&entry.seam, &entry.evidence);
+        assert_eq!(
+            repair_route_readiness(&entry).state,
+            RepairRouteState::StaticLimitation
+        );
+        entry.evidence.missing_discriminators[0].value =
+            "discount_threshold (equality boundary)".to_string();
+        entry.class = classify_seam(&entry.seam, &entry.evidence);
 
         for (kind, required) in [
             (
@@ -2103,6 +2120,19 @@ mod tests {
                 },
             ),
         ] {
+            let discriminator_value = match &required {
+                RequiredDiscriminator::ErrorVariant { variant }
+                | RequiredDiscriminator::MatchArmTaken { arm: variant }
+                | RequiredDiscriminator::FieldValue { field: variant }
+                | RequiredDiscriminator::BoundaryValue {
+                    description: variant,
+                }
+                | RequiredDiscriminator::ReturnValue {
+                    description: variant,
+                }
+                | RequiredDiscriminator::Effect { sink: variant }
+                | RequiredDiscriminator::CallSite { target: variant } => variant.clone(),
+            };
             entry.seam = RepoSeam::new(
                 "src/pricing.rs",
                 "pricing::discounted_total",
@@ -2110,12 +2140,12 @@ mod tests {
                 42,
                 88,
                 "changed behavior",
-                required,
+                required.clone(),
                 ExpectedSink::ReturnValue,
             );
             entry.evidence.seam_id = entry.seam.id().clone();
             entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
-                value: "producer-owned fact".to_string(),
+                value: discriminator_value,
                 reason: "exact family evidence".to_string(),
                 flow_sink: None,
             }];
@@ -2213,9 +2243,30 @@ mod tests {
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
                 repair_route_readiness(&entry).state,
-                RepairRouteState::StaticLimitation
+                RepairRouteState::AlreadyGripped
             );
         }
+    }
+
+    #[test]
+    fn readiness_terminal_states_follow_classifier_class() {
+        let intentional = sample_classified(StageState::Yes, SeamGripClass::Intentional);
+        assert_eq!(
+            repair_route_readiness(&intentional).state,
+            RepairRouteState::PolicyExcluded
+        );
+
+        let suppressed = sample_classified(StageState::Yes, SeamGripClass::Suppressed);
+        assert_eq!(
+            repair_route_readiness(&suppressed).state,
+            RepairRouteState::PolicyExcluded
+        );
+
+        let strong = sample_classified(StageState::Yes, SeamGripClass::StronglyGripped);
+        assert_eq!(
+            repair_route_readiness(&strong).state,
+            RepairRouteState::AlreadyGripped
+        );
     }
 
     #[test]
@@ -2548,25 +2599,18 @@ mod tests {
 
         let record = evidence_record_for(&entry, None);
 
-        assert_eq!(record.actionability.class, "actionable_focused_test");
+        assert_eq!(record.actionability.class, "static_limitation");
         assert!(record.recommendation.nearest_test_to_imitate.is_none());
+        assert!(matches!(
+            repair_route_readiness(&entry).target_selection,
+            RepairTargetSelection::Missing
+        ));
 
         let recommended_test = record.recommendation.recommended_test.as_ref();
         let related_test = record.canonical_item.related_test.as_ref();
 
-        assert_eq!(
-            related_test.map(|test| test.name.as_str()),
-            recommended_test.map(|test| test.name.as_str())
-        );
-        assert_eq!(
-            related_test.map(|test| test.file.as_str()),
-            recommended_test.map(|test| test.file.as_str())
-        );
-        assert_eq!(related_test.map(|test| test.line), Some(1));
-        assert_eq!(
-            related_test.map(|test| test.reason.as_str()),
-            Some("recommended_test_target")
-        );
+        assert!(recommended_test.is_none());
+        assert!(related_test.is_none());
     }
 
     #[test]

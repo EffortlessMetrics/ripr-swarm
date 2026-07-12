@@ -1505,7 +1505,9 @@ mod tests {
         scopes_from_gap_records, seam_matches_resolved_scope,
     };
     use crate::analysis::repair_route::{
+        NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
         REPAIR_ROUTE_AUTHORITY_BOUNDARY, RepairRouteReadiness, RepairRouteState,
+        RepairTargetSelection,
     };
     use crate::analysis::seam_cache::FileFactCacheStats;
     use crate::domain::OracleKind;
@@ -2107,6 +2109,12 @@ mod tests {
             required_evidence: vec!["producer-owned missing discriminator fact".to_string()],
             present_evidence: vec!["producer-owned missing discriminator fact".to_string()],
             missing_evidence: Vec::new(),
+            target_selection: RepairTargetSelection::Proposed(NewTestTargetProposal {
+                kind: NewTestKind::Integration,
+                file: "tests/example.rs".into(),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
             test_target: None,
             proposed_oracle: Some(OracleKind::ExactValue),
             current_oracle: None,

@@ -9,6 +9,7 @@ use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, StageState};
+use std::path::PathBuf;
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
@@ -20,7 +21,55 @@ const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 pub(crate) enum RepairRouteState {
     Ready,
     AlreadyGripped,
+    PolicyExcluded,
     StaticLimitation,
+}
+
+/// The producer-owned choice of where a test-only repair may land.
+///
+/// `Missing` is deliberate: a related-test summary, a path, or a renderer
+/// heuristic is not permission to edit that location. New-test proposals are
+/// represented explicitly so a future producer can supply them without
+/// overloading an existing-test identity.
+#[allow(
+    dead_code,
+    reason = "typed new-test target variants remain reserved for a future RustIndex proposal producer"
+)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RepairTargetSelection {
+    Existing(TestTargetEvidence),
+    Proposed(NewTestTargetProposal),
+    Missing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct NewTestTargetProposal {
+    pub(crate) kind: NewTestKind,
+    pub(crate) file: PathBuf,
+    pub(crate) owner: String,
+    pub(crate) provenance: NewTestProposalProvenance,
+}
+
+#[allow(
+    dead_code,
+    reason = "typed new-test target variants remain reserved for a future RustIndex proposal producer"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NewTestKind {
+    InlineUnit,
+    Integration,
+}
+
+#[allow(
+    dead_code,
+    reason = "typed new-test target variants remain reserved for a future RustIndex proposal producer"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NewTestProposalProvenance {
+    ProducerOwned,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -31,6 +80,7 @@ pub(crate) struct RepairRouteReadiness {
     pub(crate) required_evidence: Vec<String>,
     pub(crate) present_evidence: Vec<String>,
     pub(crate) missing_evidence: Vec<String>,
+    pub(crate) target_selection: RepairTargetSelection,
     pub(crate) test_target: Option<TestTargetEvidence>,
     pub(crate) proposed_oracle: Option<OracleKind>,
     pub(crate) current_oracle: Option<OracleKind>,
@@ -48,6 +98,18 @@ pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadi
         | SeamKind::MatchArm => value_route_readiness(seam, evidence),
         SeamKind::SideEffect | SeamKind::CallPresence => effect_route_readiness(seam, evidence),
     };
+    match entry.class {
+        crate::analysis::seams::SeamGripClass::StronglyGripped => {
+            readiness.state = RepairRouteState::AlreadyGripped;
+            readiness.missing_evidence.clear();
+        }
+        crate::analysis::seams::SeamGripClass::Intentional
+        | crate::analysis::seams::SeamGripClass::Suppressed => {
+            readiness.state = RepairRouteState::PolicyExcluded;
+            readiness.missing_evidence.clear();
+        }
+        _ => {}
+    }
     readiness.seam_id = seam.id().as_str().to_string();
     readiness.canonical_gap_id = canonical_gap_identity(entry).map(|identity| identity.id);
     readiness.authority_boundary = REPAIR_ROUTE_AUTHORITY_BOUNDARY;
@@ -63,13 +125,11 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
         discriminator_evidence.clone(),
         SAFE_TEST_TARGET_EVIDENCE.to_string(),
     ];
-    let has_discriminator = !evidence.missing_discriminators.is_empty();
+    let has_discriminator = has_exact_discriminator(seam, evidence);
     let selected_test_target = existing_test_target(evidence, false);
-    // A related test without an indexed target is not interchangeable with an
-    // explicit new-test proposal. Keep that distinction in the authority:
-    // output may project a proposal only when the producer supplied no related
-    // test node at all.
-    let has_safe_target = selected_test_target.is_some() || evidence.related_tests.is_empty();
+    // No related test is not evidence of a safe new-test location. A future
+    // producer may populate `Proposed`; until then the target is Missing.
+    let has_safe_target = selected_test_target.is_some();
     let state = if has_discriminator && has_safe_target {
         RepairRouteState::Ready
     } else {
@@ -96,6 +156,10 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
         required_evidence: required,
         present_evidence,
         missing_evidence,
+        target_selection: selected_test_target
+            .clone()
+            .map(RepairTargetSelection::Existing)
+            .unwrap_or(RepairTargetSelection::Missing),
         test_target: selected_test_target,
         proposed_oracle: Some(oracle_for_seam(seam.kind())),
         current_oracle: current_oracle(evidence, false, true),
@@ -199,11 +263,57 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
         required_evidence,
         present_evidence,
         missing_evidence,
+        target_selection: test_target
+            .clone()
+            .map(RepairTargetSelection::Existing)
+            .unwrap_or(RepairTargetSelection::Missing),
         test_target,
         proposed_oracle: Some(OracleKind::MockExpectation),
         current_oracle: current,
         authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
+}
+
+fn has_exact_discriminator(seam: &RepoSeam, evidence: &TestGripEvidence) -> bool {
+    evidence
+        .missing_discriminators
+        .iter()
+        .any(|fact| discriminator_fact_matches(seam.required_discriminator(), &fact.value))
+}
+
+fn discriminator_fact_matches(required: &RequiredDiscriminator, fact: &str) -> bool {
+    let fact = fact.trim().to_ascii_lowercase();
+    if fact.is_empty() {
+        return false;
+    }
+    match required {
+        RequiredDiscriminator::BoundaryValue { description } => significant_tokens(description)
+            .last()
+            .is_some_and(|token| fact.contains(token)),
+        RequiredDiscriminator::ReturnValue { description } => {
+            contains_all_tokens(&fact, description)
+        }
+        RequiredDiscriminator::ErrorVariant { variant } => contains_all_tokens(&fact, variant),
+        RequiredDiscriminator::MatchArmTaken { arm } => contains_all_tokens(&fact, arm),
+        RequiredDiscriminator::FieldValue { field } => contains_all_tokens(&fact, field),
+        RequiredDiscriminator::Effect { sink }
+        | RequiredDiscriminator::CallSite { target: sink } => contains_all_tokens(&fact, sink),
+    }
+}
+
+fn contains_all_tokens(fact: &str, required: &str) -> bool {
+    let tokens = significant_tokens(required);
+    !tokens.is_empty() && tokens.into_iter().all(|token| fact.contains(&token))
+}
+
+fn significant_tokens(value: &str) -> Vec<String> {
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter_map(|token| {
+            let token = token.trim().to_ascii_lowercase();
+            (token.len() >= 3).then_some(token)
+        })
+        .collect()
 }
 
 fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
