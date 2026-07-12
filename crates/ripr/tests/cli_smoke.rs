@@ -2748,6 +2748,8 @@ fn rerun_changed_test_emits_current_state_only_for_boundary_gap_fixture() -> Res
         r#""state": "current_state_only""#,
         r#""changed_test": "tests/pricing.rs""#,
         r#""canonical_gap_id": "gap:"#,
+        r#""repair_route_readiness": {"#,
+        r#""state": "ready""#,
         "gap movement is not inferred",
     ] {
         if !json.contains(expected) {

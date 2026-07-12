@@ -15,14 +15,15 @@ pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
 const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RepairRouteState {
     Ready,
     AlreadyGripped,
     StaticLimitation,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct RepairRouteReadiness {
     pub(crate) state: RepairRouteState,
     pub(crate) seam_id: String,

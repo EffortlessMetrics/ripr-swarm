@@ -87,12 +87,14 @@ pub(crate) struct TestTargetEvidence {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum TestKind {
     InlineUnit,
     Integration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum TestTargetProvenance {
     RustIndexFunction,
     #[cfg(test)]
