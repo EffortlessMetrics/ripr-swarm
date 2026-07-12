@@ -682,6 +682,73 @@ mod tests {
     }
 
     #[test]
+    fn invalid_attempt_fields_fail_closed_without_entering_denominators() -> Result<(), String> {
+        let mut corpus: Value = serde_json::from_str(include_str!(
+            "../../../metrics/rust-repair-trust/corpus.json"
+        ))
+        .map_err(|error| format!("parse corpus fixture: {error}"))?;
+        corpus["cases"] = json!([{
+            "attempt_id": "invalid-1",
+            "repository": "not-authorized",
+            "analyzed_head_sha": "not-a-sha",
+            "canonical_gap_id": "wrong-prefix",
+            "seam_id": "seam:invalid-1",
+            "file_line": "src/lib.rs:10",
+            "changed_behavior": "changed behavior",
+            "missing_discriminator": "missing discriminator",
+            "related_test_or_production_caller": "caller",
+            "focused_test_intent": "observe behavior",
+            "before_receipt": "before.json",
+            "repair_intent": "add assertion",
+            "verification_command": "cargo test",
+            "verification_result": "failed",
+            "targeted_rerun_command": "cargo xtask targeted-rerun",
+            "receipt_command": "cargo xtask receipt",
+            "inspection_command": "git diff --check",
+            "after_receipt": "after.json",
+            "claim_boundary": "static evidence",
+            "attempt_number": 0,
+            "changed_test_files": [],
+            "allowed_edit_surface": [""],
+            "limitations": "not-an-array",
+            "source_refs": [],
+            "movement": "invented",
+            "test_only": false,
+            "production_files_changed": true,
+            "false_actionability": "unknown",
+            "known_impossible_recommendation": false,
+            "parity_failure": false,
+            "artifact_archaeology": false
+        }]);
+
+        let report = build_report(&corpus);
+        if report["eligible_attempt_count"] != 0 {
+            return Err("invalid attempt must not enter the eligible denominator".to_string());
+        }
+        let errors = report["validation_errors"]
+            .as_array()
+            .ok_or_else(|| "validation_errors must be an array".to_string())?;
+        let errors = errors.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+        for expected in [
+            "repository not-authorized is not authorized",
+            "revision must be a 40-character commit SHA",
+            "movement invented is not in the closed vocabulary",
+            "attempt_number must be a positive integer",
+            "changed_test_files must not be empty",
+            "limitations must be an array",
+            "source_refs must not be empty",
+            "test_only must be true",
+            "production_files_changed must be false",
+            "canonical_gap_id must start with gap:",
+        ] {
+            if !errors.iter().any(|error| error.contains(expected)) {
+                return Err(format!("missing validation error: {expected}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn complete_corpus_scores_metrics_and_markdown_with_explicit_denominators() -> Result<(), String>
     {
         let repositories = [
