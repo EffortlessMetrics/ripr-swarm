@@ -287,7 +287,7 @@ fn sorted_unique_json_values(
     keyed.into_values().collect()
 }
 
-fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> bool {
+pub(super) fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> bool {
     raw_findings
         .iter()
         .map(|finding| finding.class.as_str())

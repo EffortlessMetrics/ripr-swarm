@@ -6,9 +6,10 @@ use super::capabilities::{initialize_result, root_from_initialize_params};
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
     DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
-    diagnostic_for_classified_seam, diagnostic_for_finding, diagnostic_refresh_plan,
-    diagnostic_severity_for_class, take_all_uris, workspace_diagnostic_batches,
-    workspace_diagnostic_batches_with_config, workspace_diagnostics_with_config,
+    canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
+    diagnostic_refresh_plan, diagnostic_severity_for_class, take_all_uris,
+    workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
+    workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
@@ -826,6 +827,24 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
     let backend = service.inner();
     let mut finding = sample_finding();
     finding.canonical_gap = Some(sample_canonical_gap());
+    finding.evidence = vec!["related evidence".to_string()];
+    finding.missing = vec!["missing exact discriminator".to_string()];
+    finding.recommended_next_step = Some("Add the exact assertion.".to_string());
+    finding.activation.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
+        value: "threshold equality".to_string(),
+        reason: "the equality boundary is not observed".to_string(),
+        flow_sink: None,
+    }];
+    finding.related_tests = vec![RelatedTest {
+        name: "pricing::discount_boundary".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        oracle: Some("assert_eq".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        relation_reason: None,
+        relation_confidence: None,
+    }];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let canonical_gap_id = diagnostic
         .data
@@ -862,6 +881,46 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
             .and_then(|data| data["raw_findings"].as_array())
             .map(Vec::len),
         Some(2)
+    );
+    assert_eq!(
+        grouped_diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data["related_tests"].as_array())
+            .map(Vec::len),
+        Some(1)
+    );
+    let mut no_data_diagnostic = tower_lsp_server::ls_types::Diagnostic::default();
+    add_canonical_group_data(
+        Path::new("/workspace"),
+        &mut no_data_diagnostic,
+        &finding,
+        std::slice::from_ref(&finding),
+    );
+    assert!(no_data_diagnostic.data.is_none());
+    assert_eq!(
+        grouped_diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data["evidence"].as_array())
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        grouped_diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data["missing"].as_array())
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        grouped_diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data["recommended_next_steps"].as_array())
+            .map(Vec::len),
+        Some(1)
     );
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
     let diagnostics = sample_workspace_diagnostics(
@@ -4369,6 +4428,19 @@ fn canonical_finding_groups_collapse_same_gap_and_preserve_raw_signals() -> Resu
         )
     );
     Ok(())
+}
+
+#[test]
+fn canonical_group_mixed_classes_are_detected_without_promotion() {
+    let mut first = sample_finding();
+    first.canonical_gap = Some(sample_canonical_gap());
+    let mut second = first.clone();
+    second.class = ExposureClass::StaticUnknown;
+
+    assert!(canonical_group_has_mixed_classes(&[first, second]));
+    assert!(!canonical_group_has_mixed_classes(std::slice::from_ref(
+        &sample_finding()
+    )));
 }
 
 fn sample_finding() -> Finding {
