@@ -278,10 +278,12 @@ pub(crate) fn evidence_record_for(
     canonical_gap: Option<&CanonicalGapIdentity>,
 ) -> EvidenceRecord {
     let missing_records = missing_discriminator_records_for(entry);
-    let actionability = actionability_for(entry, &missing_records);
-    let recommendation = recommendation_for(entry, &missing_records, &actionability);
+    let recommended_test = recommended_test_for(entry);
+    let actionability = actionability_for(entry, &missing_records, &recommended_test);
+    let recommendation =
+        recommendation_for(entry, &missing_records, &actionability, &recommended_test);
     let related_tests_total = entry.evidence.related_tests.len();
-    let static_limitations = static_limitations_for(entry);
+    let static_limitations = static_limitations_for(entry, &recommended_test);
     let raw_findings = raw_findings_for(entry);
     let canonical_item = canonical_item_for(
         entry,
@@ -439,12 +441,14 @@ fn stage_record(stage: &StageEvidence) -> EvidenceRecordStage {
 pub(crate) fn actionability_for(
     entry: &ClassifiedSeam,
     missing_records: &[crate::output::agent_seam_packets::MissingRecord],
+    recommended_test: &RecommendedTest,
 ) -> EvidenceRecordActionability {
     let static_limited = is_static_limited(entry);
     let candidate_values = !candidate_values_for(entry, missing_records).is_empty();
     let assertion_shape = !static_limited && entry.class.is_headline_eligible();
     let related_test = !entry.evidence.related_tests.is_empty();
-    let recommended_test_target = assertion_shape && has_distinct_test_target(entry);
+    let recommended_test_target =
+        assertion_shape && has_distinct_test_target(entry, recommended_test);
     let verification_command = assertion_shape;
     let missing_discriminator = !missing_records.is_empty();
 
@@ -933,6 +937,7 @@ fn recommendation_for(
     entry: &ClassifiedSeam,
     missing_records: &[crate::output::agent_seam_packets::MissingRecord],
     actionability: &EvidenceRecordActionability,
+    recommended_test: &RecommendedTest,
 ) -> EvidenceRecordRecommendation {
     let actionable = actionability.has_concrete_guidance;
     let static_limited = actionability.class == "static_limitation";
@@ -944,7 +949,7 @@ fn recommendation_for(
         "no_action"
     };
 
-    let recommended_test = actionable.then(|| recommended_test_record(recommended_test_for(entry)));
+    let recommended_test = actionable.then(|| recommended_test_record(recommended_test));
     let assertion_shape =
         actionable.then(|| assertion_shape_record(assertion_shape_for_entry(entry)));
     let verify_command = actionable.then(|| VERIFY_COMMAND.to_string());
@@ -983,11 +988,11 @@ pub(crate) fn canonical_receipt_command_for(
     ))
 }
 
-fn recommended_test_record(test: RecommendedTest) -> EvidenceRecordRecommendedTest {
+fn recommended_test_record(test: &RecommendedTest) -> EvidenceRecordRecommendedTest {
     EvidenceRecordRecommendedTest {
-        name: test.name,
-        file: test.file,
-        reason: test.reason,
+        name: test.name.clone(),
+        file: test.file.clone(),
+        reason: test.reason.clone(),
     }
 }
 
@@ -1038,6 +1043,7 @@ fn oracle_semantics_record(
 
 pub(crate) fn static_limitations_for(
     entry: &ClassifiedSeam,
+    recommended_test: &RecommendedTest,
 ) -> Vec<EvidenceRecordStaticLimitation> {
     let mut limitations = Vec::new();
     if cross_language_oracle_visibility_unresolved(entry) {
@@ -1112,7 +1118,7 @@ pub(crate) fn static_limitations_for(
 
     if entry.class.is_headline_eligible()
         && !is_static_limited(entry)
-        && !has_distinct_test_target(entry)
+        && !has_distinct_test_target(entry, recommended_test)
     {
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "repair_target".to_string(),
@@ -1127,8 +1133,7 @@ pub(crate) fn static_limitations_for(
     limitations
 }
 
-fn has_distinct_test_target(entry: &ClassifiedSeam) -> bool {
-    let recommended = recommended_test_for(entry);
+fn has_distinct_test_target(entry: &ClassifiedSeam, recommended: &RecommendedTest) -> bool {
     !recommended.file.is_empty()
         && recommended.file != "not_applicable"
         && recommended.file != display_path(entry.seam.file())
