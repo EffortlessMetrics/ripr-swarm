@@ -29,6 +29,11 @@ pub(crate) const CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY: &str =
     "cross_language_target_unresolved";
 pub(crate) const CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE: &str =
     "analysis/cross-language-test-target-inference";
+const MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY: &str = "missing_discriminator_evidence";
+const MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE: &str =
+    "analysis/producer-evidence-discriminator";
+const SAME_FILE_TEST_TARGET_CATEGORY: &str = "test_target_same_as_production_seam";
+const SAME_FILE_TEST_TARGET_REPAIR_ROUTE: &str = "analysis/test-target-resolution";
 
 const MAX_RELATED_TESTS_PER_EVIDENCE_RECORD: usize = 8;
 const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json";
@@ -439,7 +444,7 @@ pub(crate) fn actionability_for(
     let candidate_values = !candidate_values_for(entry, missing_records).is_empty();
     let assertion_shape = !static_limited && entry.class.is_headline_eligible();
     let related_test = !entry.evidence.related_tests.is_empty();
-    let recommended_test_target = assertion_shape;
+    let recommended_test_target = assertion_shape && has_distinct_test_target(entry);
     let verification_command = assertion_shape;
     let missing_discriminator = !missing_records.is_empty();
 
@@ -452,6 +457,16 @@ pub(crate) fn actionability_for(
         (
             "not_policy_relevant",
             "seam is already gripped or intentionally non-actionable under current policy",
+        )
+    } else if !missing_discriminator {
+        (
+            "static_limitation",
+            "producer-owned evidence does not identify a concrete missing discriminator",
+        )
+    } else if !recommended_test_target {
+        (
+            "static_limitation",
+            "the suggested test target resolves to the production seam and cannot be safely selected",
         )
     } else if related_test && weak_related_oracle(entry) {
         (
@@ -1078,7 +1093,45 @@ pub(crate) fn static_limitations_for(
         });
     }
 
+    // A related test or an assertion template is not enough to produce a
+    // repair packet. The producer must name the discriminator that the test
+    // needs to observe; otherwise the route is only a plausible suggestion.
+    if entry.class.is_headline_eligible()
+        && !is_static_limited(entry)
+        && missing_discriminator_records_for(entry).is_empty()
+    {
+        limitations.push(EvidenceRecordStaticLimitation {
+            stage: "discriminate".to_string(),
+            state: "unknown".to_string(),
+            reason: "producer-owned evidence does not identify a concrete missing discriminator"
+                .to_string(),
+            category: MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY.to_string(),
+            repair_route: MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE.to_string(),
+        });
+    }
+
+    if entry.class.is_headline_eligible()
+        && !is_static_limited(entry)
+        && !has_distinct_test_target(entry)
+    {
+        limitations.push(EvidenceRecordStaticLimitation {
+            stage: "repair_target".to_string(),
+            state: "unknown".to_string(),
+            reason: "the suggested test target resolves to the production seam and cannot be safely selected"
+                .to_string(),
+            category: SAME_FILE_TEST_TARGET_CATEGORY.to_string(),
+            repair_route: SAME_FILE_TEST_TARGET_REPAIR_ROUTE.to_string(),
+        });
+    }
+
     limitations
+}
+
+fn has_distinct_test_target(entry: &ClassifiedSeam) -> bool {
+    let recommended = recommended_test_for(entry);
+    !recommended.file.is_empty()
+        && recommended.file != "not_applicable"
+        && recommended.file != display_path(entry.seam.file())
 }
 
 fn push_stage_limitation(
@@ -1159,6 +1212,8 @@ fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'stati
 
 fn static_limitation_repair_route(category: &str) -> &'static str {
     match category {
+        MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY => MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE,
+        SAME_FILE_TEST_TARGET_CATEGORY => SAME_FILE_TEST_TARGET_REPAIR_ROUTE,
         "activation_owner_call_absent" => "analysis/owner-call-absence-triage",
         "activation_owner_call_absent_call_presence_target_affinity" => {
             "analysis/call-presence-target-affinity-owner-call-tracing"
@@ -1856,6 +1911,63 @@ mod tests {
             category: category.to_string(),
             repair_route: repair_route.to_string(),
         }
+    }
+
+    #[test]
+    fn evidence_record_fails_closed_without_producer_discriminator() {
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let seam = RepoSeam::new(
+            "src/config.rs",
+            "config::build_options",
+            SeamKind::FieldConstruction,
+            42,
+            88,
+            "options.provider = provider",
+            RequiredDiscriminator::FieldValue {
+                field: "provider".to_string(),
+            },
+            ExpectedSink::OutputField,
+        );
+        entry.evidence.seam_id = seam.id().clone();
+        entry.seam = seam;
+        entry.evidence.missing_discriminators.clear();
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        assert_eq!(record.actionability.class, "static_limitation");
+        assert_eq!(json["canonical_item"]["gap_state"], "static_limitation");
+        assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert_eq!(
+            json["static_limitations"][0]["category"],
+            MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY
+        );
+        assert_eq!(
+            json["static_limitations"][0]["repair_route"],
+            MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE
+        );
+    }
+
+    #[test]
+    fn evidence_record_fails_closed_when_test_target_is_the_production_seam() {
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
+
+        let record = evidence_record_for(&entry, None);
+        let json = evidence_record_json_value(&record);
+
+        assert_eq!(record.actionability.class, "static_limitation");
+        assert_eq!(json["canonical_item"]["gap_state"], "static_limitation");
+        assert_eq!(json["canonical_item"]["receipt_command"], Value::Null);
+        assert!(
+            json["static_limitations"]
+                .as_array()
+                .is_some_and(|limitations| {
+                    limitations
+                        .iter()
+                        .any(|limitation| limitation["category"] == SAME_FILE_TEST_TARGET_CATEGORY)
+                })
+        );
     }
 
     #[test]
