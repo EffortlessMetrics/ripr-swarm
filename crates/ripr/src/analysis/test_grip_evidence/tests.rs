@@ -1750,6 +1750,96 @@ fn given_direct_owner_call_and_same_file_match_when_related_tests_are_ranked_the
 }
 
 #[test]
+fn producer_records_real_rust_test_symbol_identity_for_inline_and_integration_tests()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn discounted_total_boundary() {
+        assert_eq!(super::discounted_total(100, 100), 90);
+    }
+}
+"#;
+    let inline_index = index_from_files(&[(prod.clone(), prod_src)])?;
+    let inline_seam = inventory_seams_from_index(std::slice::from_ref(&prod), &inline_index)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected inline predicate seam".to_string())?;
+    let inline_evidence = evidence_for_seam(&inline_seam, &inline_index);
+    let inline_test = inline_evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "discounted_total_boundary")
+        .ok_or_else(|| "expected inline related test".to_string())?;
+    let inline_target = inline_test
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "expected producer-owned inline test target".to_string())?;
+    assert_eq!(inline_target.file, prod);
+    assert_eq!(inline_target.test_kind, TestKind::InlineUnit);
+    assert_eq!(
+        inline_target.provenance,
+        TestTargetProvenance::RustIndexFunction
+    );
+    assert_eq!(
+        inline_target.symbol_id,
+        inline_index
+            .files
+            .get(&prod)
+            .and_then(|file| {
+                file.functions
+                    .iter()
+                    .find(|function| function.name == "discounted_total_boundary")
+            })
+            .ok_or_else(|| "expected indexed inline test function".to_string())?
+            .id
+    );
+
+    let integration_path = PathBuf::from("tests/pricing.rs");
+    let integration_src = r#"
+#[test]
+fn discounted_total_integration_boundary() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+"#;
+    let integration_index = index_from_files(&[
+        (
+            prod.clone(),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }",
+        ),
+        (integration_path.clone(), integration_src),
+    ])?;
+    let integration_seam =
+        inventory_seams_from_index(std::slice::from_ref(&prod), &integration_index)
+            .into_iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "expected integration predicate seam".to_string())?;
+    let integration_evidence = evidence_for_seam(&integration_seam, &integration_index);
+    let integration_test = integration_evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "discounted_total_integration_boundary")
+        .ok_or_else(|| "expected integration related test".to_string())?;
+    let integration_target = integration_test
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "expected producer-owned integration test target".to_string())?;
+    assert_eq!(integration_target.file, integration_path);
+    assert_eq!(integration_target.test_kind, TestKind::Integration);
+    assert_eq!(
+        integration_target.provenance,
+        TestTargetProvenance::RustIndexFunction
+    );
+    Ok(())
+}
+
+#[test]
 fn given_owner_named_test_without_call_when_related_tests_are_ranked_then_confidence_is_medium()
 -> Result<(), String> {
     // Test name embeds the owner name but does not call it and is

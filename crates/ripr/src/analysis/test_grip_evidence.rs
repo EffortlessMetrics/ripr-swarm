@@ -29,7 +29,7 @@ use super::rust_index::{
 use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::domain::{
     Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
-    ValueContext, ValueFact,
+    SymbolId, ValueContext, ValueFact,
 };
 // Re-export so callers that import from this module continue to compile.
 pub(crate) use crate::domain::{RelationConfidence, RelationReason};
@@ -64,11 +64,63 @@ pub(crate) struct RelatedTestGrip {
     pub(crate) test_name: String,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
+    pub(crate) test_target: Option<TestTargetEvidence>,
     pub(crate) oracle_kind: OracleKind,
     pub(crate) oracle_strength: OracleStrength,
     pub(crate) evidence_summary: String,
     pub(crate) relation_reason: RelationReason,
     pub(crate) relation_confidence: RelationConfidence,
+}
+
+/// Producer-owned identity for an existing Rust test target.
+///
+/// This is populated from the Rust index's test function facts. Renderers may
+/// display it, but may not reconstruct it from a path, name, or line tuple.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TestTargetEvidence {
+    pub(crate) symbol_id: SymbolId,
+    pub(crate) file: PathBuf,
+    pub(crate) line: usize,
+    pub(crate) test_kind: TestKind,
+    pub(crate) provenance: TestTargetProvenance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TestKind {
+    InlineUnit,
+    Integration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TestTargetProvenance {
+    RustIndexFunction,
+    #[cfg(test)]
+    FixtureOnly,
+}
+
+#[cfg(test)]
+impl TestTargetEvidence {
+    pub(crate) fn fixture(name: &str, file: &std::path::Path, line: usize) -> Self {
+        Self {
+            symbol_id: SymbolId(format!("fixture:test:{}:{}:{}", file.display(), line, name)),
+            file: file.to_path_buf(),
+            line,
+            test_kind: if file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("/tests/")
+                || file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .starts_with("tests/")
+            {
+                TestKind::Integration
+            } else {
+                TestKind::InlineUnit
+            },
+            provenance: TestTargetProvenance::FixtureOnly,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,7 +193,7 @@ fn evidence_for_seam_with_context(
 
     let related_tests: Vec<RelatedTestGrip> = related_with_reason
         .iter()
-        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason))
+        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context.index))
         .collect();
 
     TestGripEvidence {
@@ -1797,6 +1849,7 @@ fn related_test_grip(
     seam: &RepoSeam,
     test: &TestSummary,
     reason: RelationReason,
+    index: &RustIndex,
 ) -> RelatedTestGrip {
     let (kind, strength) = best_oracle(test, seam);
     let summary = if matches!(strength, OracleStrength::None) {
@@ -1819,12 +1872,35 @@ fn related_test_grip(
         test_name: test.name.clone(),
         file: test.file.clone(),
         line: test.start_line,
+        test_target: test_target_evidence(index, seam, test),
         oracle_kind: kind,
         oracle_strength: strength,
         evidence_summary: summary,
         relation_reason: reason,
         relation_confidence: confidence,
     }
+}
+
+fn test_target_evidence(
+    index: &RustIndex,
+    seam: &RepoSeam,
+    test: &TestSummary,
+) -> Option<TestTargetEvidence> {
+    let file = index.files.get(&test.file)?;
+    let function = file.functions.iter().find(|function| {
+        function.is_test && function.name == test.name && function.start_line == test.start_line
+    })?;
+    Some(TestTargetEvidence {
+        symbol_id: function.id.clone(),
+        file: function.file.clone(),
+        line: function.start_line,
+        test_kind: if function.file == seam.file() {
+            TestKind::InlineUnit
+        } else {
+            TestKind::Integration
+        },
+        provenance: TestTargetProvenance::RustIndexFunction,
+    })
 }
 
 fn best_oracle(test: &TestSummary, seam: &RepoSeam) -> (OracleKind, OracleStrength) {

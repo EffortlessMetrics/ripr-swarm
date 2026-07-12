@@ -928,6 +928,13 @@ mod tests {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: std::path::PathBuf::from("tests/pricing_tests.rs"),
                 line: 5,
+                test_target: Some(
+                    crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                        "below_threshold_has_no_discount",
+                        std::path::Path::new("tests/pricing_tests.rs"),
+                        5,
+                    ),
+                ),
                 oracle_kind: OracleKind::ExactValue,
                 oracle_strength: OracleStrength::Strong,
                 evidence_summary: "exact value assertion".to_string(),

@@ -1347,7 +1347,9 @@ mod tests {
         AgentBriefSelectedSeam, AgentBriefSelection, AgentBriefWhyNow, AgentBriefWhyNowConfidence,
         AgentBriefWhyNowReason,
     };
-    use crate::domain::{Confidence, OracleKind, OracleStrength, StageEvidence, StageState};
+    use crate::domain::{
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+    };
     use serde_json::Value;
     use std::fs;
     use std::path::PathBuf;
@@ -1379,6 +1381,13 @@ mod tests {
                     test_name: "above_threshold_gets_discount".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
+                    test_target: Some(
+                        crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                            "above_threshold_gets_discount",
+                            std::path::Path::new("tests/pricing.rs"),
+                            12,
+                        ),
+                    ),
                     oracle_kind: OracleKind::ExactValue,
                     oracle_strength: OracleStrength::Strong,
                     evidence_summary: "exact returned value assertion".to_string(),
@@ -1391,7 +1400,11 @@ mod tests {
                 observe: stage(StageState::Yes),
                 discriminate: stage(StageState::Weak),
                 observed_values: Vec::new(),
-                missing_discriminators: Vec::new(),
+                missing_discriminators: vec![MissingDiscriminatorFact {
+                    value: "amount == discount_threshold".to_string(),
+                    reason: "producer identified the equality boundary as missing".to_string(),
+                    flow_sink: None,
+                }],
             },
         }
     }
@@ -1439,6 +1452,7 @@ mod tests {
                     test_name: "blob copies resizable buffers".to_string(),
                     file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
                     line: 41,
+                    test_target: None,
                     oracle_kind: OracleKind::ExactValue,
                     oracle_strength: OracleStrength::Strong,
                     evidence_summary: "configured TypeScript bridge exact value observer"
@@ -1480,6 +1494,7 @@ mod tests {
                     test_name: "markdown snapshots resizable ArrayBuffer input".to_string(),
                     file: PathBuf::from("test/js/bun/md/md-edge-cases.test.ts"),
                     line: 42,
+                    test_target: None,
                     oracle_kind: OracleKind::ExactValue,
                     oracle_strength: OracleStrength::Strong,
                     evidence_summary: "configured TypeScript bridge exact markdown output observer"
@@ -2455,6 +2470,10 @@ mod tests {
     #[test]
     fn review_comments_pr_guidance_fixtures_pin_required_cases() -> Result<(), String> {
         let exact_seams = [classified(88)];
+        assert_eq!(
+            missing_records_for(&exact_seams[0])[0].value,
+            "amount == discount_threshold"
+        );
         let exact = AgentBriefResolvedWorkingSet::base(
             "main",
             vec![AgentBriefLine::new("src/pricing.rs", 88)],

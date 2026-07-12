@@ -14,9 +14,9 @@ use crate::analysis::test_grip_evidence::TestGripEvidence;
 use crate::app::{CheckInput, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind, OracleStrength,
-    Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-    StageEvidence, StageState, Summary,
+    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, MissingDiscriminatorFact,
+    OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+    RiprEvidence, SourceLocation, StageEvidence, StageState, Summary,
 };
 use std::path::PathBuf;
 
@@ -127,7 +127,11 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Weak),
             observed_values: Vec::new(),
-            missing_discriminators: Vec::new(),
+            missing_discriminators: vec![MissingDiscriminatorFact {
+                value: "amount == threshold".to_string(),
+                reason: "producer identified the equality boundary as missing".to_string(),
+                flow_sink: None,
+            }],
         },
         seam,
         class,

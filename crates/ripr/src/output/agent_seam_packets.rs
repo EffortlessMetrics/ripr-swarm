@@ -18,6 +18,7 @@
 //! contract aimed at coding agents rather than reviewers.
 
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
+use crate::analysis::repair_route::{RepairRouteState, repair_route_readiness};
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
@@ -734,6 +735,11 @@ fn normalize_queue_receipt_movement(movement: &str) -> String {
 /// any seam with a concrete assertion template can expose the editor
 /// action, while prose-only guidance remains hidden.
 pub(crate) fn suggested_assertion_for_classified_seam(entry: &ClassifiedSeam) -> Option<String> {
+    if !entry.class.is_headline_eligible()
+        || repair_route_readiness(&entry.seam, &entry.evidence).state != RepairRouteState::Ready
+    {
+        return None;
+    }
     suggested_assertions_for(
         entry.seam.kind(),
         entry.seam.owner(),
@@ -1368,10 +1374,14 @@ fn is_actionable_entry(entry: &ClassifiedSeam) -> bool {
         && !cross_language_test_target_unresolved(entry)
 }
 
-fn task_for(class: SeamGripClass) -> &'static str {
-    match class {
-        SeamGripClass::Opaque => "inspect_static_limitation",
-        _ => "write_targeted_test",
+fn task_for(entry: &ClassifiedSeam) -> &'static str {
+    if matches!(entry.class, SeamGripClass::Opaque)
+        || repair_route_readiness(&entry.seam, &entry.evidence).state
+            == RepairRouteState::StaticLimitation
+    {
+        "inspect_static_limitation"
+    } else {
+        "write_targeted_test"
     }
 }
 
@@ -1383,7 +1393,7 @@ fn push_packet_json(
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     out.push_str("    {\n");
-    out.push_str(&format!("      \"task\": \"{}\",\n", task_for(entry.class)));
+    out.push_str(&format!("      \"task\": \"{}\",\n", task_for(entry)));
     out.push_str(&format!(
         "      \"seam_id\": \"{}\",\n",
         json_escape(seam.id().as_str())
@@ -1658,7 +1668,6 @@ pub(crate) enum RecommendedTestTargetKind {
     ExistingTest,
     NewInlineTestModule,
     NewIntegrationTest,
-    ProductionFallback,
     Unresolved,
 }
 
@@ -1667,7 +1676,6 @@ pub(crate) enum RecommendedTestSource {
     RelatedTestEvidence,
     InferredSourceModuleTests,
     InferredIntegrationTests,
-    ProductionFallback,
     Unresolved,
 }
 
@@ -1734,7 +1742,7 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         };
     }
     if let Some(test) = nearest_strong_test_to_imitate(entry.seam.kind(), &entry.evidence) {
-        let (target_kind, symbol_id) = related_test_target_identity(entry, test);
+        let (target_kind, symbol_id) = related_test_target_identity(test);
         return RecommendedTest {
             name,
             file: display_path(&test.file),
@@ -1746,7 +1754,7 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         };
     }
     if let Some(test) = entry.evidence.related_tests.first() {
-        let (target_kind, symbol_id) = related_test_target_identity(entry, test);
+        let (target_kind, symbol_id) = related_test_target_identity(test);
         return RecommendedTest {
             name,
             file: display_path(&test.file),
@@ -1770,26 +1778,15 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
 }
 
 fn related_test_target_identity(
-    entry: &ClassifiedSeam,
     test: &RelatedTestGrip,
 ) -> (RecommendedTestTargetKind, Option<String>) {
-    let production_file = display_path(entry.seam.file());
-    let test_file = display_path(&test.file);
-    let is_test_target = test_file == production_file || is_test_target_path(&test.file);
-    let symbol_id = is_test_target
-        .then(|| {
-            (!test.test_name.trim().is_empty() && test.line > 0)
-                .then(|| format!("test:{test_file}:{}:{}", test.line, test.test_name.trim()))
-        })
-        .flatten();
-    let target_kind = if symbol_id.is_some() {
-        RecommendedTestTargetKind::ExistingTest
-    } else if is_test_target {
-        RecommendedTestTargetKind::Unresolved
-    } else {
-        RecommendedTestTargetKind::ProductionFallback
+    let Some(target) = test.test_target.as_ref() else {
+        return (RecommendedTestTargetKind::Unresolved, None);
     };
-    (target_kind, symbol_id)
+    (
+        RecommendedTestTargetKind::ExistingTest,
+        Some(target.symbol_id.0.clone()),
+    )
 }
 
 fn recommended_test_source_for_target_kind(
@@ -1797,7 +1794,6 @@ fn recommended_test_source_for_target_kind(
 ) -> RecommendedTestSource {
     match target_kind {
         RecommendedTestTargetKind::ExistingTest => RecommendedTestSource::RelatedTestEvidence,
-        RecommendedTestTargetKind::ProductionFallback => RecommendedTestSource::ProductionFallback,
         RecommendedTestTargetKind::Unresolved => RecommendedTestSource::Unresolved,
         RecommendedTestTargetKind::NewInlineTestModule => {
             RecommendedTestSource::InferredSourceModuleTests
@@ -1806,26 +1802,6 @@ fn recommended_test_source_for_target_kind(
             RecommendedTestSource::InferredIntegrationTests
         }
     }
-}
-
-fn is_test_target_path(path: &std::path::Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let stem = path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    normalized.starts_with("tests/")
-        || normalized.contains("/tests/")
-        || file_name == "tests.rs"
-        || stem.ends_with("_test")
-        || stem.ends_with("_tests")
-        || path
-            .components()
-            .any(|component| component.as_os_str() == "test")
 }
 
 pub(crate) fn navigation_only_external_target_for(
@@ -2070,55 +2046,16 @@ fn push_related_test_reference(
 }
 
 pub(crate) fn candidate_values_for(
-    entry: &ClassifiedSeam,
+    _entry: &ClassifiedSeam,
     missing: &[MissingRecord],
 ) -> Vec<CandidateValue> {
-    let mut out: Vec<CandidateValue> = missing
+    missing
         .iter()
         .map(|record| CandidateValue {
             value: record.value.clone(),
             reason: record.reason.clone(),
         })
-        .collect();
-    if out.is_empty() {
-        out.push(candidate_value_from_required(
-            entry.seam.required_discriminator(),
-        ));
-    }
-    out
-}
-
-fn candidate_value_from_required(required: &RequiredDiscriminator) -> CandidateValue {
-    match required {
-        RequiredDiscriminator::BoundaryValue { description } => CandidateValue {
-            value: format!("input that exercises {description}"),
-            reason: "exercise the predicate boundary named by the seam".to_string(),
-        },
-        RequiredDiscriminator::ErrorVariant { variant } => CandidateValue {
-            value: format!("input that triggers {variant}"),
-            reason: "force the exact error variant rather than any error".to_string(),
-        },
-        RequiredDiscriminator::ReturnValue { description } => CandidateValue {
-            value: format!("input that changes {description}"),
-            reason: "observe the returned value sink named by the seam".to_string(),
-        },
-        RequiredDiscriminator::FieldValue { field } => CandidateValue {
-            value: format!("input that sets {field}"),
-            reason: "observe the constructed field value".to_string(),
-        },
-        RequiredDiscriminator::Effect { sink } => CandidateValue {
-            value: format!("input that produces {sink}"),
-            reason: "observe the side effect sink".to_string(),
-        },
-        RequiredDiscriminator::MatchArmTaken { arm } => CandidateValue {
-            value: format!("input that selects {arm}"),
-            reason: "exercise the changed match arm".to_string(),
-        },
-        RequiredDiscriminator::CallSite { target } => CandidateValue {
-            value: format!("input that reaches call {target}"),
-            reason: "observe the call site with a mock or spy".to_string(),
-        },
-    }
+        .collect()
 }
 
 pub(crate) fn assertion_shape_for(
@@ -2252,11 +2189,11 @@ fn packet_confidence_for(entry: &ClassifiedSeam) -> &'static str {
     "low"
 }
 
-/// Build the `missing_discriminators` array carried in the packet,
-/// pairing analyzer-emitted hypotheses with a predicate-boundary
-/// fallback when the seam expression names a clear boundary.
+/// Build the `missing_discriminators` array carried in the packet from
+/// producer-owned evidence only. Presentation must not invent a boundary
+/// fact from the seam expression or required-discriminator description.
 pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<MissingRecord> {
-    let mut out: Vec<MissingRecord> = entry
+    entry
         .evidence
         .missing_discriminators
         .iter()
@@ -2264,22 +2201,7 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
             value: m.value.clone(),
             reason: m.reason.clone(),
         })
-        .collect();
-    // For predicate-boundary seams, surface the boundary expression
-    // explicitly even when the analyzer hypothesis only names the RHS
-    // token (or hasn't fired). This pins the most common ask.
-    if matches!(entry.seam.kind(), SeamKind::PredicateBoundary)
-        && let RequiredDiscriminator::BoundaryValue { description } =
-            entry.seam.required_discriminator()
-        && !out.iter().any(|r| r.value.contains(description.as_str()))
-    {
-        out.insert(0, MissingRecord {
-            value: format!("input that hits the boundary: {description}"),
-            reason: "predicate uses an equality-bearing operator; tests should exercise the boundary case"
-                .to_string(),
-        });
-    }
-    out
+        .collect()
 }
 
 /// Suggest the oracle *shape* a test should use, derived from the
@@ -2437,6 +2359,13 @@ mod tests {
             test_name: name.to_string(),
             file: PathBuf::from("tests/service.rs"),
             line: 21,
+            test_target: Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    name,
+                    std::path::Path::new("tests/service.rs"),
+                    21,
+                ),
+            ),
             oracle_kind,
             oracle_strength,
             evidence_summary: "related oracle evidence".to_string(),
@@ -2476,6 +2405,13 @@ mod tests {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
+                test_target: Some(
+                    crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                        "below_threshold_has_no_discount",
+                        std::path::Path::new("tests/pricing.rs"),
+                        12,
+                    ),
+                ),
                 oracle_kind: OracleKind::ExactValue,
                 oracle_strength: OracleStrength::Strong,
                 evidence_summary: "exact value assertion".to_string(),
@@ -2610,23 +2546,16 @@ mod tests {
     }
 
     #[test]
-    fn predicate_boundary_fallback_emits_when_no_analyzer_hypothesis_fired() -> Result<(), String> {
-        // Construct a weakly-gripped predicate seam with EMPTY
-        // missing_discriminators (no analyzer hypothesis). The packet
-        // should still surface the equality-boundary fallback so an
-        // agent has something to act on.
+    fn predicate_boundary_without_producer_fact_does_not_invent_one() -> Result<(), String> {
         let mut entry = weakly_gripped_classified();
         entry.evidence.missing_discriminators = Vec::new();
         let json = render_agent_seam_packets_json(&[entry], None);
-        if !json
-            .contains("\"value\": \"input that hits the boundary: amount >= discount_threshold\"")
+        if json.contains("input that hits the boundary")
+            || json.contains("predicate uses an equality-bearing operator")
         {
             return Err(format!(
-                "expected predicate-boundary fallback record when analyzer hypothesis is empty: {json}"
+                "presentation must not synthesize a discriminator: {json}"
             ));
-        }
-        if !json.contains("predicate uses an equality-bearing operator") {
-            return Err(format!("expected fallback reason text: {json}"));
         }
         Ok(())
     }
@@ -2644,10 +2573,10 @@ mod tests {
     }
 
     #[test]
-    fn given_ungripped_seam_when_packet_is_rendered_then_task_is_write_targeted_test()
+    fn given_ungripped_seam_without_route_when_packet_is_rendered_then_task_is_inspect_static_limitation()
     -> Result<(), String> {
         let json = render_agent_seam_packets_json(&[ungripped_classified()], None);
-        if !json.contains("\"task\": \"write_targeted_test\"") {
+        if !json.contains("\"task\": \"inspect_static_limitation\"") {
             return Err(format!("missing task field: {json}"));
         }
         if !json.contains("\"current_grip\": \"ungripped\"") {
@@ -2715,6 +2644,13 @@ mod tests {
             test_name: "z_high_confidence".to_string(),
             file: PathBuf::from("tests/zeta.rs"),
             line: 1,
+            test_target: Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "z_high_confidence",
+                    std::path::Path::new("tests/zeta.rs"),
+                    1,
+                ),
+            ),
             oracle_kind: OracleKind::ExactValue,
             oracle_strength: OracleStrength::Strong,
             evidence_summary: "exact value assertion".to_string(),
@@ -2725,6 +2661,13 @@ mod tests {
             test_name: "a_low_confidence".to_string(),
             file: PathBuf::from("tests/alpha.rs"),
             line: 1,
+            test_target: Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "a_low_confidence",
+                    std::path::Path::new("tests/alpha.rs"),
+                    1,
+                ),
+            ),
             oracle_kind: OracleKind::Unknown,
             oracle_strength: OracleStrength::None,
             evidence_summary: "no oracle in test body".to_string(),
@@ -2760,7 +2703,7 @@ mod tests {
             "\"file\": \"tests/pricing.rs\"",
             "\"nearest_strong_test_to_imitate\": {\"name\": \"below_threshold_has_no_discount\"",
             "\"candidate_values\": [",
-            "\"value\": \"input that hits the boundary: amount >= discount_threshold\"",
+            "\"value\": \"discount_threshold (equality boundary)\"",
             "\"assertion_shape\": {\"kind\": \"exact_return_value\"",
             "\"example\": \"assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)\"",
             "\"confidence\": \"high\"",
@@ -3940,11 +3883,11 @@ mod tests {
             "- owner: pricing::discounted_total",
             "Why it matters:",
             "- Related test evidence: below_threshold_has_no_discount uses strong exact_value oracle.",
-            "- Missing discriminator: input that hits the boundary: amount >= discount_threshold",
+            "- Missing discriminator: discount_threshold (equality boundary) (observed values do not include the equality-boundary case)",
             "Add a targeted test:",
             "- Suggested file: tests/pricing.rs",
             "- Suggested name: discounted_total_boundary_discriminator",
-            "- Candidate value: input that hits the boundary: amount >= discount_threshold",
+            "- Candidate value: discount_threshold (equality boundary)",
             "- Assertion shape: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
             "Imitate:",
             "- below_threshold_has_no_discount (strong exact_value oracle with high relation)",
@@ -3964,7 +3907,7 @@ mod tests {
         for needle in [
             "- No related test location is visible in saved-workspace analysis.",
             "- Suggested file: tests/pricing_tests.rs",
-            "- Candidate value: input that hits the boundary: amount >= discount_threshold",
+            "- Assertion shape: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
             "- copying a smoke-only test shape",
         ] {
             if !brief.contains(needle) {
@@ -4010,16 +3953,16 @@ mod tests {
         assert_eq!(inline.target_kind, RecommendedTestTargetKind::ExistingTest);
         assert!(inline.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing_helper.rs");
+        entry.evidence.related_tests[0].test_target = None;
         let production_fallback = recommended_test_for(&entry);
         assert_eq!(
             production_fallback.target_kind,
-            RecommendedTestTargetKind::ProductionFallback
+            RecommendedTestTargetKind::Unresolved
         );
         assert!(production_fallback.symbol_id.is_none());
         assert_eq!(
             production_fallback.source,
-            RecommendedTestSource::ProductionFallback
+            RecommendedTestSource::Unresolved
         );
 
         entry.evidence.related_tests.clear();
@@ -4161,6 +4104,7 @@ mod tests {
             test_name: "blob copies resizable buffers".to_string(),
             file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
             line: 41,
+            test_target: None,
             oracle_kind: OracleKind::ExactValue,
             oracle_strength: OracleStrength::Strong,
             evidence_summary: "configured TypeScript bridge exact value observer".to_string(),
@@ -4352,18 +4296,17 @@ mod tests {
             OracleStrength::Weak,
             crate::analysis::test_grip_evidence::RelationConfidence::High,
         );
-        let json = render_agent_seam_packets_json(
-            &[classified_with(
-                seam,
-                SeamGripClass::WeaklyGripped,
-                vec![related],
-            )],
-            None,
-        );
+        let mut entry = classified_with(seam, SeamGripClass::WeaklyGripped, vec![related]);
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "AuthError::RevokedToken".to_string(),
+            reason: "producer identified the exact error variant as missing".to_string(),
+            flow_sink: None,
+        }];
+        let json = render_agent_seam_packets_json(&[entry], None);
         for needle in [
             "\"name\": \"authenticate_exact_error_variant\"",
             "\"candidate_values\": [",
-            "\"value\": \"input that triggers AuthError::RevokedToken\"",
+            "\"value\": \"AuthError::RevokedToken\"",
             "\"missing_oracle_shape\": \"exact error-variant assertion",
             "\"assertion_shape\": {\"kind\": \"exact_error_variant\"",
             "let err = authenticate(/* trigger AuthError::RevokedToken */).expect_err",
@@ -4443,10 +4386,8 @@ mod tests {
         );
         for needle in [
             "\"name\": \"charge_customer_side_effect_observer\"",
-            "\"value\": \"input that produces payment event\"",
             "\"assertion_shape\": {\"kind\": \"side_effect_observer\"",
             "\"name\": \"sync_invoice_call_presence_observer\"",
-            "\"value\": \"input that reaches call repository.save\"",
             "\"assertion_shape\": {\"kind\": \"call_expectation\"",
             "\"pattern\": \"copying a smoke-only test shape\"",
         ] {
@@ -4515,6 +4456,12 @@ mod tests {
             SeamGripClass::WeaklyGripped,
             Vec::new(),
         );
+        let mut field = field;
+        field.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "quote.total".to_string(),
+            reason: "producer identified the output field value as missing".to_string(),
+            flow_sink: None,
+        }];
         let opaque_field = classified_with(
             seam_with(
                 "pricing::build_quote",
@@ -4547,10 +4494,7 @@ mod tests {
             assertion.contains("assert_eq!(result.field"),
             "unexpected field assertion: {assertion}"
         );
-        assert!(
-            suggested_assertion_for_classified_seam(&opaque_field).is_some(),
-            "opaque packet with concrete assertion guidance should expose the same assertion action"
-        );
+        assert!(suggested_assertion_for_classified_seam(&opaque_field).is_none());
         assert!(suggested_assertion_for_classified_seam(&side_effect).is_none());
         Ok(())
     }
