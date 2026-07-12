@@ -282,11 +282,11 @@ pub(crate) fn evidence_record_for(
 ) -> EvidenceRecord {
     let missing_records = missing_discriminator_records_for(entry);
     let recommended_test = recommended_test_for(entry);
-    let actionability = actionability_for(entry, &missing_records, &recommended_test);
+    let actionability = actionability_for(entry, &missing_records);
     let recommendation =
         recommendation_for(entry, &missing_records, &actionability, &recommended_test);
     let related_tests_total = entry.evidence.related_tests.len();
-    let static_limitations = static_limitations_for(entry, &recommended_test);
+    let static_limitations = static_limitations_for(entry);
     let raw_findings = raw_findings_for(entry);
     let canonical_item = canonical_item_for(
         entry,
@@ -444,16 +444,16 @@ fn stage_record(stage: &StageEvidence) -> EvidenceRecordStage {
 pub(crate) fn actionability_for(
     entry: &ClassifiedSeam,
     missing_records: &[crate::output::agent_seam_packets::MissingRecord],
-    recommended_test: &RecommendedTest,
 ) -> EvidenceRecordActionability {
     let static_limited = is_static_limited(entry);
     let candidate_values = !candidate_values_for(entry, missing_records).is_empty();
     let assertion_shape = !static_limited && entry.class.is_headline_eligible();
     let related_test = !entry.evidence.related_tests.is_empty();
-    let recommended_test_target = assertion_shape && has_safe_test_target(recommended_test);
     let verification_command = assertion_shape;
     let missing_discriminator = !missing_records.is_empty();
     let route_readiness = repair_route_readiness(entry);
+    let recommended_test_target =
+        route_readiness.test_target.is_some() || entry.evidence.related_tests.is_empty();
 
     let (class, reason) = if static_limited {
         (
@@ -473,11 +473,6 @@ pub(crate) fn actionability_for(
                 .first()
                 .map(String::as_str)
                 .unwrap_or("producer-owned repair-route evidence is incomplete"),
-        )
-    } else if !recommended_test_target {
-        (
-            "static_limitation",
-            "the producer did not identify a test-owned target node; the suggested target may resolve to production code",
         )
     } else if related_test && weak_related_oracle(entry) {
         (
@@ -1050,7 +1045,6 @@ fn oracle_semantics_record(
 
 pub(crate) fn static_limitations_for(
     entry: &ClassifiedSeam,
-    recommended_test: &RecommendedTest,
 ) -> Vec<EvidenceRecordStaticLimitation> {
     let mut limitations = Vec::new();
     if cross_language_oracle_visibility_unresolved(entry) {
@@ -1114,6 +1108,10 @@ pub(crate) fn static_limitations_for(
         && !is_static_limited(entry)
         && route_readiness.state == RepairRouteState::StaticLimitation
     {
+        let missing_target = route_readiness
+            .missing_evidence
+            .iter()
+            .any(|evidence| evidence == "safe test target");
         let value_family = matches!(
             entry.seam.kind(),
             SeamKind::PredicateBoundary
@@ -1123,15 +1121,24 @@ pub(crate) fn static_limitations_for(
                 | SeamKind::MatchArm
         );
         limitations.push(EvidenceRecordStaticLimitation {
-            stage: "discriminate".to_string(),
+            stage: if missing_target {
+                "repair_target"
+            } else {
+                "discriminate"
+            }
+            .to_string(),
             state: "unknown".to_string(),
             reason: route_readiness.missing_evidence.join("; "),
-            category: if value_family {
+            category: if missing_target {
+                TEST_TARGET_PROVENANCE_CATEGORY.to_string()
+            } else if value_family {
                 MISSING_DISCRIMINATOR_EVIDENCE_CATEGORY.to_string()
             } else {
                 REPAIR_ROUTE_EVIDENCE_CATEGORY.to_string()
             },
-            repair_route: if value_family {
+            repair_route: if missing_target {
+                TEST_TARGET_PROVENANCE_REPAIR_ROUTE.to_string()
+            } else if value_family {
                 MISSING_DISCRIMINATOR_EVIDENCE_REPAIR_ROUTE.to_string()
             } else {
                 REPAIR_ROUTE_EVIDENCE_REPAIR_ROUTE.to_string()
@@ -1139,23 +1146,10 @@ pub(crate) fn static_limitations_for(
         });
     }
 
-    if entry.class.is_headline_eligible()
-        && !is_static_limited(entry)
-        && !has_safe_test_target(recommended_test)
-    {
-        limitations.push(EvidenceRecordStaticLimitation {
-            stage: "repair_target".to_string(),
-            state: "unknown".to_string(),
-            reason: "the producer did not identify a test-owned target node; the suggested target may resolve to production code"
-                .to_string(),
-            category: TEST_TARGET_PROVENANCE_CATEGORY.to_string(),
-            repair_route: TEST_TARGET_PROVENANCE_REPAIR_ROUTE.to_string(),
-        });
-    }
-
     limitations
 }
 
+#[cfg(test)]
 fn has_safe_test_target(recommended: &RecommendedTest) -> bool {
     let target_is_typed = match recommended.target_kind {
         crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest => {

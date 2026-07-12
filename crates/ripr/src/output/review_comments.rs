@@ -784,7 +784,7 @@ fn review_recommendation_json(
         .map(agent_seam_packets::navigation_only_external_target_json);
 
     // Derive gap_state for every card using the canonical decision from evidence_record.
-    let actionability = actionability_for(entry, &missing, &recommended);
+    let actionability = actionability_for(entry, &missing);
     let gap_state = if target_unresolved {
         "static_limitation"
     } else {
@@ -796,7 +796,7 @@ fn review_recommendation_json(
 
     // why_not_actionable + non_claims: for static_limitation cards.
     let static_limitations = if gap_state == "static_limitation" {
-        static_limitations_for(entry, &recommended)
+        static_limitations_for(entry)
     } else {
         Vec::new()
     };
