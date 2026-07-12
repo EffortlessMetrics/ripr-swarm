@@ -33,7 +33,7 @@ pub(crate) enum RepairRouteState {
 /// overloading an existing-test identity.
 #[allow(
     dead_code,
-    reason = "typed new-test target variants remain reserved for a future RustIndex proposal producer"
+    reason = "reserved typed target proposal variants await a RustIndex proposal producer"
 )]
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,7 +53,7 @@ pub(crate) struct NewTestTargetProposal {
 
 #[allow(
     dead_code,
-    reason = "typed new-test target variants remain reserved for a future RustIndex proposal producer"
+    reason = "reserved typed new-test kinds await a RustIndex proposal producer"
 )]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,7 +64,7 @@ pub(crate) enum NewTestKind {
 
 #[allow(
     dead_code,
-    reason = "typed new-test target variants remain reserved for a future RustIndex proposal producer"
+    reason = "reserved typed proposal provenance awaits a RustIndex proposal producer"
 )]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
