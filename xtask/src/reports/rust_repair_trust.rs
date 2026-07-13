@@ -302,14 +302,13 @@ fn build_report(corpus: &Value) -> Value {
     let mut valid_observations = 0usize;
     let mut duplicate_observations = 0usize;
     let mut new_exclusion_observations = 0usize;
-    let mut new_timeout_observations = 0usize;
+    let mut duplicate_timeout_observations = 0usize;
     let mut observation_classification_counts = BTreeMap::<String, usize>::new();
     let mut observation_ids = BTreeSet::new();
     let timeout_exclusion_count = exclusion_reason_counts
         .get("analysis_timeout")
         .copied()
         .unwrap_or(0);
-    let mut timeout_observations = 0usize;
     for (index, observation) in observations.iter().enumerate() {
         let prefix = format!("observations[{index}]");
         let mut errors = observation_errors(
@@ -341,14 +340,11 @@ fn build_report(corpus: &Value) -> Value {
                 .or_default() += 1;
             if classification == "duplicate_observation" {
                 duplicate_observations += 1;
+                if observation.get("reason").and_then(Value::as_str) == Some("analysis_timeout") {
+                    duplicate_timeout_observations += 1;
+                }
             } else if classification == "new_exclusion" {
                 new_exclusion_observations += 1;
-                if observation.get("reason").and_then(Value::as_str) == Some("analysis_timeout") {
-                    new_timeout_observations += 1;
-                }
-            }
-            if observation.get("reason").and_then(Value::as_str) == Some("analysis_timeout") {
-                timeout_observations += 1;
             }
         } else {
             for error in errors {
@@ -444,8 +440,7 @@ fn build_report(corpus: &Value) -> Value {
         "valid_observation_count": valid_observations,
         "unique_exclusion_count": valid_exclusions,
         "duplicate_observation_count": duplicate_observations,
-        "timeout_observation_count": timeout_exclusion_count + timeout_observations
-            - new_timeout_observations,
+        "timeout_observation_count": timeout_exclusion_count + duplicate_timeout_observations,
         "observation_classification_counts": observation_classification_counts,
         "requirements": {
             "minimum_repositories": MIN_REPOSITORIES,
