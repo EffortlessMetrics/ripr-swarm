@@ -54,7 +54,7 @@ impl CausalDeltaAuthority {
         let producer_claimed_complete = coverage
             .get("complete")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or(ambiguous_items == 0 && unknown_items == 0);
         let mut by_gap_id = BTreeMap::new();
         for delta in value
             .get("deltas")
@@ -215,7 +215,7 @@ mod tests {
             &path,
             r#"{
               "schema_version":"0.1",
-              "coverage":{"ambiguous_items":0,"unknown_items":0,"complete":true},
+              "coverage":{"ambiguous_items":0,"unknown_items":0},
               "deltas":[
                 {"canonical_gap_id":"gap:introduced","delta_attribution":"introduced_by_change"},
                 {"canonical_gap_id":"gap:resolved","delta_attribution":"resolved_by_change"}
