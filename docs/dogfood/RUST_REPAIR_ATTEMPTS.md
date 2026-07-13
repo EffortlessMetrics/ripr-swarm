@@ -9,6 +9,12 @@ and its report is generated with:
 cargo xtask rust-repair-trust-report
 ```
 
+Exclusion rows may also preserve an observed route state, missing
+producer-owned facts, completion status, and an explicit
+`excluded_from_success_denominator: true` marker. These fields are optional so
+older governed exclusions remain valid; when present they describe why an
+observation was not promoted to an attempt and do not create route authority.
+
 The command writes `target/ripr/reports/rust-repair-trust.json` and
 `target/ripr/reports/rust-repair-trust.md`. It is a report-only proof executor;
 it does not edit consumer repositories, generate tests, run mutation testing,

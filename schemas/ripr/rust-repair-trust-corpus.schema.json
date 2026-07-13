@@ -176,6 +176,14 @@
         },
         "evidence_ref": { "$ref": "#/$defs/non_empty_string" },
         "command": { "$ref": "#/$defs/non_empty_string" },
+        "route_state": {
+          "enum": ["static_limitation", "not_available"]
+        },
+        "missing_producer_facts": { "$ref": "#/$defs/string_array" },
+        "completion_status": {
+          "enum": ["completed_without_repair_packet", "timed_out"]
+        },
+        "excluded_from_success_denominator": { "const": true },
         "claim_boundary": { "$ref": "#/$defs/non_empty_string" }
       }
     }
