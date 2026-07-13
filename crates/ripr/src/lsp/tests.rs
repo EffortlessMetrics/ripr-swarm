@@ -5663,6 +5663,53 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
 }
 
 #[test]
+fn refresh_transaction_does_not_replace_snapshot_before_commit() -> Result<(), String> {
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let baseline_finding = sample_finding();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(
+                Path::new("/workspace"),
+                &baseline_finding,
+            )],
+            vec![baseline_finding.clone()],
+        ))
+        .ok_or_else(|| "expected baseline snapshot".to_string())?;
+
+    let mut candidate_finding = sample_finding();
+    candidate_finding.id = "probe:pricing:99:predicate".to_string();
+    candidate_finding.probe.id = ProbeId(candidate_finding.id.clone());
+    let transaction = backend
+        .prepare_refresh_transaction(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic_for_finding(
+                Path::new("/workspace"),
+                &candidate_finding,
+            )],
+            vec![candidate_finding.clone()],
+        ))
+        .ok_or_else(|| "expected prepared refresh transaction".to_string())?;
+
+    let retained = backend
+        .latest_analysis_snapshot()
+        .ok_or_else(|| "expected retained baseline snapshot".to_string())?;
+    assert_eq!(retained.findings[0].id, baseline_finding.id);
+
+    let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
+    assert!(backend.commit_refresh_snapshot(snapshot, &plan));
+    let committed = backend
+        .latest_analysis_snapshot()
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    assert_eq!(committed.findings[0].id, candidate_finding.id);
+    Ok(())
+}
+
+#[test]
 fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_counts()
 -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()

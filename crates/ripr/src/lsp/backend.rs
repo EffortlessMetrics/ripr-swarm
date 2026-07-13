@@ -67,6 +67,12 @@ pub(super) struct Backend {
     refresh_idle: Notify,
 }
 
+pub(super) struct RefreshTransaction {
+    pub(super) plan: DiagnosticRefreshPlan,
+    pub(super) snapshot: AnalysisSnapshot,
+    pub(super) previous_diagnostics: BTreeMap<Uri, Vec<Diagnostic>>,
+}
+
 impl Backend {
     pub(super) fn new(client: Client, root: PathBuf) -> Self {
         Self {
@@ -264,7 +270,7 @@ impl Backend {
         }
         let summary = RefreshLogSummary::from_snapshot(generation, &diagnostics.snapshot)
             .with_enabled_languages(&enabled_languages);
-        let Some(refresh) = self.refresh_plan(diagnostics) else {
+        let Some(transaction) = self.prepare_refresh_transaction(diagnostics) else {
             self.report_refresh_failure_after(
                 request,
                 "diagnostic snapshot was inconsistent with publish batches".to_string(),
@@ -274,27 +280,52 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         };
-        let published_uri_count = refresh.publish_batches.len();
-        let cleared_uri_count = refresh.clear_uris.len();
-        let unchanged_uri_count = refresh.unchanged_uri_count;
-        let published_payload_bytes = refresh.published_payload_bytes;
-        let suppressed_payload_bytes = refresh.suppressed_payload_bytes;
-        for batch in refresh.publish_batches {
+        let RefreshTransaction {
+            plan,
+            snapshot,
+            previous_diagnostics,
+        } = transaction;
+        let published_uri_count = plan.publish_batches.len();
+        let cleared_uri_count = plan.clear_uris.len();
+        let unchanged_uri_count = plan.unchanged_uri_count;
+        let published_payload_bytes = plan.published_payload_bytes;
+        let suppressed_payload_bytes = plan.suppressed_payload_bytes;
+        for batch in &plan.publish_batches {
             if !self.refresh_scheduler.is_current_generation(generation) {
+                self.rollback_refresh_transaction(&previous_diagnostics, &plan)
+                    .await;
                 return cancellation_outcome(request);
             }
             self.client
-                .publish_diagnostics(batch.uri, batch.diagnostics, None)
+                .publish_diagnostics(batch.uri.clone(), batch.diagnostics.clone(), None)
                 .await;
         }
-        for uri in refresh.clear_uris {
+        for uri in &plan.clear_uris {
             if !self.refresh_scheduler.is_current_generation(generation) {
+                self.rollback_refresh_transaction(&previous_diagnostics, &plan)
+                    .await;
                 return cancellation_outcome(request);
             }
-            self.client.publish_diagnostics(uri, Vec::new(), None).await;
+            self.client
+                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .await;
         }
         if !self.refresh_scheduler.is_current_generation(generation) {
+            self.rollback_refresh_transaction(&previous_diagnostics, &plan)
+                .await;
             return cancellation_outcome(request);
+        }
+        if !self.commit_refresh_snapshot(snapshot, &plan) {
+            self.rollback_refresh_transaction(&previous_diagnostics, &plan)
+                .await;
+            self.report_refresh_failure_after(
+                request,
+                "could not commit the completed diagnostic snapshot".to_string(),
+                started.elapsed(),
+                "snapshot_commit_failure",
+            )
+            .await;
+            return RefreshAttemptOutcome::Failed;
         }
         self.log_refresh_completed(
             summary,
@@ -325,29 +356,73 @@ impl Backend {
         self.publish_analysis_status().await;
     }
 
+    #[cfg(test)]
     pub(super) fn refresh_plan(
         &self,
         diagnostics: WorkspaceDiagnostics,
     ) -> Option<DiagnosticRefreshPlan> {
+        let transaction = self.prepare_refresh_transaction(diagnostics)?;
+        let RefreshTransaction { plan, snapshot, .. } = transaction;
+        self.commit_refresh_snapshot(snapshot, &plan)
+            .then_some(plan)
+    }
+
+    pub(super) fn prepare_refresh_transaction(
+        &self,
+        diagnostics: WorkspaceDiagnostics,
+    ) -> Option<RefreshTransaction> {
         let WorkspaceDiagnostics { snapshot, batches } = diagnostics;
-        let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
-            return None;
-        };
-        let Ok(mut last_diagnostics) = self.last_diagnostics.lock() else {
-            return None;
-        };
-        let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
+        let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
             return None;
         };
         if snapshot.diagnostics_by_uri != diagnostics_by_uri_from_batches(&batches) {
             return None;
         }
-        let refresh = diagnostic_refresh_plan(&last_diagnostics, batches);
+        let plan = diagnostic_refresh_plan(&last_diagnostics, batches);
         debug_assert!(snapshot.is_consistent());
+        Some(RefreshTransaction {
+            plan,
+            snapshot,
+            previous_diagnostics: last_diagnostics.clone(),
+        })
+    }
+
+    pub(super) fn commit_refresh_snapshot(
+        &self,
+        snapshot: AnalysisSnapshot,
+        plan: &DiagnosticRefreshPlan,
+    ) -> bool {
+        let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
+            return false;
+        };
+        let Ok(mut last_diagnostics) = self.last_diagnostics.lock() else {
+            return false;
+        };
+        let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
+            return false;
+        };
         *last_diagnostics = snapshot.diagnostics_by_uri.clone();
-        *last_diagnostic_uris = refresh.current_uris.clone();
+        *last_diagnostic_uris = plan.current_uris.clone();
         *latest_analysis = Some(snapshot);
-        Some(refresh)
+        true
+    }
+
+    async fn rollback_refresh_transaction(
+        &self,
+        previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
+        plan: &DiagnosticRefreshPlan,
+    ) {
+        let mut uris = previous_diagnostics
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        uris.extend(plan.current_uris.iter().cloned());
+        for uri in uris {
+            let diagnostics = previous_diagnostics.get(&uri).cloned().unwrap_or_default();
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
+        }
     }
 
     pub(super) fn clear_all_diagnostic_uris(&self) -> Vec<Uri> {
