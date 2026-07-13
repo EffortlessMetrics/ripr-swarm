@@ -14,7 +14,7 @@
       "changed_expression": "amount >= discount_threshold",
       "current_grip": "weakly_gripped",
       "headline_eligible": true,
-      "recommended_test": {"name": "discounted_total_boundary_discriminator", "file": "tests/pricing.rs", "reason": "place the new targeted test next to the nearest strong related test"},
+      "recommended_test": {"name": "discounted_total_boundary_discriminator", "file": "tests/pricing.rs", "reason": "place the new targeted test next to the producer-owned related test"},
       "nearest_strong_test_to_imitate": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 4, "oracle_kind": "exact_value", "oracle_strength": "strong", "relation_reason": "direct_owner_call", "relation_confidence": "high", "reason": "nearest strong related test by ranked evidence"},
       "evidence": {"reach": "yes", "activate": "yes", "propagate": "yes", "observe": "yes", "discriminate": "yes"},
       "observed_values": ["50", "10_000"],

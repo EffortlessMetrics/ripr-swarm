@@ -66,7 +66,7 @@
       "recommended_test": {
         "file": "tests/pricing.rs",
         "name": "discounted_total_boundary_discriminator",
-        "reason": "place the new targeted test next to the nearest strong related test"
+        "reason": "place the new targeted test next to the producer-owned related test"
       },
       "seam_id": "67fc764ba37d77bd",
       "seam_kind": "predicate_boundary",
