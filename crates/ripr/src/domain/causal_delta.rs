@@ -1,0 +1,441 @@
+//! Typed base/head attribution for canonical static evidence.
+//!
+//! This module owns identity-safe comparison vocabulary and fixture-backed
+//! comparison rules. It does not decide whether an attribution blocks a gate
+//! or how any consumer renders it.
+
+use super::OracleStrength;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeltaAttribution {
+    IntroducedByChange,
+    WeakenedByChange,
+    ReintroducedByChange,
+    ResolvedByChange,
+    ChangedSurfaceExisting,
+    AdjacentPreexisting,
+    BaselineExisting,
+    ComparisonUnknown,
+}
+
+impl DeltaAttribution {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::IntroducedByChange => "introduced_by_change",
+            Self::WeakenedByChange => "weakened_by_change",
+            Self::ReintroducedByChange => "reintroduced_by_change",
+            Self::ResolvedByChange => "resolved_by_change",
+            Self::ChangedSurfaceExisting => "changed_surface_existing",
+            Self::AdjacentPreexisting => "adjacent_preexisting",
+            Self::BaselineExisting => "baseline_existing",
+            Self::ComparisonUnknown => "comparison_unknown",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttributionBasis {
+    SameCanonicalOwner,
+    SameBehaviorIdentity,
+    SameDiscriminator,
+    OracleStrengthDecreased,
+    OracleStrengthIncreased,
+    GapStateChanged,
+    UnchangedEvidence,
+    BaseItemAbsent,
+    HeadItemAbsent,
+    BaseSnapshotUnavailable,
+    IdentityAmbiguous,
+    RenameOrMoveMapped,
+    AdjacentSurface,
+    BaselineReceipt,
+}
+
+impl AttributionBasis {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SameCanonicalOwner => "same_canonical_owner",
+            Self::SameBehaviorIdentity => "same_behavior_identity",
+            Self::SameDiscriminator => "same_discriminator",
+            Self::OracleStrengthDecreased => "oracle_strength_decreased",
+            Self::OracleStrengthIncreased => "oracle_strength_increased",
+            Self::GapStateChanged => "gap_state_changed",
+            Self::UnchangedEvidence => "unchanged_evidence",
+            Self::BaseItemAbsent => "base_item_absent",
+            Self::HeadItemAbsent => "head_item_absent",
+            Self::BaseSnapshotUnavailable => "base_snapshot_unavailable",
+            Self::IdentityAmbiguous => "identity_ambiguous",
+            Self::RenameOrMoveMapped => "rename_or_move_mapped",
+            Self::AdjacentSurface => "adjacent_surface",
+            Self::BaselineReceipt => "baseline_receipt",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonConfidence {
+    FixtureBacked,
+    High,
+    Medium,
+    Low,
+    Unknown,
+}
+
+impl ComparisonConfidence {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FixtureBacked => "fixture_backed",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CanonicalEvidenceState {
+    pub canonical_owner: String,
+    pub behavior_identity: String,
+    pub discriminator_identity: String,
+    pub gap_state: String,
+    pub oracle_strength: OracleStrength,
+}
+
+impl CanonicalEvidenceState {
+    pub fn new(
+        canonical_owner: impl Into<String>,
+        behavior_identity: impl Into<String>,
+        discriminator_identity: impl Into<String>,
+        gap_state: impl Into<String>,
+        oracle_strength: OracleStrength,
+    ) -> Self {
+        Self {
+            canonical_owner: canonical_owner.into(),
+            behavior_identity: behavior_identity.into(),
+            discriminator_identity: discriminator_identity.into(),
+            gap_state: gap_state.into(),
+            oracle_strength,
+        }
+    }
+
+    fn same_identity(&self, other: &Self) -> bool {
+        self.canonical_owner == other.canonical_owner
+            && self.behavior_identity == other.behavior_identity
+            && self.discriminator_identity == other.discriminator_identity
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CanonicalDelta {
+    pub canonical_gap_id: String,
+    pub delta_attribution: DeltaAttribution,
+    pub base_state: Option<CanonicalEvidenceState>,
+    pub head_state: Option<CanonicalEvidenceState>,
+    pub attribution_basis: Vec<AttributionBasis>,
+    pub comparison_confidence: ComparisonConfidence,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ComparisonCoverage {
+    pub base_items: usize,
+    pub head_items: usize,
+    pub matched_items: usize,
+    pub ambiguous_items: usize,
+    pub unknown_items: usize,
+}
+
+impl ComparisonCoverage {
+    pub fn is_complete(&self) -> bool {
+        self.ambiguous_items == 0 && self.unknown_items == 0
+    }
+}
+
+/// Compare one fixture-backed canonical item without using line proximity.
+///
+/// `base_available` and `head_available` distinguish an absent item in a
+/// complete snapshot from an unavailable snapshot. An unavailable base or
+/// head is always `comparison_unknown`, even when the other side has a record.
+pub fn compare_fixture_delta(
+    canonical_gap_id: impl Into<String>,
+    base_available: bool,
+    head_available: bool,
+    base_state: Option<CanonicalEvidenceState>,
+    head_state: Option<CanonicalEvidenceState>,
+) -> CanonicalDelta {
+    let canonical_gap_id = canonical_gap_id.into();
+    if !base_available || !head_available {
+        return CanonicalDelta {
+            canonical_gap_id,
+            delta_attribution: DeltaAttribution::ComparisonUnknown,
+            base_state,
+            head_state,
+            attribution_basis: vec![AttributionBasis::BaseSnapshotUnavailable],
+            comparison_confidence: ComparisonConfidence::Unknown,
+        };
+    }
+
+    match (base_state.as_ref(), head_state.as_ref()) {
+        (None, Some(_)) => CanonicalDelta {
+            canonical_gap_id,
+            delta_attribution: DeltaAttribution::IntroducedByChange,
+            base_state,
+            head_state,
+            attribution_basis: vec![AttributionBasis::BaseItemAbsent],
+            comparison_confidence: ComparisonConfidence::FixtureBacked,
+        },
+        (Some(_), None) => CanonicalDelta {
+            canonical_gap_id,
+            delta_attribution: DeltaAttribution::ResolvedByChange,
+            base_state,
+            head_state,
+            attribution_basis: vec![AttributionBasis::HeadItemAbsent],
+            comparison_confidence: ComparisonConfidence::FixtureBacked,
+        },
+        (Some(base), Some(head)) if !base.same_identity(head) => CanonicalDelta {
+            canonical_gap_id,
+            delta_attribution: DeltaAttribution::ComparisonUnknown,
+            base_state,
+            head_state,
+            attribution_basis: vec![AttributionBasis::IdentityAmbiguous],
+            comparison_confidence: ComparisonConfidence::Unknown,
+        },
+        (Some(base), Some(head)) => {
+            let mut attribution_basis = vec![
+                AttributionBasis::SameCanonicalOwner,
+                AttributionBasis::SameBehaviorIdentity,
+                AttributionBasis::SameDiscriminator,
+            ];
+            let (delta_attribution, comparison_confidence) = if is_reintroduced(base, head) {
+                attribution_basis.push(AttributionBasis::GapStateChanged);
+                (
+                    DeltaAttribution::ReintroducedByChange,
+                    ComparisonConfidence::FixtureBacked,
+                )
+            } else if head.oracle_strength.rank() < base.oracle_strength.rank() {
+                attribution_basis.push(AttributionBasis::OracleStrengthDecreased);
+                (
+                    DeltaAttribution::WeakenedByChange,
+                    ComparisonConfidence::FixtureBacked,
+                )
+            } else if head.oracle_strength.rank() > base.oracle_strength.rank()
+                || (is_resolved_state(&head.gap_state) && !is_resolved_state(&base.gap_state))
+            {
+                attribution_basis.push(AttributionBasis::OracleStrengthIncreased);
+                (
+                    DeltaAttribution::ResolvedByChange,
+                    ComparisonConfidence::FixtureBacked,
+                )
+            } else if base.gap_state == head.gap_state
+                && base.oracle_strength == head.oracle_strength
+            {
+                attribution_basis.push(AttributionBasis::UnchangedEvidence);
+                (
+                    DeltaAttribution::ChangedSurfaceExisting,
+                    ComparisonConfidence::FixtureBacked,
+                )
+            } else {
+                attribution_basis.push(AttributionBasis::IdentityAmbiguous);
+                (
+                    DeltaAttribution::ComparisonUnknown,
+                    ComparisonConfidence::Low,
+                )
+            };
+            CanonicalDelta {
+                canonical_gap_id,
+                delta_attribution,
+                base_state,
+                head_state,
+                attribution_basis,
+                comparison_confidence,
+            }
+        }
+        (None, None) => CanonicalDelta {
+            canonical_gap_id,
+            delta_attribution: DeltaAttribution::ComparisonUnknown,
+            base_state,
+            head_state,
+            attribution_basis: vec![AttributionBasis::IdentityAmbiguous],
+            comparison_confidence: ComparisonConfidence::Unknown,
+        },
+    }
+}
+
+fn is_reintroduced(base: &CanonicalEvidenceState, head: &CanonicalEvidenceState) -> bool {
+    matches!(base.gap_state.as_str(), "resolved" | "already_observed")
+        && head.gap_state == "actionable"
+}
+
+fn is_resolved_state(gap_state: &str) -> bool {
+    matches!(gap_state, "resolved" | "already_observed")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(gap_state: &str, oracle_strength: OracleStrength) -> CanonicalEvidenceState {
+        CanonicalEvidenceState::new(
+            "crate::pricing::discount",
+            "predicate:amount>=threshold",
+            "amount==threshold",
+            gap_state,
+            oracle_strength,
+        )
+    }
+
+    #[test]
+    fn closed_attribution_vocabulary_serializes_stably() {
+        let labels = [
+            DeltaAttribution::IntroducedByChange,
+            DeltaAttribution::WeakenedByChange,
+            DeltaAttribution::ReintroducedByChange,
+            DeltaAttribution::ResolvedByChange,
+            DeltaAttribution::ChangedSurfaceExisting,
+            DeltaAttribution::AdjacentPreexisting,
+            DeltaAttribution::BaselineExisting,
+            DeltaAttribution::ComparisonUnknown,
+        ];
+        assert_eq!(
+            labels.map(DeltaAttribution::as_str),
+            [
+                "introduced_by_change",
+                "weakened_by_change",
+                "reintroduced_by_change",
+                "resolved_by_change",
+                "changed_surface_existing",
+                "adjacent_preexisting",
+                "baseline_existing",
+                "comparison_unknown",
+            ]
+        );
+    }
+
+    #[test]
+    fn unavailable_base_never_promotes_a_head_only_item() {
+        let delta = compare_fixture_delta(
+            "gap:pricing",
+            false,
+            true,
+            None,
+            Some(state("actionable", OracleStrength::Weak)),
+        );
+        assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+        assert_eq!(
+            delta.attribution_basis,
+            vec![AttributionBasis::BaseSnapshotUnavailable]
+        );
+        assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+    }
+
+    #[test]
+    fn fixture_rules_cover_introduced_weakened_reintroduced_and_resolved() {
+        let introduced = compare_fixture_delta(
+            "gap:introduced",
+            true,
+            true,
+            None,
+            Some(state("actionable", OracleStrength::Weak)),
+        );
+        assert_eq!(
+            introduced.delta_attribution,
+            DeltaAttribution::IntroducedByChange
+        );
+
+        let weakened = compare_fixture_delta(
+            "gap:weakened",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Strong)),
+            Some(state("actionable", OracleStrength::Weak)),
+        );
+        assert_eq!(
+            weakened.delta_attribution,
+            DeltaAttribution::WeakenedByChange
+        );
+        assert!(
+            weakened
+                .attribution_basis
+                .contains(&AttributionBasis::OracleStrengthDecreased)
+        );
+
+        let reintroduced = compare_fixture_delta(
+            "gap:reintroduced",
+            true,
+            true,
+            Some(state("resolved", OracleStrength::Strong)),
+            Some(state("actionable", OracleStrength::Strong)),
+        );
+        assert_eq!(
+            reintroduced.delta_attribution,
+            DeltaAttribution::ReintroducedByChange
+        );
+
+        let resolved = compare_fixture_delta(
+            "gap:resolved",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Weak)),
+            None,
+        );
+        assert_eq!(
+            resolved.delta_attribution,
+            DeltaAttribution::ResolvedByChange
+        );
+    }
+
+    #[test]
+    fn identity_mismatch_is_unknown_even_when_lines_would_be_adjacent() {
+        let mut head = state("actionable", OracleStrength::Weak);
+        head.canonical_owner = "crate::other::discount".to_string();
+        let delta = compare_fixture_delta(
+            "gap:ambiguous",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Strong)),
+            Some(head),
+        );
+        assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+        assert_eq!(
+            delta.attribution_basis,
+            vec![AttributionBasis::IdentityAmbiguous]
+        );
+    }
+
+    #[test]
+    fn comparison_rules_match_the_pr_a_fixture_corpus() -> Result<(), String> {
+        #[derive(serde::Deserialize)]
+        struct FixtureCase {
+            name: String,
+            base_available: bool,
+            head_available: bool,
+            base_state: Option<CanonicalEvidenceState>,
+            head_state: Option<CanonicalEvidenceState>,
+            expected: DeltaAttribution,
+        }
+
+        let cases: Vec<FixtureCase> = serde_json::from_str(include_str!(
+            "../../tests/fixtures/causal-attribution/pr-a-comparison-rules.json"
+        ))
+        .map_err(|error| format!("parse PR A comparison fixture: {error}"))?;
+        for case in cases {
+            let delta = compare_fixture_delta(
+                format!("gap:{}", case.name),
+                case.base_available,
+                case.head_available,
+                case.base_state,
+                case.head_state,
+            );
+            if delta.delta_attribution != case.expected {
+                return Err(format!(
+                    "fixture {} expected {:?}, got {:?}",
+                    case.name, case.expected, delta.delta_attribution
+                ));
+            }
+        }
+        Ok(())
+    }
+}
