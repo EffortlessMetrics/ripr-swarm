@@ -172,6 +172,7 @@ fn build_report(corpus: &Value) -> Value {
         .unwrap_or_default();
     let mut case_ids = BTreeSet::new();
     let mut exclusion_ids = BTreeSet::new();
+    let mut valid_exclusion_ids = BTreeSet::new();
     let mut movements = BTreeMap::<String, usize>::new();
     let mut exclusion_reason_counts = BTreeMap::<String, usize>::new();
     let mut repository_names = BTreeSet::new();
@@ -284,6 +285,7 @@ fn build_report(corpus: &Value) -> Value {
         }
         if errors.is_empty() {
             valid_exclusions += 1;
+            valid_exclusion_ids.insert(id.to_string());
             if let Some(repository) = exclusion.get("repository").and_then(Value::as_str) {
                 repository_names.insert(repository.to_string());
             }
@@ -316,7 +318,7 @@ fn build_report(corpus: &Value) -> Value {
             &authorized_repositories,
             &authorized_observation_heads,
             &exclusions,
-            &exclusion_ids,
+            &valid_exclusion_ids,
         );
         let id = observation
             .get("observation_id")
@@ -670,13 +672,17 @@ fn observation_errors(
     {
         errors.push("revision must be a 40-character commit SHA".to_string());
     }
-    if let Some(heads) = authorized_observation_heads.get(repository)
-        && !heads.is_empty()
-        && !heads.contains(revision)
-    {
-        errors.push(format!(
+    match authorized_observation_heads.get(repository) {
+        None => errors.push(format!(
+            "repository {repository} has no authorized observation heads"
+        )),
+        Some(heads) if heads.is_empty() => errors.push(format!(
+            "repository {repository} has an empty authorized observation head allowlist"
+        )),
+        Some(heads) if !heads.contains(revision) => errors.push(format!(
             "revision {revision} is not explicitly authorized for observation"
-        ));
+        )),
+        Some(_) => {}
     }
     if let Some(reason) = observation.get("reason").and_then(Value::as_str)
         && !EXCLUSION_REASONS.contains(&reason)
@@ -1076,6 +1082,93 @@ mod tests {
         }
         if report["observation_classification_counts"]["duplicate_observation"] != 1 {
             return Err("the repeated #747 observation must remain a duplicate".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn observations_require_non_empty_authorized_head_allowlists() -> Result<(), String> {
+        let mut corpus: Value = serde_json::from_str(include_str!(
+            "../../../metrics/rust-repair-trust/corpus.json"
+        ))
+        .map_err(|error| format!("parse corpus fixture: {error}"))?;
+        corpus["authorization"]["repositories"][0]["authorized_observation_heads"] = json!([]);
+
+        let report = build_report(&corpus);
+        let observation_count = corpus
+            .get("observations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "observations must be an array".to_string())?
+            .len() as u64;
+        if report["valid_observation_count"]
+            .as_u64()
+            .is_some_and(|count| count >= observation_count)
+        {
+            return Err(
+                "an observation must not count without an authorized head allowlist".to_string(),
+            );
+        }
+        let errors = report["validation_errors"]
+            .as_array()
+            .ok_or_else(|| "validation_errors must be an array".to_string())?;
+        if !errors
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|error| error.contains("empty authorized observation head allowlist"))
+        {
+            return Err("missing empty observation-head allowlist error".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_observations_require_valid_exclusion_targets() -> Result<(), String> {
+        let mut corpus: Value = serde_json::from_str(include_str!(
+            "../../../metrics/rust-repair-trust/corpus.json"
+        ))
+        .map_err(|error| format!("parse corpus fixture: {error}"))?;
+        let exclusions = corpus
+            .get_mut("exclusions")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "exclusions must be an array".to_string())?;
+        exclusions.push(json!({
+            "exclusion_id": "invalid-target",
+            "repository": "EffortlessMetrics/ub-review",
+            "analyzed_head_sha": "98aea1868f92c6c0ffe89d9faae83fba11de3019",
+            "source_ref": "pilot",
+            "reason": "not-a-governed-reason",
+            "evidence_ref": "target/ripr/pilot/invalid.json",
+            "command": "ripr pilot",
+            "claim_boundary": "invalid exclusion"
+        }));
+        let duplicate_source = corpus
+            .get("observations")
+            .and_then(Value::as_array)
+            .and_then(|observations| observations.get(5))
+            .cloned()
+            .ok_or_else(|| "expected duplicate observation fixture".to_string())?;
+        let mut duplicate = duplicate_source;
+        duplicate["observation_id"] = json!("duplicate-invalid-target");
+        duplicate["duplicate_of"] = json!("invalid-target");
+        corpus
+            .get_mut("observations")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "observations must be an array".to_string())?
+            .push(duplicate);
+
+        let report = build_report(&corpus);
+        if report["duplicate_observation_count"] != 1 {
+            return Err("duplicate of an invalid exclusion must not count".to_string());
+        }
+        let errors = report["validation_errors"]
+            .as_array()
+            .ok_or_else(|| "validation_errors must be an array".to_string())?;
+        if !errors
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|error| error.contains("duplicate_of invalid-target names an invalid exclusion"))
+        {
+            return Err("missing invalid duplicate target error".to_string());
         }
         Ok(())
     }
