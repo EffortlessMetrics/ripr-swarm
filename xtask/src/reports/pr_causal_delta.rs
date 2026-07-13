@@ -28,8 +28,9 @@ pub(crate) fn write_canonical_delta(
     base: &str,
     head: &str,
     changed_files: &[String],
+    root: &str,
 ) -> Result<(), String> {
-    let artifact = build_canonical_delta(repo, base, head, changed_files);
+    let artifact = build_canonical_delta(repo, base, head, changed_files, root);
     let rendered = serde_json::to_string_pretty(&artifact)
         .map_err(|err| format!("serialize canonical delta: {err}"))?;
     write_parented_file(
@@ -41,7 +42,13 @@ pub(crate) fn write_canonical_delta(
     Ok(())
 }
 
-fn build_canonical_delta(repo: &Path, base: &str, head: &str, changed_files: &[String]) -> Value {
+fn build_canonical_delta(
+    repo: &Path,
+    base: &str,
+    head: &str,
+    changed_files: &[String],
+    root: &str,
+) -> Value {
     let binary = resolve_ripr_binary(repo);
     let changed_files = changed_files
         .iter()
@@ -50,8 +57,8 @@ fn build_canonical_delta(repo: &Path, base: &str, head: &str, changed_files: &[S
 
     let (base_snapshot, head_snapshot) = match binary {
         Ok(binary) => (
-            materialize_snapshot(repo, base, "base", &binary),
-            materialize_snapshot(repo, head, "head", &binary),
+            materialize_snapshot(repo, base, "base", &binary, root),
+            materialize_snapshot(repo, head, "head", &binary, root),
         ),
         Err(err) => (
             Snapshot::unavailable(format!("RIPR binary unavailable: {err}")),
@@ -96,16 +103,22 @@ fn resolve_ripr_binary(repo: &Path) -> Result<String, String> {
     Ok(target_dir.join("debug").join(name).display().to_string())
 }
 
-fn materialize_snapshot(repo: &Path, revision: &str, label: &str, binary: &str) -> Snapshot {
+fn materialize_snapshot(
+    repo: &Path,
+    revision: &str,
+    label: &str,
+    binary: &str,
+    root: &str,
+) -> Snapshot {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let root = repo
+    let snapshot_dir = repo
         .join("target/ripr/pr/canonical-snapshots")
         .join(format!("{label}-{}-{nonce}", std::process::id()));
-    let output_dir = root.join("output");
-    let worktree = root.join("worktree");
+    let output_dir = snapshot_dir.join("output");
+    let worktree = snapshot_dir.join("worktree");
     let worktree_args = vec![
         "-C".to_string(),
         repo.display().to_string(),
@@ -122,7 +135,7 @@ fn materialize_snapshot(repo: &Path, revision: &str, label: &str, binary: &str) 
         let args = vec![
             "pilot".to_string(),
             "--root".to_string(),
-            worktree.display().to_string(),
+            snapshot_root(&worktree, root),
             "--out".to_string(),
             output_dir.display().to_string(),
             "--mode".to_string(),
@@ -169,12 +182,21 @@ fn materialize_snapshot(repo: &Path, revision: &str, label: &str, binary: &str) 
             worktree.display().to_string(),
         ],
     );
-    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&snapshot_dir);
 
     match (result, cleanup) {
         (Ok(snapshot), Ok(_)) => snapshot,
         (Ok(_), Err(err)) => Snapshot::unavailable(format!("cleanup {label} snapshot: {err}")),
         (Err(err), _) => Snapshot::unavailable(err),
+    }
+}
+
+fn snapshot_root(worktree: &Path, root: &str) -> String {
+    let root_path = Path::new(root);
+    if root_path.is_absolute() {
+        root.to_string()
+    } else {
+        worktree.join(root_path).display().to_string()
     }
 }
 
@@ -292,7 +314,7 @@ fn snapshot_item(value: &Value) -> Result<SnapshotItem, String> {
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let discriminator_identity = discriminator_identity(value, canonical, evidence_class);
-    let semantic_key = format!("{seam_kind}|{item_kind}|{discriminator_identity}");
+    let semantic_key = format!("{owner}|{seam_kind}|{item_kind}|{discriminator_identity}");
     let state = CanonicalEvidenceState::new(
         owner,
         format!("{seam_kind}|{item_kind}"),
@@ -427,7 +449,7 @@ fn compare_snapshots(
                         head_item.gap_id.clone(),
                         base.comparable(),
                         head.comparable(),
-                        Some(head_item.state.clone()),
+                        None,
                         Some(head_item.state.clone()),
                     );
                     delta.delta_attribution = DeltaAttribution::ComparisonUnknown;
@@ -440,30 +462,27 @@ fn compare_snapshots(
         };
 
         let Some(base_item) = base_item else {
-            let delta = compare_fixture_delta(
+            let mut delta = compare_fixture_delta(
                 head_item.gap_id.clone(),
                 base.comparable(),
                 head.comparable(),
                 None,
                 Some(head_item.state.clone()),
             );
-            if delta.delta_attribution == DeltaAttribution::ComparisonUnknown {
-                unknown += 1;
-            }
+            delta.delta_attribution = DeltaAttribution::ComparisonUnknown;
+            delta.comparison_confidence = ComparisonConfidence::Unknown;
+            delta.attribution_basis = vec![AttributionBasis::IdentityAmbiguous];
+            unknown += 1;
             deltas.push(delta_value(delta, None, Some(head_item), "head_only"));
             continue;
         };
 
-        let mut head_state = head_item.state.clone();
-        if mapped || base_item.state.canonical_owner != head_state.canonical_owner {
-            head_state.canonical_owner = base_item.state.canonical_owner.clone();
-        }
         let mut delta = compare_fixture_delta(
             base_item.gap_id.clone(),
             base.available,
             head.available,
             Some(base_item.state.clone()),
-            Some(head_state),
+            Some(head_item.state.clone()),
         );
         if mapped || base_item.file != head_item.file || base_item.line != head_item.line {
             delta
@@ -596,7 +615,7 @@ mod tests {
     ) -> SnapshotItem {
         SnapshotItem {
             gap_id: gap_id.to_string(),
-            semantic_key: "predicate|boundary|predicate_boundary|boundary".to_string(),
+            semantic_key: format!("{owner}|predicate|boundary|predicate_boundary|boundary"),
             state: CanonicalEvidenceState::new(
                 owner,
                 "predicate|boundary",
@@ -701,10 +720,89 @@ mod tests {
         let value = compare_snapshots("base", "head", &base, &head, &BTreeSet::new());
         if value["coverage"]["ambiguous_items"] != 1
             || value["deltas"][0]["delta_attribution"] != "comparison_unknown"
+            || !value["deltas"][0]["base_state"].is_null()
         {
             return Err(format!("ambiguous comparison did not fail closed: {value}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn different_owner_cannot_be_mapped_as_a_move() -> Result<(), String> {
+        let base = snapshot(vec![item(
+            "gap:base",
+            "owner-a",
+            "src/old.rs",
+            "actionable",
+            OracleStrength::Weak,
+        )]);
+        let head = snapshot(vec![item(
+            "gap:head",
+            "owner-b",
+            "src/new.rs",
+            "actionable",
+            OracleStrength::Weak,
+        )]);
+        let value = compare_snapshots("base", "head", &base, &head, &BTreeSet::new());
+        let delta = value["deltas"]
+            .as_array()
+            .and_then(|deltas| {
+                deltas
+                    .iter()
+                    .find(|delta| delta["match_kind"] == "head_only")
+            })
+            .ok_or("missing head-only owner-mismatch delta")?;
+        if delta["delta_attribution"] != "comparison_unknown" {
+            return Err(format!("owner mismatch was mapped: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unmatched_base_identity_is_comparison_unknown() -> Result<(), String> {
+        let base = snapshot(vec![item(
+            "gap:base",
+            "owner",
+            "src/base.rs",
+            "actionable",
+            OracleStrength::Weak,
+        )]);
+        let mut head_item = item(
+            "gap:head",
+            "owner",
+            "src/head.rs",
+            "different_behavior",
+            OracleStrength::Weak,
+        );
+        head_item.semantic_key = "owner|different-behavior".to_string();
+        let head = snapshot(vec![head_item]);
+        let value = compare_snapshots("base", "head", &base, &head, &BTreeSet::new());
+        let delta = value["deltas"]
+            .as_array()
+            .and_then(|deltas| {
+                deltas
+                    .iter()
+                    .find(|delta| delta["match_kind"] == "head_only")
+            })
+            .ok_or("missing head-only unmatched-base delta")?;
+        if delta["delta_attribution"] != "comparison_unknown"
+            || delta["comparison_confidence"] != "unknown"
+        {
+            return Err(format!("unmatched base was treated as causal: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_root_preserves_relative_and_absolute_scope() {
+        let worktree = Path::new("snapshot-worktree");
+        assert_eq!(
+            snapshot_root(worktree, "crates/ripr"),
+            worktree.join("crates/ripr").display().to_string()
+        );
+        let absolute = std::env::temp_dir().join("snapshot-workspace/crates/ripr");
+        let absolute_string = absolute.display().to_string();
+        assert_eq!(snapshot_root(worktree, &absolute_string), absolute_string);
     }
 
     #[test]

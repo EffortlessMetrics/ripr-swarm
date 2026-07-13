@@ -102,7 +102,13 @@ fn write_pr_evidence_with_runner(
     verify_revision(repo, &options.head)?;
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
-    write_canonical_delta(repo, &options.base, &options.head, &changed_files)?;
+    write_canonical_delta(
+        repo,
+        &options.base,
+        &options.head,
+        &changed_files,
+        &options.root,
+    )?;
     match run_check(repo, options) {
         Ok(check_json) => {
             match write_pr_evidence_packet(repo, options, &changed_files, &check_json) {
