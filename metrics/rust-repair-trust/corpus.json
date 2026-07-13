@@ -270,8 +270,8 @@
       "canonical_candidate_id": "EffortlessMetrics/perl-lsp-swarm#4022",
       "reason": "analysis_timeout",
       "evidence_ref": "docs/dogfood/2026-07-13-rust-pilot.md#perl-lsp-4022",
-      "command": "ripr review-comments --root . --base 1a25013ad341caacbaf96ab2298edeea4f1a5e90 --head 968464954e5da8e69a0b6b55de8ac349056924f6 --out target/ripr/fresh-pilot-4022.json (operator timeout 900s)",
-      "claim_boundary": "Bounded analysis timed out before an eligibility result; no route or attempt denominator was inferred."
+      "command": "ripr review-comments --root . --base 1a25013ad341caacbaf96ab2298edeea4f1a5e90 --head 968464954e5da8e69a0b6b55de8ac349056924f6 --out target/ripr/fresh-pilot-4022.json",
+      "claim_boundary": "Bounded analysis timed out before an eligibility result after a 900-second operator bound; no route or attempt denominator was inferred."
     },
     {
       "exclusion_id": "perl-4037-analysis-timeout",
@@ -281,8 +281,8 @@
       "canonical_candidate_id": "EffortlessMetrics/perl-lsp-swarm#4037",
       "reason": "analysis_timeout",
       "evidence_ref": "docs/dogfood/2026-07-13-rust-pilot.md#perl-lsp-4037",
-      "command": "ripr review-comments --root . --base 26ed34f8f1357076f91aed418949dbe7288c93b3 --head 6f175766ee03921a7ae13887d915ce9331647516 --out target/ripr/fresh-pilot-4037.json (operator timeout 900s)",
-      "claim_boundary": "Bounded analysis timed out before an eligibility result; no route or attempt denominator was inferred."
+      "command": "ripr review-comments --root . --base 26ed34f8f1357076f91aed418949dbe7288c93b3 --head 6f175766ee03921a7ae13887d915ce9331647516 --out target/ripr/fresh-pilot-4037.json",
+      "claim_boundary": "Bounded analysis timed out before an eligibility result after a 900-second operator bound; no route or attempt denominator was inferred."
     },
     {
       "exclusion_id": "ub-772-static-limitation",
