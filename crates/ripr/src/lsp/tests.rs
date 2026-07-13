@@ -2991,8 +2991,7 @@ fn unknown_stage_value_route_omits_suggested_assertion_action() -> Result<(), St
 }
 
 #[test]
-fn seam_code_actions_keep_targeted_brief_when_related_test_exists_without_assertion()
--> Result<(), String> {
+fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result<(), String> {
     use crate::analysis::test_grip_evidence::{
         RelatedTestGrip, RelationConfidence, RelationReason,
     };
@@ -3025,8 +3024,8 @@ fn seam_code_actions_keep_targeted_brief_when_related_test_exists_without_assert
     assert!(
         commands
             .iter()
-            .any(|(_, command, _)| command == COPY_TARGETED_TEST_BRIEF_COMMAND),
-        "expected targeted-test brief action when a related test exists, got {commands:?}"
+            .all(|(_, command, _)| command != COPY_TARGETED_TEST_BRIEF_COMMAND),
+        "unresolved related-test evidence must not produce a repair brief: {commands:?}"
     );
     assert!(
         commands

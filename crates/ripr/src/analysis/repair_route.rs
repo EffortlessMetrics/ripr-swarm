@@ -87,6 +87,17 @@ pub(crate) struct RepairRouteReadiness {
     pub(crate) authority_boundary: &'static str,
 }
 
+impl RepairRouteReadiness {
+    pub(crate) fn is_repair_ready(&self) -> bool {
+        self.state == RepairRouteState::Ready
+            && !matches!(self.target_selection, RepairTargetSelection::Missing)
+    }
+}
+
+pub(crate) fn repair_projection_ready(entry: &ClassifiedSeam) -> bool {
+    repair_route_readiness(entry).is_repair_ready()
+}
+
 pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadiness {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
@@ -246,7 +257,8 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
     }
 
     let related = direct_owner_related_test(evidence);
-    let test_target = related.and_then(|test| test.test_target.clone());
+    let target_related = direct_owner_related_test_with_target(evidence);
+    let test_target = target_related.and_then(|test| test.test_target.clone());
     if test_target.is_some() {
         present_evidence.push("producer-owned test symbol".to_string());
     } else {
@@ -258,8 +270,8 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
         missing_evidence.push("direct owner relationship".to_string());
     }
 
-    let current = related.map(|test| test.oracle_kind.clone());
-    let current_strength = related.map(|test| test.oracle_strength.clone());
+    let current = target_related.map(|test| test.oracle_kind.clone());
+    let current_strength = target_related.map(|test| test.oracle_strength.clone());
     let stages_localize_sink = matches!(
         (
             &evidence.reach.state,
@@ -320,38 +332,63 @@ fn has_exact_discriminator(seam: &RepoSeam, evidence: &TestGripEvidence) -> bool
 }
 
 fn discriminator_fact_matches(required: &RequiredDiscriminator, fact: &str) -> bool {
-    let fact = fact.trim().to_ascii_lowercase();
-    if fact.is_empty() {
-        return false;
-    }
     match required {
-        RequiredDiscriminator::BoundaryValue { description } => significant_tokens(description)
-            .last()
-            .is_some_and(|token| fact.contains(token)),
-        RequiredDiscriminator::ReturnValue { description } => {
-            contains_all_tokens(&fact, description)
+        RequiredDiscriminator::BoundaryValue { description } => {
+            boundary_fact_matches(description, fact)
         }
-        RequiredDiscriminator::ErrorVariant { variant } => contains_all_tokens(&fact, variant),
-        RequiredDiscriminator::MatchArmTaken { arm } => contains_all_tokens(&fact, arm),
-        RequiredDiscriminator::FieldValue { field } => contains_all_tokens(&fact, field),
+        RequiredDiscriminator::ReturnValue { description } => {
+            exact_discriminator_text(description, fact)
+        }
+        RequiredDiscriminator::ErrorVariant { variant } => exact_discriminator_text(variant, fact),
+        RequiredDiscriminator::MatchArmTaken { arm } => exact_discriminator_text(arm, fact),
+        RequiredDiscriminator::FieldValue { field } => exact_discriminator_text(field, fact),
         RequiredDiscriminator::Effect { sink }
-        | RequiredDiscriminator::CallSite { target: sink } => contains_all_tokens(&fact, sink),
+        | RequiredDiscriminator::CallSite { target: sink } => exact_discriminator_text(sink, fact),
     }
 }
 
-fn contains_all_tokens(fact: &str, required: &str) -> bool {
-    let tokens = significant_tokens(required);
-    !tokens.is_empty() && tokens.into_iter().all(|token| fact.contains(&token))
+fn boundary_fact_matches(required: &str, fact: &str) -> bool {
+    let Some((required_left, required_operator, required_right)) = comparison_parts(required)
+    else {
+        return false;
+    };
+    let fact = fact.trim();
+    if let Some((fact_left, fact_operator, fact_right)) = comparison_parts(fact) {
+        return fact_left == required_left
+            && fact_operator == required_operator
+            && fact_right == required_right;
+    }
+
+    fact.strip_suffix(" (equality boundary)")
+        .map(str::trim)
+        .is_some_and(|boundary| normalize_identifier(boundary) == required_right)
 }
 
-fn significant_tokens(value: &str) -> Vec<String> {
-    value
-        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-        .filter_map(|token| {
-            let token = token.trim().to_ascii_lowercase();
-            (token.len() >= 3).then_some(token)
-        })
-        .collect()
+fn exact_discriminator_text(required: &str, fact: &str) -> bool {
+    let required = normalize_discriminator_text(required);
+    let fact = normalize_discriminator_text(fact);
+    !required.is_empty() && required == fact
+}
+
+fn comparison_parts(value: &str) -> Option<(String, String, String)> {
+    for operator in [" >= ", " <= ", " == ", " != ", " > ", " < "] {
+        if let Some((left, right)) = value.split_once(operator) {
+            let left = normalize_identifier(left);
+            let right = normalize_identifier(right);
+            if !left.is_empty() && !right.is_empty() {
+                return Some((left, operator.trim().to_string(), right));
+            }
+        }
+    }
+    None
+}
+
+fn normalize_discriminator_text(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn normalize_identifier(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
@@ -359,6 +396,52 @@ fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTest
         .related_tests
         .iter()
         .find(|test| test.relation_reason == crate::domain::RelationReason::DirectOwnerCall)
+}
+
+fn direct_owner_related_test_with_target(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
+    evidence.related_tests.iter().find(|test| {
+        test.relation_reason == crate::domain::RelationReason::DirectOwnerCall
+            && test.test_target.is_some()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discriminator_fact_matches;
+    use crate::analysis::seams::RequiredDiscriminator;
+
+    #[test]
+    fn boundary_matching_requires_the_same_operator_and_operands() {
+        let required = RequiredDiscriminator::BoundaryValue {
+            description: "amount >= discount_threshold".to_string(),
+        };
+
+        assert!(discriminator_fact_matches(
+            &required,
+            "discount_threshold (equality boundary)"
+        ));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "amount != discount_threshold"
+        ));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "discount_threshold_cache_key (equality boundary)"
+        ));
+    }
+
+    #[test]
+    fn non_boundary_matching_requires_exact_producer_text() {
+        let required = RequiredDiscriminator::FieldValue {
+            field: "discount_threshold".to_string(),
+        };
+
+        assert!(discriminator_fact_matches(&required, "discount_threshold"));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "discount_threshold_cache_key"
+        ));
+    }
 }
 
 fn existing_test_target(

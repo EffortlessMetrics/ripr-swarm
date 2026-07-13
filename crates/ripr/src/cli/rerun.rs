@@ -1,4 +1,3 @@
-use crate::analysis::repair_route::repair_route_readiness;
 use crate::analysis::{
     canonical_gap::canonical_gap_identity,
     inventory_changed_test_classified_seams_at_with_config_node,
@@ -6,6 +5,7 @@ use crate::analysis::{
     inventory_diff_scoped_classified_seams_at_with_config, seam_cache::stable_input_hash,
     workspace_cache_key_at_with_config,
 };
+use crate::app::repair_route_readiness;
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
