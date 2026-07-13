@@ -221,10 +221,14 @@ pub fn compare_fixture_delta(
                     DeltaAttribution::WeakenedByChange,
                     ComparisonConfidence::FixtureBacked,
                 )
-            } else if head.oracle_strength.rank() > base.oracle_strength.rank()
-                || (is_resolved_state(&head.gap_state) && !is_resolved_state(&base.gap_state))
-            {
+            } else if head.oracle_strength.rank() > base.oracle_strength.rank() {
                 attribution_basis.push(AttributionBasis::OracleStrengthIncreased);
+                (
+                    DeltaAttribution::ResolvedByChange,
+                    ComparisonConfidence::FixtureBacked,
+                )
+            } else if is_resolved_state(&head.gap_state) && !is_resolved_state(&base.gap_state) {
+                attribution_basis.push(AttributionBasis::GapStateChanged);
                 (
                     DeltaAttribution::ResolvedByChange,
                     ComparisonConfidence::FixtureBacked,
@@ -238,7 +242,7 @@ pub fn compare_fixture_delta(
                     ComparisonConfidence::FixtureBacked,
                 )
             } else {
-                attribution_basis.push(AttributionBasis::IdentityAmbiguous);
+                attribution_basis.push(AttributionBasis::GapStateChanged);
                 (
                     DeltaAttribution::ComparisonUnknown,
                     ComparisonConfidence::Low,
@@ -402,6 +406,49 @@ mod tests {
         assert_eq!(
             delta.attribution_basis,
             vec![AttributionBasis::IdentityAmbiguous]
+        );
+    }
+
+    #[test]
+    fn resolving_gap_state_without_oracle_increase_uses_gap_state_basis() {
+        let delta = compare_fixture_delta(
+            "gap:resolved-by-state",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Weak)),
+            Some(state("resolved", OracleStrength::Weak)),
+        );
+        assert_eq!(delta.delta_attribution, DeltaAttribution::ResolvedByChange);
+        assert!(
+            delta
+                .attribution_basis
+                .contains(&AttributionBasis::GapStateChanged)
+        );
+        assert!(
+            !delta
+                .attribution_basis
+                .contains(&AttributionBasis::OracleStrengthIncreased)
+        );
+    }
+
+    #[test]
+    fn same_identity_unknown_does_not_claim_identity_ambiguity() {
+        let delta = compare_fixture_delta(
+            "gap:unknown-state",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Weak)),
+            Some(state("unsupported", OracleStrength::Weak)),
+        );
+        assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+        assert_eq!(
+            delta.attribution_basis,
+            vec![
+                AttributionBasis::SameCanonicalOwner,
+                AttributionBasis::SameBehaviorIdentity,
+                AttributionBasis::SameDiscriminator,
+                AttributionBasis::GapStateChanged,
+            ]
         );
     }
 
