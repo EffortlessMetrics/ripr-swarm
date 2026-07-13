@@ -270,11 +270,18 @@ pub(crate) fn render_pilot_terminal(
             entry.class.as_str()
         ));
         out.push_str(&format!("  why it matters: {}\n", why_line(entry)));
-        out.push_str(&format!(
-            "  focused test: add {} in {}\n",
-            outline.suggested_name,
-            display_path_text(&outline.suggested_file)
-        ));
+        if outline.suggested_file == "not_applicable" {
+            out.push_str(&format!(
+                "  focused test: not applicable (route limited: {})\n",
+                outline.suggested_reason
+            ));
+        } else {
+            out.push_str(&format!(
+                "  focused test: add {} in {}\n",
+                outline.suggested_name,
+                display_path_text(&outline.suggested_file)
+            ));
+        }
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
@@ -302,7 +309,13 @@ pub(crate) fn render_pilot_terminal(
         "  {}\n\n",
         display_path(&context.artifacts.agent_seam_packets_json)
     ));
-    out.push_str("Run after adding the focused test:\n");
+    if top.first().is_some_and(|entry| {
+        targeted_test_brief_outline_for_classified_seam(entry).suggested_file == "not_applicable"
+    }) {
+        out.push_str("Run after producer evidence makes a repair route actionable:\n");
+    } else {
+        out.push_str("Run after adding the focused test:\n");
+    }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));
     out
