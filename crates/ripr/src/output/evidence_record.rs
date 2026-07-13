@@ -2090,6 +2090,13 @@ mod tests {
             repair_route_readiness(&entry).state,
             RepairRouteState::StaticLimitation
         );
+        entry.evidence.missing_discriminators[0].value = "amount == discount_threshold".to_string();
+        entry.class = classify_seam(&entry.seam, &entry.evidence);
+        assert_eq!(
+            repair_route_readiness(&entry).state,
+            RepairRouteState::Ready,
+            "producer equality facts with the same boundary operands remain actionable"
+        );
         entry.evidence.missing_discriminators[0].value =
             "discount_threshold (equality boundary)".to_string();
         entry.class = classify_seam(&entry.seam, &entry.evidence);

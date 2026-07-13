@@ -366,11 +366,21 @@ fn discriminator_fact_matches(required: &RequiredDiscriminator, fact: &str) -> b
                 operator: fact_operator,
                 right: fact_right,
             },
-        ) => {
-            required_left == fact_left
-                && required_operator == fact_operator
-                && required_right == fact_right
+        ) if required_operator == fact_operator => {
+            required_left == fact_left && required_right == fact_right
         }
+        (
+            DiscriminatorCompatibilityKey::Comparison {
+                left: required_left,
+                right: required_right,
+                ..
+            },
+            DiscriminatorCompatibilityKey::Comparison {
+                left: fact_left,
+                operator: fact_operator,
+                right: fact_right,
+            },
+        ) => fact_operator == "==" && required_left == fact_left && required_right == fact_right,
         (
             DiscriminatorCompatibilityKey::Comparison { right, .. },
             DiscriminatorCompatibilityKey::EqualityBoundary { right: fact_right },
@@ -544,6 +554,36 @@ mod tests {
             &required,
             "discount_threshold_cache_key (equality boundary)"
         ));
+    }
+
+    #[test]
+    fn boundary_matching_accepts_same_operands_from_equality_fact() {
+        let required = RequiredDiscriminator::BoundaryValue {
+            description: "amount >= discount_threshold".to_string(),
+        };
+
+        assert!(discriminator_fact_matches(
+            &required,
+            "amount == discount_threshold"
+        ));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "amount == discount_threshold_cache_key"
+        ));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "other_amount == discount_threshold"
+        ));
+    }
+
+    #[test]
+    fn boundary_matching_accepts_literal_equality_fact_for_same_boundary() {
+        let required = RequiredDiscriminator::BoundaryValue {
+            description: "amount > 10".to_string(),
+        };
+
+        assert!(discriminator_fact_matches(&required, "amount == 10"));
+        assert!(!discriminator_fact_matches(&required, "amount == 100"));
     }
 
     #[test]
