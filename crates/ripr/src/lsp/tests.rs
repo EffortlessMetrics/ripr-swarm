@@ -2961,6 +2961,36 @@ fn seam_code_actions_omit_assertion_and_related_test_when_evidence_is_missing() 
 }
 
 #[test]
+fn unknown_stage_value_route_omits_suggested_assertion_action() -> Result<(), String> {
+    use crate::analysis::seams::SeamGripClass;
+
+    let mut seam = sample_classified_seam();
+    seam.class = SeamGripClass::ActivationUnknown;
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let actions = code_action_response(&code_action_params(vec![diagnostic])?, Some(&snapshot));
+    let commands = code_action_commands(&actions)?;
+
+    if commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_SUGGESTED_ASSERTION_COMMAND)
+    {
+        return Err(format!(
+            "unknown-stage route must not offer suggested assertion: {commands:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn seam_code_actions_keep_targeted_brief_when_related_test_exists_without_assertion()
 -> Result<(), String> {
     use crate::analysis::test_grip_evidence::{

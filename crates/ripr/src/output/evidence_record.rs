@@ -2270,6 +2270,91 @@ mod tests {
     }
 
     #[test]
+    fn readiness_class_ceiling_preserves_known_facts_for_unknown_grip_classes() {
+        for (class, missing_stage) in [
+            (
+                SeamGripClass::ActivationUnknown,
+                "incomplete evidence stage: activation",
+            ),
+            (
+                SeamGripClass::PropagationUnknown,
+                "incomplete evidence stage: propagation",
+            ),
+            (
+                SeamGripClass::ObservationUnknown,
+                "incomplete evidence stage: observation",
+            ),
+            (
+                SeamGripClass::DiscriminationUnknown,
+                "incomplete evidence stage: discrimination",
+            ),
+            (SeamGripClass::Opaque, "incomplete evidence stage: opaque"),
+        ] {
+            let mut entry = sample_classified(StageState::Yes, class);
+            entry.class = class;
+            let readiness = repair_route_readiness(&entry);
+
+            assert_eq!(readiness.state, RepairRouteState::StaticLimitation);
+            assert!(matches!(
+                readiness.target_selection,
+                RepairTargetSelection::Existing(_)
+            ));
+            assert!(readiness.test_target.is_some());
+            assert!(
+                readiness
+                    .present_evidence
+                    .contains(&"safe test target".to_string())
+            );
+            assert!(
+                readiness
+                    .present_evidence
+                    .iter()
+                    .any(|evidence| evidence
+                        .starts_with("producer-owned missing discriminator fact"))
+            );
+            assert!(
+                readiness
+                    .required_evidence
+                    .contains(&missing_stage.to_string())
+            );
+            assert!(
+                readiness
+                    .missing_evidence
+                    .contains(&missing_stage.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn readiness_class_ceiling_preserves_actionable_and_terminal_mappings() {
+        for class in [
+            SeamGripClass::WeaklyGripped,
+            SeamGripClass::Ungripped,
+            SeamGripClass::ReachableUnrevealed,
+        ] {
+            let mut entry = sample_classified(StageState::Yes, class);
+            entry.class = class;
+            assert_eq!(
+                repair_route_readiness(&entry).state,
+                RepairRouteState::Ready
+            );
+        }
+
+        let strong = sample_classified(StageState::Yes, SeamGripClass::StronglyGripped);
+        assert_eq!(
+            repair_route_readiness(&strong).state,
+            RepairRouteState::AlreadyGripped
+        );
+        for class in [SeamGripClass::Intentional, SeamGripClass::Suppressed] {
+            let entry = sample_classified(StageState::Yes, class);
+            assert_eq!(
+                repair_route_readiness(&entry).state,
+                RepairRouteState::PolicyExcluded
+            );
+        }
+    }
+
+    #[test]
     fn evidence_record_carries_identity_path_guidance_and_calibration_placeholder() {
         let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         let seam_id = entry.seam.id().as_str().to_string();

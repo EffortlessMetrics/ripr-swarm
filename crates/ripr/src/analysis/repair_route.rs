@@ -5,7 +5,7 @@
 //! not infer test identity, effect sinks, or missing observations themselves.
 
 use super::seam_classification::ClassifiedSeam;
-use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, StageState};
@@ -98,22 +98,60 @@ pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadi
         | SeamKind::MatchArm => value_route_readiness(seam, evidence),
         SeamKind::SideEffect | SeamKind::CallPresence => effect_route_readiness(seam, evidence),
     };
-    match entry.class {
-        crate::analysis::seams::SeamGripClass::StronglyGripped => {
-            readiness.state = RepairRouteState::AlreadyGripped;
-            readiness.missing_evidence.clear();
-        }
-        crate::analysis::seams::SeamGripClass::Intentional
-        | crate::analysis::seams::SeamGripClass::Suppressed => {
-            readiness.state = RepairRouteState::PolicyExcluded;
-            readiness.missing_evidence.clear();
-        }
-        _ => {}
-    }
+    apply_grip_class_ceiling(entry.class, &mut readiness);
     readiness.seam_id = seam.id().as_str().to_string();
     readiness.canonical_gap_id = canonical_gap_identity(entry).map(|identity| identity.id);
     readiness.authority_boundary = REPAIR_ROUTE_AUTHORITY_BOUNDARY;
     readiness
+}
+
+fn apply_grip_class_ceiling(class: SeamGripClass, readiness: &mut RepairRouteReadiness) {
+    match class {
+        SeamGripClass::StronglyGripped => {
+            readiness.state = RepairRouteState::AlreadyGripped;
+            readiness.missing_evidence.clear();
+        }
+        SeamGripClass::Intentional | SeamGripClass::Suppressed => {
+            readiness.state = RepairRouteState::PolicyExcluded;
+            readiness.missing_evidence.clear();
+        }
+        SeamGripClass::ActivationUnknown
+        | SeamGripClass::PropagationUnknown
+        | SeamGripClass::ObservationUnknown
+        | SeamGripClass::DiscriminationUnknown
+        | SeamGripClass::Opaque => {
+            let missing_stage = incomplete_stage_evidence(class).to_string();
+            if !readiness
+                .required_evidence
+                .iter()
+                .any(|evidence| evidence == &missing_stage)
+            {
+                readiness.required_evidence.push(missing_stage.clone());
+            }
+            if !readiness
+                .missing_evidence
+                .iter()
+                .any(|evidence| evidence == &missing_stage)
+            {
+                readiness.missing_evidence.push(missing_stage);
+            }
+            readiness.state = RepairRouteState::StaticLimitation;
+        }
+        SeamGripClass::WeaklyGripped
+        | SeamGripClass::Ungripped
+        | SeamGripClass::ReachableUnrevealed => {}
+    }
+}
+
+fn incomplete_stage_evidence(class: SeamGripClass) -> &'static str {
+    match class {
+        SeamGripClass::ActivationUnknown => "incomplete evidence stage: activation",
+        SeamGripClass::PropagationUnknown => "incomplete evidence stage: propagation",
+        SeamGripClass::ObservationUnknown => "incomplete evidence stage: observation",
+        SeamGripClass::DiscriminationUnknown => "incomplete evidence stage: discrimination",
+        SeamGripClass::Opaque => "incomplete evidence stage: opaque",
+        _ => "incomplete evidence stage: unknown",
+    }
 }
 
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {

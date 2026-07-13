@@ -2545,6 +2545,32 @@ mod tests {
     }
 
     #[test]
+    fn unknown_grip_classes_never_project_assertion_repair_packets() -> Result<(), String> {
+        for class in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+            SeamGripClass::Opaque,
+        ] {
+            let mut entry = weakly_gripped_classified();
+            entry.class = class;
+            let json = render_agent_seam_packets_json(&[entry.clone()], None);
+            if !json.contains("\"task\": \"inspect_static_limitation\"") {
+                return Err(format!(
+                    "expected static-limitation task for {class:?}: {json}"
+                ));
+            }
+            if suggested_assertion_for_classified_seam(&entry).is_some() {
+                return Err(format!(
+                    "unexpected suggested assertion for {class:?}: {json}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn predicate_boundary_without_producer_fact_does_not_invent_one() -> Result<(), String> {
         let mut entry = weakly_gripped_classified();
         entry.evidence.missing_discriminators = Vec::new();

@@ -1970,6 +1970,33 @@ mod tests {
     }
 
     #[test]
+    fn targeted_rerun_serializes_static_limitation_route_state() -> Result<(), String> {
+        let mut seam = baseline_fields();
+        seam.static_class = "activation_unknown".to_string();
+        seam.repair_route_readiness.state = RepairRouteState::StaticLimitation;
+        seam.repair_route_readiness.required_evidence = vec![
+            "producer-owned missing discriminator fact".to_string(),
+            "safe test target".to_string(),
+            "incomplete evidence stage: activation".to_string(),
+        ];
+        seam.repair_route_readiness.present_evidence = vec![
+            "producer-owned missing discriminator fact".to_string(),
+            "safe test target".to_string(),
+        ];
+        seam.repair_route_readiness.missing_evidence =
+            vec!["incomplete evidence stage: activation".to_string()];
+
+        let value = serde_json::to_value(seam)
+            .map_err(|error| format!("serialize targeted rerun seam: {error}"))?;
+        if value["repair_route_readiness"]["state"] != "static_limitation" {
+            return Err(format!(
+                "targeted rerun must serialize static_limitation: {value}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn resolved_scope_matches_canonical_gap_or_typed_seam_identity() {
         let seam = baseline_fields();
         let canonical = ResolvedRerunScope {
