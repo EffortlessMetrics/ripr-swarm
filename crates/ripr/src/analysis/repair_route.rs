@@ -482,45 +482,6 @@ fn direct_owner_related_test_with_target(evidence: &TestGripEvidence) -> Option<
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::discriminator_fact_matches;
-    use crate::analysis::seams::RequiredDiscriminator;
-
-    #[test]
-    fn boundary_matching_requires_the_same_operator_and_operands() {
-        let required = RequiredDiscriminator::BoundaryValue {
-            description: "amount >= discount_threshold".to_string(),
-        };
-
-        assert!(discriminator_fact_matches(
-            &required,
-            "discount_threshold (equality boundary)"
-        ));
-        assert!(!discriminator_fact_matches(
-            &required,
-            "amount != discount_threshold"
-        ));
-        assert!(!discriminator_fact_matches(
-            &required,
-            "discount_threshold_cache_key (equality boundary)"
-        ));
-    }
-
-    #[test]
-    fn non_boundary_matching_requires_exact_producer_text() {
-        let required = RequiredDiscriminator::FieldValue {
-            field: "discount_threshold".to_string(),
-        };
-
-        assert!(discriminator_fact_matches(&required, "discount_threshold"));
-        assert!(!discriminator_fact_matches(
-            &required,
-            "discount_threshold_cache_key"
-        ));
-    }
-}
-
 fn existing_test_target(
     evidence: &TestGripEvidence,
     require_direct_owner: bool,
@@ -557,5 +518,44 @@ fn oracle_for_seam(kind: SeamKind) -> OracleKind {
         SeamKind::ErrorVariant => OracleKind::ExactErrorVariant,
         SeamKind::SideEffect | SeamKind::CallPresence => OracleKind::MockExpectation,
         _ => OracleKind::ExactValue,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discriminator_fact_matches;
+    use crate::analysis::seams::RequiredDiscriminator;
+
+    #[test]
+    fn boundary_matching_requires_the_same_operator_and_operands() {
+        let required = RequiredDiscriminator::BoundaryValue {
+            description: "amount >= discount_threshold".to_string(),
+        };
+
+        assert!(discriminator_fact_matches(
+            &required,
+            "discount_threshold (equality boundary)"
+        ));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "amount != discount_threshold"
+        ));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "discount_threshold_cache_key (equality boundary)"
+        ));
+    }
+
+    #[test]
+    fn non_boundary_matching_requires_exact_producer_text() {
+        let required = RequiredDiscriminator::FieldValue {
+            field: "discount_threshold".to_string(),
+        };
+
+        assert!(discriminator_fact_matches(&required, "discount_threshold"));
+        assert!(!discriminator_fact_matches(
+            &required,
+            "discount_threshold_cache_key"
+        ));
     }
 }

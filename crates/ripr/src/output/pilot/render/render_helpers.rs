@@ -72,7 +72,7 @@ pub(super) fn push_markdown_recommendation(out: &mut String, entry: &ClassifiedS
         entry.class.as_str()
     ));
     out.push_str(&format!("- Why it matters: {}\n", why_line(entry)));
-    if outline.suggested_file == "not_applicable" {
+    if outline.is_not_applicable() {
         out.push_str(&format!(
             "- Focused test: not applicable (route limited: {})\n",
             outline.suggested_reason

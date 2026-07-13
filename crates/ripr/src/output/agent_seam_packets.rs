@@ -798,7 +798,7 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
         ));
     }
 
-    if outline.suggested_file == "not_applicable" {
+    if outline.is_not_applicable() {
         out.push_str("\nTarget placement blocked:\n");
     } else {
         out.push_str("\nAdd a targeted test:\n");
@@ -808,7 +808,7 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
         display_path_text(&outline.suggested_file)
     ));
     out.push_str(&format!("- Suggested name: {}\n", outline.suggested_name));
-    if outline.suggested_file == "not_applicable" {
+    if outline.is_not_applicable() {
         out.push_str(&format!(
             "- Target-placement route: {}\n",
             outline.suggested_reason
@@ -861,6 +861,12 @@ pub(crate) struct TargetedTestBriefOutline {
     pub(crate) suggested_reason: String,
     pub(crate) candidate_value: Option<String>,
     pub(crate) assertion_shape: String,
+}
+
+impl TargetedTestBriefOutline {
+    pub(crate) fn is_not_applicable(&self) -> bool {
+        self.suggested_file == "not_applicable"
+    }
 }
 
 pub(crate) fn targeted_test_brief_outline_for_classified_seam(
@@ -2339,6 +2345,27 @@ mod tests {
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
+    }
+
+    #[test]
+    fn targeted_outline_accessor_identifies_limited_routes() {
+        let limited = TargetedTestBriefOutline {
+            suggested_file: "not_applicable".to_string(),
+            suggested_name: "not_applicable".to_string(),
+            suggested_reason: "route limited".to_string(),
+            candidate_value: None,
+            assertion_shape: "not_applicable".to_string(),
+        };
+        let actionable = TargetedTestBriefOutline {
+            suggested_file: "tests/pricing.rs".to_string(),
+            suggested_name: "checks_boundary".to_string(),
+            suggested_reason: "ready".to_string(),
+            candidate_value: None,
+            assertion_shape: "assert_eq!".to_string(),
+        };
+
+        assert!(limited.is_not_applicable());
+        assert!(!actionable.is_not_applicable());
     }
 
     fn boundary_seam() -> RepoSeam {

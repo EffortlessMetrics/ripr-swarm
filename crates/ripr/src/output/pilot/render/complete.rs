@@ -247,6 +247,7 @@ pub(crate) fn render_pilot_terminal(
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
+    let mut route_not_applicable = false;
     out.push_str("RIPR pilot complete.\n\n");
     out.push_str("Inspected:\n");
     out.push_str(&format!("  root: {}\n", display_path(context.root)));
@@ -260,6 +261,7 @@ pub(crate) fn render_pilot_terminal(
 
     if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
+        route_not_applicable = outline.is_not_applicable();
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
             "  inspected seam: {}:{} {} in {} ({})\n",
@@ -270,7 +272,7 @@ pub(crate) fn render_pilot_terminal(
             entry.class.as_str()
         ));
         out.push_str(&format!("  why it matters: {}\n", why_line(entry)));
-        if outline.suggested_file == "not_applicable" {
+        if outline.is_not_applicable() {
             out.push_str(&format!(
                 "  focused test: not applicable (route limited: {})\n",
                 outline.suggested_reason
@@ -309,9 +311,7 @@ pub(crate) fn render_pilot_terminal(
         "  {}\n\n",
         display_path(&context.artifacts.agent_seam_packets_json)
     ));
-    if top.first().is_some_and(|entry| {
-        targeted_test_brief_outline_for_classified_seam(entry).suggested_file == "not_applicable"
-    }) {
+    if route_not_applicable {
         out.push_str("Run after producer evidence makes a repair route actionable:\n");
     } else {
         out.push_str("Run after adding the focused test:\n");
