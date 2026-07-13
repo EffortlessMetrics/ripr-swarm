@@ -55,7 +55,7 @@ impl RefreshRequest {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum RefreshDecision {
-    Start(RefreshRequest),
+    Start(Box<RefreshRequest>),
     Queued { generation: u64 },
     Deduplicated,
     Stopped,
@@ -133,7 +133,7 @@ impl RefreshScheduler {
         };
         if state.active.is_none() {
             state.active = Some(request.clone());
-            RefreshDecision::Start(request)
+            RefreshDecision::Start(Box::new(request))
         } else {
             let generation = request.generation;
             state.pending_latest = Some(request);
@@ -234,6 +234,7 @@ mod tests {
         else {
             return Err("first request should start".to_string());
         };
+        let active = *active;
         for revision in 2..=10 {
             if !matches!(
                 request(&scheduler, revision, RefreshScope::Interactive),
@@ -261,6 +262,7 @@ mod tests {
         let RefreshDecision::Start(active) = request(&scheduler, 1, RefreshScope::Full) else {
             return Err("full request should start".to_string());
         };
+        let active = *active;
         if request(&scheduler, 1, RefreshScope::Interactive) != RefreshDecision::Deduplicated {
             return Err("interactive request should be covered by active full request".to_string());
         }
@@ -279,6 +281,7 @@ mod tests {
         let RefreshDecision::Start(active) = request(&scheduler, 1, RefreshScope::Full) else {
             return Err("full request should start".to_string());
         };
+        let active = *active;
         let RefreshDecision::Queued { .. } = request(&scheduler, 2, RefreshScope::Interactive)
         else {
             return Err("new saved input should remain pending".to_string());
@@ -299,6 +302,7 @@ mod tests {
         else {
             return Err("request should start".to_string());
         };
+        let active = *active;
         if !matches!(
             request(&scheduler, 2, RefreshScope::Full),
             RefreshDecision::Queued { .. }

@@ -104,7 +104,7 @@ impl Backend {
             self.refresh_scheduler
                 .request(root, config, workspace_revision, scope, reason);
         let mut request = match decision {
-            RefreshDecision::Start(request) => request,
+            RefreshDecision::Start(request) => *request,
             RefreshDecision::Queued { generation } => {
                 self.log_refresh_queued(generation).await;
                 loop {
