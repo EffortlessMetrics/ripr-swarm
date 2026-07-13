@@ -123,6 +123,11 @@ impl Backend {
             }
             RefreshDecision::Deduplicated | RefreshDecision::Stopped => return,
         };
+        let mut cancellation_guard = RefreshCancellationGuard::new(
+            &self.refresh_scheduler,
+            &self.refresh_idle,
+            request.clone(),
+        );
 
         loop {
             let completed_authoritatively = self.run_refresh_request(&request).await;
@@ -130,10 +135,12 @@ impl Backend {
                 .refresh_scheduler
                 .finish(&request, completed_authoritatively)
             else {
+                cancellation_guard.disarm();
                 self.refresh_idle.notify_waiters();
                 return;
             };
             request = next;
+            cancellation_guard.update(request.clone());
         }
     }
 
@@ -395,6 +402,40 @@ impl Backend {
         };
         let diagnostics = last_diagnostics.get(uri)?;
         diagnostic_at_position(diagnostics, position).map(diagnostic_hover_response)
+    }
+}
+
+struct RefreshCancellationGuard<'a> {
+    scheduler: &'a RefreshScheduler,
+    idle: &'a Notify,
+    request: RefreshRequest,
+    armed: bool,
+}
+
+impl<'a> RefreshCancellationGuard<'a> {
+    fn new(scheduler: &'a RefreshScheduler, idle: &'a Notify, request: RefreshRequest) -> Self {
+        Self {
+            scheduler,
+            idle,
+            request,
+            armed: true,
+        }
+    }
+
+    fn update(&mut self, request: RefreshRequest) {
+        self.request = request;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RefreshCancellationGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed && self.scheduler.cancel(&self.request) {
+            self.idle.notify_waiters();
+        }
     }
 }
 

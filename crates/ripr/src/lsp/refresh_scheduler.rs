@@ -172,6 +172,22 @@ impl RefreshScheduler {
         None
     }
 
+    pub(super) fn cancel(&self, request: &RefreshRequest) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        let request_is_active = state
+            .active
+            .as_ref()
+            .is_some_and(|active| active.generation == request.generation);
+        if !request_is_active {
+            return false;
+        }
+        state.active = None;
+        state.pending_latest = None;
+        true
+    }
+
     pub(super) fn stop(&self) {
         let Ok(mut state) = self.state.lock() else {
             return;
@@ -318,6 +334,32 @@ mod tests {
         }
         if request(&scheduler, 3, RefreshScope::Interactive) != RefreshDecision::Stopped {
             return Err("shutdown should reject new work".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cancellation_clears_active_and_pending_work() -> Result<(), String> {
+        let scheduler = RefreshScheduler::default();
+        let RefreshDecision::Start(active) = request(&scheduler, 1, RefreshScope::Interactive)
+        else {
+            return Err("request should start".to_string());
+        };
+        let active = *active;
+        if !matches!(
+            request(&scheduler, 2, RefreshScope::Interactive),
+            RefreshDecision::Queued { .. }
+        ) {
+            return Err("new request should be pending".to_string());
+        }
+        if !scheduler.cancel(&active) || !scheduler.is_idle() {
+            return Err("cancellation should clear active and pending work".to_string());
+        }
+        if !matches!(
+            request(&scheduler, 3, RefreshScope::Interactive),
+            RefreshDecision::Start(_)
+        ) {
+            return Err("a later request should be able to start".to_string());
         }
         Ok(())
     }
