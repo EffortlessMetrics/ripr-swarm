@@ -19,7 +19,7 @@
 
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::repair_route::{
-    RepairTargetSelection, repair_projection_ready, repair_route_readiness,
+    NewTestKind, RepairTargetSelection, repair_projection_ready, repair_route_readiness,
 };
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
@@ -1687,10 +1687,6 @@ pub(crate) struct CandidateValue {
     pub(crate) reason: String,
 }
 
-#[allow(
-    dead_code,
-    reason = "typed proposal variants remain reserved for a producer-owned new-test proposal"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecommendedTestTargetKind {
     ExistingTest,
@@ -1699,10 +1695,6 @@ pub(crate) enum RecommendedTestTargetKind {
     Unresolved,
 }
 
-#[allow(
-    dead_code,
-    reason = "typed proposal sources remain reserved for a producer-owned new-test proposal"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecommendedTestSource {
     RelatedTestEvidence,
@@ -1780,10 +1772,29 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned route readiness is not eligible for a repair target",
         );
     }
-    let RepairTargetSelection::Existing(selected_target) = &readiness.target_selection else {
-        return not_applicable_recommended_test(
-            "producer-owned route readiness has no existing or proposed repair target",
-        );
+    let selected_target = match &readiness.target_selection {
+        RepairTargetSelection::Existing(selected_target) => selected_target,
+        RepairTargetSelection::Proposed(proposal) => {
+            return RecommendedTest {
+                name,
+                file: display_path(&proposal.file),
+                target_kind: match proposal.kind {
+                    NewTestKind::InlineUnit => RecommendedTestTargetKind::NewInlineTestModule,
+                    NewTestKind::Integration => RecommendedTestTargetKind::NewIntegrationTest,
+                },
+                symbol_id: None,
+                source: match proposal.kind {
+                    NewTestKind::InlineUnit => RecommendedTestSource::InferredSourceModuleTests,
+                    NewTestKind::Integration => RecommendedTestSource::InferredIntegrationTests,
+                },
+                reason: "use the producer-owned new-test target proposal".to_string(),
+            };
+        }
+        RepairTargetSelection::Missing => {
+            return not_applicable_recommended_test(
+                "producer-owned route readiness has no existing or proposed repair target",
+            );
+        }
     };
     let Some(test) = entry.evidence.related_tests.iter().find(|test| {
         test.test_target

@@ -331,43 +331,120 @@ fn has_exact_discriminator(seam: &RepoSeam, evidence: &TestGripEvidence) -> bool
         .any(|fact| discriminator_fact_matches(seam.required_discriminator(), &fact.value))
 }
 
-fn discriminator_fact_matches(required: &RequiredDiscriminator, fact: &str) -> bool {
-    match required {
-        RequiredDiscriminator::BoundaryValue { description } => {
-            boundary_fact_matches(description, fact)
-        }
-        RequiredDiscriminator::ReturnValue { description } => {
-            exact_discriminator_text(description, fact)
-        }
-        RequiredDiscriminator::ErrorVariant { variant } => exact_discriminator_text(variant, fact),
-        RequiredDiscriminator::MatchArmTaken { arm } => exact_discriminator_text(arm, fact),
-        RequiredDiscriminator::FieldValue { field } => exact_discriminator_text(field, fact),
-        RequiredDiscriminator::Effect { sink }
-        | RequiredDiscriminator::CallSite { target: sink } => exact_discriminator_text(sink, fact),
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DiscriminatorCompatibilityKey {
+    Comparison {
+        left: String,
+        operator: String,
+        right: String,
+    },
+    EqualityBoundary {
+        right: String,
+    },
+    Exact {
+        kind: &'static str,
+        value: String,
+    },
 }
 
-fn boundary_fact_matches(required: &str, fact: &str) -> bool {
-    let Some((required_left, required_operator, required_right)) = comparison_parts(required)
-    else {
+fn discriminator_fact_matches(required: &RequiredDiscriminator, fact: &str) -> bool {
+    let Some(required_key) = required_discriminator_key(required) else {
         return false;
     };
-    let fact = fact.trim();
-    if let Some((fact_left, fact_operator, fact_right)) = comparison_parts(fact) {
-        return fact_left == required_left
-            && fact_operator == required_operator
-            && fact_right == required_right;
+    let Some(fact_key) = fact_discriminator_key(required, fact) else {
+        return false;
+    };
+    match (required_key, fact_key) {
+        (
+            DiscriminatorCompatibilityKey::Comparison {
+                left: required_left,
+                operator: required_operator,
+                right: required_right,
+            },
+            DiscriminatorCompatibilityKey::Comparison {
+                left: fact_left,
+                operator: fact_operator,
+                right: fact_right,
+            },
+        ) => {
+            required_left == fact_left
+                && required_operator == fact_operator
+                && required_right == fact_right
+        }
+        (
+            DiscriminatorCompatibilityKey::Comparison { right, .. },
+            DiscriminatorCompatibilityKey::EqualityBoundary { right: fact_right },
+        ) => right == fact_right,
+        (
+            DiscriminatorCompatibilityKey::Exact {
+                kind: required_kind,
+                value: required_value,
+            },
+            DiscriminatorCompatibilityKey::Exact {
+                kind: fact_kind,
+                value: fact_value,
+            },
+        ) => required_kind == fact_kind && required_value == fact_value,
+        _ => false,
     }
-
-    fact.strip_suffix(" (equality boundary)")
-        .map(str::trim)
-        .is_some_and(|boundary| normalize_identifier(boundary) == required_right)
 }
 
-fn exact_discriminator_text(required: &str, fact: &str) -> bool {
-    let required = normalize_discriminator_text(required);
-    let fact = normalize_discriminator_text(fact);
-    !required.is_empty() && required == fact
+fn required_discriminator_key(
+    required: &RequiredDiscriminator,
+) -> Option<DiscriminatorCompatibilityKey> {
+    match required {
+        RequiredDiscriminator::BoundaryValue { description } => {
+            let (left, operator, right) = comparison_parts(description)?;
+            Some(DiscriminatorCompatibilityKey::Comparison {
+                left,
+                operator,
+                right,
+            })
+        }
+        RequiredDiscriminator::ReturnValue { description } => {
+            exact_key("return_value", description)
+        }
+        RequiredDiscriminator::ErrorVariant { variant } => exact_key("error_variant", variant),
+        RequiredDiscriminator::MatchArmTaken { arm } => exact_key("match_arm", arm),
+        RequiredDiscriminator::FieldValue { field } => exact_key("field_value", field),
+        RequiredDiscriminator::Effect { sink } => exact_key("effect", sink),
+        RequiredDiscriminator::CallSite { target } => exact_key("call_site", target),
+    }
+}
+
+fn fact_discriminator_key(
+    required: &RequiredDiscriminator,
+    fact: &str,
+) -> Option<DiscriminatorCompatibilityKey> {
+    match required {
+        RequiredDiscriminator::BoundaryValue { .. } => {
+            if let Some((left, operator, right)) = comparison_parts(fact) {
+                return Some(DiscriminatorCompatibilityKey::Comparison {
+                    left,
+                    operator,
+                    right,
+                });
+            }
+            let right = fact
+                .trim()
+                .strip_suffix(" (equality boundary)")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(normalize_identifier)?;
+            Some(DiscriminatorCompatibilityKey::EqualityBoundary { right })
+        }
+        RequiredDiscriminator::ReturnValue { .. } => exact_key("return_value", fact),
+        RequiredDiscriminator::ErrorVariant { .. } => exact_key("error_variant", fact),
+        RequiredDiscriminator::MatchArmTaken { .. } => exact_key("match_arm", fact),
+        RequiredDiscriminator::FieldValue { .. } => exact_key("field_value", fact),
+        RequiredDiscriminator::Effect { .. } => exact_key("effect", fact),
+        RequiredDiscriminator::CallSite { .. } => exact_key("call_site", fact),
+    }
+}
+
+fn exact_key(kind: &'static str, value: &str) -> Option<DiscriminatorCompatibilityKey> {
+    let value = normalize_discriminator_text(value);
+    (!value.is_empty()).then_some(DiscriminatorCompatibilityKey::Exact { kind, value })
 }
 
 fn comparison_parts(value: &str) -> Option<(String, String, String)> {
