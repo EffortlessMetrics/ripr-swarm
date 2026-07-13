@@ -10,7 +10,7 @@ mod support;
 
 pub use causal_delta::{
     AttributionBasis, CanonicalDelta, CanonicalEvidenceState, ComparisonConfidence,
-    ComparisonCoverage, DeltaAttribution, compare_fixture_delta,
+    ComparisonCoverage, DeltaAttribution, GapState, compare_fixture_delta,
 };
 pub use classification::ExposureClass;
 pub(crate) use classification::{

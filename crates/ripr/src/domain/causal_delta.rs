@@ -47,6 +47,7 @@ pub enum AttributionBasis {
     BaseItemAbsent,
     HeadItemAbsent,
     BaseSnapshotUnavailable,
+    HeadSnapshotUnavailable,
     IdentityAmbiguous,
     RenameOrMoveMapped,
     AdjacentSurface,
@@ -66,10 +67,46 @@ impl AttributionBasis {
             Self::BaseItemAbsent => "base_item_absent",
             Self::HeadItemAbsent => "head_item_absent",
             Self::BaseSnapshotUnavailable => "base_snapshot_unavailable",
+            Self::HeadSnapshotUnavailable => "head_snapshot_unavailable",
             Self::IdentityAmbiguous => "identity_ambiguous",
             Self::RenameOrMoveMapped => "rename_or_move_mapped",
             Self::AdjacentSurface => "adjacent_surface",
             Self::BaselineReceipt => "baseline_receipt",
+        }
+    }
+}
+
+/// Closed evidence-state vocabulary used by the causal comparison model.
+///
+/// Unknown is intentionally explicit: opaque or unsupported producer state
+/// must remain non-causal rather than being coerced into an actionable state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapState {
+    Actionable,
+    AlreadyObserved,
+    Resolved,
+    Unknown,
+}
+
+impl GapState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Actionable => "actionable",
+            Self::AlreadyObserved => "already_observed",
+            Self::Resolved => "resolved",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl From<&str> for GapState {
+    fn from(value: &str) -> Self {
+        match value {
+            "actionable" => Self::Actionable,
+            "already_observed" => Self::AlreadyObserved,
+            "resolved" => Self::Resolved,
+            _ => Self::Unknown,
         }
     }
 }
@@ -101,7 +138,7 @@ pub struct CanonicalEvidenceState {
     pub canonical_owner: String,
     pub behavior_identity: String,
     pub discriminator_identity: String,
-    pub gap_state: String,
+    pub gap_state: GapState,
     pub oracle_strength: OracleStrength,
 }
 
@@ -110,7 +147,7 @@ impl CanonicalEvidenceState {
         canonical_owner: impl Into<String>,
         behavior_identity: impl Into<String>,
         discriminator_identity: impl Into<String>,
-        gap_state: impl Into<String>,
+        gap_state: impl Into<GapState>,
         oracle_strength: OracleStrength,
     ) -> Self {
         Self {
@@ -173,7 +210,15 @@ pub fn compare_fixture_delta(
             delta_attribution: DeltaAttribution::ComparisonUnknown,
             base_state,
             head_state,
-            attribution_basis: vec![AttributionBasis::BaseSnapshotUnavailable],
+            attribution_basis: match (base_available, head_available) {
+                (false, false) => vec![
+                    AttributionBasis::BaseSnapshotUnavailable,
+                    AttributionBasis::HeadSnapshotUnavailable,
+                ],
+                (false, true) => vec![AttributionBasis::BaseSnapshotUnavailable],
+                (true, false) => vec![AttributionBasis::HeadSnapshotUnavailable],
+                (true, true) => Vec::new(),
+            },
             comparison_confidence: ComparisonConfidence::Unknown,
         };
     }
@@ -215,6 +260,12 @@ pub fn compare_fixture_delta(
                     DeltaAttribution::ReintroducedByChange,
                     ComparisonConfidence::FixtureBacked,
                 )
+            } else if is_resolved_state(head.gap_state) && !is_resolved_state(base.gap_state) {
+                attribution_basis.push(AttributionBasis::GapStateChanged);
+                (
+                    DeltaAttribution::ResolvedByChange,
+                    ComparisonConfidence::FixtureBacked,
+                )
             } else if head.oracle_strength.rank() < base.oracle_strength.rank() {
                 attribution_basis.push(AttributionBasis::OracleStrengthDecreased);
                 (
@@ -227,13 +278,8 @@ pub fn compare_fixture_delta(
                     DeltaAttribution::ResolvedByChange,
                     ComparisonConfidence::FixtureBacked,
                 )
-            } else if is_resolved_state(&head.gap_state) && !is_resolved_state(&base.gap_state) {
-                attribution_basis.push(AttributionBasis::GapStateChanged);
-                (
-                    DeltaAttribution::ResolvedByChange,
-                    ComparisonConfidence::FixtureBacked,
-                )
-            } else if base.gap_state == head.gap_state
+            } else if (base.gap_state == head.gap_state
+                || (is_resolved_state(base.gap_state) && is_resolved_state(head.gap_state)))
                 && base.oracle_strength == head.oracle_strength
             {
                 attribution_basis.push(AttributionBasis::UnchangedEvidence);
@@ -269,19 +315,21 @@ pub fn compare_fixture_delta(
 }
 
 fn is_reintroduced(base: &CanonicalEvidenceState, head: &CanonicalEvidenceState) -> bool {
-    matches!(base.gap_state.as_str(), "resolved" | "already_observed")
-        && head.gap_state == "actionable"
+    is_resolved_state(base.gap_state) && head.gap_state == GapState::Actionable
 }
 
-fn is_resolved_state(gap_state: &str) -> bool {
-    matches!(gap_state, "resolved" | "already_observed")
+fn is_resolved_state(gap_state: GapState) -> bool {
+    matches!(gap_state, GapState::Resolved | GapState::AlreadyObserved)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn state(gap_state: &str, oracle_strength: OracleStrength) -> CanonicalEvidenceState {
+    fn state(
+        gap_state: impl Into<GapState>,
+        oracle_strength: OracleStrength,
+    ) -> CanonicalEvidenceState {
         CanonicalEvidenceState::new(
             "crate::pricing::discount",
             "predicate:amount>=threshold",
@@ -331,6 +379,7 @@ mod tests {
             AttributionBasis::BaseItemAbsent,
             AttributionBasis::HeadItemAbsent,
             AttributionBasis::BaseSnapshotUnavailable,
+            AttributionBasis::HeadSnapshotUnavailable,
             AttributionBasis::IdentityAmbiguous,
             AttributionBasis::RenameOrMoveMapped,
             AttributionBasis::AdjacentSurface,
@@ -349,6 +398,7 @@ mod tests {
                 "base_item_absent",
                 "head_item_absent",
                 "base_snapshot_unavailable",
+                "head_snapshot_unavailable",
                 "identity_ambiguous",
                 "rename_or_move_mapped",
                 "adjacent_surface",
@@ -366,6 +416,17 @@ mod tests {
         assert_eq!(
             confidences.map(ComparisonConfidence::as_str),
             ["fixture_backed", "high", "medium", "low", "unknown"]
+        );
+
+        let gap_states = [
+            GapState::Actionable,
+            GapState::AlreadyObserved,
+            GapState::Resolved,
+            GapState::Unknown,
+        ];
+        assert_eq!(
+            gap_states.map(GapState::as_str),
+            ["actionable", "already_observed", "resolved", "unknown"]
         );
 
         let complete = ComparisonCoverage {
@@ -469,6 +530,10 @@ mod tests {
             unavailable_head.delta_attribution,
             DeltaAttribution::ComparisonUnknown
         );
+        assert_eq!(
+            unavailable_head.attribution_basis,
+            vec![AttributionBasis::HeadSnapshotUnavailable]
+        );
 
         let oracle_increased = compare_fixture_delta(
             "gap:oracle-increased",
@@ -550,6 +615,42 @@ mod tests {
             !delta
                 .attribution_basis
                 .contains(&AttributionBasis::OracleStrengthIncreased)
+        );
+    }
+
+    #[test]
+    fn resolved_transition_wins_over_oracle_weakening() {
+        let delta = compare_fixture_delta(
+            "gap:resolved-before-weakened",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Strong)),
+            Some(state("resolved", OracleStrength::Weak)),
+        );
+        assert_eq!(delta.delta_attribution, DeltaAttribution::ResolvedByChange);
+        assert!(
+            !delta
+                .attribution_basis
+                .contains(&AttributionBasis::OracleStrengthDecreased)
+        );
+    }
+
+    #[test]
+    fn resolved_state_aliases_are_unchanged_evidence() {
+        let delta = compare_fixture_delta(
+            "gap:resolved-alias",
+            true,
+            true,
+            Some(state("resolved", OracleStrength::Weak)),
+            Some(state("already_observed", OracleStrength::Weak)),
+        );
+        assert_eq!(
+            delta.delta_attribution,
+            DeltaAttribution::ChangedSurfaceExisting
+        );
+        assert_eq!(
+            delta.attribution_basis.last(),
+            Some(&AttributionBasis::UnchangedEvidence)
         );
     }
 
