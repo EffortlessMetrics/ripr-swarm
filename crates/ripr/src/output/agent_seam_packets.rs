@@ -863,6 +863,12 @@ pub(crate) struct TargetedTestBriefOutline {
     pub(crate) assertion_shape: String,
 }
 
+impl TargetedTestBriefOutline {
+    pub(crate) fn is_not_applicable(&self) -> bool {
+        self.suggested_file == "not_applicable"
+    }
+}
+
 pub(crate) fn targeted_test_brief_outline_for_classified_seam(
     entry: &ClassifiedSeam,
 ) -> TargetedTestBriefOutline {
