@@ -319,6 +319,71 @@ mod tests {
     }
 
     #[test]
+    fn supporting_vocabularies_and_coverage_are_typed() {
+        let bases = [
+            AttributionBasis::SameCanonicalOwner,
+            AttributionBasis::SameBehaviorIdentity,
+            AttributionBasis::SameDiscriminator,
+            AttributionBasis::OracleStrengthDecreased,
+            AttributionBasis::OracleStrengthIncreased,
+            AttributionBasis::GapStateChanged,
+            AttributionBasis::UnchangedEvidence,
+            AttributionBasis::BaseItemAbsent,
+            AttributionBasis::HeadItemAbsent,
+            AttributionBasis::BaseSnapshotUnavailable,
+            AttributionBasis::IdentityAmbiguous,
+            AttributionBasis::RenameOrMoveMapped,
+            AttributionBasis::AdjacentSurface,
+            AttributionBasis::BaselineReceipt,
+        ];
+        assert_eq!(
+            bases.map(AttributionBasis::as_str),
+            [
+                "same_canonical_owner",
+                "same_behavior_identity",
+                "same_discriminator",
+                "oracle_strength_decreased",
+                "oracle_strength_increased",
+                "gap_state_changed",
+                "unchanged_evidence",
+                "base_item_absent",
+                "head_item_absent",
+                "base_snapshot_unavailable",
+                "identity_ambiguous",
+                "rename_or_move_mapped",
+                "adjacent_surface",
+                "baseline_receipt",
+            ]
+        );
+
+        let confidences = [
+            ComparisonConfidence::FixtureBacked,
+            ComparisonConfidence::High,
+            ComparisonConfidence::Medium,
+            ComparisonConfidence::Low,
+            ComparisonConfidence::Unknown,
+        ];
+        assert_eq!(
+            confidences.map(ComparisonConfidence::as_str),
+            ["fixture_backed", "high", "medium", "low", "unknown"]
+        );
+
+        let complete = ComparisonCoverage {
+            base_items: 1,
+            head_items: 1,
+            matched_items: 1,
+            ambiguous_items: 0,
+            unknown_items: 0,
+        };
+        assert!(complete.is_complete());
+        let incomplete = ComparisonCoverage {
+            ambiguous_items: 1,
+            ..complete
+        };
+        assert!(!incomplete.is_complete());
+    }
+
+    #[test]
     fn unavailable_base_never_promotes_a_head_only_item() {
         let delta = compare_fixture_delta(
             "gap:pricing",
@@ -388,6 +453,63 @@ mod tests {
         assert_eq!(
             resolved.delta_attribution,
             DeltaAttribution::ResolvedByChange
+        );
+    }
+
+    #[test]
+    fn remaining_comparison_branches_are_conservative_and_typed() {
+        let unavailable_head = compare_fixture_delta(
+            "gap:head-unavailable",
+            true,
+            false,
+            Some(state("actionable", OracleStrength::Weak)),
+            None,
+        );
+        assert_eq!(
+            unavailable_head.delta_attribution,
+            DeltaAttribution::ComparisonUnknown
+        );
+
+        let oracle_increased = compare_fixture_delta(
+            "gap:oracle-increased",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Weak)),
+            Some(state("actionable", OracleStrength::Strong)),
+        );
+        assert_eq!(
+            oracle_increased.delta_attribution,
+            DeltaAttribution::ResolvedByChange
+        );
+        assert_eq!(
+            oracle_increased.attribution_basis.last(),
+            Some(&AttributionBasis::OracleStrengthIncreased)
+        );
+
+        let unchanged = compare_fixture_delta(
+            "gap:unchanged",
+            true,
+            true,
+            Some(state("actionable", OracleStrength::Weak)),
+            Some(state("actionable", OracleStrength::Weak)),
+        );
+        assert_eq!(
+            unchanged.delta_attribution,
+            DeltaAttribution::ChangedSurfaceExisting
+        );
+        assert_eq!(
+            unchanged.attribution_basis.last(),
+            Some(&AttributionBasis::UnchangedEvidence)
+        );
+
+        let no_items = compare_fixture_delta("gap:no-items", true, true, None, None);
+        assert_eq!(
+            no_items.delta_attribution,
+            DeltaAttribution::ComparisonUnknown
+        );
+        assert_eq!(
+            no_items.attribution_basis,
+            vec![AttributionBasis::IdentityAmbiguous]
         );
     }
 
