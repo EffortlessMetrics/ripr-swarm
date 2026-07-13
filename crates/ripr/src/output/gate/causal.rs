@@ -112,6 +112,10 @@ impl CausalDeltaAuthority {
         )
     }
 
+    pub(super) fn is_complete(&self) -> bool {
+        self.complete
+    }
+
     pub(super) fn disclosure(&self) -> String {
         if self.complete {
             "canonical delta comparison is complete".to_string()

@@ -118,7 +118,9 @@ pub(crate) fn build_gate_decision_report(
             None
         }
     };
-    if let Some(authority) = &causal_delta {
+    if let Some(authority) = &causal_delta
+        && !authority.is_complete()
+    {
         warnings.push(authority.disclosure());
     }
     // #1442: an explicitly requested exception ledger fails closed — a
