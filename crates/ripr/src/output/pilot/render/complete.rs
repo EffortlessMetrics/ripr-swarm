@@ -247,7 +247,6 @@ pub(crate) fn render_pilot_terminal(
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
-    let mut route_not_applicable = false;
     out.push_str("RIPR pilot complete.\n\n");
     out.push_str("Inspected:\n");
     out.push_str(&format!("  root: {}\n", display_path(context.root)));
@@ -261,7 +260,6 @@ pub(crate) fn render_pilot_terminal(
 
     let route_not_applicable = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
-        route_not_applicable = outline.is_not_applicable();
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
             "  inspected seam: {}:{} {} in {} ({})\n",
