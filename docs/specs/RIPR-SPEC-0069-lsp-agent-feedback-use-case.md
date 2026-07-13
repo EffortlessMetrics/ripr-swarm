@@ -144,6 +144,37 @@ For the agent-cockpit contract, the surface must expose:
   `ripr.copyAgentBriefCommand`) so the agent leaves the editor with
   the full bounded brief, not a paraphrase.
 
+The server also emits the versioned `ripr/analysisStatus` notification and
+returns the same `analysis_status` object from `ripr.collectWorkspaceStatus`.
+Its stable fields are:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "analysis_status",
+  "attempt_id": "7",
+  "state": "failed",
+  "reason": "did_save",
+  "requested_scope": "interactive",
+  "snapshot_id": "snapshot:6",
+  "last_success_snapshot_id": "snapshot:6",
+  "last_success_age_ms": 1234,
+  "run_status": "stale",
+  "failure": { "kind": "analysis_error", "message": "bounded detail" },
+  "pending": false,
+  "retry_command": "ripr.refresh",
+  "repair_actions_available": false
+}
+```
+
+`state` describes the current attempt, while `snapshot_id` identifies the
+last retained analysis. A failed, cancelled, or superseded attempt never
+replaces that snapshot and sets `run_status` to `stale` (or `no_snapshot` if
+there is no completed snapshot). The notification is the typed authority for
+editor status; `window/logMessage` remains human-readable diagnostic output and
+is not a client state protocol. Timing and queue fields belong only in this
+health surface, never in diagnostic or semantic gap identities.
+
 "Repair packet" here is the canonical RIPR-SPEC-0061 contract, not
 a separate LSP shape. A complete packet carries the full
 RIPR-SPEC-0061 field list — `packet_id`, `canonical_gap_id`,
@@ -263,6 +294,9 @@ these states as an actionable offer:
   command produces a repair instruction for it.
 - A diagnostic raised before the snapshot was refreshed offers only
   `ripr.refresh`; after refresh the full action set returns.
+- A successful snapshot followed by a failed refresh retains its diagnostics
+  and inspection context, reports `state: "failed"` with `run_status: "stale"`,
+  and suppresses repair actions until a later successful snapshot.
 - A human in VS Code sees the first-useful-action title in the
   status bar (rendered by the extension client, sourced read-only
   from `target/ripr/reports/first-useful-action.json`); opening it

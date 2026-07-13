@@ -16,6 +16,9 @@ use super::gap_artifacts::{
 };
 use super::hover::{classified_seam_hover_response, hover_response, hover_with_snapshot_status};
 use super::lens::{code_lens_response, lens_title_is_static_language_clean};
+use super::refresh_scheduler::{
+    RefreshAttemptOutcome, RefreshReason, RefreshRequest, RefreshScope,
+};
 use super::state::{AnalysisSnapshot, DocumentStore, RefreshMetadata, format_duration};
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -26,6 +29,7 @@ use super::{
     COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND, COPY_TARGETED_TEST_BRIEF_COMMAND,
     HOVER_TEXT, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
 };
+use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::app::Mode;
 use crate::domain::{
@@ -3269,7 +3273,7 @@ fn take_all_uris_returns_and_clears_previous_diagnostic_uris() -> Result<(), Str
 }
 
 #[test]
-fn refresh_failure_clear_helper_clears_tracked_diagnostics() -> Result<(), String> {
+fn explicit_snapshot_clear_helper_clears_tracked_diagnostics() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
     let tracked_uri = test_uri("file:///workspace/src/stale.rs")?;
@@ -5535,6 +5539,9 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
         assert_eq!(status["tool"], "ripr");
         assert_eq!(status["kind"], "workspace_status");
         assert_eq!(status["run_status"], "no_snapshot");
+        assert_eq!(status["analysis_status"]["state"], "stopped");
+        assert_eq!(status["analysis_status"]["run_status"], "no_snapshot");
+        assert_eq!(status["analysis_status"]["repair_actions_available"], false);
         assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
         assert_eq!(status["top_limitation"], serde_json::Value::Null);
         assert_eq!(
@@ -5547,6 +5554,109 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
                 .as_str()
                 .is_some_and(|p| p.contains("actionable-gaps")),
             "expected report_paths.actionable_gaps in status: {status}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let finding = sample_finding();
+        let diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        );
+        backend
+            .refresh_plan(diagnostics)
+            .ok_or_else(|| "expected successful snapshot".to_string())?;
+
+        let request = RefreshRequest {
+            generation: 7,
+            root: PathBuf::from("/workspace"),
+            config: LspAnalysisConfig::default(),
+            workspace_revision: 1,
+            scope: RefreshScope::Interactive,
+            reason: RefreshReason::DidSave,
+            cancellation: AnalysisCancellationToken::new(),
+        };
+        backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+        backend
+            .report_refresh_failure_after(
+                &request,
+                "temporary analysis timeout at /workspace/src/pricing.rs".to_string(),
+                Duration::from_millis(25),
+                "analysis_error",
+            )
+            .await;
+
+        let retained = backend
+            .latest_analysis_snapshot()
+            .ok_or_else(|| "failed refresh erased the last snapshot".to_string())?;
+        if retained.finding_count() != 1 {
+            return Err("failed refresh did not retain diagnostics evidence".to_string());
+        }
+
+        let status = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected workspace status after failure".to_string())?;
+        assert_eq!(status["run_status"], "stale");
+        assert_eq!(status["analysis_status"]["state"], "failed");
+        assert_eq!(status["analysis_status"]["run_status"], "stale");
+        assert_eq!(
+            status["analysis_status"]["failure"]["kind"],
+            "analysis_error"
+        );
+        assert_eq!(
+            status["analysis_status"]["failure"]["message"],
+            "temporary analysis timeout at <path>"
+        );
+        assert_eq!(
+            status["analysis_status"]["last_success_snapshot_id"],
+            "snapshot:7"
+        );
+        assert_eq!(status["analysis_status"]["repair_actions_available"], false);
+        assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
+
+        let retained_diagnostic = retained
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .next()
+            .cloned()
+            .ok_or_else(|| "expected retained diagnostic".to_string())?;
+        let actions = backend
+            .code_action(code_action_params(vec![retained_diagnostic])?)
+            .await
+            .map_err(|err| format!("code_action failed: {err}"))?
+            .ok_or_else(|| "expected code action response".to_string())?;
+        let action_titles = actions
+            .iter()
+            .map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => action.title.as_str(),
+                CodeActionOrCommand::Command(command) => command.title.as_str(),
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            action_titles
+                .iter()
+                .all(|title| { title.contains("Refresh") || title.contains("Inspect") }),
+            "stale snapshots must expose only inspection and refresh actions: {action_titles:?}"
         );
         Ok(())
     })
