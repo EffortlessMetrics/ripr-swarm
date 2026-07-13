@@ -259,7 +259,7 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
     out.push('\n');
 
-    if let Some(entry) = top.first() {
+    let route_not_applicable = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         route_not_applicable = outline.is_not_applicable();
         out.push_str("Top recommendation:\n");
@@ -288,14 +288,17 @@ pub(crate) fn render_pilot_terminal(
             out.push_str(&format!("  candidate value: {value}\n"));
         }
         out.push_str(&format!("  assertion: {}\n\n", outline.assertion_shape));
+        outline.is_not_applicable()
     } else if let Some(card) = python_top_repair_card(context.python_first_use) {
         out.push_str("Top recommendation:\n");
         push_python_repair_card_terminal(&mut out, card);
         out.push('\n');
+        false
     } else {
         out.push_str("Top recommendation:\n");
         out.push_str("  none ranked by the default pilot policy\n\n");
-    }
+        false
+    };
 
     if let Some(first_use) = context.python_first_use {
         push_python_first_use_terminal(&mut out, first_use);
