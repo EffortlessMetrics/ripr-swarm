@@ -61,7 +61,12 @@ impl CausalDeltaAuthority {
             .and_then(Value::as_array)
             .ok_or_else(|| "canonical delta missing deltas array".to_string())?
         {
-            let Some(gap_id) = delta.get("canonical_gap_id").and_then(Value::as_str) else {
+            let Some(gap_id) = delta
+                .get("canonical_gap_id")
+                .and_then(Value::as_str)
+                .filter(|gap_id| !gap_id.trim().is_empty())
+            else {
+                unknown_items += 1;
                 continue;
             };
             let (attribution, recognized) = parse_attribution(
