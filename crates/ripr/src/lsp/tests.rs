@@ -3891,7 +3891,9 @@ where
 {
     let mut notifications = Vec::new();
     loop {
-        let message = read_lsp_message(reader).await?;
+        let message = tokio::time::timeout(Duration::from_secs(2), read_lsp_message(reader))
+            .await
+            .map_err(|_| "timed out waiting for terminal refresh notification".to_string())??;
         let is_terminal_refresh = message.get("method").and_then(serde_json::Value::as_str)
             == Some("window/logMessage")
             && message
