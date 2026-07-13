@@ -3893,7 +3893,9 @@ where
     loop {
         let message = tokio::time::timeout(Duration::from_secs(2), read_lsp_message(reader))
             .await
-            .map_err(|_| "timed out waiting for terminal refresh notification".to_string())??;
+            .map_err(|timeout| {
+                format!("timed out waiting for terminal refresh notification: {timeout}")
+            })??;
         let is_terminal_refresh = message.get("method").and_then(serde_json::Value::as_str)
             == Some("window/logMessage")
             && message
