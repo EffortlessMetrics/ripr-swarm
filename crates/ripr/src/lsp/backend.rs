@@ -336,14 +336,22 @@ impl Backend {
         // until the current snapshot has committed.
         let _root_transition = self.workspace_root_transition.lock().await;
         if !self.refresh_request_is_current(request) {
-            self.rollback_refresh_transaction(&previous_diagnostics, &plan)
-                .await;
+            self.rollback_refresh_transaction_if_authority_is_current(
+                request,
+                &previous_diagnostics,
+                &plan,
+            )
+            .await;
             return cancellation_outcome(request);
         }
         for batch in &plan.publish_batches {
             if !self.refresh_request_is_current(request) {
-                self.rollback_refresh_transaction(&previous_diagnostics, &plan)
-                    .await;
+                self.rollback_refresh_transaction_if_authority_is_current(
+                    request,
+                    &previous_diagnostics,
+                    &plan,
+                )
+                .await;
                 return cancellation_outcome(request);
             }
             self.client
@@ -361,13 +369,21 @@ impl Backend {
                 .await;
         }
         if !self.refresh_request_is_current(request) {
-            self.rollback_refresh_transaction(&previous_diagnostics, &plan)
-                .await;
+            self.rollback_refresh_transaction_if_authority_is_current(
+                request,
+                &previous_diagnostics,
+                &plan,
+            )
+            .await;
             return cancellation_outcome(request);
         }
         if !self.commit_refresh_snapshot(snapshot, &plan) {
-            self.rollback_refresh_transaction(&previous_diagnostics, &plan)
-                .await;
+            self.rollback_refresh_transaction_if_authority_is_current(
+                request,
+                &previous_diagnostics,
+                &plan,
+            )
+            .await;
             self.report_refresh_failure_after(
                 request,
                 "could not commit the completed diagnostic snapshot".to_string(),
@@ -485,6 +501,18 @@ impl Backend {
         }
     }
 
+    async fn rollback_refresh_transaction_if_authority_is_current(
+        &self,
+        request: &RefreshRequest,
+        previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
+        plan: &DiagnosticRefreshPlan,
+    ) {
+        if self.refresh_authority_is_unchanged(request) {
+            self.rollback_refresh_transaction(previous_diagnostics, plan)
+                .await;
+        }
+    }
+
     pub(super) fn clear_all_diagnostic_uris(&self) -> Vec<Uri> {
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return Vec::new();
@@ -540,6 +568,18 @@ impl Backend {
         }
         let authority = self.workspace_root_authority();
         authority.allows_analysis() && authority.effective_root.as_ref() == Some(&request.root)
+    }
+
+    pub(super) fn refresh_authority_is_unchanged(&self, request: &RefreshRequest) -> bool {
+        self.workspace_root_epoch.load(Ordering::SeqCst) == request.authority_epoch
+    }
+
+    #[cfg(test)]
+    pub(super) async fn invalidate_workspace_root_for_test(&self) {
+        self.apply_workspace_root_authority(WorkspaceRootAuthority::unavailable(
+            "test root transition",
+        ))
+        .await;
     }
 
     fn workspace_root_authority(&self) -> WorkspaceRootAuthority {
