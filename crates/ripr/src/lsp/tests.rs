@@ -534,7 +534,8 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
                     "rootUri": root_uri.as_str(),
                     "initializationOptions": {
                         "baseRef": "HEAD",
-                        "checkMode": "instant"
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
                     },
                     "capabilities": {}
                 }
@@ -4293,6 +4294,7 @@ fn boundary_gap_lsp_config(repo_config: crate::config::RiprConfig) -> LspAnalysi
     LspAnalysisConfig {
         base_ref: Some("HEAD".to_string()),
         mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         repo_config,
         ..LspAnalysisConfig::default()
     }
