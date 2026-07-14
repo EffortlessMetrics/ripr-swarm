@@ -48,11 +48,12 @@ use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLensOptions, DiagnosticSeverity,
     DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, ExecuteCommandParams, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, Position, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    VersionedTextDocumentIdentifier, WorkspaceFolder,
+    DidOpenTextDocumentParams, DocumentDiagnosticParams, ExecuteCommandParams, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, MarkedString, NumberOrString,
+    PartialResultParams, Position, PreviousResultId, Range, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, VersionedTextDocumentIdentifier,
+    WorkspaceDiagnosticParams, WorkspaceFolder,
 };
 use tower_lsp_server::{LspService, Server};
 
@@ -108,6 +109,121 @@ fn capabilities_advertise_code_lens_provider() -> Result<(), String> {
         },
         "code_lens_provider must advertise resolve_provider: false (advisory text-only; no resolve round-trip)"
     );
+    Ok(())
+}
+
+#[test]
+fn document_pull_reuses_result_id_as_unchanged_report() -> Result<(), String> {
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let finding = sample_finding();
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    let request = |previous_result_id| DocumentDiagnosticParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        identifier: None,
+        previous_result_id,
+        work_done_progress_params: Default::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+    let first = runtime
+        .block_on(backend.diagnostic(request(None)))
+        .map_err(|err| format!("first pull failed: {err}"))?;
+    let first_json = serde_json::to_value(first)
+        .map_err(|err| format!("serialize first report failed: {err}"))?;
+    if first_json.get("kind").and_then(serde_json::Value::as_str) != Some("full") {
+        return Err(format!("expected full first report: {first_json}"));
+    }
+    let result_id = first_json
+        .get("resultId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "full report did not carry resultId".to_string())?
+        .to_string();
+    let second = runtime
+        .block_on(backend.diagnostic(request(Some(result_id))))
+        .map_err(|err| format!("second pull failed: {err}"))?;
+    let second_json = serde_json::to_value(second)
+        .map_err(|err| format!("serialize second report failed: {err}"))?;
+    if second_json.get("kind").and_then(serde_json::Value::as_str) != Some("unchanged") {
+        return Err(format!("expected unchanged second report: {second_json}"));
+    }
+    if second_json.get("items").is_some() {
+        return Err("unchanged report unexpectedly carried items".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn workspace_pull_reuses_each_document_result_id() -> Result<(), String> {
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let finding = sample_finding();
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    let first = runtime
+        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
+            identifier: None,
+            previous_result_ids: Vec::new(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        }))
+        .map_err(|err| format!("first workspace pull failed: {err}"))?;
+    let first_json = serde_json::to_value(first)
+        .map_err(|err| format!("serialize first workspace report failed: {err}"))?;
+    let result_id = first_json
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("resultId"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "workspace full report did not carry resultId".to_string())?
+        .to_string();
+    let second = runtime
+        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
+            identifier: None,
+            previous_result_ids: vec![PreviousResultId {
+                uri,
+                value: result_id,
+            }],
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        }))
+        .map_err(|err| format!("second workspace pull failed: {err}"))?;
+    let second_json = serde_json::to_value(second)
+        .map_err(|err| format!("serialize second workspace report failed: {err}"))?;
+    let kind = second_json
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("kind"))
+        .and_then(serde_json::Value::as_str);
+    if kind != Some("unchanged") {
+        return Err(format!(
+            "expected unchanged workspace report: {second_json}"
+        ));
+    }
     Ok(())
 }
 
