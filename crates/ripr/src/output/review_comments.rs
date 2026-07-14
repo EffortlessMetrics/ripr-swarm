@@ -8,10 +8,10 @@ use crate::app::agent_brief::{
     AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefSelection,
     AgentBriefWhyNowReason,
 };
+use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::config::RiprConfig;
 use crate::output::agent_seam_packets;
 use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
-use crate::output::causal_projection::{CausalDeltaArtifact, insert_comparison_fields};
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
     EvidenceRecordStaticLimitation, actionability_for, canonical_receipt_command_for,
@@ -314,7 +314,7 @@ pub(crate) fn render_review_comments_json_with_scope(
     if let Some(projection) = &causal_projection
         && let Some(object) = value.as_object_mut()
     {
-        insert_comparison_fields(object, projection);
+        projection.insert_comparison_fields(object);
     }
 
     super::json::render_pretty(&value, "review comments")
@@ -413,22 +413,14 @@ pub(crate) fn render_gap_record_review_comments_json(
     if let Some(projection) = &causal_projection
         && let Some(object) = value.as_object_mut()
     {
-        insert_comparison_fields(object, projection);
+        projection.insert_comparison_fields(object);
     }
 
     super::json::render_pretty(&value, "gap-ledger review comments")
 }
 
 fn load_causal_projection_for_review(root: &Path) -> (Option<CausalDeltaArtifact>, Option<String>) {
-    match CausalDeltaArtifact::load(root) {
-        Ok(projection) => (projection, None),
-        Err(error) => (
-            None,
-            Some(format!(
-                "causal comparison artifact omitted from review projection: {error}"
-            )),
-        ),
-    }
+    CausalDeltaArtifact::load_optional(root)
 }
 
 #[cfg(test)]

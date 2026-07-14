@@ -8,9 +8,9 @@ use crate::app::Mode;
 use crate::app::agent_brief::{
     AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefSelection,
 };
+use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::config::{RiprConfig, config_fingerprint};
 use crate::output::agent_seam_packets;
-use crate::output::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -23,7 +23,11 @@ pub(crate) fn render_agent_brief_json(
     working_set: &AgentBriefResolvedWorkingSet,
     selection: &AgentBriefSelection<'_>,
 ) -> Result<String, String> {
-    let causal_projection = CausalDeltaArtifact::load(root)?;
+    let (causal_projection, causal_projection_warning) = CausalDeltaArtifact::load_optional(root);
+    let mut warnings = selection.warnings.clone();
+    if let Some(warning) = causal_projection_warning {
+        warnings.push(warning);
+    }
     let mut value = json!({
         "schema_version": AGENT_BRIEF_SCHEMA_VERSION,
         "tool": "ripr",
@@ -56,7 +60,7 @@ pub(crate) fn render_agent_brief_json(
                 None,
             ),
         },
-        "warnings": &selection.warnings,
+        "warnings": warnings,
     });
     if let Some(projection) = causal_projection
         && let Some(object) = value.as_object_mut()

@@ -4,7 +4,7 @@ use super::model::{
     GateRepairRoute, GateRepairTarget, GateSummary, NewUnsuppressed,
 };
 use super::{LIMITS_NOTE, SCHEMA_VERSION};
-use crate::output::causal_projection::{insert_canonical_delta_fields, insert_comparison_fields};
+use crate::app::causal_projection::insert_canonical_delta_fields;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -37,7 +37,7 @@ pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<S
     if let Some(projection) = &report.causal_projection
         && let Some(object) = document.as_object_mut()
     {
-        insert_comparison_fields(object, projection);
+        projection.insert_comparison_fields(object);
     }
     serde_json::to_string_pretty(&document)
         .map_err(|err| format!("failed to render gate decision JSON: {err}"))

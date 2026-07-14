@@ -11,10 +11,10 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
 use crate::analysis::seams::SeamGripClass;
+use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::app::check_workspace_with_config;
 use crate::config::{ConfigSeverity, SeverityConfig};
 use crate::domain::{Finding, LanguageId, LanguageStatus, RelatedTest};
-use crate::output::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, projection_eligible,
 };
@@ -503,13 +503,10 @@ pub(super) fn workspace_diagnostics_with_config(
         defer_seam_inventory,
     );
     let is_full_run = run_status == "full";
-    let causal_projection = match CausalDeltaArtifact::load(&root) {
-        Ok(projection) => projection,
-        Err(error) => {
-            eprintln!("ripr lsp: causal projection omitted: {error}");
-            None
-        }
-    };
+    let (causal_projection, causal_projection_warning) = CausalDeltaArtifact::load_optional(&root);
+    if let Some(warning) = causal_projection_warning {
+        eprintln!("ripr lsp: {warning}");
+    }
 
     let mut grouped = finding_diagnostics_by_uri(
         &root,
@@ -970,10 +967,12 @@ fn gap_record_diagnostic_data_with_causal(
         anchor_object.insert("file".to_string(), serde_json::Value::String(file));
     }
     if let Some(projection) = causal_projection
-        && let Some(delta) = projection.delta_for(non_empty(&record.canonical_gap_id))
         && let Some(object) = data.as_object_mut()
     {
-        insert_canonical_delta_fields(object, delta);
+        projection.insert_comparison_fields(object);
+        if let Some(delta) = projection.delta_for(non_empty(&record.canonical_gap_id)) {
+            insert_canonical_delta_fields(object, delta);
+        }
     }
     data
 }
@@ -1078,14 +1077,16 @@ fn diagnostic_for_classified_seam_with_causal(
         },
     });
     if let Some(projection) = causal_projection
-        && let Some(delta) = projection.delta_for(
+        && let Some(object) = data.as_object_mut()
+    {
+        projection.insert_comparison_fields(object);
+        if let Some(delta) = projection.delta_for(
             crate::analysis::canonical_gap::canonical_gap_identities(std::slice::from_ref(entry))
                 .get(entry.seam.id())
                 .map(|identity| identity.id.as_str()),
-        )
-        && let Some(object) = data.as_object_mut()
-    {
-        insert_canonical_delta_fields(object, delta);
+        ) {
+            insert_canonical_delta_fields(object, delta);
+        }
     }
     Some(Diagnostic {
         range,
@@ -1232,11 +1233,13 @@ fn diagnostic_for_finding_with_causal(
                 preview_actionability_json_value(&actionability),
             );
         }
-        if let Some(projection) = causal_projection
-            && let Some(delta) =
+        if let Some(projection) = causal_projection {
+            projection.insert_comparison_fields(obj);
+            if let Some(delta) =
                 projection.delta_for(finding.canonical_gap.as_ref().map(|gap| gap.id.as_str()))
-        {
-            insert_canonical_delta_fields(obj, delta);
+            {
+                insert_canonical_delta_fields(obj, delta);
+            }
         }
     }
     Diagnostic {

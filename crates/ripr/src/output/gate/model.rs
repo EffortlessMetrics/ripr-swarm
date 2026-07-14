@@ -71,7 +71,7 @@ pub(crate) struct GateDecisionReport {
     pub(super) warnings: Vec<String>,
     pub(super) config_errors: Vec<String>,
     pub(super) causal_delta: Option<super::causal::CausalDeltaAuthority>,
-    pub(super) causal_projection: Option<crate::output::causal_projection::CausalDeltaArtifact>,
+    pub(super) causal_projection: Option<crate::app::causal_projection::CausalDeltaArtifact>,
     /// Exception-ledger evaluation (#1442). `Some` only when the caller
     /// passed `--exception-policy`; absent otherwise so existing
     /// gate-decision consumers and goldens see identical output.

@@ -875,10 +875,11 @@ impl Backend {
         }
         if let Some(seam_id) = args.get("seam_id").and_then(|v| v.as_str()) {
             let seam = snapshot.classified_seam_by_id(seam_id)?;
-            let causal_projection =
-                crate::output::causal_projection::CausalDeltaArtifact::load(&snapshot.root)
-                    .ok()
-                    .flatten();
+            let (causal_projection, causal_projection_warning) =
+                crate::app::causal_projection::CausalDeltaArtifact::load_optional(&snapshot.root);
+            if let Some(warning) = causal_projection_warning {
+                eprintln!("ripr lsp: {warning}");
+            }
             let packet =
                 crate::output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
                     std::slice::from_ref(seam),

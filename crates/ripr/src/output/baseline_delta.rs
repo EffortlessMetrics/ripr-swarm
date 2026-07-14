@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::output::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
+use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 
 const SCHEMA_VERSION: &str = "0.1";
 const REPORT_KIND: &str = "baseline_debt_delta";

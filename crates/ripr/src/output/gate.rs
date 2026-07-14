@@ -119,7 +119,7 @@ pub(crate) fn build_gate_decision_report(
         }
     };
     let causal_projection =
-        match crate::output::causal_projection::CausalDeltaArtifact::load(&input.root) {
+        match crate::app::causal_projection::CausalDeltaArtifact::load(&input.root) {
             Ok(projection) => projection,
             Err(error) => {
                 config_errors.push(error);
@@ -483,7 +483,7 @@ fn gate_decision(
     baseline: &BaselineIndex,
     causal_inputs: (
         Option<&CausalDeltaAuthority>,
-        Option<&crate::output::causal_projection::CausalDeltaArtifact>,
+        Option<&crate::app::causal_projection::CausalDeltaArtifact>,
     ),
 ) -> GateDecision {
     let (causal_delta, causal_projection) = causal_inputs;

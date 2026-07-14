@@ -24,7 +24,7 @@ use crate::analysis::repair_route::{
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
-use crate::output::causal_projection::CausalDeltaArtifact;
+use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, cross_language_oracle_visibility_unresolved,
     cross_language_test_target_unresolved, evidence_record_for, evidence_record_json_value,
@@ -292,7 +292,7 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         && let Some(delta) = projection.delta_for(non_empty(&record.canonical_gap_id).as_deref())
         && let Some(object) = packet.as_object_mut()
     {
-        crate::output::causal_projection::insert_canonical_delta_fields(object, delta);
+        crate::app::causal_projection::insert_canonical_delta_fields(object, delta);
     }
     let mut envelope = json!({
         "schema_version": AGENT_SEAM_PACKET_SCHEMA_VERSION,
@@ -1707,7 +1707,7 @@ fn push_packet_json(
         && let Some(delta) = projection.delta_for(canonical_gap.map(|gap| gap.id.as_str()))
     {
         let mut object = serde_json::Map::new();
-        crate::output::causal_projection::insert_canonical_delta_fields(&mut object, delta);
+        crate::app::causal_projection::insert_canonical_delta_fields(&mut object, delta);
         for (key, value) in object {
             out.push_str(&format!("      \"{}\": {},\n", key, value));
         }

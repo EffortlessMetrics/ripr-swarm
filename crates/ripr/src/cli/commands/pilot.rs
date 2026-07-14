@@ -85,7 +85,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // budget wins when both fire; inventory limit is the outer bound).
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified);
     let limit_info = pilot_budget_info.or(inventory_limit_info);
-    let causal_projection = output::causal_projection::CausalDeltaArtifact::load(&input.root)?;
+    let (causal_projection, causal_projection_warning) =
+        crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
+    if let Some(warning) = causal_projection_warning {
+        eprintln!("ripr pilot: {warning}");
+    }
 
     let python_first_use = collect_pilot_python_first_use(&input, &config);
     let context = output::pilot::PilotSummaryContext {

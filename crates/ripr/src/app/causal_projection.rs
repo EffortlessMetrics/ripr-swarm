@@ -26,6 +26,18 @@ pub(crate) struct CausalDeltaArtifact {
 }
 
 impl CausalDeltaArtifact {
+    pub(crate) fn load_optional(root: &Path) -> (Option<Self>, Option<String>) {
+        match Self::load(root) {
+            Ok(projection) => (projection, None),
+            Err(error) => (
+                None,
+                Some(format!(
+                    "causal comparison artifact omitted from projection: {error}"
+                )),
+            ),
+        }
+    }
+
     pub(crate) fn load(root: &Path) -> Result<Option<Self>, String> {
         let path = root.join(DEFAULT_CANONICAL_DELTA);
         let text = match fs::read_to_string(&path) {
@@ -162,13 +174,6 @@ pub(crate) fn insert_canonical_delta_fields(
         "comparison_confidence".to_string(),
         Value::String(delta.comparison_confidence.as_str().to_string()),
     );
-}
-
-pub(crate) fn insert_comparison_fields(
-    object: &mut Map<String, Value>,
-    artifact: &CausalDeltaArtifact,
-) {
-    artifact.insert_comparison_fields(object);
 }
 
 fn required_count(value: &Value, field: &str) -> Result<usize, String> {
