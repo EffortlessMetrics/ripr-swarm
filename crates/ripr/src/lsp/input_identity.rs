@@ -82,15 +82,19 @@ impl LspAnalysisInputIdentity {
         config: &LspAnalysisConfig,
     ) -> Self {
         let enabled_languages = config.repo_config().languages().enabled();
-        let session_options_identity = Some(format!(
-            "include_unchanged_tests={};seam_diagnostics={}",
-            config.include_unchanged_tests, config.enable_seam_diagnostics
-        ));
+        let session_options_identity = config
+            .session_options
+            .as_ref()
+            .and_then(|options| serde_json::to_string(options).ok())
+            .map(|options| crate::config::config_fingerprint(&options));
         Self::new(
             effective_root,
             saved_workspace_revision,
             InputIdentityComponents {
-                repository_config_identity: None,
+                repository_config_identity: config
+                    .repo_config()
+                    .source_text()
+                    .map(crate::config::config_fingerprint),
                 session_options_identity,
                 requested_base: config.base_ref.clone(),
                 resolved_base: None,
@@ -226,5 +230,48 @@ mod tests {
         assert_ne!(changed_manifest, baseline);
         assert_ne!(changed_lockfile, baseline);
         assert_ne!(changed_analyzer_version, baseline);
+    }
+
+    #[test]
+    fn repository_config_source_content_participates_in_refresh_identity() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-lsp-input-identity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock failed: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root failed: {error}"))?;
+        let result = (|| {
+            std::fs::write(
+                root.join(crate::config::CONFIG_FILE_NAME),
+                "[analysis]\nmode = \"draft\"\n",
+            )
+            .map_err(|error| format!("write first config failed: {error}"))?;
+            let first = crate::config::load_for_root(&root)?;
+            std::fs::write(
+                root.join(crate::config::CONFIG_FILE_NAME),
+                "[analysis]\nmode = \"fast\"\n",
+            )
+            .map_err(|error| format!("write second config failed: {error}"))?;
+            let second = crate::config::load_for_root(&root)?;
+            let first = LspAnalysisConfig::from_repo_config_and_options(first, None);
+            let second = LspAnalysisConfig::from_repo_config_and_options(second, None);
+
+            let first_identity =
+                LspAnalysisInputIdentity::from_refresh_inputs(root.clone(), 1, &first);
+            let second_identity =
+                LspAnalysisInputIdentity::from_refresh_inputs(root.clone(), 1, &second);
+
+            assert_ne!(
+                first_identity.repository_config_identity,
+                second_identity.repository_config_identity
+            );
+            assert_ne!(first_identity, second_identity);
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 }

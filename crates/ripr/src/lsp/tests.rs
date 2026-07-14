@@ -3755,6 +3755,10 @@ enabled = ["ruby"]
         );
         assert_eq!(config.mode, Mode::Draft);
         assert!(config.enable_seam_diagnostics);
+        let Some(failure) = backend.configuration_failure() else {
+            return Err("invalid config should pause analysis with a typed failure".to_string());
+        };
+        assert_eq!(failure.kind, "config_invalid");
         Ok(())
     })
 }
