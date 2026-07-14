@@ -98,7 +98,7 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
 
 #[test]
 fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
-    let root = Path::new(r"C:\workspace");
+    let root = Path::new("/workspace/ripr");
     assert!(workspace_input_path_is_relevant(
         root,
         &root.join("Cargo.toml")
@@ -109,7 +109,7 @@ fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
     ));
     assert!(!workspace_input_path_is_relevant(
         root,
-        Path::new(r"C:\workspace-sibling\Cargo.toml")
+        Path::new("/workspace/ripr-sibling/Cargo.toml")
     ));
     assert!(!workspace_input_path_is_relevant(
         root,
