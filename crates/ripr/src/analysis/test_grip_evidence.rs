@@ -1536,12 +1536,15 @@ fn code_contains_record_field(code: &str, field: &str) -> bool {
 ///
 /// The seam variant is extracted from `RequiredDiscriminator::ErrorVariant { variant }`.
 /// The producer normally stores the bare exact variant identity (such as
-/// `"MyError::TooLarge"`), while older or unparseable inputs may retain the
-/// surrounding expression. The assertion variant is extracted from the oracle
+/// `"MyError::TooLarge"`). Constructor and string-payload expressions that do
+/// not contain an enum variant retain their source text and use the dedicated
+/// payload matcher instead. The assertion variant is extracted from the oracle
 /// text using the same `exact_error_variant` + `enum_variant_values` parsers.
 ///
-/// Fail-closed: returns `false` whenever either side cannot be parsed or they
-/// do not share a common variant value.
+/// Fail-closed: exact-variant seams return `false` when either identity cannot
+/// be parsed or the identities differ. Payload-shaped seams may use the
+/// dedicated exact payload matcher; arbitrary opaque text never establishes a
+/// discriminator by itself.
 fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str) -> bool {
     use super::classify::{enum_variant_values, exact_error_variant};
     use crate::analysis::seams::RequiredDiscriminator;

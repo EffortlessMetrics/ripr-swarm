@@ -478,6 +478,29 @@ fn parse_returns_revoked_token_on_empty() {
 }
 
 #[test]
+fn given_opaque_error_variant_without_payload_evidence_then_discrimination_stays_fail_closed()
+-> Result<(), String> {
+    let seam = crate::analysis::seams::RepoSeam::new(
+        "src/parse.rs",
+        "parse",
+        SeamKind::ErrorVariant,
+        0,
+        1,
+        "return Err(make_error(reason));",
+        RequiredDiscriminator::ErrorVariant {
+            variant: "return Err(make_error(reason));".to_string(),
+        },
+        ExpectedSink::ReturnValue,
+    );
+
+    assert!(!super::error_variant_oracle_matches_seam_variant(
+        &seam,
+        "assert_eq!(result, Err(make_error(reason)));"
+    ));
+    Ok(())
+}
+
+#[test]
 fn given_error_constructor_payload_seam_when_test_asserts_exact_payload_then_discriminate_evidence_is_yes()
 -> Result<(), String> {
     let prod = PathBuf::from("src/entry_validation.rs");
