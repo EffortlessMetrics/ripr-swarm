@@ -5672,6 +5672,7 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
         let uri = test_uri("file:///workspace/src/pricing.rs")?;
         let finding = sample_finding();
         let diagnostics = sample_workspace_diagnostics(
@@ -5686,6 +5687,7 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
 
         let request = RefreshRequest {
             generation: 7,
+            authority_epoch: 0,
             root: PathBuf::from("/workspace"),
             config: LspAnalysisConfig::default(),
             workspace_revision: 1,
@@ -5908,6 +5910,7 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
         let uri = test_uri("file:///workspace/src/pricing.rs")?;
         let mut diagnostics =
             sample_workspace_diagnostics(PathBuf::from("/workspace"), uri, Vec::new(), Vec::new());
@@ -6068,6 +6071,7 @@ fn write_actionable_gaps_report(
 }
 
 fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
+    backend.initialize_test_workspace_root();
     let finding = sample_finding();
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
     backend
@@ -6080,6 +6084,7 @@ fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
         .ok_or_else(|| "expected successful analysis snapshot".to_string())?;
     let request = RefreshRequest {
         generation: 1,
+        authority_epoch: 0,
         root: PathBuf::from("/workspace"),
         config: LspAnalysisConfig::default(),
         workspace_revision: 1,
@@ -6365,6 +6370,7 @@ fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() ->
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
 
         let params = ExecuteCommandParams {
             command: COLLECT_TOP_LIMITATION_COMMAND.to_string(),
@@ -6515,6 +6521,7 @@ fn execute_command_collect_receipt_status_no_snapshot_returns_not_available_fiel
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
 
         let params = ExecuteCommandParams {
             command: COLLECT_RECEIPT_STATUS_COMMAND.to_string(),
@@ -6565,6 +6572,7 @@ fn execute_command_collect_receipt_status_absent_artifacts_yield_not_available()
         // No attempt-ledger or route-quality files written — they are absent.
         let (service, _socket) = LspService::new(|client| Backend::new(client, root.clone()));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
 
         let uri = test_uri("file:///workspace/src/lib.rs")?;
         let diagnostics = sample_workspace_diagnostics(root.clone(), uri, Vec::new(), Vec::new());
@@ -6619,6 +6627,7 @@ fn execute_command_collect_receipt_status_with_attempt_ledger_returns_real_outco
 
         let (service, _socket) = LspService::new(|client| Backend::new(client, root.clone()));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
 
         let uri = test_uri("file:///workspace/src/lib.rs")?;
         let diagnostics = sample_workspace_diagnostics(root.clone(), uri, Vec::new(), Vec::new());
@@ -6665,6 +6674,7 @@ fn execute_command_collect_receipt_status_with_route_quality_returns_summary() -
 
         let (service, _socket) = LspService::new(|client| Backend::new(client, root.clone()));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
 
         let uri = test_uri("file:///workspace/src/lib.rs")?;
         let diagnostics = sample_workspace_diagnostics(root.clone(), uri, Vec::new(), Vec::new());

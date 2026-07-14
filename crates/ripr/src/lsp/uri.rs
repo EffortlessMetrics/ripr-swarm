@@ -274,17 +274,31 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn drive_root_contains_case_insensitive_descendants() {
-        let c_drive_root = PathBuf::from(format!("C:{}", std::path::MAIN_SEPARATOR));
-        let c_child = c_drive_root.join("workspace").join("src").join("lib.rs");
+    fn windows_drive_root_containment_uses_path_components() {
+        let root = Path::new("C:\\");
+        assert!(paths_equal_or_below(
+            root,
+            Path::new("c:\\workspace\\src.rs")
+        ));
+        let c_child = PathBuf::from(format!(
+            "C:{}workspace{}src{}lib.rs",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+        ));
         let d_child = PathBuf::from(format!(
             "D:{}workspace{}src{}lib.rs",
             std::path::MAIN_SEPARATOR,
             std::path::MAIN_SEPARATOR,
             std::path::MAIN_SEPARATOR,
         ));
-        assert!(paths_equal_or_below(&c_drive_root, &c_child,));
-        assert!(!paths_equal_or_below(&c_drive_root, &d_child));
+        assert!(paths_equal_or_below(root, &c_child));
+        assert!(paths_equal_or_below(root, Path::new("C:\\")));
+        assert!(!paths_equal_or_below(
+            Path::new("C:\\workspace"),
+            Path::new("C:\\workspace-sibling\\src.rs")
+        ));
+        assert!(!paths_equal_or_below(root, &d_child));
     }
 
     #[test]
