@@ -1460,7 +1460,7 @@ fn discriminate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvid
 /// For `ErrorVariant` seams (RIPR-SPEC-0106, Part B) the oracle must also
 /// structurally pin the seam's specific variant:
 /// - The oracle kind must be `ExactErrorVariant`.
-/// - The oracle text must contain the seam's variant token
+/// - The oracle text must contain the seam's exact variant identity
 ///   (from `RequiredDiscriminator::ErrorVariant { variant }`).
 /// - If the seam variant cannot be parsed from the discriminator, or the
 ///   oracle text does not contain it, the oracle is NOT credited (fail-closed).
@@ -1534,11 +1534,11 @@ fn code_contains_record_field(code: &str, field: &str) -> bool {
 /// Returns true when the oracle text structurally pins the same error variant
 /// as the seam requires.
 ///
-/// The seam variant is extracted from `RequiredDiscriminator::ErrorVariant { variant }`
-/// (which holds the full `Err(<variant>)` expression such as
-/// `"return Err(MyError::TooLarge)"`). The assertion variant is extracted from
-/// the oracle text using the same `exact_error_variant` + `enum_variant_values`
-/// parsers.
+/// The seam variant is extracted from `RequiredDiscriminator::ErrorVariant { variant }`.
+/// The producer normally stores the bare exact variant identity (such as
+/// `"MyError::TooLarge"`), while older or unparseable inputs may retain the
+/// surrounding expression. The assertion variant is extracted from the oracle
+/// text using the same `exact_error_variant` + `enum_variant_values` parsers.
 ///
 /// Fail-closed: returns `false` whenever either side cannot be parsed or they
 /// do not share a common variant value.
@@ -1546,15 +1546,17 @@ fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str)
     use super::classify::{enum_variant_values, exact_error_variant};
     use crate::analysis::seams::RequiredDiscriminator;
 
-    // Extract the seam's required variant from the discriminator expression.
+    // Extract the seam's required variant from the producer-owned identity.
     let seam_variant = match seam.required_discriminator() {
         RequiredDiscriminator::ErrorVariant { variant } => {
-            // The `variant` field is the full expression such as
-            // `"return Err(MyError::TooLarge);"` — extract the inner variant.
-            // Fail-closed: if unparseable, return false.
-            match exact_error_variant(variant) {
-                Some(v) => v,
-                None => {
+            if let Some(value) = exact_error_variant(variant) {
+                value
+            } else {
+                let candidate = variant.trim();
+                let values = enum_variant_values(candidate);
+                if values.len() == 1 && values[0] == candidate {
+                    candidate.to_string()
+                } else {
                     return error_constructor_payload_oracle_matches_seam(variant, oracle_text)
                         || error_string_payload_oracle_matches_seam(variant, oracle_text);
                 }

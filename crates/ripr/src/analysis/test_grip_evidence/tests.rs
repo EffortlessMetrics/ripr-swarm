@@ -419,6 +419,12 @@ fn parse_rejects_empty() {
         .iter()
         .find(|s| s.kind() == SeamKind::ErrorVariant)
         .ok_or_else(|| "expected error_variant seam".to_string())?;
+    assert_eq!(
+        error_seam.required_discriminator(),
+        &RequiredDiscriminator::ErrorVariant {
+            variant: "AuthError::RevokedToken".to_string(),
+        }
+    );
 
     let evidence = evidence_for_seam(error_seam, &index);
     if evidence.discriminate.state != StageState::Weak
