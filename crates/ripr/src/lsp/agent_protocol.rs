@@ -88,36 +88,46 @@ mod tests {
         let agent = capability
             .get("riprAgent")
             .ok_or_else(|| "expected experimental.riprAgent capability".to_string())?;
-
-        if agent.get("protocol_version").and_then(serde_json::Value::as_str)
-            != Some(RIPR_AGENT_PROTOCOL_VERSION)
-        {
+        let protocol_version = agent
+            .get("protocol_version")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "expected protocol version".to_string())?;
+        if protocol_version != RIPR_AGENT_PROTOCOL_VERSION {
             return Err("protocol version must be explicit".to_string());
         }
-        if !agent
+
+        let supported_requests = agent
             .get("supported_requests")
             .and_then(serde_json::Value::as_array)
-            .is_some_and(Vec::is_empty)
-        {
+            .ok_or_else(|| "expected supported request list".to_string())?;
+        if !supported_requests.is_empty() {
             return Err("unimplemented request handlers must not be advertised".to_string());
         }
-        if !agent
+
+        let supported_profiles = agent
             .get("supported_profiles")
             .and_then(serde_json::Value::as_array)
-            .is_some_and(Vec::is_empty)
-        {
+            .ok_or_else(|| "expected supported profile list".to_string())?;
+        if !supported_profiles.is_empty() {
             return Err("unimplemented diagnostic profiles must not be advertised".to_string());
         }
-        if agent.get("source_edit_capability").and_then(serde_json::Value::as_str)
-            != Some("none")
-        {
+
+        let source_edit_capability = agent
+            .get("source_edit_capability")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "expected source edit capability".to_string())?;
+        if source_edit_capability != "none" {
             return Err("the capability must remain read-only".to_string());
         }
-        if agent.get("snapshot_handles").and_then(serde_json::Value::as_bool) != Some(false)
-            || agent.get("continuations").and_then(serde_json::Value::as_bool) != Some(false)
-            || agent.get("cancellation").and_then(serde_json::Value::as_bool) != Some(false)
-        {
-            return Err("future protocol behavior must remain explicitly disabled".to_string());
+
+        for field in ["snapshot_handles", "continuations", "cancellation"] {
+            let enabled = agent
+                .get(field)
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format!("expected boolean capability `{field}`"))?;
+            if enabled {
+                return Err(format!("future protocol capability `{field}` must remain disabled"));
+            }
         }
         Ok(())
     }
@@ -132,10 +142,12 @@ mod tests {
         let agent = capability
             .get("riprAgent")
             .ok_or_else(|| "expected experimental.riprAgent capability".to_string())?;
-        if agent.get("reserved_requests") != Some(&serde_json::json!(RESERVED_REQUESTS)) {
+        let expected_requests = serde_json::json!(RESERVED_REQUESTS);
+        if agent.get("reserved_requests") != Some(&expected_requests) {
             return Err("capability request vocabulary drifted".to_string());
         }
-        if agent.get("error_kinds") != Some(&serde_json::json!(RESERVED_ERROR_KINDS)) {
+        let expected_errors = serde_json::json!(RESERVED_ERROR_KINDS);
+        if agent.get("error_kinds") != Some(&expected_errors) {
             return Err("capability error vocabulary drifted".to_string());
         }
         Ok(())
