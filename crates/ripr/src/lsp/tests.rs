@@ -3901,34 +3901,6 @@ where
     }
 }
 
-async fn read_until_refresh_terminal<R>(reader: &mut R) -> Result<Vec<serde_json::Value>, String>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut notifications = Vec::new();
-    loop {
-        let message = tokio::time::timeout(Duration::from_secs(2), read_lsp_message(reader))
-            .await
-            .map_err(|timeout| {
-                format!("timed out waiting for terminal refresh notification: {timeout}")
-            })??;
-        let is_terminal_refresh = message.get("method").and_then(serde_json::Value::as_str)
-            == Some("window/logMessage")
-            && message
-                .get("params")
-                .and_then(|params| params.get("message"))
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|message| {
-                    message.contains("ripr analysis refresh failed after")
-                        || message.contains("ripr analysis refresh completed in")
-                });
-        notifications.push(message);
-        if is_terminal_refresh {
-            return Ok(notifications);
-        }
-    }
-}
-
 fn log_notification_messages(messages: &[serde_json::Value]) -> Vec<String> {
     messages
         .iter()
