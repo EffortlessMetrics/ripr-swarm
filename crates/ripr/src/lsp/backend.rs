@@ -1008,6 +1008,14 @@ impl Backend {
             return;
         }
         self.set_analysis_config(next);
+        if self.configuration_failure().is_some() {
+            // Keep the config_invalid signal visible while repository
+            // configuration remains broken. The stored session override is
+            // retained and will be reapplied when the repository reload
+            // succeeds; it cannot authorize a refresh on its own.
+            self.publish_analysis_status().await;
+            return;
+        }
         self.invalidate_analysis_input(RefreshReason::ConfigReload.as_str());
         self.publish_analysis_status().await;
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
