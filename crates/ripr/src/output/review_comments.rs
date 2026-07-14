@@ -192,7 +192,8 @@ pub(crate) fn render_review_comments_json_with_scope(
     selection: &AgentBriefSelection<'_>,
     analysis_scope: &ReviewCommentsAnalysisScope,
 ) -> Result<String, String> {
-    let causal_projection = CausalDeltaArtifact::load(context.root)?;
+    let (causal_projection, causal_projection_warning) =
+        load_causal_projection_for_review(context.root);
     let mut comments = Vec::new();
     let mut summary_only = Vec::new();
     let mut suppressed = Vec::new();
@@ -220,6 +221,9 @@ pub(crate) fn render_review_comments_json_with_scope(
             "repo-actionable fallback seams were suppressed because PR guidance requires a changed working-set match"
                 .to_string(),
         );
+    }
+    if let Some(warning) = causal_projection_warning {
+        warnings.push(warning);
     }
 
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
@@ -342,7 +346,7 @@ pub(crate) fn render_gap_record_review_comments_json(
     gap_ledger_path: &str,
     records: &[GapRecord],
 ) -> Result<String, String> {
-    let causal_projection = CausalDeltaArtifact::load(root)?;
+    let (causal_projection, causal_projection_warning) = load_causal_projection_for_review(root);
     let mut comments = Vec::new();
     let mut summary_only = Vec::new();
     let mut suppressed = Vec::new();
@@ -399,7 +403,10 @@ pub(crate) fn render_gap_record_review_comments_json(
         "comments": comments,
         "summary_only": summary_only,
         "suppressed": suppressed,
-        "warnings": [],
+        "warnings": causal_projection_warning
+            .iter()
+            .map(|warning| json!({"kind": "other", "message": warning}))
+            .collect::<Vec<_>>(),
         "limits_note": "Advisory static evidence only; gap-ledger repair cards do not edit source, generate tests, run mutation testing, or change CI/gate authority.",
     });
     let mut value = value;
@@ -410,6 +417,18 @@ pub(crate) fn render_gap_record_review_comments_json(
     }
 
     super::json::render_pretty(&value, "gap-ledger review comments")
+}
+
+fn load_causal_projection_for_review(root: &Path) -> (Option<CausalDeltaArtifact>, Option<String>) {
+    match CausalDeltaArtifact::load(root) {
+        Ok(projection) => (projection, None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "causal comparison artifact omitted from review projection: {error}"
+            )),
+        ),
+    }
 }
 
 #[cfg(test)]
