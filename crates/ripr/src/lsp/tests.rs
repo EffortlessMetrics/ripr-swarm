@@ -1028,7 +1028,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
         "PricingError::Boundary"
     );
     assert_eq!(witness["fix_site"]["file"], "tests/pricing.rs");
-    assert_eq!(witness["fix_site"]["oracle_location"]["line"], 12);
+    assert!(witness["fix_site"]["oracle_location"].is_null());
     assert!(witness["suggested_assertion"].is_null());
     assert_eq!(
         diagnostic
@@ -1047,7 +1047,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
         .ok_or_else(|| "expected fix-site related information".to_string())?;
     assert_eq!(related.len(), 1);
     assert!(related[0].message.starts_with("Fix site:"));
-    assert_eq!(related[0].location.range.start.line, 11);
+    assert_eq!(related[0].location.range.start.line, 9);
 
     let hover = super::hover::finding_hover_response(&finding, &diagnostic);
     let HoverContents::Markup(markup) = hover.contents else {
