@@ -166,9 +166,9 @@ Its stable fields are:
   "retry_command": "ripr.refresh",
   "repair_actions_available": false,
   "root_state": "selected_single_root",
-  "effective_root": "C:/work/ripr",
+  "effective_root": "<selected-workspace-root>",
   "candidate_roots": [],
-  "root_input_identity": "root:C:/work/ripr",
+  "root_input_identity": "root:<selected-workspace-root>",
   "root_detail": null,
   "root_recovery_route": "refresh"
 }

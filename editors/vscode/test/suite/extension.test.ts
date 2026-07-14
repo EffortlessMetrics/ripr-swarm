@@ -1046,14 +1046,14 @@ suite('Extension Smoke', () => {
         state: 'stopped',
         run_status: 'no_snapshot',
         root_state: 'workspace_ambiguous',
-        candidate_roots: ['C:/work/one', 'C:/work/two'],
+        candidate_roots: ['<workspace-one>', '<workspace-two>'],
         root_detail: 'select one workspace folder, then restart or refresh the session',
         root_recovery_route: 'select_root_and_restart'
       });
 
       assert.ok(context.status.text.includes('ripr: select root'));
       assert.ok(String(context.status.tooltip).includes('workspace_ambiguous'));
-      assert.ok(String(context.status.tooltip).includes('C:/work/one'));
+      assert.ok(String(context.status.tooltip).includes('<workspace-one>'));
       assert.ok(String(context.status.tooltip).includes('select_root_and_restart'));
     } finally {
       await context.dispose();
