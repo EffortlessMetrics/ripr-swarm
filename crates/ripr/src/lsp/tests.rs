@@ -50,9 +50,9 @@ use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLensOptions, DiagnosticSeverity,
     DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, ExecuteCommandParams, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, Position, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    DidOpenTextDocumentParams, ExecuteCommandParams, FileChangeType, FileEvent, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, Position,
+    Range, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
     VersionedTextDocumentIdentifier, WorkspaceFolder,
 };
@@ -115,6 +115,33 @@ fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
         root,
         &root.join("Cargo.toml.bak")
     ));
+}
+
+#[test]
+fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+    let config_uri = file_uri_for_path(&root.join(crate::config::CONFIG_FILE_NAME))
+        .map_err(|err| format!("config URI failed: {err}"))?;
+    let manifest_uri = file_uri_for_path(&root.join("Cargo.toml"))
+        .map_err(|err| format!("manifest URI failed: {err}"))?;
+    let changes = vec![
+        FileEvent {
+            uri: config_uri,
+            typ: FileChangeType::CHANGED,
+        },
+        FileEvent {
+            uri: manifest_uri,
+            typ: FileChangeType::CHANGED,
+        },
+    ];
+
+    assert_eq!(backend.watched_file_change_kinds(&changes), (true, true));
+    Ok(())
 }
 
 #[test]

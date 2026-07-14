@@ -116,6 +116,26 @@ fn git_ref_exists(root: &Path, refname: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Resolve a requested base to the commit that the next analysis will use.
+///
+/// Tracking the commit rather than only the ref name keeps moving refs such as
+/// `origin/main` from being mistaken for the same analysis input after they
+/// advance. An unresolved ref remains `None`; the analysis path will report
+/// the named base failure instead of manufacturing a commit identity.
+pub fn resolve_base_commit(root: &Path, base: Option<&str>) -> Option<String> {
+    let base = base?;
+    let commit = format!("{base}^{{commit}}");
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", &commit])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 pub fn load_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
     run_git_diff(
         root,

@@ -101,7 +101,10 @@ impl LspAnalysisInputIdentity {
                     .map(crate::config::config_fingerprint),
                 session_options_identity,
                 requested_base: config.base_ref.clone(),
-                resolved_base: None,
+                resolved_base: crate::analysis::resolve_base_commit(
+                    &effective_root,
+                    config.base_ref.as_deref(),
+                ),
             },
             config.mode.clone(),
             "default",
