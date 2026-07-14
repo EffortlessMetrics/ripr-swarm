@@ -194,6 +194,7 @@ export class RiprClientController {
   private server: ResolvedServer | undefined;
   private readonly notificationDisposables: vscode.Disposable[] = [];
   private receivedTypedAnalysisStatus = false;
+  private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
   private readonly dirtyRiprDocuments = new Set<string>();
   private firstUsefulAction: FirstUsefulActionStatus | undefined;
   private setupStatus: RiprSetupStatus = setupStatusWithoutWorkspace();
@@ -337,6 +338,7 @@ export class RiprClientController {
     this.client = undefined;
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
+    this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
     while (this.notificationDisposables.length > 0) {
@@ -876,7 +878,7 @@ export class RiprClientController {
     if (!message) {
       return;
     }
-    if (this.receivedTypedAnalysisStatus && isRefreshLifecycleLog(message)) {
+    if (this.shouldSuppressRefreshLifecycleLog(message)) {
       return;
     }
     if (message.startsWith('ripr analysis refresh queued')) {
@@ -918,6 +920,7 @@ export class RiprClientController {
       return;
     }
     this.receivedTypedAnalysisStatus = true;
+    this.typedAnalysisStatusState = status.state;
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
@@ -998,6 +1001,12 @@ export class RiprClientController {
         `Unsaved routed files: ${Array.from(this.dirtyRiprDocuments).join(', ')}`
       ].join('\n')
     };
+  }
+
+  private shouldSuppressRefreshLifecycleLog(message: string): boolean {
+    return this.receivedTypedAnalysisStatus
+      && this.typedAnalysisStatusState !== 'succeeded'
+      && isRefreshLifecycleLog(message);
   }
 
   private updateStatus(status: RiprStatusState): void {

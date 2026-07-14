@@ -171,9 +171,13 @@ Its stable fields are:
 last retained analysis. A failed, cancelled, or superseded attempt never
 replaces that snapshot and sets `run_status` to `stale` (or `no_snapshot` if
 there is no completed snapshot). The notification is the typed authority for
-editor status; `window/logMessage` remains human-readable diagnostic output and
-is not a client state protocol. Timing and queue fields belong only in this
-health surface, never in diagnostic or semantic gap identities.
+attempt health and stale/failure state; `window/logMessage` remains
+human-readable diagnostic output. A successful typed status may still be
+followed by the completion log, which provides rich counts such as actionable
+gap artifacts and enabled languages for clients that project those details. A
+completion log must not override a typed failed, cancelled, or superseded
+state. Timing and queue fields belong only in this health surface, never in
+diagnostic or semantic gap identities.
 
 "Repair packet" here is the canonical RIPR-SPEC-0061 contract, not
 a separate LSP shape. A complete packet carries the full

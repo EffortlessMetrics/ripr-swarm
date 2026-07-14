@@ -5963,11 +5963,35 @@ fn write_actionable_gaps_report(
     Ok(())
 }
 
+fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
+    let finding = sample_finding();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        ))
+        .ok_or_else(|| "expected successful analysis snapshot".to_string())?;
+    let request = RefreshRequest {
+        generation: 1,
+        root: PathBuf::from("/workspace"),
+        config: LspAnalysisConfig::default(),
+        workspace_revision: 1,
+        scope: RefreshScope::Interactive,
+        reason: RefreshReason::DidSave,
+        cancellation: AnalysisCancellationToken::new(),
+    };
+    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+    Ok(())
+}
+
 #[test]
-fn execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_null() -> Result<(), String>
-{
-    // When neither actionable-gaps.json nor gap-decision-ledger.json exists on
-    // disk the command must return null (no partial packet).
+fn execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_sentinel()
+-> Result<(), String> {
+    // Without a successful snapshot, on-disk artifacts must never become a
+    // repair packet, even when the report files are absent.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -5977,18 +6001,18 @@ fn execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_null() 
         let (service, _socket) =
             LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
         let backend = service.inner();
-
         let params = ExecuteCommandParams {
             command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
             arguments: vec![],
             work_done_progress_params: Default::default(),
         };
         let result = backend.execute_command(params).await;
-        let value = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        assert!(
-            value.is_none(),
-            "expected null when no actionable-gaps.json and no ledger, got {value:?}"
-        );
+        let value = result
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected stale-snapshot sentinel".to_string())?;
+        assert_eq!(value["kind"], "repair_packet");
+        assert_eq!(value["status"], "not_actionable_or_incomplete");
+        assert_eq!(value["reason"], "analysis_snapshot_stale");
         Ok(())
     })
 }
@@ -6032,6 +6056,7 @@ fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Re
         let (service, _socket) =
             LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
         let backend = service.inner();
+        seed_successful_snapshot(backend)?;
         let params = ExecuteCommandParams {
             command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
             arguments: vec![],
@@ -6079,6 +6104,7 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
         let (service, _socket) =
             LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
         let backend = service.inner();
+        seed_successful_snapshot(backend)?;
         let params = ExecuteCommandParams {
             command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
             arguments: vec![serde_json::json!({

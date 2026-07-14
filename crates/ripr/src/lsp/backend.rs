@@ -1632,9 +1632,7 @@ const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.j
 impl Backend {
     fn collect_repair_packet(&self, arguments: &[LSPAny]) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
-        if !health.allows_current_repairs()
-            && !matches!(health.state, AnalysisAttemptState::Stopped)
-        {
+        if !health.allows_current_repairs() {
             return Some(repair_packet_sentinel("analysis_snapshot_stale"));
         }
         let root = self.root.lock().ok()?.clone();
