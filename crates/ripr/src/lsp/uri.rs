@@ -166,16 +166,16 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 fn paths_equal_or_below(root: &Path, candidate: &Path) -> bool {
     if cfg!(windows) {
-        root.to_string_lossy()
-            .eq_ignore_ascii_case(&candidate.to_string_lossy())
-            || candidate
-                .to_string_lossy()
-                .to_ascii_lowercase()
-                .starts_with(&(root.to_string_lossy().to_ascii_lowercase() + "\\"))
-            || candidate
-                .to_string_lossy()
-                .to_ascii_lowercase()
-                .starts_with(&(root.to_string_lossy().to_ascii_lowercase() + "/"))
+        let root_components = root
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        let candidate_components = candidate
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        candidate_components.len() >= root_components.len()
+            && candidate_components[..root_components.len()] == root_components[..]
     } else {
         candidate == root || candidate.starts_with(root)
     }
@@ -270,6 +270,21 @@ mod tests {
         ));
         assert!(!path_is_within_root(root, Path::new("../outside.rs")));
         assert!(!path_is_within_root(root, Path::new("/workspace/other.rs")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_root_contains_case_insensitive_descendants() {
+        let c_drive_root = PathBuf::from(format!("C:{}", std::path::MAIN_SEPARATOR));
+        let c_child = c_drive_root.join("workspace").join("src").join("lib.rs");
+        let d_child = PathBuf::from(format!(
+            "D:{}workspace{}src{}lib.rs",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+        ));
+        assert!(paths_equal_or_below(&c_drive_root, &c_child,));
+        assert!(!paths_equal_or_below(&c_drive_root, &d_child));
     }
 
     #[test]

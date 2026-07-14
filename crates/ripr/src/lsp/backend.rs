@@ -47,7 +47,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::time::Instant;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::Result as LspResult;
 use tower_lsp_server::ls_types::{
     CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, Diagnostic,
@@ -62,6 +62,7 @@ pub(super) struct Backend {
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
     workspace_root_epoch: AtomicU64,
+    workspace_root_transition: AsyncMutex<()>,
     documents: Mutex<DocumentStore>,
     analysis_config: Mutex<LspAnalysisConfig>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
@@ -86,6 +87,7 @@ impl Backend {
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::selected(root)),
             workspace_root_epoch: AtomicU64::new(0),
+            workspace_root_transition: AsyncMutex::new(()),
             documents: Mutex::new(DocumentStore::default()),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
@@ -124,8 +126,8 @@ impl Backend {
                 (&authority.state, scope),
                 (WorkspaceRootState::RootChanged, RefreshScope::Full)
             ) {
-                self.set_workspace_root_authority(WorkspaceRootAuthority::selected(root.clone()));
-                self.publish_analysis_status().await;
+                self.apply_workspace_root_authority(WorkspaceRootAuthority::selected(root.clone()))
+                    .await;
             } else {
                 return;
             }
@@ -766,6 +768,7 @@ impl Backend {
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
+        let _transition = self.workspace_root_transition.lock().await;
         let authority_epoch = self.workspace_root_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let previous = self.workspace_root_authority();
         let changed = previous.state != authority.state
@@ -1303,6 +1306,9 @@ impl LanguageServer for Backend {
         self.set_analysis_config(LspAnalysisConfig::from_initialize_params(
             &params,
             repo_config,
+        ));
+        self.set_workspace_root_authority(WorkspaceRootAuthority::unavailable(
+            "initial workspace root resolution pending",
         ));
         self.apply_workspace_root_resolution(resolution).await;
         Ok(initialize_result())
