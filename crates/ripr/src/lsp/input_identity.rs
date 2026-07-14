@@ -2,7 +2,6 @@ use super::config::LspAnalysisConfig;
 use crate::app::Mode;
 use crate::domain::LanguageId;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Versioned semantic inputs that identify one LSP analysis session state.
 ///
@@ -104,7 +103,10 @@ impl LspAnalysisInputIdentity {
                     .map(crate::config::config_fingerprint),
                 session_options_identity,
                 requested_base: config.base_ref.clone(),
-                resolved_base: Self::resolve_base_ref(&effective_root, config.base_ref.as_deref()),
+                resolved_base: crate::analysis::resolve_base_commit(
+                    &effective_root,
+                    config.base_ref.as_deref(),
+                ),
             },
             config.mode.clone(),
             "default",
@@ -114,26 +116,6 @@ impl LspAnalysisInputIdentity {
             env!("CARGO_PKG_VERSION"),
             "lsp-analysis-input-v1",
         )
-    }
-
-    /// Resolve the configured base to the commit actually used by Git.
-    ///
-    /// A moving ref is not sufficient provenance for a retained snapshot. If
-    /// Git cannot resolve the configured value, preserve `None` so status does
-    /// not imply an exact base that the producer did not establish.
-    fn resolve_base_ref(root: &std::path::Path, requested: Option<&str>) -> Option<String> {
-        let requested = requested?;
-        let commit_ref = format!("{requested}^{{commit}}");
-        let output = Command::new("git")
-            .args(["rev-parse", "--verify", "--quiet", &commit_ref])
-            .current_dir(root)
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let resolved = String::from_utf8(output.stdout).ok()?.trim().to_string();
-        (!resolved.is_empty()).then_some(resolved)
     }
 
     /// Stable opaque identity for status, snapshot provenance, and client
@@ -431,11 +413,11 @@ mod tests {
             .to_string();
 
             assert_eq!(
-                LspAnalysisInputIdentity::resolve_base_ref(&root, Some("HEAD")),
+                crate::analysis::resolve_base_commit(&root, Some("HEAD")),
                 Some(expected)
             );
             assert_eq!(
-                LspAnalysisInputIdentity::resolve_base_ref(&root, Some("missing-base")),
+                crate::analysis::resolve_base_commit(&root, Some("missing-base")),
                 None
             );
             Ok(())

@@ -1079,6 +1079,16 @@ impl Backend {
         workspace_input_path_is_relevant(&root, &path)
     }
 
+    pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> (bool, bool) {
+        let config_changed = changes
+            .iter()
+            .any(|event| self.file_event_is_repository_config(event));
+        let workspace_graph_changed = changes
+            .iter()
+            .any(|event| self.file_event_is_workspace_manifest_or_lockfile(event));
+        (config_changed, workspace_graph_changed)
+    }
+
     fn set_analysis_config(&self, config: LspAnalysisConfig) {
         let Ok(mut current_config) = self.analysis_config.lock() else {
             return;
@@ -1620,14 +1630,8 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let config_changed = params
-            .changes
-            .iter()
-            .any(|event| self.file_event_is_repository_config(event));
-        let workspace_graph_changed = params
-            .changes
-            .iter()
-            .any(|event| self.file_event_is_workspace_manifest_or_lockfile(event));
+        let (config_changed, workspace_graph_changed) =
+            self.watched_file_change_kinds(&params.changes);
         if config_changed {
             self.reload_repository_config().await;
         }
