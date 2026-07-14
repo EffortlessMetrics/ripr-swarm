@@ -108,12 +108,15 @@ fn git_symbolic_ref_quiet(root: &Path, refname: &str) -> Option<String> {
 /// Return `true` when `git rev-parse --verify --quiet <refname>` succeeds,
 /// meaning the ref genuinely exists in the repository.
 fn git_ref_exists(root: &Path, refname: &str) -> bool {
+    git_ref_output(root, refname).is_some_and(|out| out.status.success())
+}
+
+fn git_ref_output(root: &Path, refname: &str) -> Option<std::process::Output> {
     Command::new("git")
         .args(["rev-parse", "--verify", "--quiet", refname])
         .current_dir(root)
         .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+        .ok()
 }
 
 /// Resolve a requested base to the commit that the next analysis will use.
@@ -125,11 +128,7 @@ fn git_ref_exists(root: &Path, refname: &str) -> bool {
 pub fn resolve_base_commit(root: &Path, base: Option<&str>) -> Option<String> {
     let base = base?;
     let commit = format!("{base}^{{commit}}");
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", "--quiet", &commit])
-        .current_dir(root)
-        .output()
-        .ok()?;
+    let output = git_ref_output(root, &commit)?;
     output
         .status
         .success()
