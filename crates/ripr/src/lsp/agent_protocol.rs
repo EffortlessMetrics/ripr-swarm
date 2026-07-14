@@ -64,7 +64,10 @@ pub(super) fn server_capability() -> LSPAny {
             "analysis_status_notification": "ripr/analysisStatus",
             "compatibility_commands": compatibility_commands(),
             "error_kinds": RESERVED_ERROR_KINDS,
-            "claim_boundary": "Capability negotiation only; no riprAgent requests are implemented by this slice."
+            "claim_boundary": concat!(
+                "Capability negotiation only; ",
+                "no riprAgent requests are implemented by this slice."
+            )
         }
     })
 }
@@ -126,7 +129,9 @@ mod tests {
                 .and_then(serde_json::Value::as_bool)
                 .ok_or_else(|| format!("expected boolean capability `{field}`"))?;
             if enabled {
-                return Err(format!("future protocol capability `{field}` must remain disabled"));
+                return Err(format!(
+                    "future protocol capability `{field}` must remain disabled"
+                ));
             }
         }
         Ok(())
