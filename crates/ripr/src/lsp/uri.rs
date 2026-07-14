@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tower_lsp_server::ls_types::Uri;
 
 mod percent_codec {
@@ -77,6 +77,25 @@ pub(super) fn path_from_file_uri(uri: &Uri) -> Option<PathBuf> {
     normalized_file_uri_path(uri).map(PathBuf::from)
 }
 
+/// Prove that a projected path stays inside the selected workspace root.
+/// Existing paths are canonicalized so symlink/junction escapes are rejected;
+/// missing paths fall back to normalized lexical containment for diagnostics
+/// and command payloads that refer to a future file.
+pub(super) fn path_is_within_root(root: &Path, path: &Path) -> bool {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let root = canonical_or_normalized(root);
+    let candidate = canonical_or_normalized(&candidate);
+    paths_equal_or_below(&root, &candidate)
+}
+
+pub(super) fn file_uri_is_within_root(root: &Path, uri: &Uri) -> bool {
+    path_from_file_uri(uri).is_some_and(|path| path_is_within_root(root, &path))
+}
+
 pub(super) fn file_uris_match(left: &Uri, right: &Uri) -> bool {
     if left == right {
         return true;
@@ -105,6 +124,42 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
         decoded
     };
     Some(path.replace('\\', "/"))
+}
+
+fn canonical_or_normalized(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| normalize_path(path))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::RootDir | Component::Prefix(_) => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn paths_equal_or_below(root: &Path, candidate: &Path) -> bool {
+    if cfg!(windows) {
+        root.to_string_lossy()
+            .eq_ignore_ascii_case(&candidate.to_string_lossy())
+            || candidate
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .starts_with(&(root.to_string_lossy().to_ascii_lowercase() + "\\"))
+            || candidate
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .starts_with(&(root.to_string_lossy().to_ascii_lowercase() + "/"))
+    } else {
+        candidate == root || candidate.starts_with(root)
+    }
 }
 
 pub(super) fn encode_uri_path(path: &str) -> String {
@@ -183,6 +238,30 @@ mod tests {
         let lower = parse_uri("file:///workspace/ripr/src/lib.rs")?;
 
         assert!(!file_uris_match(&upper, &lower));
+        Ok(())
+    }
+
+    #[test]
+    fn path_is_within_root_rejects_traversal_and_foreign_absolute_paths() {
+        let root = Path::new("/workspace/ripr");
+        assert!(path_is_within_root(root, Path::new("src/lib.rs")));
+        assert!(path_is_within_root(
+            root,
+            Path::new("/workspace/ripr/src/lib.rs")
+        ));
+        assert!(!path_is_within_root(root, Path::new("../outside.rs")));
+        assert!(!path_is_within_root(root, Path::new("/workspace/other.rs")));
+    }
+
+    #[test]
+    fn file_uri_is_within_root_rejects_non_file_and_foreign_uris() -> Result<(), String> {
+        let root = Path::new("/workspace/ripr");
+        let inside = parse_uri("file:///workspace/ripr/src/lib.rs")?;
+        let outside = parse_uri("file:///workspace/other/src/lib.rs")?;
+        let foreign = parse_uri("https://example.test/src/lib.rs")?;
+        assert!(file_uri_is_within_root(root, &inside));
+        assert!(!file_uri_is_within_root(root, &outside));
+        assert!(!file_uri_is_within_root(root, &foreign));
         Ok(())
     }
 }
