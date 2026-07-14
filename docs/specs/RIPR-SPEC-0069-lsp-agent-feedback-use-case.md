@@ -98,6 +98,7 @@ The exposed command vocabulary is closed (`crates/ripr/src/lsp.rs`):
 - `ripr.copyTargetedTestBrief`
 - `ripr.collectContext`
 - `ripr.collectEvidenceContext`
+- `ripr.collectWorkspaceStatus`
 - `ripr.openRelatedTest`
 - `ripr.refresh`
 

@@ -490,6 +490,13 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.snapshot_run_status = Some(run_status.to_string());
+        }
+    }
+
     fn effective_health_for_snapshot(
         &self,
         mut health: AnalysisHealth,

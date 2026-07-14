@@ -6201,6 +6201,33 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
 }
 
 #[test]
+fn execute_command_collect_repair_packet_stale_snapshot_returns_sentinel() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_snapshot_run_status_for_test("stale");
+
+        let result = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected stale-snapshot sentinel".to_string())?;
+        assert_eq!(result["status"], "not_actionable_or_incomplete");
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        Ok(())
+    })
+}
+
+#[test]
 fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<(), String> {
     let Some(provider) = initialize_result().capabilities.execute_command_provider else {
         return Err("expected execute command provider".to_string());

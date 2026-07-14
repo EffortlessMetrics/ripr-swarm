@@ -105,7 +105,9 @@ impl AnalysisHealth {
     }
 
     pub(super) fn allows_current_repairs(&self) -> bool {
-        self.snapshot_id.is_some() && self.state.allows_current_repairs()
+        self.snapshot_id.is_some()
+            && self.state.allows_current_repairs()
+            && self.run_status() != "stale"
     }
 
     pub(super) fn pending(&self) -> bool {
