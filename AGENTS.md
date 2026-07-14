@@ -412,9 +412,12 @@ reconcile current repo and work-item truth
 The main or root session is the **orchestrator and integrator**. It owns the
 objective, accepted premises, constraints, non-goals, dependency order,
 acceptance coverage, contradictions, product or architecture decisions, PR
-scope, and final integration judgment. File searches, CI logs, broad diffs,
-test inventories, and failed hypotheses belong in subagents that return bounded
-structured results, not in the root context.
+scope, and final integration judgment. Broad file searches, CI logs, broad
+diffs, test inventories, and failed hypotheses belong in subagents that return
+bounded structured results, not in the root context. During verification, the
+root may inspect targeted evidence directly when binding a claim to an exact
+head, command, denominator, artifact, or changed line; this targeted inspection
+does not turn the root into a raw-log sink.
 
 ### When to delegate
 
@@ -576,8 +579,8 @@ worktrees and branches dispositioned, locks/claims released when present,
 `target/ripr` growth inspected, temporary/generated/npm/Cargo residue reviewed,
 and the root worktree proven uncontaminated.
 
-The typed orchestration tooling described by issue #1631 and child issues
-#1632–#1639 is not yet an assumed command surface. Apply these rules manually
+The typed orchestration tooling described by issue #1631 and the child issue
+range 1632–1639 is not yet an assumed command surface. Apply these rules manually
 until each command and schema lands; do not invent or cite planned commands as
 current evidence. See `docs/AGENT_OPERATING_MODEL.md`,
 `docs/CODEX_GOALS.md`, `docs/agent-context/CONTEXT_SYSTEM.md`, and
