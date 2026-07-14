@@ -3,12 +3,14 @@ use crate::agent::loop_commands::{
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_seam_packets_command, agent_verify_command,
     check_repo_exposure_command, display_path,
 };
+use crate::analysis::canonical_gap::canonical_gap_identities;
 use crate::app::Mode;
 use crate::app::agent_brief::{
     AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefSelection,
 };
 use crate::config::{RiprConfig, config_fingerprint};
 use crate::output::agent_seam_packets;
+use crate::output::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -21,7 +23,8 @@ pub(crate) fn render_agent_brief_json(
     working_set: &AgentBriefResolvedWorkingSet,
     selection: &AgentBriefSelection<'_>,
 ) -> Result<String, String> {
-    let value = json!({
+    let causal_projection = CausalDeltaArtifact::load(root)?;
+    let mut value = json!({
         "schema_version": AGENT_BRIEF_SCHEMA_VERSION,
         "tool": "ripr",
         "scope": "working_set",
@@ -38,7 +41,7 @@ pub(crate) fn render_agent_brief_json(
         "top_seams": selection
             .top_seams
             .iter()
-            .map(|entry| top_seam_json(entry, root, mode, config))
+            .map(|entry| top_seam_json(entry, root, mode, config, causal_projection.as_ref()))
             .collect::<Vec<_>>(),
         "next": {
             "inspect_packet": agent_seam_packets_command(
@@ -55,6 +58,11 @@ pub(crate) fn render_agent_brief_json(
         },
         "warnings": &selection.warnings,
     });
+    if let Some(projection) = causal_projection
+        && let Some(object) = value.as_object_mut()
+    {
+        projection.insert_comparison_fields(object);
+    }
     serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
 }
 
@@ -87,6 +95,7 @@ fn top_seam_json(
     root: &Path,
     mode: &Mode,
     config: &RiprConfig,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Value {
     let entry = selected.seam;
     let seam = &entry.seam;
@@ -97,7 +106,7 @@ fn top_seam_json(
     let candidate_values = agent_seam_packets::candidate_values_for(entry, &missing);
     let assertion_shape = agent_seam_packets::assertion_shape_for_entry(entry);
 
-    json!({
+    let mut value = json!({
         "seam_id": seam.id().as_str(),
         "owner": seam.owner(),
         "seam_kind": seam.kind().as_str(),
@@ -150,7 +159,18 @@ fn top_seam_json(
             "seam_id": seam.id().as_str(),
         },
         "verification": verification_json(root, mode, &recommended.name),
-    })
+    });
+    if let Some(projection) = causal_projection
+        && let Some(delta) = projection.delta_for(
+            canonical_gap_identities(std::slice::from_ref(entry))
+                .get(seam.id())
+                .map(|identity| identity.id.as_str()),
+        )
+        && let Some(object) = value.as_object_mut()
+    {
+        insert_canonical_delta_fields(object, delta);
+    }
+    value
 }
 
 fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value {

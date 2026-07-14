@@ -11,6 +11,7 @@ use crate::app::agent_brief::{
 use crate::config::RiprConfig;
 use crate::output::agent_seam_packets;
 use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
+use crate::output::causal_projection::{CausalDeltaArtifact, insert_comparison_fields};
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
     EvidenceRecordStaticLimitation, actionability_for, canonical_receipt_command_for,
@@ -191,6 +192,7 @@ pub(crate) fn render_review_comments_json_with_scope(
     selection: &AgentBriefSelection<'_>,
     analysis_scope: &ReviewCommentsAnalysisScope,
 ) -> Result<String, String> {
+    let causal_projection = CausalDeltaArtifact::load(context.root)?;
     let mut comments = Vec::new();
     let mut summary_only = Vec::new();
     let mut suppressed = Vec::new();
@@ -221,8 +223,13 @@ pub(crate) fn render_review_comments_json_with_scope(
     }
 
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
-        let recommendation =
-            review_recommendation_json(context.root, context.mode, context.config, selected);
+        let recommendation = review_recommendation_json(
+            context.root,
+            context.mode,
+            context.config,
+            selected,
+            causal_projection.as_ref(),
+        );
         if cross_language_test_target_unresolved(selected.seam) {
             let mut item = recommendation;
             item["placement"] = Value::Null;
@@ -299,6 +306,12 @@ pub(crate) fn render_review_comments_json_with_scope(
         "warnings": review_warnings_json(&warnings),
         "limits_note": "Advisory static evidence only; no automatic edits, generated tests, runtime mutation execution, or CI blocking.",
     });
+    let mut value = value;
+    if let Some(projection) = &causal_projection
+        && let Some(object) = value.as_object_mut()
+    {
+        insert_comparison_fields(object, projection);
+    }
 
     super::json::render_pretty(&value, "review comments")
 }
@@ -329,6 +342,7 @@ pub(crate) fn render_gap_record_review_comments_json(
     gap_ledger_path: &str,
     records: &[GapRecord],
 ) -> Result<String, String> {
+    let causal_projection = CausalDeltaArtifact::load(root)?;
     let mut comments = Vec::new();
     let mut summary_only = Vec::new();
     let mut suppressed = Vec::new();
@@ -336,8 +350,13 @@ pub(crate) fn render_gap_record_review_comments_json(
     let analysis_scope = ReviewCommentsAnalysisScope::gap_ledger_artifact(records);
 
     for record in records {
-        let comment = match gap_record_comment_json(root, gap_ledger_path, record, &mut seen_dedupe)
-        {
+        let comment = match gap_record_comment_json(
+            root,
+            gap_ledger_path,
+            record,
+            &mut seen_dedupe,
+            causal_projection.as_ref(),
+        ) {
             Ok(comment) => comment,
             Err(suppressed_item) => {
                 suppressed.push(suppressed_item);
@@ -383,6 +402,12 @@ pub(crate) fn render_gap_record_review_comments_json(
         "warnings": [],
         "limits_note": "Advisory static evidence only; gap-ledger repair cards do not edit source, generate tests, run mutation testing, or change CI/gate authority.",
     });
+    let mut value = value;
+    if let Some(projection) = &causal_projection
+        && let Some(object) = value.as_object_mut()
+    {
+        insert_comparison_fields(object, projection);
+    }
 
     super::json::render_pretty(&value, "gap-ledger review comments")
 }
@@ -506,6 +531,7 @@ fn gap_record_comment_json(
     gap_ledger_path: &str,
     record: &GapRecord,
     seen_dedupe: &mut BTreeSet<String>,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Result<Value, Value> {
     let Some(projection) = record.projection_eligibility.get("pr_comment") else {
         return Err(gap_record_suppressed_json(
@@ -611,7 +637,7 @@ fn gap_record_comment_json(
     let verify_command = record.verification_commands[0].clone();
     let source_location = source_location_json(file, Some(line as usize));
 
-    Ok(json!({
+    let mut value = json!({
         "id": format!("ripr-review-{gap_id}"),
         "source": "gap_decision_ledger",
         "gap_id": gap_id.as_str(),
@@ -663,7 +689,13 @@ fn gap_record_comment_json(
             "command": format!("ripr first-action --root {} --gap-ledger {}", display_path(root), gap_ledger_path),
             "verify_command": verify_command,
         },
-    }))
+    });
+    if let Some(projection) = causal_projection
+        && let Some(object) = value.as_object_mut()
+    {
+        projection.insert_delta_fields(object, non_empty(&record.canonical_gap_id).as_deref());
+    }
+    Ok(value)
 }
 
 fn gap_record_suppressed_json(record: &GapRecord, reason: &str, message: &str) -> Value {
@@ -763,6 +795,7 @@ fn review_recommendation_json(
     _mode: &Mode,
     config: &RiprConfig,
     selected: &AgentBriefSelectedSeam<'_>,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Value {
     let entry = selected.seam;
     let seam = &entry.seam;
@@ -956,6 +989,14 @@ fn review_recommendation_json(
         if let Some(target) = navigation_target_json {
             object.insert("navigation_only_target".to_string(), target);
         }
+    }
+    if let Some(projection) = causal_projection
+        && let Some(object) = recommendation.as_object_mut()
+    {
+        projection.insert_delta_fields(
+            object,
+            canonical_gap_identity(entry).map(|id| id.id).as_deref(),
+        );
     }
     recommendation
 }
@@ -1193,6 +1234,9 @@ fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value: Option<&Va
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("null");
         lines.push(format!("  - canonical_gap_id: `{canonical_gap_id}`"));
+        if let Some(attribution) = string_field(item, "delta_attribution") {
+            lines.push(format!("  - delta_attribution: `{attribution}`"));
+        }
         lines.push(format!("  - state: `{state}`"));
         if let Some(route) = repair_route_kind(item) {
             lines.push(format!("  - repair_route: `{route}`"));
@@ -2060,6 +2104,7 @@ mod tests {
             &Mode::Draft,
             &RiprConfig::default(),
             &selected.top_seams[0],
+            None,
         );
 
         assert_eq!(item["gap_state"], "static_limitation");

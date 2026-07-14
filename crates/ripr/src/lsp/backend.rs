@@ -875,10 +875,16 @@ impl Backend {
         }
         if let Some(seam_id) = args.get("seam_id").and_then(|v| v.as_str()) {
             let seam = snapshot.classified_seam_by_id(seam_id)?;
-            let packet = crate::output::agent_seam_packets::render_agent_seam_packets_json(
-                std::slice::from_ref(seam),
-                None,
-            );
+            let causal_projection =
+                crate::output::causal_projection::CausalDeltaArtifact::load(&snapshot.root)
+                    .ok()
+                    .flatten();
+            let packet =
+                crate::output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
+                    std::slice::from_ref(seam),
+                    None,
+                    causal_projection.as_ref(),
+                );
             return serde_json::from_str(&packet).ok();
         }
         let finding_id = args.get("finding_id").and_then(|v| v.as_str())?;

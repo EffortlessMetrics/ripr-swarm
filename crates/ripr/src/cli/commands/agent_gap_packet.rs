@@ -2,6 +2,7 @@ use crate::output;
 use std::path::Path;
 
 pub(super) fn render_agent_packet_from_gap_ledger(
+    root: &Path,
     gap_ledger: &Path,
     gap_id: &str,
 ) -> Result<String, String> {
@@ -22,9 +23,11 @@ pub(super) fn render_agent_packet_from_gap_ledger(
         .iter()
         .find(|record| record.gap_id == gap_id || record.canonical_gap_id == gap_id)
         .ok_or_else(|| format!("agent packet gap_id {gap_id} was not found"))?;
-    output::agent_seam_packets::render_agent_gap_record_packet_json(
+    let causal_projection = output::causal_projection::CausalDeltaArtifact::load(root)?;
+    output::agent_seam_packets::render_agent_gap_record_packet_json_with_causal(
         &output::outcome::display_path(gap_ledger),
         record,
+        causal_projection.as_ref(),
     )
     .map_err(|err| format!("agent packet gap_id {gap_id} {err}"))
 }
@@ -53,7 +56,7 @@ mod tests {
         )
         .map_err(|err| format!("write gap ledger: {err}"))?;
 
-        let rendered = render_agent_packet_from_gap_ledger(&gap_ledger, "gap:rust:pricing")?;
+        let rendered = render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:rust:pricing")?;
         assert!(rendered.contains(r#""source": "gap_decision_ledger""#));
         assert!(rendered.contains(r#""gap_id": "gap:pr:pricing""#));
         assert!(rendered.contains(r#""repair_kind": "AddBoundaryAssertion""#));
@@ -79,11 +82,11 @@ mod tests {
         .map_err(|err| format!("write gap ledger: {err}"))?;
 
         assert_eq!(
-            render_agent_packet_from_gap_ledger(&gap_ledger, "gap:missing"),
+            render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:missing"),
             Err("agent packet gap_id gap:missing was not found".to_string())
         );
         assert_eq!(
-            render_agent_packet_from_gap_ledger(&gap_ledger, "gap:no-action"),
+            render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:no-action"),
             Err(
                 "agent packet gap_id gap:no-action is not agent-packet eligible: already_observed"
                     .to_string()

@@ -14,6 +14,7 @@ use crate::analysis::seams::SeamGripClass;
 use crate::app::check_workspace_with_config;
 use crate::config::{ConfigSeverity, SeverityConfig};
 use crate::domain::{Finding, LanguageId, LanguageStatus, RelatedTest};
+use crate::output::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, projection_eligible,
 };
@@ -302,12 +303,14 @@ pub(super) fn finding_diagnostics_by_uri(
     findings: &[Finding],
     severity: &SeverityConfig,
     is_full_run: bool,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Result<BTreeMap<Uri, Vec<Diagnostic>>, String> {
     let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
     for (primary, raw_findings) in canonical_finding_groups(findings) {
         let path = absolute_finding_path(root, &primary);
         let uri = file_uri_for_path(&path)?;
-        let mut diagnostic = diagnostic_for_finding_with_config(root, &primary, severity);
+        let mut diagnostic =
+            diagnostic_for_finding_with_causal(root, &primary, severity, causal_projection);
         if primary.canonical_gap.is_some() {
             add_canonical_group_data(root, &mut diagnostic, &primary, &raw_findings);
             if canonical_group_has_mixed_classes(&raw_findings) {
@@ -500,12 +503,20 @@ pub(super) fn workspace_diagnostics_with_config(
         defer_seam_inventory,
     );
     let is_full_run = run_status == "full";
+    let causal_projection = match CausalDeltaArtifact::load(&root) {
+        Ok(projection) => projection,
+        Err(error) => {
+            eprintln!("ripr lsp: causal projection omitted: {error}");
+            None
+        }
+    };
 
     let mut grouped = finding_diagnostics_by_uri(
         &root,
         &findings,
         config.repo_config().severity(),
         is_full_run,
+        causal_projection.as_ref(),
     )?;
 
     // Repo seam evidence diagnostics. Enabled by built-in defaults for the
@@ -560,10 +571,11 @@ pub(super) fn workspace_diagnostics_with_config(
                         let Ok(uri) = file_uri_for_path(&path) else {
                             return false;
                         };
-                        if let Some(mut diagnostic) = diagnostic_for_classified_seam_with_config(
+                        if let Some(mut diagnostic) = diagnostic_for_classified_seam_with_causal(
                             &root,
                             entry,
                             config.repo_config().severity(),
+                            causal_projection.as_ref(),
                         ) {
                             // Policy: limited/stale run downgrades seam WARNINGs to INFORMATION.
                             if !is_full_run
@@ -592,10 +604,11 @@ pub(super) fn workspace_diagnostics_with_config(
     // "full" (stale/cache_limited/limited). The limited state is surfaced by
     // `ripr.collectWorkspaceStatus`, not per-file spam.
     if is_full_run {
-        append_gap_record_diagnostics(
+        append_gap_record_diagnostics_with_causal(
             &root,
             config.repo_config().languages().enabled(),
             &mut grouped,
+            causal_projection.as_ref(),
         );
     }
 
@@ -684,10 +697,20 @@ pub(super) fn snapshot_run_status_for_test(
     snapshot_run_status(findings, rejections, defer_seam_inventory)
 }
 
+#[cfg(test)]
 fn append_gap_record_diagnostics(
     root: &Path,
     enabled_languages: &[LanguageId],
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    append_gap_record_diagnostics_with_causal(root, enabled_languages, grouped, None);
+}
+
+fn append_gap_record_diagnostics_with_causal(
+    root: &Path,
+    enabled_languages: &[LanguageId],
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) {
     let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
     let contents = match fs::read_to_string(&ledger_path) {
@@ -744,17 +767,29 @@ fn append_gap_record_diagnostics(
         }
     };
     for record in &records {
-        let Some((uri, diagnostic)) = diagnostic_for_gap_record(root, &ledger_path, record) else {
+        let Some((uri, diagnostic)) =
+            diagnostic_for_gap_record_with_causal(root, &ledger_path, record, causal_projection)
+        else {
             continue;
         };
         grouped.entry(uri).or_default().push(diagnostic);
     }
 }
 
+#[cfg(test)]
 fn diagnostic_for_gap_record(
     root: &Path,
     ledger_path: &Path,
     record: &GapRecord,
+) -> Option<(Uri, Diagnostic)> {
+    diagnostic_for_gap_record_with_causal(root, ledger_path, record, None)
+}
+
+fn diagnostic_for_gap_record_with_causal(
+    root: &Path,
+    ledger_path: &Path,
+    record: &GapRecord,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Option<(Uri, Diagnostic)> {
     if !projection_eligible(record, "lsp_diagnostic") {
         return None;
@@ -792,7 +827,12 @@ fn diagnostic_for_gap_record(
         message: gap_record_diagnostic_message(record),
         related_information: None,
         tags: None,
-        data: Some(gap_record_diagnostic_data(root, ledger_path, record)),
+        data: Some(gap_record_diagnostic_data_with_causal(
+            root,
+            ledger_path,
+            record,
+            causal_projection,
+        )),
     };
     Some((uri, diagnostic))
 }
@@ -876,10 +916,11 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
     message
 }
 
-fn gap_record_diagnostic_data(
+fn gap_record_diagnostic_data_with_causal(
     root: &Path,
     ledger_path: &Path,
     record: &GapRecord,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> serde_json::Value {
     let diagnostic_id = if !record.canonical_gap_id.trim().is_empty() {
         record.canonical_gap_id.clone()
@@ -927,6 +968,12 @@ fn gap_record_diagnostic_data(
     {
         let file = display_repo_path(root, Path::new(file));
         anchor_object.insert("file".to_string(), serde_json::Value::String(file));
+    }
+    if let Some(projection) = causal_projection
+        && let Some(delta) = projection.delta_for(non_empty(&record.canonical_gap_id))
+        && let Some(object) = data.as_object_mut()
+    {
+        insert_canonical_delta_fields(object, delta);
     }
     data
 }
@@ -978,10 +1025,20 @@ pub(super) fn diagnostic_for_classified_seam(
     diagnostic_for_classified_seam_with_config(_root, entry, &SeverityConfig::default())
 }
 
+#[cfg(test)]
 pub(super) fn diagnostic_for_classified_seam_with_config(
+    root: &Path,
+    entry: &ClassifiedSeam,
+    config: &SeverityConfig,
+) -> Option<Diagnostic> {
+    diagnostic_for_classified_seam_with_causal(root, entry, config, None)
+}
+
+fn diagnostic_for_classified_seam_with_causal(
     _root: &Path,
     entry: &ClassifiedSeam,
     config: &SeverityConfig,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Option<Diagnostic> {
     let severity = diagnostic_severity_for_grip_class_with_config(entry.class, config)?;
     let seam = &entry.seam;
@@ -1003,6 +1060,33 @@ pub(super) fn diagnostic_for_classified_seam_with_config(
             seam.expression(),
         ],
     );
+    let mut data = serde_json::json!({
+        "schema_version": "0.1",
+        "diagnostic_id": diagnostic_id,
+        "seam_id": seam.id().as_str(),
+        "seam_kind": seam.kind().as_str(),
+        "grip_class": entry.class.as_str(),
+        "headline_eligible": entry.class.is_headline_eligible(),
+        "owner": seam.owner(),
+        "expected_sink": seam.expected_sink().as_str(),
+        "evidence": {
+            "reach": evidence.reach.state.as_str(),
+            "activate": evidence.activate.state.as_str(),
+            "propagate": evidence.propagate.state.as_str(),
+            "observe": evidence.observe.state.as_str(),
+            "discriminate": evidence.discriminate.state.as_str(),
+        },
+    });
+    if let Some(projection) = causal_projection
+        && let Some(delta) = projection.delta_for(
+            crate::analysis::canonical_gap::canonical_gap_identities(std::slice::from_ref(entry))
+                .get(entry.seam.id())
+                .map(|identity| identity.id.as_str()),
+        )
+        && let Some(object) = data.as_object_mut()
+    {
+        insert_canonical_delta_fields(object, delta);
+    }
     Some(Diagnostic {
         range,
         severity: Some(severity),
@@ -1015,23 +1099,7 @@ pub(super) fn diagnostic_for_classified_seam_with_config(
         message: lsp_seam_message(entry),
         related_information: None,
         tags: None,
-        data: Some(serde_json::json!({
-            "schema_version": "0.1",
-            "diagnostic_id": diagnostic_id,
-            "seam_id": seam.id().as_str(),
-            "seam_kind": seam.kind().as_str(),
-            "grip_class": entry.class.as_str(),
-            "headline_eligible": entry.class.is_headline_eligible(),
-            "owner": seam.owner(),
-            "expected_sink": seam.expected_sink().as_str(),
-            "evidence": {
-                "reach": evidence.reach.state.as_str(),
-                "activate": evidence.activate.state.as_str(),
-                "propagate": evidence.propagate.state.as_str(),
-                "observe": evidence.observe.state.as_str(),
-                "discriminate": evidence.discriminate.state.as_str(),
-            },
-        })),
+        data: Some(data),
     })
 }
 
@@ -1076,10 +1144,20 @@ pub(super) fn diagnostic_for_finding(root: &Path, finding: &Finding) -> Diagnost
     diagnostic_for_finding_with_config(root, finding, &SeverityConfig::default())
 }
 
+#[cfg(test)]
 pub(super) fn diagnostic_for_finding_with_config(
     root: &Path,
     finding: &Finding,
     config: &SeverityConfig,
+) -> Diagnostic {
+    diagnostic_for_finding_with_causal(root, finding, config, None)
+}
+
+fn diagnostic_for_finding_with_causal(
+    root: &Path,
+    finding: &Finding,
+    config: &SeverityConfig,
+    causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Diagnostic {
     let file = display_repo_path(root, &finding.probe.location.file);
     let owner = finding
@@ -1153,6 +1231,12 @@ pub(super) fn diagnostic_for_finding_with_config(
                 "preview_actionability".to_string(),
                 preview_actionability_json_value(&actionability),
             );
+        }
+        if let Some(projection) = causal_projection
+            && let Some(delta) =
+                projection.delta_for(finding.canonical_gap.as_ref().map(|gap| gap.id.as_str()))
+        {
+            insert_canonical_delta_fields(obj, delta);
         }
     }
     Diagnostic {
