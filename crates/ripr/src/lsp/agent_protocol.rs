@@ -123,7 +123,12 @@ mod tests {
             return Err("the capability must remain read-only".to_string());
         }
 
-        for field in ["snapshot_handles", "continuations", "cancellation"] {
+        for field in [
+            "snapshot_handles",
+            "continuations",
+            "work_done_progress",
+            "cancellation",
+        ] {
             let enabled = agent
                 .get(field)
                 .and_then(serde_json::Value::as_bool)
@@ -154,6 +159,10 @@ mod tests {
         let expected_errors = serde_json::json!(RESERVED_ERROR_KINDS);
         if agent.get("error_kinds") != Some(&expected_errors) {
             return Err("capability error vocabulary drifted".to_string());
+        }
+        let expected_profiles = serde_json::json!(RESERVED_PROFILES);
+        if agent.get("reserved_profiles") != Some(&expected_profiles) {
+            return Err("capability profile vocabulary drifted".to_string());
         }
         Ok(())
     }
