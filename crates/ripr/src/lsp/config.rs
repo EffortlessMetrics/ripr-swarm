@@ -169,13 +169,15 @@ mod tests {
 
     #[test]
     fn invalid_repo_diagnostic_profile_is_rejected() {
-        let error = crate::config::tests_only_parse(
+        let error = match crate::config::tests_only_parse(
             r#"
 [lsp]
 diagnostic_profile = "quiet"
 "#,
-        )
-        .expect_err("invalid diagnostic profile should fail configuration parsing");
+        ) {
+            Ok(_) => "invalid diagnostic profile was accepted".to_owned(),
+            Err(error) => error,
+        };
         assert!(error.contains("diagnostic_profile"));
     }
 
