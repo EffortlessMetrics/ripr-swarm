@@ -16,6 +16,8 @@ pub(super) struct LspAnalysisConfig {
     /// saved-workspace, draft-mode analysis so the installed editor surface is
     /// useful with no `ripr.toml` and without running `ripr init`.
     pub(super) enable_seam_diagnostics: bool,
+    /// Defaults to `actionable`; valid initialization options override the
+    /// repository setting, while unknown options retain that resolved value.
     pub(super) diagnostic_profile: LspDiagnosticProfile,
 }
 

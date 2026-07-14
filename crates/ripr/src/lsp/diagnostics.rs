@@ -367,7 +367,10 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
     Ok(grouped)
 }
 
-fn finding_is_visible_in_profile(profile: LspDiagnosticProfile, finding: &Finding) -> bool {
+pub(super) fn finding_is_visible_in_profile(
+    profile: LspDiagnosticProfile,
+    finding: &Finding,
+) -> bool {
     match profile {
         LspDiagnosticProfile::Full => true,
         LspDiagnosticProfile::Actionable => {
@@ -667,6 +670,7 @@ pub(super) fn workspace_diagnostics_with_config(
         mode,
         refresh: RefreshMetadata::generated_now(),
         findings,
+        diagnostic_profile: config.diagnostic_profile,
         classified_seams,
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
