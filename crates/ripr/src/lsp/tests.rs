@@ -3440,6 +3440,22 @@ fn initialize_root_uses_root_uri_when_workspace_folders_are_missing() -> Result<
 }
 
 #[test]
+fn initialize_root_rejects_empty_workspace_folders_even_with_root_uri() -> Result<(), String> {
+    let params = initialize_params(
+        Some(Vec::new()),
+        Some(test_uri("file:///workspace/root-uri")?),
+    );
+
+    assert_eq!(
+        root_from_initialize_params(&params),
+        WorkspaceRootResolution::Unavailable(
+            "the client explicitly reported no workspace folders".to_string()
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn initialize_root_reports_unavailable_when_no_lsp_root_exists() {
     let params = initialize_params(None, None);
 

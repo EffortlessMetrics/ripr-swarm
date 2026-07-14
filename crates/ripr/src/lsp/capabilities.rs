@@ -66,6 +66,11 @@ pub(super) fn initialize_result() -> InitializeResult {
 )]
 pub(super) fn root_from_initialize_params(params: &InitializeParams) -> WorkspaceRootResolution {
     if let Some(folders) = params.workspace_folders.as_ref() {
+        if folders.is_empty() {
+            return WorkspaceRootResolution::Unavailable(
+                "the client explicitly reported no workspace folders".to_string(),
+            );
+        }
         if folders.len() > 1 {
             let mut candidates = Vec::with_capacity(folders.len());
             for folder in folders {

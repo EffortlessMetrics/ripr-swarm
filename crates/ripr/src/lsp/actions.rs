@@ -1587,7 +1587,7 @@ fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {
 
 fn related_test_target(snapshot: &AnalysisSnapshot, related: &RelatedTestGrip) -> Option<LSPAny> {
     let path = absolute_related_test_path(snapshot, related);
-    if !workspace_path_is_safe(snapshot.root.as_path(), &related.file.to_string_lossy()) {
+    if !super::uri::path_is_within_root(snapshot.root.as_path(), &path) {
         return None;
     }
     let uri = file_uri_for_path(&path).ok()?;

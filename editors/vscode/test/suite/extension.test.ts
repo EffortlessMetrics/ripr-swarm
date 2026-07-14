@@ -1060,6 +1060,30 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('typed analysis status surfaces a changed root as stale', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'stopped',
+        run_status: 'stale',
+        root_state: 'root_changed',
+        root_detail: 'workspace root changed; refresh to obtain current evidence',
+        root_recovery_route: 'refresh'
+      });
+
+      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(String(context.status.tooltip).includes('root_changed'));
+      assert.ok(String(context.status.tooltip).includes('new root'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar projects existing first useful action report', async () => {
     const context = createControllerTestContext({
       firstActionJson: JSON.stringify({

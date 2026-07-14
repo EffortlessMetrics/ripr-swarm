@@ -937,7 +937,7 @@ export class RiprClientController {
             : 'ripr has no usable workspace root.',
         detail: `${analysisStatusDetail(status)}\n${rootDetail}`,
         nextStep: status.root_recovery_route === 'refresh'
-          ? 'Refresh the saved workspace after selecting a root.'
+          ? 'Refresh the saved workspace to obtain current evidence for the new root.'
           : 'Select one workspace folder, then restart the ripr server.'
       });
       return;

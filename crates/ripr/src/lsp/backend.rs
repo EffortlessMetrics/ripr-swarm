@@ -112,9 +112,21 @@ impl Backend {
     ///
     /// See RIPR-SPEC-0105 for the design rationale.
     pub(super) async fn refresh_diagnostics(&self, scope: RefreshScope, reason: RefreshReason) {
-        let Some(root) = self.effective_root() else {
+        let authority = self.workspace_root_authority();
+        let Some(root) = authority.effective_root.clone() else {
             return;
         };
+        if !authority.allows_analysis() {
+            if matches!(
+                (&authority.state, scope),
+                (WorkspaceRootState::RootChanged, RefreshScope::Full)
+            ) {
+                self.set_workspace_root_authority(WorkspaceRootAuthority::selected(root.clone()));
+                self.publish_analysis_status().await;
+            } else {
+                return;
+            }
+        }
         let Some(config) = self.analysis_config() else {
             return;
         };
@@ -755,23 +767,23 @@ impl Backend {
             self.reset_health_for_input_change();
         }
 
-        if changed
+        let final_authority = if changed
             && matches!(authority.state, WorkspaceRootState::SelectedSingleRoot)
             && previous.effective_root != authority.effective_root
             && previous.effective_root.is_some()
         {
-            let changed_authority = WorkspaceRootAuthority::changed(
+            WorkspaceRootAuthority::changed(
                 previous.effective_root.clone(),
                 authority.effective_root.clone(),
-            );
-            self.set_workspace_root_authority(changed_authority);
-            self.publish_analysis_status().await;
-        }
+            )
+        } else {
+            authority
+        };
 
-        if let Some(root) = authority.effective_root.clone() {
+        if let Some(root) = final_authority.effective_root.clone() {
             self.set_root(root);
         }
-        self.set_workspace_root_authority(authority);
+        self.set_workspace_root_authority(final_authority);
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
     }
@@ -1282,18 +1294,7 @@ impl LanguageServer for Backend {
     async fn shutdown(&self) -> LspResult<()> {
         self.refresh_scheduler.stop();
         self.clear_all_diagnostic_uris();
-        if let Ok(mut health) = self.analysis_health.lock() {
-            health.state = AnalysisAttemptState::Stopped;
-            health.attempt_id = None;
-            health.snapshot_id = None;
-            health.last_success_snapshot_id = None;
-            health.last_success_at = None;
-            health.snapshot_run_status = None;
-            health.failure = None;
-            health.pending_attempt_id = None;
-            health.pending_reason = None;
-            health.pending_scope = None;
-        }
+        self.reset_health_for_input_change();
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
         Ok(())
@@ -1895,6 +1896,21 @@ impl Backend {
     }
 
     fn collect_receipt_status(&self) -> Option<LSPAny> {
+        if !self.workspace_root_authority().allows_analysis() {
+            return Some(serde_json::json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt_status",
+                "status": "no_snapshot",
+                "receipt_status": "not_available",
+                "missing_receipt_reason": "not_available",
+                "copy_receipt_command": "not_available",
+                "open_attempt_ledger": "not_available",
+                "latest_attempt_outcome": "not_available",
+                "route_quality_summary": "not_available",
+                "limits_note": "Static evidence only; advisory, not a gate decision.",
+            }));
+        }
         let root = self.root.lock().ok()?.clone();
         let snapshot = match self.latest_analysis.lock().ok()? {
             guard if guard.is_none() => {

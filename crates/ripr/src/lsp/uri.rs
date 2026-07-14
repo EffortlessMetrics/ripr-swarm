@@ -127,7 +127,26 @@ fn normalized_file_uri_path(uri: &Uri) -> Option<String> {
 }
 
 fn canonical_or_normalized(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| normalize_path(path))
+    canonicalize_with_missing_tail(path).unwrap_or_else(|| normalize_path(path))
+}
+
+fn canonicalize_with_missing_tail(path: &Path) -> Option<PathBuf> {
+    let mut current = path.to_path_buf();
+    let mut missing = Vec::new();
+    loop {
+        if let Ok(mut canonical) = current.canonicalize() {
+            for component in missing.iter().rev() {
+                canonical.push(component);
+            }
+            return Some(canonical);
+        }
+
+        let component = current.file_name()?.to_os_string();
+        missing.push(component);
+        if !current.pop() {
+            return None;
+        }
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
