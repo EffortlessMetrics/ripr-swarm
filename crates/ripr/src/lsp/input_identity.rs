@@ -126,8 +126,14 @@ mod tests {
 
     #[test]
     fn identity_is_deterministic_and_language_set_order_independent() {
-        let first = identity("C:/repo", [LanguageId::TypeScript, LanguageId::Rust]);
-        let second = identity("C:/repo", [LanguageId::Rust, LanguageId::TypeScript]);
+        let first = identity(
+            "/workspace/repo",
+            [LanguageId::TypeScript, LanguageId::Rust],
+        );
+        let second = identity(
+            "/workspace/repo",
+            [LanguageId::Rust, LanguageId::TypeScript],
+        );
 
         assert_eq!(first, second);
         assert_eq!(first.enabled_languages, ["rust", "typescript"]);
@@ -135,23 +141,23 @@ mod tests {
 
     #[test]
     fn duplicate_language_inputs_do_not_change_identity() {
-        let with_duplicate = identity("C:/repo", [LanguageId::Rust, LanguageId::Rust]);
-        let without_duplicate = identity("C:/repo", [LanguageId::Rust]);
+        let with_duplicate = identity("/workspace/repo", [LanguageId::Rust, LanguageId::Rust]);
+        let without_duplicate = identity("/workspace/repo", [LanguageId::Rust]);
 
         assert_eq!(with_duplicate, without_duplicate);
     }
 
     #[test]
     fn selected_root_remains_part_of_session_identity() {
-        let first = identity("C:/repo-a", [LanguageId::Rust]);
-        let second = identity("C:/repo-b", [LanguageId::Rust]);
+        let first = identity("/workspace/repo-a", [LanguageId::Rust]);
+        let second = identity("/workspace/repo-b", [LanguageId::Rust]);
 
         assert_ne!(first, second);
     }
 
     #[test]
     fn every_declared_input_participates_in_identity() {
-        let base = identity("C:/repo", [LanguageId::Rust]);
+        let base = identity("/workspace/repo", [LanguageId::Rust]);
         let changed_revision = LspAnalysisInputIdentity {
             saved_workspace_revision: 8,
             ..base.clone()
@@ -161,7 +167,13 @@ mod tests {
             ..base
         };
 
-        assert_ne!(changed_revision, identity("C:/repo", [LanguageId::Rust]));
-        assert_ne!(changed_schema, identity("C:/repo", [LanguageId::Rust]));
+        assert_ne!(
+            changed_revision,
+            identity("/workspace/repo", [LanguageId::Rust])
+        );
+        assert_ne!(
+            changed_schema,
+            identity("/workspace/repo", [LanguageId::Rust])
+        );
     }
 }
