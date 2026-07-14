@@ -96,6 +96,7 @@ struct RefreshInputIdentity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RefreshRequest {
     pub(super) generation: u64,
+    pub(super) authority_epoch: u64,
     pub(super) root: PathBuf,
     pub(super) config: LspAnalysisConfig,
     pub(super) workspace_revision: u64,
@@ -158,6 +159,7 @@ impl RefreshScheduler {
         root: PathBuf,
         config: LspAnalysisConfig,
         workspace_revision: u64,
+        authority_epoch: u64,
         scope: RefreshScope,
         reason: RefreshReason,
     ) -> RefreshDecision {
@@ -217,6 +219,7 @@ impl RefreshScheduler {
         state.next_generation = state.next_generation.saturating_add(1);
         let request = RefreshRequest {
             generation: state.next_generation,
+            authority_epoch,
             root,
             config,
             workspace_revision,
@@ -425,6 +428,7 @@ mod tests {
             PathBuf::from("/workspace"),
             config(),
             revision,
+            0,
             scope,
             RefreshReason::DidSave,
         )
