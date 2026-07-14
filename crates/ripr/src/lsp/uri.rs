@@ -273,6 +273,35 @@ mod tests {
     }
 
     #[test]
+    fn path_is_within_root_rejects_missing_leaf_under_symlink_ancestor() -> Result<(), String> {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-uri-root-{suffix}"));
+        let outside = std::env::temp_dir().join(format!("ripr-uri-outside-{suffix}"));
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+        let link = root.join("linked");
+
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside, &link);
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_dir(&outside, &link);
+        if let Err(err) = link_result {
+            eprintln!("skipping symlink containment test: {err}");
+            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&outside);
+            return Ok(());
+        }
+
+        assert!(!path_is_within_root(&root, Path::new("linked/missing.rs")));
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        std::fs::remove_dir_all(&outside).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
     fn file_uri_is_within_root_rejects_non_file_and_foreign_uris() -> Result<(), String> {
         let root = Path::new("/workspace/ripr");
         let inside = parse_uri("file:///workspace/ripr/src/lib.rs")?;

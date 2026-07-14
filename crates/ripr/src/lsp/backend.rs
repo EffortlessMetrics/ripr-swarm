@@ -44,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::Notify;
@@ -60,6 +61,7 @@ pub(super) struct Backend {
     client: Client,
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
+    workspace_root_epoch: AtomicU64,
     documents: Mutex<DocumentStore>,
     analysis_config: Mutex<LspAnalysisConfig>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
@@ -83,6 +85,7 @@ impl Backend {
             client,
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::selected(root)),
+            workspace_root_epoch: AtomicU64::new(0),
             documents: Mutex::new(DocumentStore::default()),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
@@ -200,7 +203,7 @@ impl Backend {
         self.mark_attempt_running(request);
         self.publish_analysis_status().await;
         self.log_refresh_queued(generation).await;
-        if !self.refresh_scheduler.is_current_generation(generation) {
+        if !self.refresh_request_is_current(request) {
             return RefreshAttemptOutcome::NotStarted;
         }
         let enabled_languages = request.config.repo_config().languages().enabled().to_vec();
@@ -237,9 +240,7 @@ impl Backend {
                 diagnostics
             }
             Ok(Err(err)) => {
-                if self.refresh_scheduler.is_current_generation(generation)
-                    && !is_cancellation_error(&err)
-                {
+                if self.refresh_request_is_current(request) && !is_cancellation_error(&err) {
                     self.report_refresh_failure_after(
                         request,
                         err,
@@ -262,7 +263,7 @@ impl Backend {
                 return cancellation_outcome(request);
             }
             Err(err) => {
-                if self.refresh_scheduler.is_current_generation(generation) {
+                if self.refresh_request_is_current(request) {
                     self.report_refresh_failure_after(
                         request,
                         format!("analysis task failed: {err}"),
@@ -283,7 +284,7 @@ impl Backend {
                 return cancellation_outcome(request);
             }
         };
-        if !self.refresh_scheduler.is_current_generation(generation) {
+        if !self.refresh_request_is_current(request) {
             return cancellation_outcome(request);
         }
         if !workspace_diagnostics_are_root_contained(&root, &diagnostics) {
@@ -319,7 +320,7 @@ impl Backend {
         let published_payload_bytes = plan.published_payload_bytes;
         let suppressed_payload_bytes = plan.suppressed_payload_bytes;
         for batch in &plan.publish_batches {
-            if !self.refresh_scheduler.is_current_generation(generation) {
+            if !self.refresh_request_is_current(request) {
                 self.rollback_refresh_transaction(&previous_diagnostics, &plan)
                     .await;
                 return cancellation_outcome(request);
@@ -329,7 +330,7 @@ impl Backend {
                 .await;
         }
         for uri in &plan.clear_uris {
-            if !self.refresh_scheduler.is_current_generation(generation) {
+            if !self.refresh_request_is_current(request) {
                 self.rollback_refresh_transaction(&previous_diagnostics, &plan)
                     .await;
                 return cancellation_outcome(request);
@@ -338,7 +339,7 @@ impl Backend {
                 .publish_diagnostics(uri.clone(), Vec::new(), None)
                 .await;
         }
-        if !self.refresh_scheduler.is_current_generation(generation) {
+        if !self.refresh_request_is_current(request) {
             self.rollback_refresh_transaction(&previous_diagnostics, &plan)
                 .await;
             return cancellation_outcome(request);
@@ -494,6 +495,17 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|authority| authority.effective_root.clone())
+    }
+
+    fn refresh_request_is_current(&self, request: &RefreshRequest) -> bool {
+        if !self
+            .refresh_scheduler
+            .is_current_generation(request.generation)
+        {
+            return false;
+        }
+        let authority = self.workspace_root_authority();
+        authority.allows_analysis() && authority.effective_root.as_ref() == Some(&request.root)
     }
 
     fn workspace_root_authority(&self) -> WorkspaceRootAuthority {
@@ -754,6 +766,7 @@ impl Backend {
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
+        let authority_epoch = self.workspace_root_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let previous = self.workspace_root_authority();
         let changed = previous.state != authority.state
             || previous.effective_root != authority.effective_root
@@ -765,6 +778,10 @@ impl Backend {
                 self.client.publish_diagnostics(uri, Vec::new(), None).await;
             }
             self.reset_health_for_input_change();
+        }
+
+        if self.workspace_root_epoch.load(Ordering::SeqCst) != authority_epoch {
+            return;
         }
 
         let final_authority = if changed
@@ -1235,6 +1252,32 @@ fn root_recovery_route(state: &WorkspaceRootState) -> &'static str {
         WorkspaceRootState::RootRemoved => "select_root_and_restart",
         WorkspaceRootState::RootChanged => "refresh",
     }
+}
+
+fn root_authority_block_reason(state: &WorkspaceRootState) -> &'static str {
+    match state {
+        WorkspaceRootState::WorkspaceAmbiguous => "workspace_root_ambiguous",
+        WorkspaceRootState::RootUnavailable => "workspace_root_unavailable",
+        WorkspaceRootState::RootRemoved => "workspace_root_removed",
+        WorkspaceRootState::RootChanged => "workspace_root_changed",
+        WorkspaceRootState::SelectedSingleRoot => "analysis_snapshot_stale",
+    }
+}
+
+fn root_authority_receipt_status(state: &WorkspaceRootState) -> LSPAny {
+    serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "kind": "receipt_status",
+        "status": "workspace_root_blocked",
+        "receipt_status": "not_available",
+        "missing_receipt_reason": root_authority_block_reason(state),
+        "copy_receipt_command": "not_available",
+        "open_attempt_ledger": "not_available",
+        "latest_attempt_outcome": "not_available",
+        "route_quality_summary": "not_available",
+        "limits_note": "Static evidence only; advisory, not a gate decision.",
+    })
 }
 
 impl LanguageServer for Backend {
@@ -1833,8 +1876,14 @@ const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.j
 impl Backend {
     fn collect_repair_packet(&self, arguments: &[LSPAny]) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
-        if !health.allows_current_repairs() || !self.workspace_root_authority().allows_analysis() {
+        if !health.allows_current_repairs() {
             return Some(repair_packet_sentinel("analysis_snapshot_stale"));
+        }
+        let authority = self.workspace_root_authority();
+        if !authority.allows_analysis() {
+            return Some(repair_packet_sentinel(root_authority_block_reason(
+                &authority.state,
+            )));
         }
         let root = self.root.lock().ok()?.clone();
         let gap_id_arg = arguments
@@ -1896,20 +1945,9 @@ impl Backend {
     }
 
     fn collect_receipt_status(&self) -> Option<LSPAny> {
-        if !self.workspace_root_authority().allows_analysis() {
-            return Some(serde_json::json!({
-                "schema_version": "0.1",
-                "tool": "ripr",
-                "kind": "receipt_status",
-                "status": "no_snapshot",
-                "receipt_status": "not_available",
-                "missing_receipt_reason": "not_available",
-                "copy_receipt_command": "not_available",
-                "open_attempt_ledger": "not_available",
-                "latest_attempt_outcome": "not_available",
-                "route_quality_summary": "not_available",
-                "limits_note": "Static evidence only; advisory, not a gate decision.",
-            }));
+        let authority = self.workspace_root_authority();
+        if !authority.allows_analysis() {
+            return Some(root_authority_receipt_status(&authority.state));
         }
         let root = self.root.lock().ok()?.clone();
         let snapshot = match self.latest_analysis.lock().ok()? {
