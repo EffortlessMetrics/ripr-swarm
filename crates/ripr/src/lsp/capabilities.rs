@@ -1,3 +1,4 @@
+use super::agent_protocol::server_capability;
 use super::uri::path_from_file_uri;
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -35,6 +36,7 @@ pub(super) fn initialize_result() -> InitializeResult {
                 ],
                 ..ExecuteCommandOptions::default()
             }),
+            experimental: Some(server_capability()),
             ..ServerCapabilities::default()
         },
         server_info: Some(ServerInfo {
@@ -60,4 +62,22 @@ pub(super) fn root_from_initialize_params(
         .and_then(|folder| path_from_file_uri(&folder.uri))
         .or_else(|| params.root_uri.as_ref().and_then(path_from_file_uri))
         .unwrap_or_else(|| fallback_root.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialize_result_advertises_the_fail_closed_agent_capability() -> Result<(), String> {
+        let result = initialize_result();
+        let experimental = result
+            .capabilities
+            .experimental
+            .ok_or_else(|| "expected experimental LSP capabilities".to_string())?;
+        if experimental != server_capability() {
+            return Err("initialize capability drifted from the protocol authority".to_string());
+        }
+        Ok(())
+    }
 }
