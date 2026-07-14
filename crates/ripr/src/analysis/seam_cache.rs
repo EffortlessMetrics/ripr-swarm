@@ -1295,6 +1295,17 @@ fn hash_bytes(bytes: &[u8]) -> String {
 }
 
 fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
+    workspace_named_file_identity(root, file_name)
+        .unwrap_or_else(|| hash_str("<no matching workspace files>"))
+}
+
+/// Return the deterministic identity of all matching workspace files.
+///
+/// LSP input identity uses the same path-and-content boundary as the seam
+/// cache so a manifest or lockfile change cannot be treated as equivalent to
+/// the previous analysis input. `None` means no matching workspace file was
+/// found; unreadable files retain the seam-cache placeholder behavior.
+pub(crate) fn workspace_named_file_identity(root: &Path, file_name: &str) -> Option<String> {
     let mut files = Vec::new();
     collect_named_workspace_files(root, root, file_name, &mut files);
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -1305,10 +1316,7 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
         input.push_str(&hash_bytes(&bytes));
         input.push('\n');
     }
-    if input.is_empty() {
-        input.push_str("<no matching workspace files>");
-    }
-    hash_str(&input)
+    (!input.is_empty()).then(|| hash_str(&input))
 }
 
 fn collect_named_workspace_files(

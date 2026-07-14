@@ -92,7 +92,7 @@ impl LspAnalysisInputIdentity {
             ))
         });
         Self::new(
-            effective_root,
+            effective_root.clone(),
             saved_workspace_revision,
             InputIdentityComponents {
                 repository_config_identity: config
@@ -106,11 +106,41 @@ impl LspAnalysisInputIdentity {
             config.mode.clone(),
             "default",
             enabled_languages.iter().copied(),
-            None,
-            None,
+            crate::analysis::seam_cache::workspace_named_file_identity(
+                &effective_root,
+                "Cargo.toml",
+            ),
+            crate::analysis::seam_cache::workspace_named_file_identity(
+                &effective_root,
+                "Cargo.lock",
+            ),
             env!("CARGO_PKG_VERSION"),
             "lsp-analysis-input-v1",
         )
+    }
+
+    /// Stable opaque identity for status, snapshot provenance, and client
+    /// comparisons. The individual fields remain internal authority; the
+    /// published value is deliberately bounded and does not expose config
+    /// contents or absolute paths.
+    pub(super) fn stable_id(&self) -> String {
+        let canonical = format!(
+            "root={};saved_revision={};repo_config={:?};session_options={:?};requested_base={:?};resolved_base={:?};mode={};profile={};languages={};manifest={:?};lockfile={:?};analyzer={};schema={}",
+            self.effective_root.to_string_lossy().replace('\\', "/"),
+            self.saved_workspace_revision,
+            self.repository_config_identity,
+            self.session_options_identity,
+            self.requested_base,
+            self.resolved_base,
+            self.mode.as_str(),
+            self.profile,
+            self.enabled_languages.join(","),
+            self.manifest_identity,
+            self.lockfile_identity,
+            self.analyzer_version,
+            self.schema_version,
+        );
+        format!("input:{}", crate::config::config_fingerprint(&canonical))
     }
 }
 
@@ -274,6 +304,49 @@ mod tests {
                 second_identity.repository_config_identity
             );
             assert_ne!(first_identity, second_identity);
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn workspace_manifest_and_lockfile_content_participate_in_identity() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-lsp-workspace-input-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock failed: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("crates/app"))
+            .map_err(|error| format!("create root failed: {error}"))?;
+        let result = (|| {
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
+                .map_err(|error| format!("write manifest failed: {error}"))?;
+            std::fs::write(
+                root.join("crates/app/Cargo.toml"),
+                "[package]\nname='app'\n",
+            )
+            .map_err(|error| format!("write member manifest failed: {error}"))?;
+            std::fs::write(root.join("Cargo.lock"), "version = 4\n")
+                .map_err(|error| format!("write lockfile failed: {error}"))?;
+            let config = LspAnalysisConfig::default();
+            let first = LspAnalysisInputIdentity::from_refresh_inputs(root.clone(), 1, &config);
+            std::fs::write(root.join("Cargo.lock"), "version = 4\n# changed\n")
+                .map_err(|error| format!("rewrite lockfile failed: {error}"))?;
+            let second = LspAnalysisInputIdentity::from_refresh_inputs(root.clone(), 1, &config);
+
+            if first.lockfile_identity == second.lockfile_identity {
+                return Err("lockfile content change did not change input identity".to_string());
+            }
+            if first.manifest_identity.is_none() || second.manifest_identity.is_none() {
+                return Err("workspace manifests should produce an identity".to_string());
+            }
+            if first.stable_id() == second.stable_id() {
+                return Err("changed workspace input retained the same stable id".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);

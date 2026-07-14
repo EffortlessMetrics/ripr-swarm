@@ -1,6 +1,7 @@
 use super::actions::code_action_response;
 use super::backend::{
     Backend, RefreshLogSummary, refresh_completed_log_message, refresh_failed_log_message,
+    workspace_input_path_is_relevant,
 };
 use super::capabilities::{
     WorkspaceRootResolution, initialize_result, root_from_initialize_params,
@@ -17,6 +18,7 @@ use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
 };
 use super::hover::{classified_seam_hover_response, hover_response, hover_with_snapshot_status};
+use super::input_identity::LspAnalysisInputIdentity;
 use super::lens::{code_lens_response, lens_title_is_static_language_clean};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshReason, RefreshRequest, RefreshScope,
@@ -92,6 +94,27 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
         ]
     );
     Ok(())
+}
+
+#[test]
+fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
+    let root = Path::new(r"C:\workspace");
+    assert!(workspace_input_path_is_relevant(
+        root,
+        &root.join("Cargo.toml")
+    ));
+    assert!(workspace_input_path_is_relevant(
+        root,
+        &root.join("crates/app/Cargo.lock")
+    ));
+    assert!(!workspace_input_path_is_relevant(
+        root,
+        Path::new(r"C:\workspace-sibling\Cargo.toml")
+    ));
+    assert!(!workspace_input_path_is_relevant(
+        root,
+        &root.join("Cargo.toml.bak")
+    ));
 }
 
 #[test]
@@ -219,6 +242,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
 
     let snapshot = AnalysisSnapshot {
         root: std::path::PathBuf::from(root),
+        input_identity: None,
         base: None,
         mode: crate::app::Mode::Draft,
         refresh: RefreshMetadata::default(),
@@ -3498,6 +3522,11 @@ fn stale_refresh_does_not_rollback_after_root_authority_transition() -> Result<(
         let request = RefreshRequest {
             generation: 1,
             authority_epoch: 0,
+            input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+                PathBuf::from("/workspace"),
+                1,
+                &LspAnalysisConfig::default(),
+            ),
             root: PathBuf::from("/workspace"),
             config: LspAnalysisConfig::default(),
             workspace_revision: 1,
@@ -4293,8 +4322,14 @@ fn sample_analysis_snapshot(
 ) -> AnalysisSnapshot {
     let mut diagnostics_by_uri = BTreeMap::new();
     diagnostics_by_uri.insert(uri, diagnostics);
+    let input_identity = LspAnalysisInputIdentity::from_refresh_inputs(
+        root.clone(),
+        1,
+        &LspAnalysisConfig::default(),
+    );
     AnalysisSnapshot {
         root,
+        input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
         refresh: RefreshMetadata::generated_now(),
@@ -5830,6 +5865,11 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
         let request = RefreshRequest {
             generation: 7,
             authority_epoch: 0,
+            input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+                PathBuf::from("/workspace"),
+                1,
+                &LspAnalysisConfig::default(),
+            ),
             root: PathBuf::from("/workspace"),
             config: LspAnalysisConfig::default(),
             workspace_revision: 1,
@@ -5877,6 +5917,16 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
         assert_eq!(
             status["analysis_status"]["last_success_snapshot_id"],
             "snapshot:7"
+        );
+        assert!(
+            status["analysis_status"]["current_input_identity"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("input:"))
+        );
+        assert!(
+            status["analysis_status"]["last_success_input_identity"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("input:"))
         );
         assert_eq!(status["analysis_status"]["repair_actions_available"], false);
         assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
@@ -6227,6 +6277,11 @@ fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
     let request = RefreshRequest {
         generation: 1,
         authority_epoch: 0,
+        input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+            PathBuf::from("/workspace"),
+            1,
+            &LspAnalysisConfig::default(),
+        ),
         root: PathBuf::from("/workspace"),
         config: LspAnalysisConfig::default(),
         workspace_revision: 1,
