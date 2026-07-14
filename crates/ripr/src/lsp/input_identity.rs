@@ -82,11 +82,15 @@ impl LspAnalysisInputIdentity {
         config: &LspAnalysisConfig,
     ) -> Self {
         let enabled_languages = config.repo_config().languages().enabled();
-        let session_options_identity = config
-            .session_options
-            .as_ref()
-            .and_then(|options| serde_json::to_string(options).ok())
-            .map(|options| crate::config::config_fingerprint(&options));
+        let session_options_identity = config.session_options.as_ref().map(|_| {
+            crate::config::config_fingerprint(&format!(
+                "base_ref={:?};mode={};include_unchanged_tests={};seam_diagnostics={}",
+                config.base_ref,
+                config.mode.as_str(),
+                config.include_unchanged_tests,
+                config.enable_seam_diagnostics
+            ))
+        });
         Self::new(
             effective_root,
             saved_workspace_revision,
@@ -113,6 +117,7 @@ impl LspAnalysisInputIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn identity(
         root: &str,
@@ -273,5 +278,31 @@ mod tests {
         })();
         let _ = std::fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn equivalent_session_option_order_has_one_identity() {
+        let first = LspAnalysisConfig::from_repo_config_and_options(
+            crate::config::RiprConfig::default(),
+            Some(&json!({
+                "baseRef": "origin/main",
+                "checkMode": "fast",
+                "includeUnchangedTests": true,
+            })),
+        );
+        let second = LspAnalysisConfig::from_repo_config_and_options(
+            crate::config::RiprConfig::default(),
+            Some(&json!({
+                "includeUnchangedTests": true,
+                "checkMode": "fast",
+                "baseRef": "origin/main",
+            })),
+        );
+        let first_identity =
+            LspAnalysisInputIdentity::from_refresh_inputs(PathBuf::from("/workspace"), 1, &first);
+        let second_identity =
+            LspAnalysisInputIdentity::from_refresh_inputs(PathBuf::from("/workspace"), 1, &second);
+
+        assert_eq!(first_identity, second_identity);
     }
 }

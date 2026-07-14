@@ -3759,6 +3759,8 @@ enabled = ["ruby"]
             return Err("invalid config should pause analysis with a typed failure".to_string());
         };
         assert_eq!(failure.kind, "config_invalid");
+        backend.invalidate_workspace_root_for_test().await;
+        assert!(backend.configuration_failure().is_none());
         Ok(())
     })
 }

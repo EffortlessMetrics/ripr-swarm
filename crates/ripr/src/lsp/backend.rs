@@ -895,6 +895,9 @@ impl Backend {
     }
 
     fn reset_health_for_input_change(&self) {
+        if let Ok(mut failure) = self.configuration_failure.lock() {
+            *failure = None;
+        }
         if let Ok(mut health) = self.analysis_health.lock() {
             health.state = AnalysisAttemptState::Stopped;
             health.attempt_id = None;
@@ -957,7 +960,7 @@ impl Backend {
         self.configuration_failure
             .lock()
             .ok()
-            .and_then(|failure| failure.clone())
+            .and_then(|guard| guard.as_ref().cloned())
     }
 
     async fn reload_repository_config(&self) {
@@ -1668,6 +1671,14 @@ impl LanguageServer for Backend {
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<LSPAny>> {
         if params.command == REFRESH_COMMAND {
+            if self.configuration_failure().is_some() {
+                // A retry must re-read the repository configuration. The
+                // normal refresh guard intentionally refuses to run while a
+                // config error is latched, so relying on a later file-watch
+                // event would make the advertised retry route dishonest.
+                self.reload_repository_config().await;
+                return Ok(None);
+            }
             // Explicit refresh: run the full seam inventory (RIPR-SPEC-0105).
             // This is the demand path that transitions a seams_deferred snapshot
             // to full/limited with complete seam evidence.
