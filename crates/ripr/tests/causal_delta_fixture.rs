@@ -16,6 +16,9 @@ fn comparison_rules_match_the_pr_a_fixture_corpus() -> Result<(), String> {
         "fixtures/causal-attribution/pr-a-comparison-rules.json"
     ))
     .map_err(|error| format!("parse PR A comparison fixture: {error}"))?;
+    if cases.is_empty() {
+        return Err("PR A comparison fixture is empty".to_string());
+    }
     for case in cases {
         let delta = compare_fixture_delta(
             format!("gap:{}", case.name),
