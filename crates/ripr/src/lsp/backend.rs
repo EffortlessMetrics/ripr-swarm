@@ -1630,7 +1630,8 @@ impl LanguageServer for Backend {
             .any(|event| self.file_event_is_workspace_manifest_or_lockfile(event));
         if config_changed {
             self.reload_repository_config().await;
-        } else if workspace_graph_changed {
+        }
+        if workspace_graph_changed {
             self.invalidate_analysis_input("workspace_manifest_or_lockfile_changed");
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)

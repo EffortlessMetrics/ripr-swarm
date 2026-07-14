@@ -98,7 +98,8 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
 
 #[test]
 fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
-    let root = Path::new("/workspace/ripr");
+    let root = std::env::temp_dir().join("ripr-workspace-input-watch");
+    let root = root.as_path();
     assert!(workspace_input_path_is_relevant(
         root,
         &root.join("Cargo.toml")
@@ -109,11 +110,27 @@ fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
     ));
     assert!(!workspace_input_path_is_relevant(
         root,
-        Path::new("/workspace/ripr-sibling/Cargo.toml")
+        &root
+            .with_file_name("ripr-workspace-input-watch-sibling")
+            .join("Cargo.toml")
     ));
     assert!(!workspace_input_path_is_relevant(
         root,
         &root.join("Cargo.toml.bak")
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn workspace_input_watch_uses_case_insensitive_windows_containment() {
+    let root = Path::new(r"C:\workspace\ripr");
+    assert!(workspace_input_path_is_relevant(
+        root,
+        Path::new(r"c:\Workspace\RIPR\Cargo.toml")
+    ));
+    assert!(!workspace_input_path_is_relevant(
+        root,
+        Path::new(r"c:\workspace\ripr-sibling\Cargo.toml")
     ));
 }
 

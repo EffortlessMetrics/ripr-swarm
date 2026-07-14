@@ -2,6 +2,7 @@ use super::config::LspAnalysisConfig;
 use crate::app::Mode;
 use crate::domain::LanguageId;
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Versioned semantic inputs that identify one LSP analysis session state.
 ///
@@ -82,6 +83,8 @@ impl LspAnalysisInputIdentity {
         config: &LspAnalysisConfig,
     ) -> Self {
         let enabled_languages = config.repo_config().languages().enabled();
+        let (manifest_identity, lockfile_identity) =
+            crate::analysis::seam_cache::workspace_named_file_identities(&effective_root);
         let session_options_identity = config.session_options.as_ref().map(|_| {
             crate::config::config_fingerprint(&format!(
                 "base_ref={:?};mode={};include_unchanged_tests={};seam_diagnostics={}",
@@ -101,22 +104,36 @@ impl LspAnalysisInputIdentity {
                     .map(crate::config::config_fingerprint),
                 session_options_identity,
                 requested_base: config.base_ref.clone(),
-                resolved_base: None,
+                resolved_base: Self::resolve_base_ref(&effective_root, config.base_ref.as_deref()),
             },
             config.mode.clone(),
             "default",
             enabled_languages.iter().copied(),
-            crate::analysis::seam_cache::workspace_named_file_identity(
-                &effective_root,
-                "Cargo.toml",
-            ),
-            crate::analysis::seam_cache::workspace_named_file_identity(
-                &effective_root,
-                "Cargo.lock",
-            ),
+            manifest_identity,
+            lockfile_identity,
             env!("CARGO_PKG_VERSION"),
             "lsp-analysis-input-v1",
         )
+    }
+
+    /// Resolve the configured base to the commit actually used by Git.
+    ///
+    /// A moving ref is not sufficient provenance for a retained snapshot. If
+    /// Git cannot resolve the configured value, preserve `None` so status does
+    /// not imply an exact base that the producer did not establish.
+    fn resolve_base_ref(root: &std::path::Path, requested: Option<&str>) -> Option<String> {
+        let requested = requested?;
+        let commit_ref = format!("{requested}^{{commit}}");
+        let output = Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", &commit_ref])
+            .current_dir(root)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let resolved = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        (!resolved.is_empty()).then_some(resolved)
     }
 
     /// Stable opaque identity for status, snapshot provenance, and client
@@ -148,6 +165,7 @@ impl LspAnalysisInputIdentity {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::process::Command;
 
     fn identity(
         root: &str,
@@ -347,6 +365,79 @@ mod tests {
             if first.stable_id() == second.stable_id() {
                 return Err("changed workspace input retained the same stable id".to_string());
             }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn resolved_base_is_exact_and_unknown_refs_fail_closed() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-lsp-base-identity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock failed: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root failed: {error}"))?;
+        let result = (|| {
+            let init = Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .map_err(|error| format!("git init failed: {error}"))?;
+            if !init.success() {
+                return Err("git init returned a failure".to_string());
+            }
+            std::fs::write(root.join("input.txt"), "base\n")
+                .map_err(|error| format!("write input failed: {error}"))?;
+            let add = Command::new("git")
+                .args(["add", "input.txt"])
+                .current_dir(&root)
+                .status()
+                .map_err(|error| format!("git add failed: {error}"))?;
+            if !add.success() {
+                return Err("git add returned a failure".to_string());
+            }
+            let commit = Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=ripr-test",
+                    "-c",
+                    "user.email=ripr-test@example.invalid",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "base",
+                ])
+                .current_dir(&root)
+                .status()
+                .map_err(|error| format!("git commit failed: {error}"))?;
+            if !commit.success() {
+                return Err("git commit returned a failure".to_string());
+            }
+            let expected = String::from_utf8(
+                Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .current_dir(&root)
+                    .output()
+                    .map_err(|error| format!("git rev-parse failed: {error}"))?
+                    .stdout,
+            )
+            .map_err(|error| format!("git output was not UTF-8: {error}"))?
+            .trim()
+            .to_string();
+
+            assert_eq!(
+                LspAnalysisInputIdentity::resolve_base_ref(&root, Some("HEAD")),
+                Some(expected)
+            );
+            assert_eq!(
+                LspAnalysisInputIdentity::resolve_base_ref(&root, Some("missing-base")),
+                None
+            );
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);

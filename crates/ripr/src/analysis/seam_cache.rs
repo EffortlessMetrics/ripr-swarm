@@ -1308,6 +1308,25 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 pub(crate) fn workspace_named_file_identity(root: &Path, file_name: &str) -> Option<String> {
     let mut files = Vec::new();
     collect_named_workspace_files(root, root, file_name, &mut files);
+    workspace_file_identity(files)
+}
+
+/// Return the Cargo manifest and lockfile identities with one workspace walk.
+///
+/// Refresh scheduling runs this on every analysis request. Keeping the two
+/// identities on the same traversal avoids doubling blocking filesystem work
+/// on the interactive path while preserving each per-name identity boundary.
+pub(crate) fn workspace_named_file_identities(root: &Path) -> (Option<String>, Option<String>) {
+    let mut files = [Vec::new(), Vec::new()];
+    collect_named_workspace_files_by_name(root, root, &mut files);
+    let [manifest_files, lockfile_files] = files;
+    (
+        workspace_file_identity(manifest_files),
+        workspace_file_identity(lockfile_files),
+    )
+}
+
+fn workspace_file_identity(mut files: Vec<(PathBuf, Vec<u8>)>) -> Option<String> {
     files.sort_by(|left, right| left.0.cmp(&right.0));
     let mut input = String::new();
     for (path, bytes) in files {
@@ -1317,6 +1336,38 @@ pub(crate) fn workspace_named_file_identity(root: &Path, file_name: &str) -> Opt
         input.push('\n');
     }
     (!input.is_empty()).then(|| hash_str(&input))
+}
+
+fn collect_named_workspace_files_by_name(
+    root: &Path,
+    directory: &Path,
+    files: &mut [Vec<(PathBuf, Vec<u8>)>; 2],
+) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            if matches!(
+                name,
+                ".git" | ".ripr" | "target" | "fixtures" | ".direnv" | "node_modules"
+            ) {
+                continue;
+            }
+            collect_named_workspace_files_by_name(root, &path, files);
+        } else if matches!(name, "Cargo.toml" | "Cargo.lock") {
+            let index = usize::from(name == "Cargo.lock");
+            let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+            let bytes =
+                std::fs::read(&path).unwrap_or_else(|_| b"<workspace input unreadable>".to_vec());
+            files[index].push((relative, bytes));
+        }
+    }
 }
 
 fn collect_named_workspace_files(
