@@ -302,9 +302,9 @@ fn validate_run_receipt(
         )),
         None => violations.push("run_receipt.status is missing or not a string".to_string()),
     }
-    if !receipt
+    if receipt
         .get("configured_timeout_ms")
-        .is_some_and(|value| value.as_u64().is_some_and(|timeout| timeout > 0))
+        .is_none_or(|value| value.as_u64().is_none_or(|timeout| timeout == 0))
     {
         violations.push("run_receipt.configured_timeout_ms is missing or invalid".to_string());
     }
