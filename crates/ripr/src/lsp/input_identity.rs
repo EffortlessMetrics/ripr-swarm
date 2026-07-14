@@ -27,18 +27,23 @@ pub(super) struct LspAnalysisInputIdentity {
     pub(super) schema_version: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InputIdentityComponents {
+    repository_config_identity: Option<String>,
+    session_options_identity: Option<String>,
+    requested_base: Option<String>,
+    resolved_base: Option<String>,
+}
+
 impl LspAnalysisInputIdentity {
     #[expect(
         clippy::too_many_arguments,
         reason = "identity construction keeps the versioned input fields explicit"
     )]
-    pub(super) fn new(
+    fn new(
         effective_root: PathBuf,
         saved_workspace_revision: u64,
-        repository_config_identity: Option<String>,
-        session_options_identity: Option<String>,
-        requested_base: Option<String>,
-        resolved_base: Option<String>,
+        components: InputIdentityComponents,
         mode: Mode,
         profile: impl Into<String>,
         enabled_languages: impl IntoIterator<Item = LanguageId>,
@@ -57,10 +62,10 @@ impl LspAnalysisInputIdentity {
         Self {
             effective_root,
             saved_workspace_revision,
-            repository_config_identity,
-            session_options_identity,
-            requested_base,
-            resolved_base,
+            repository_config_identity: components.repository_config_identity,
+            session_options_identity: components.session_options_identity,
+            requested_base: components.requested_base,
+            resolved_base: components.resolved_base,
             mode,
             profile: profile.into(),
             enabled_languages,
@@ -84,10 +89,12 @@ impl LspAnalysisInputIdentity {
         Self::new(
             effective_root,
             saved_workspace_revision,
-            None,
-            session_options_identity,
-            config.base_ref.clone(),
-            None,
+            InputIdentityComponents {
+                repository_config_identity: None,
+                session_options_identity,
+                requested_base: config.base_ref.clone(),
+                resolved_base: None,
+            },
             config.mode.clone(),
             "default",
             enabled_languages.iter().copied(),
@@ -110,10 +117,12 @@ mod tests {
         LspAnalysisInputIdentity::new(
             PathBuf::from(root),
             7,
-            Some("config:abc".to_string()),
-            Some("session:xyz".to_string()),
-            Some("origin/main".to_string()),
-            Some("abc123".to_string()),
+            InputIdentityComponents {
+                repository_config_identity: Some("config:abc".to_string()),
+                session_options_identity: Some("session:xyz".to_string()),
+                requested_base: Some("origin/main".to_string()),
+                resolved_base: Some("abc123".to_string()),
+            },
             Mode::Draft,
             "default",
             languages,
@@ -158,7 +167,7 @@ mod tests {
         };
         let changed_schema = LspAnalysisInputIdentity {
             schema_version: "lsp-input-v2".to_string(),
-            ..base
+            ..base.clone()
         };
 
         assert_ne!(
@@ -169,5 +178,53 @@ mod tests {
             changed_schema,
             identity("workspace-root", [LanguageId::Rust])
         );
+
+        let changed_repository_config = LspAnalysisInputIdentity {
+            repository_config_identity: Some("config:other".to_string()),
+            ..base.clone()
+        };
+        let changed_session_options = LspAnalysisInputIdentity {
+            session_options_identity: Some("session:other".to_string()),
+            ..base.clone()
+        };
+        let changed_requested_base = LspAnalysisInputIdentity {
+            requested_base: Some("origin/develop".to_string()),
+            ..base.clone()
+        };
+        let changed_resolved_base = LspAnalysisInputIdentity {
+            resolved_base: Some("def456".to_string()),
+            ..base.clone()
+        };
+        let changed_mode = LspAnalysisInputIdentity {
+            mode: Mode::Ready,
+            ..base.clone()
+        };
+        let changed_profile = LspAnalysisInputIdentity {
+            profile: "other".to_string(),
+            ..base.clone()
+        };
+        let changed_manifest = LspAnalysisInputIdentity {
+            manifest_identity: Some("manifest:other".to_string()),
+            ..base.clone()
+        };
+        let changed_lockfile = LspAnalysisInputIdentity {
+            lockfile_identity: Some("lockfile:other".to_string()),
+            ..base.clone()
+        };
+        let changed_analyzer_version = LspAnalysisInputIdentity {
+            analyzer_version: "other-version".to_string(),
+            ..base
+        };
+
+        let baseline = identity("workspace-root", [LanguageId::Rust]);
+        assert_ne!(changed_repository_config, baseline);
+        assert_ne!(changed_session_options, baseline);
+        assert_ne!(changed_requested_base, baseline);
+        assert_ne!(changed_resolved_base, baseline);
+        assert_ne!(changed_mode, baseline);
+        assert_ne!(changed_profile, baseline);
+        assert_ne!(changed_manifest, baseline);
+        assert_ne!(changed_lockfile, baseline);
+        assert_ne!(changed_analyzer_version, baseline);
     }
 }
