@@ -1,4 +1,4 @@
-use super::{ExposureClass, Finding, MissingDiscriminatorFact, RelatedTest, ValueContext};
+use super::{ExposureClass, Finding, MissingDiscriminatorFact, RelatedTest};
 
 /// The bounded, producer-backed witness projected by passive editor diagnostics.
 ///
@@ -71,7 +71,12 @@ impl DiagnosticWitness {
         }
 
         let best_test = best_related_test(&finding.related_tests);
-        let oracle_location = best_test.and_then(|test| oracle_location(finding, test));
+        // `observed_values` is finding-wide and does not identify the
+        // selected related test.  Do not guess an assertion location by
+        // matching text; the test's own line remains the only producer-owned
+        // fix-site location available until the analyzer supplies oracle
+        // identity.
+        let oracle_location = None;
         let fix_site = best_test.map(|test| DiagnosticFixSite {
             file: display_path(&test.file),
             line: test.line,
@@ -159,27 +164,6 @@ fn best_related_test(related_tests: &[RelatedTest]) -> Option<&RelatedTest> {
     })
 }
 
-fn oracle_location(finding: &Finding, test: &RelatedTest) -> Option<DiagnosticSourceLocation> {
-    let oracle = test.oracle.as_deref()?.trim();
-    if oracle.is_empty() {
-        return None;
-    }
-    finding
-        .activation
-        .observed_values
-        .iter()
-        .find(|value| {
-            value.context == ValueContext::AssertionArgument
-                && value.line > 0
-                && !value.text.trim().is_empty()
-                && (oracle.contains(value.text.trim()) || value.text.trim().contains(oracle))
-        })
-        .map(|value| DiagnosticSourceLocation {
-            file: display_path(&test.file),
-            line: value.line,
-        })
-}
-
 fn display_path(path: &std::path::Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -197,7 +181,7 @@ mod tests {
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
         OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, SymbolId, ValueFact,
+        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::PathBuf;
 
@@ -235,16 +219,28 @@ mod tests {
             value: "result.is_err()".to_string(),
             context: ValueContext::AssertionArgument,
         }];
-        finding.related_tests = vec![RelatedTest {
-            name: "rejects_boundary".to_string(),
-            file: PathBuf::from("tests/pricing.rs"),
-            line: 10,
-            oracle: Some("assert!(result.is_err())".to_string()),
-            oracle_kind: OracleKind::BroadError,
-            oracle_strength: OracleStrength::Weak,
-            relation_reason: None,
-            relation_confidence: None,
-        }];
+        finding.related_tests = vec![
+            RelatedTest {
+                name: "rejects_boundary".to_string(),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 10,
+                oracle: Some("assert!(result.is_err())".to_string()),
+                oracle_kind: OracleKind::BroadError,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+            },
+            RelatedTest {
+                name: "rejects_boundary_in_other_fixture".to_string(),
+                file: PathBuf::from("tests/other_pricing.rs"),
+                line: 22,
+                oracle: Some("assert!(result.is_err())".to_string()),
+                oracle_kind: OracleKind::BroadError,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+            },
+        ];
 
         let witness = DiagnosticWitness::from_finding(&finding)
             .ok_or_else(|| "expected weak finding witness".to_string())?;
@@ -254,14 +250,18 @@ mod tests {
             witness.missing_discriminators[0].value,
             "PricingError::Boundary"
         );
-        assert_eq!(witness.fix_site.as_ref().map(|site| site.line), Some(10));
-        assert_eq!(
+        assert_eq!(witness.fix_site.as_ref().map(|site| site.line), Some(22));
+        assert!(
             witness
                 .fix_site
                 .as_ref()
-                .and_then(|site| site.oracle_location.as_ref())
-                .map(|location| location.line),
-            Some(12)
+                .is_some_and(|site| site.oracle_location.is_none())
+        );
+        assert!(
+            witness
+                .limitations
+                .iter()
+                .any(|item| item.kind == "oracle_source_location_unavailable")
         );
         assert!(witness.suggested_assertion.is_none());
         assert!(
