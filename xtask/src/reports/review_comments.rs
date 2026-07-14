@@ -13,6 +13,7 @@ const DEFAULT_BASE: &str = "origin/main";
 const DEFAULT_HEAD: &str = "HEAD";
 const REVIEW_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const REVIEW_COMMENTS_MD: &str = "target/ripr/review/comments.md";
+const REVIEW_COMMENTS_RECEIPT: &str = "target/ripr/review/run-receipt.json";
 const REVIEW_COMMENTS_SCHEMA: &str = "schemas/ripr/review-comments.schema.json";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 
@@ -103,10 +104,23 @@ fn write_review_comments_with_runner(
 ) -> Result<(), String> {
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
+    remove_stale_review_artifacts(repo)?;
     if !has_changed_paths(repo, &options.base, &options.head)? {
         write_empty_review_comments(repo, options)?;
-    } else if let Err(err) = run_producer(repo, options) {
-        write_error_review_comments(repo, options, &err)?;
+    } else {
+        match run_producer(repo, options) {
+            Ok(()) => ensure_review_comments_receipt(repo, options, "complete", None)?,
+            Err(err) => {
+                let status = if err.contains("timed out") {
+                    "limited_timeout"
+                } else {
+                    "failed"
+                };
+                let receipt = review_comments_receipt(repo, options, status, Some(&err));
+                write_receipt_file(repo, &receipt)?;
+                write_error_review_comments(repo, options, &err, &receipt)?;
+            }
+        }
     }
     validate_review_comments(repo, options, true)?;
     println!("Wrote {REVIEW_COMMENTS_JSON}");
@@ -179,6 +193,7 @@ fn validate_packet_value(
 
     validate_rendering_limits(packet, &mut violations);
     validate_summary_counts(packet, &mut violations);
+    validate_run_receipt(packet, repo, options, &mut violations);
 
     for key in ["comments", "summary_only", "suppressed", "warnings"] {
         if !packet.get(key).is_some_and(Value::is_array) {
@@ -234,6 +249,90 @@ fn validate_summary_counts(packet: &Value, violations: &mut Vec<String>) {
     }
 }
 
+fn validate_run_receipt(
+    packet: &Value,
+    repo: &Path,
+    options: &ReviewCommentsOptions,
+    violations: &mut Vec<String>,
+) {
+    let Some(receipt) = packet.get("run_receipt").and_then(Value::as_object) else {
+        violations.push("run_receipt is missing or not an object".to_string());
+        return;
+    };
+    for key in [
+        "schema_version",
+        "status",
+        "root_identity",
+        "base_sha",
+        "head_sha",
+        "last_completed_phase",
+        "active_phase",
+        "reusable_cache_identity",
+        "atomic_write_status",
+    ] {
+        if !receipt.contains_key(key) {
+            violations.push(format!("run_receipt.{key} is missing"));
+        }
+    }
+    expect_string_value(
+        receipt.get("schema_version"),
+        "0.1",
+        "run_receipt.schema_version",
+        violations,
+    );
+    let receipt_root = PathBuf::from(command_root_arg(repo, &options.root));
+    let expected_base = resolve_revision_identity(&receipt_root, &options.base);
+    let expected_head = resolve_revision_identity(&receipt_root, &options.head);
+    expect_string_value(
+        receipt.get("base_sha"),
+        &expected_base,
+        "run_receipt.base_sha",
+        violations,
+    );
+    expect_string_value(
+        receipt.get("head_sha"),
+        &expected_head,
+        "run_receipt.head_sha",
+        violations,
+    );
+    match receipt.get("status").and_then(Value::as_str) {
+        Some("in_progress" | "complete" | "limited_timeout" | "failed") => {}
+        Some(other) => violations.push(format!(
+            "run_receipt.status {other:?} is not contract-valid"
+        )),
+        None => violations.push("run_receipt.status is missing or not a string".to_string()),
+    }
+    if !receipt
+        .get("configured_timeout_ms")
+        .is_some_and(|value| value.as_u64().is_some_and(|timeout| timeout > 0))
+    {
+        violations.push("run_receipt.configured_timeout_ms is missing or invalid".to_string());
+    }
+    for key in [
+        "completed_artifacts",
+        "missing_artifacts",
+        "limitations",
+        "non_claims",
+    ] {
+        if !receipt.get(key).is_some_and(Value::is_array) {
+            violations.push(format!("run_receipt.{key} is missing or not an array"));
+        }
+    }
+}
+
+fn expect_string_value(
+    actual: Option<&Value>,
+    expected: &str,
+    key: &str,
+    violations: &mut Vec<String>,
+) {
+    match actual.and_then(Value::as_str) {
+        Some(value) if value == expected => {}
+        Some(value) => violations.push(format!("{key} is {value:?}, expected {expected:?}")),
+        None => violations.push(format!("{key} is missing or not a string")),
+    }
+}
+
 fn array_len(packet: &Value, key: &str) -> usize {
     packet
         .get(key)
@@ -259,6 +358,7 @@ fn run_ripr_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Res
 
     let root_arg = command_root_arg(repo, &options.root);
     let out_arg = out.display().to_string();
+    let timeout_ms = review_comments_timeout_ms()?;
     let ripr_args = vec![
         "review-comments".to_string(),
         "--root".to_string(),
@@ -267,6 +367,8 @@ fn run_ripr_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Res
         options.base.clone(),
         "--head".to_string(),
         options.head.clone(),
+        "--timeout-ms".to_string(),
+        timeout_ms.to_string(),
         "--out".to_string(),
         out_arg,
     ];
@@ -319,6 +421,12 @@ fn review_comments_timeout_secs() -> Result<u64, String> {
     }
 }
 
+fn review_comments_timeout_ms() -> Result<u64, String> {
+    review_comments_timeout_secs()?
+        .checked_mul(1_000)
+        .ok_or_else(|| "RIPR_REVIEW_COMMENTS_TIMEOUT_SECS is too large".to_string())
+}
+
 fn ripr_exe_name() -> &'static str {
     if cfg!(windows) { "ripr.exe" } else { "ripr" }
 }
@@ -363,8 +471,9 @@ fn write_error_review_comments(
     repo: &Path,
     options: &ReviewCommentsOptions,
     error: &str,
+    receipt: &Value,
 ) -> Result<(), String> {
-    let packet = error_review_comments_packet(repo, options, error);
+    let packet = error_review_comments_packet(repo, options, error, receipt);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize review comments error packet: {err}"))?;
     let markdown = render_error_review_comments_markdown(&packet);
@@ -372,7 +481,9 @@ fn write_error_review_comments(
 }
 
 fn write_empty_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Result<(), String> {
-    let packet = empty_review_comments_packet(repo, options);
+    let receipt = review_comments_receipt(repo, options, "complete", None);
+    write_receipt_file(repo, &receipt)?;
+    let packet = empty_review_comments_packet(repo, options, &receipt);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize review comments empty packet: {err}"))?;
     let markdown = render_empty_review_comments_markdown(&packet);
@@ -396,6 +507,7 @@ fn error_review_comments_packet(
     repo: &Path,
     options: &ReviewCommentsOptions,
     error: &str,
+    receipt: &Value,
 ) -> Value {
     serde_json::json!({
         "schema_version": "0.1",
@@ -425,11 +537,16 @@ fn error_review_comments_packet(
                 "path": null
             }
         ],
-        "limits_note": "Review guidance generation is advisory. The producer did not complete, so no comments are emitted."
+        "limits_note": "Review guidance generation is advisory. The producer did not complete, so no comments are emitted.",
+        "run_receipt": receipt
     })
 }
 
-fn empty_review_comments_packet(repo: &Path, options: &ReviewCommentsOptions) -> Value {
+fn empty_review_comments_packet(
+    repo: &Path,
+    options: &ReviewCommentsOptions,
+    receipt: &Value,
+) -> Value {
     serde_json::json!({
         "schema_version": "0.1",
         "tool": "ripr",
@@ -452,8 +569,150 @@ fn empty_review_comments_packet(repo: &Path, options: &ReviewCommentsOptions) ->
         "summary_only": [],
         "suppressed": [],
         "warnings": [],
-        "limits_note": "No changed paths were detected, so no changed-line review guidance is emitted."
+        "limits_note": "No changed paths were detected, so no changed-line review guidance is emitted.",
+        "run_receipt": receipt
     })
+}
+
+fn remove_stale_review_artifacts(repo: &Path) -> Result<(), String> {
+    for relative in [
+        REVIEW_COMMENTS_JSON,
+        REVIEW_COMMENTS_MD,
+        REVIEW_COMMENTS_RECEIPT,
+    ] {
+        let path = repo.join(relative);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("remove stale {relative} failed: {err}")),
+        }
+    }
+    Ok(())
+}
+
+fn ensure_review_comments_receipt(
+    repo: &Path,
+    options: &ReviewCommentsOptions,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let packet_path = repo.join(REVIEW_COMMENTS_JSON);
+    if !packet_path.is_file() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(&packet_path).map_err(|err| {
+        format!("read {REVIEW_COMMENTS_JSON} for receipt attachment failed: {err}")
+    })?;
+    let mut packet: Value = serde_json::from_str(&text).map_err(|err| {
+        format!("parse {REVIEW_COMMENTS_JSON} for receipt attachment failed: {err}")
+    })?;
+    let receipt = packet
+        .get("run_receipt")
+        .cloned()
+        .unwrap_or_else(|| review_comments_receipt(repo, options, status, error));
+    write_receipt_file(repo, &receipt)?;
+    if let Some(object) = packet.as_object_mut() {
+        object.insert("run_receipt".to_string(), receipt);
+    }
+    let rendered = serde_json::to_string_pretty(&packet)
+        .map_err(|err| format!("serialize {REVIEW_COMMENTS_JSON} with receipt failed: {err}"))?;
+    write_parented_file(&packet_path, REVIEW_COMMENTS_JSON, format!("{rendered}\n"))
+}
+
+fn write_receipt_file(repo: &Path, receipt: &Value) -> Result<(), String> {
+    let path = repo.join(REVIEW_COMMENTS_RECEIPT);
+    let rendered = serde_json::to_string_pretty(receipt)
+        .map_err(|err| format!("serialize review-comments receipt failed: {err}"))?;
+    write_parented_file(&path, REVIEW_COMMENTS_RECEIPT, format!("{rendered}\n"))
+}
+
+fn review_comments_receipt(
+    repo: &Path,
+    options: &ReviewCommentsOptions,
+    status: &str,
+    error: Option<&str>,
+) -> Value {
+    let receipt_path = repo.join(REVIEW_COMMENTS_RECEIPT);
+    let receipt_root = PathBuf::from(command_root_arg(repo, &options.root));
+    let base_sha = resolve_revision_identity(&receipt_root, &options.base);
+    let head_sha = resolve_revision_identity(&receipt_root, &options.head);
+    let existing_receipt = fs::read_to_string(&receipt_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .filter(|receipt| {
+            receipt.get("base_sha").and_then(Value::as_str) == Some(base_sha.as_str())
+                && receipt.get("head_sha").and_then(Value::as_str) == Some(head_sha.as_str())
+        });
+    let mut receipt = existing_receipt.unwrap_or_else(|| {
+        serde_json::json!({
+            "schema_version": "0.1",
+            "root_identity": normalize_path_text(&command_root_arg(repo, &options.root)),
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "configured_timeout_ms": review_comments_timeout_ms().unwrap_or(120_000),
+            "last_completed_phase": Value::Null,
+            "active_phase": "review_comments_process",
+            "completed_artifacts": [],
+            "missing_artifacts": ["comments.json", "comments.md"],
+            "reusable_cache_identity": format!(
+                "review-comments|{}|{}|{}",
+                options.base, options.head, options.root
+            ),
+            "limitations": [],
+            "non_claims": [],
+            "atomic_write_status": "committed"
+        })
+    });
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("status".to_string(), Value::String(status.to_string()));
+        if status == "complete" {
+            object.insert(
+                "last_completed_phase".to_string(),
+                Value::String("artifact_io".to_string()),
+            );
+            object.insert("active_phase".to_string(), Value::Null);
+            object.insert(
+                "completed_artifacts".to_string(),
+                serde_json::json!(["comments.json", "comments.md"]),
+            );
+            object.insert("missing_artifacts".to_string(), serde_json::json!([]));
+        } else if status == "limited_timeout" {
+            object.insert(
+                "active_phase".to_string(),
+                object
+                    .get("active_phase")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String("review_comments_process".to_string())),
+            );
+            object.insert(
+                "limitations".to_string(),
+                serde_json::json!([{
+                    "category": "analysis_timeout",
+                    "repair_route": "perf/review-comments-phase-budget"
+                }]),
+            );
+            object.insert(
+                "non_claims".to_string(),
+                serde_json::json!(["no complete route inventory", "no all-clear"]),
+            );
+        } else if status == "failed" {
+            object.insert(
+                "limitations".to_string(),
+                serde_json::json!([{
+                    "category": "review_comments_failure",
+                    "repair_route": "analysis/review-comments-error-diagnostics"
+                }]),
+            );
+            object.insert(
+                "non_claims".to_string(),
+                serde_json::json!([format!(
+                    "failure: {}",
+                    first_line(error.unwrap_or("unknown failure"))
+                )]),
+            );
+        }
+    }
+    receipt
 }
 
 fn render_error_review_comments_markdown(packet: &Value) -> String {
@@ -516,6 +775,15 @@ fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
     let mut git_args = vec!["-C".to_string(), repo.display().to_string()];
     git_args.extend(args.iter().map(|arg| (*arg).to_string()));
     run_output_owned("git", &git_args)
+}
+
+fn resolve_revision_identity(repo: &Path, revision: &str) -> String {
+    let object = format!("{revision}^{{commit}}");
+    run_git_output(repo, &["rev-parse", "--verify", object.as_str()])
+        .map(|value| value.trim().to_string())
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| revision.to_string())
 }
 
 fn has_changed_paths(repo: &Path, base: &str, head: &str) -> Result<bool, String> {
@@ -631,8 +899,18 @@ mod tests {
 
     #[test]
     fn error_packet_is_contract_valid() {
-        let packet =
-            error_review_comments_packet(&repo_root_for_display(), &options(), "synthetic failure");
+        let receipt = review_comments_receipt(
+            &repo_root_for_display(),
+            &options(),
+            "failed",
+            Some("synthetic failure"),
+        );
+        let packet = error_review_comments_packet(
+            &repo_root_for_display(),
+            &options(),
+            "synthetic failure",
+            &receipt,
+        );
         let violations = validate_packet_value(
             &packet,
             &repo_root_for_display(),
@@ -679,6 +957,8 @@ mod tests {
 
         let packet = read_packet(&repo)?;
         assert_eq!(packet["status"], "advisory");
+        assert_eq!(packet["run_receipt"]["status"], "complete");
+        assert_eq!(packet["run_receipt"]["active_phase"], Value::Null);
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
@@ -696,9 +976,33 @@ mod tests {
             packet["warnings"][0]["message"],
             "synthetic producer failure"
         );
+        assert_eq!(packet["run_receipt"]["status"], "failed");
+        assert!(repo.join(REVIEW_COMMENTS_RECEIPT).is_file());
         let markdown = fs::read_to_string(repo.join(REVIEW_COMMENTS_MD))
             .map_err(|err| format!("read error Markdown: {err}"))?;
         assert!(markdown.contains("No review guidance was generated."));
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn write_wrapper_preserves_typed_timeout_receipt() -> Result<(), String> {
+        let (repo, options) = prepared_review_repo("ripr-review-comments-timeout")?;
+        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+            Err("ripr review-comments timed out after 1 seconds".to_string())
+        })?;
+
+        let packet = read_packet(&repo)?;
+        assert_eq!(packet["run_receipt"]["status"], "limited_timeout");
+        assert_eq!(
+            packet["run_receipt"]["limitations"][0]["category"],
+            "analysis_timeout"
+        );
+        let standalone = fs::read_to_string(repo.join(REVIEW_COMMENTS_RECEIPT))
+            .map_err(|err| format!("read timeout receipt: {err}"))?;
+        let standalone: Value = serde_json::from_str(&standalone)
+            .map_err(|err| format!("parse timeout receipt: {err}"))?;
+        assert_eq!(standalone["status"], "limited_timeout");
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
@@ -783,6 +1087,7 @@ mod tests {
     }
 
     fn valid_packet_for_repo(repo: &Path, options: &ReviewCommentsOptions) -> Value {
+        let receipt_root = PathBuf::from(command_root_arg(repo, &options.root));
         json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -805,7 +1110,23 @@ mod tests {
             "summary_only": [],
             "suppressed": [],
             "warnings": [],
-            "limits_note": "Comments are capped and advisory; summary-only items never annotate."
+            "limits_note": "Comments are capped and advisory; summary-only items never annotate.",
+            "run_receipt": {
+                "schema_version": "0.1",
+                "status": "complete",
+                "root_identity": normalize_path_text(&command_root_arg(repo, &options.root)),
+                "base_sha": resolve_revision_identity(&receipt_root, &options.base),
+                "head_sha": resolve_revision_identity(&receipt_root, &options.head),
+                "configured_timeout_ms": 120000,
+                "last_completed_phase": "artifact_io",
+                "active_phase": null,
+                "completed_artifacts": ["comments.json", "comments.md"],
+                "missing_artifacts": [],
+                "reusable_cache_identity": "review-comments|fixture",
+                "limitations": [],
+                "non_claims": ["static review guidance is advisory evidence only"],
+                "atomic_write_status": "committed"
+            }
         })
     }
 
