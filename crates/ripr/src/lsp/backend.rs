@@ -1008,6 +1008,14 @@ impl Backend {
             return;
         }
         self.set_analysis_config(next);
+        if self.configuration_failure().is_some() {
+            // Repository configuration is still broken; preserve the
+            // latched failure/health signal instead of clearing it. The
+            // stored override is retained and will be reapplied once
+            // `reload_repository_config` succeeds.
+            self.publish_analysis_status().await;
+            return;
+        }
         self.invalidate_analysis_input(RefreshReason::ConfigReload.as_str());
         self.publish_analysis_status().await;
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
