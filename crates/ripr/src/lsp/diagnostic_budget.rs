@@ -231,15 +231,15 @@ pub fn evaluate_diagnostic_budget(
             });
             continue;
         }
-        if selected_bytes.saturating_add(item.payload_bytes) > budget.max_serialized_bytes
-            && !selected.is_empty()
-        {
+        if selected_bytes.saturating_add(item.payload_bytes) > budget.max_serialized_bytes {
             overflow_reasons.insert(DiagnosticOverflowReason::SerializedByteLimit);
-            omitted.push(OmittedDiagnosticItem {
-                canonical_id: item.canonical_id,
-                reason: OmittedDiagnosticReason::SerializedByteLimit,
-            });
-            continue;
+            if !selected.is_empty() {
+                omitted.push(OmittedDiagnosticItem {
+                    canonical_id: item.canonical_id,
+                    reason: OmittedDiagnosticReason::SerializedByteLimit,
+                });
+                continue;
+            }
         }
 
         let inline_detail_omitted = item.inline_detail_bytes > budget.max_inline_detail_bytes;
@@ -394,6 +394,31 @@ mod tests {
                 .overflow_reasons
                 .contains(&DiagnosticOverflowReason::DocumentItemLimit)
         );
+        assert!(
+            result
+                .overflow_reasons
+                .contains(&DiagnosticOverflowReason::SerializedByteLimit)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn first_item_over_byte_budget_stays_selected_and_marks_overflow() -> Result<(), String> {
+        let result = evaluate_diagnostic_budget(
+            [item("gap:oversized", "src/a.rs", key(0, 0, 0), 10)],
+            &DiagnosticBudget {
+                max_serialized_bytes: 5,
+                ..DiagnosticBudget::default()
+            },
+            "snapshot:s1:profile:actionable",
+            "evidence:e1",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            result.selected_ids().collect::<Vec<_>>(),
+            vec!["gap:oversized"]
+        );
+        assert!(result.overflowed);
         assert!(
             result
                 .overflow_reasons
