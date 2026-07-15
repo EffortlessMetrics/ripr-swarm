@@ -1481,19 +1481,19 @@ fn review_comments_with_diff_loader(
         ..CheckInput::default()
     };
     apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
-    let markdown_path = review_comments_markdown_path(&options.out);
-    let artifact_paths = [
-        options.out.display().to_string(),
-        markdown_path.display().to_string(),
-    ];
     let receipt_path =
         output::review_comments_receipt::ReviewCommentsRunReceipt::path_for_output(&options.out);
+    let markdown_path = review_comments_markdown_path(&options.out);
+    let artifacts = vec![
+        output::outcome::display_path(&options.out),
+        output::outcome::display_path(&markdown_path),
+    ];
     let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
         &input.root,
         &options.base,
         &options.head,
         options.timeout_ms,
-        &artifact_paths,
+        &artifacts,
     );
     receipt.write_atomic(&receipt_path)?;
     receipt.phase("input_validation", "configuration");
@@ -1532,11 +1532,13 @@ fn review_comments_with_diff_loader(
         );
         receipt.phase("configuration", "static_rendering");
         receipt.write_atomic(&receipt_path)?;
+        receipt.phase("static_rendering", "artifact_io");
+        receipt.write_atomic(&receipt_path)?;
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         write_text_file(&markdown_path, &rendered_md)?;
-        receipt.complete(&artifact_paths);
+        receipt.complete(&artifacts);
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
@@ -1606,7 +1608,7 @@ fn review_comments_with_diff_loader(
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&markdown_path, &rendered_md)?;
-    receipt.complete(&artifact_paths);
+    receipt.complete(&artifacts);
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     receipt.write_atomic(&receipt_path)?;
@@ -8018,8 +8020,12 @@ language = "rust"
         let root = unique_command_test_dir("review-comments-diff-error");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let root_arg = root.display().to_string();
+        let out = root.join("comments.json");
+        let out_arg = out.display().to_string();
         let result = review_comments_with_diff_loader(
-            &args(&["--root", &root_arg, "--base", "main", "--head", "HEAD"]),
+            &args(&[
+                "--root", &root_arg, "--base", "main", "--head", "HEAD", "--out", &out_arg,
+            ]),
             |_root, _base, _head| Err("synthetic diff failure".to_string()),
         );
 

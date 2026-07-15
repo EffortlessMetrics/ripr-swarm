@@ -18,15 +18,27 @@ const REVIEW_COMMENTS_RECEIPT: &str = "target/ripr/review/run-receipt.json";
 const REVIEW_COMMENTS_SCHEMA: &str = "schemas/ripr/review-comments.schema.json";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ReviewCommentsRunnerError {
-    TimedOut(String),
-    Failed(String),
+#[derive(Debug)]
+struct ReviewCommentsRunError {
+    message: String,
+    timed_out: bool,
 }
 
-impl From<String> for ReviewCommentsRunnerError {
+impl ReviewCommentsRunError {
+    fn timed_out(message: String) -> Self {
+        Self {
+            message,
+            timed_out: true,
+        }
+    }
+}
+
+impl From<String> for ReviewCommentsRunError {
     fn from(message: String) -> Self {
-        Self::Failed(message)
+        Self {
+            message,
+            timed_out: false,
+        }
     }
 }
 
@@ -110,27 +122,31 @@ fn write_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Result
     write_review_comments_with_runner(repo, options, run_ripr_review_comments)
 }
 
-fn write_review_comments_with_runner(
+fn write_review_comments_with_runner<E>(
     repo: &Path,
     options: &ReviewCommentsOptions,
-    run_producer: impl FnOnce(&Path, &ReviewCommentsOptions) -> Result<(), ReviewCommentsRunnerError>,
-) -> Result<(), String> {
+    run_producer: impl FnOnce(&Path, &ReviewCommentsOptions) -> Result<(), E>,
+) -> Result<(), String>
+where
+    E: Into<ReviewCommentsRunError>,
+{
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
     remove_stale_review_artifacts(repo)?;
     if !has_changed_paths(repo, &options.base, &options.head)? {
         write_empty_review_comments(repo, options)?;
     } else {
-        match run_producer(repo, options) {
+        match run_producer(repo, options).map_err(Into::into) {
             Ok(()) => ensure_review_comments_receipt(repo, options, "complete", None)?,
             Err(err) => {
-                let (status, message) = match err {
-                    ReviewCommentsRunnerError::TimedOut(message) => ("limited_timeout", message),
-                    ReviewCommentsRunnerError::Failed(message) => ("failed", message),
+                let status = if err.timed_out {
+                    "limited_timeout"
+                } else {
+                    "failed"
                 };
-                let receipt = review_comments_receipt(repo, options, status, Some(&message));
+                let receipt = review_comments_receipt(repo, options, status, Some(&err.message));
                 write_receipt_file(repo, &receipt)?;
-                write_error_review_comments(repo, options, &message, &receipt)?;
+                write_error_review_comments(repo, options, &err.message, &receipt)?;
             }
         }
     }
@@ -307,7 +323,8 @@ fn validate_run_receipt(
         "run_receipt.head_sha",
         violations,
     );
-    match receipt.get("status").and_then(Value::as_str) {
+    let receipt_status = receipt.get("status").and_then(Value::as_str);
+    match receipt_status {
         Some("in_progress" | "complete" | "limited_timeout" | "failed") => {}
         Some(other) => violations.push(format!(
             "run_receipt.status {other:?} is not contract-valid"
@@ -329,6 +346,58 @@ fn validate_run_receipt(
         if !receipt.get(key).is_some_and(Value::is_array) {
             violations.push(format!("run_receipt.{key} is missing or not an array"));
         }
+    }
+    match receipt_status {
+        Some("complete") => {
+            if !receipt
+                .get("last_completed_phase")
+                .is_some_and(|value| value.as_str() == Some("artifact_io"))
+            {
+                violations.push(
+                    "complete run_receipt.last_completed_phase must be artifact_io".to_string(),
+                );
+            }
+            if !receipt.get("active_phase").is_some_and(Value::is_null) {
+                violations.push("complete run_receipt.active_phase must be null".to_string());
+            }
+            if receipt
+                .get("completed_artifacts")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
+                violations
+                    .push("complete run_receipt.completed_artifacts must not be empty".to_string());
+            }
+            if receipt
+                .get("missing_artifacts")
+                .and_then(Value::as_array)
+                .is_some_and(|artifacts| !artifacts.is_empty())
+            {
+                violations.push("complete run_receipt.missing_artifacts must be empty".to_string());
+            }
+        }
+        Some("limited_timeout" | "failed") => {
+            if !receipt
+                .get("active_phase")
+                .and_then(Value::as_str)
+                .is_some_and(|phase| !phase.trim().is_empty())
+            {
+                violations.push(format!(
+                    "{receipt_status:?} run_receipt.active_phase must name the interrupted phase"
+                ));
+            }
+            if receipt
+                .get("missing_artifacts")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
+                violations.push(format!(
+                    "{receipt_status:?} run_receipt.missing_artifacts must not be empty"
+                ));
+            }
+        }
+        Some("in_progress") | None => {}
+        Some(_) => {}
     }
 }
 
@@ -367,7 +436,7 @@ fn non_empty_string(value: &Value) -> bool {
 fn run_ripr_review_comments(
     repo: &Path,
     options: &ReviewCommentsOptions,
-) -> Result<(), ReviewCommentsRunnerError> {
+) -> Result<(), ReviewCommentsRunError> {
     let out = repo.join(REVIEW_COMMENTS_JSON);
     ensure_parent_dir(&out, REVIEW_COMMENTS_JSON)?;
 
@@ -390,9 +459,7 @@ fn run_ripr_review_comments(
     let binary = match env::var("RIPR_BIN") {
         Ok(binary) => {
             if binary.trim().is_empty() {
-                return Err(ReviewCommentsRunnerError::Failed(
-                    "RIPR_BIN is set but empty".to_string(),
-                ));
+                return Err("RIPR_BIN is set but empty".to_string().into());
             }
             binary
         }
@@ -413,7 +480,7 @@ fn run_ripr_review_comments(
     let output =
         capture_output_with_timeout(&binary, &ripr_args, &[], timeout, "ripr review-comments")?;
     if output.timed_out {
-        return Err(ReviewCommentsRunnerError::TimedOut(format!(
+        return Err(ReviewCommentsRunError::timed_out(format!(
             "ripr review-comments timed out after {} seconds",
             output.duration.as_secs()
         )));
@@ -421,7 +488,7 @@ fn run_ripr_review_comments(
     if output.status.is_some_and(|status| status.success()) {
         Ok(())
     } else {
-        Err(ReviewCommentsRunnerError::Failed(format!(
+        Err(ReviewCommentsRunError::from(format!(
             "ripr review-comments failed\nstdout:\n{}\nstderr:\n{}",
             output.stdout.trim(),
             output.stderr.trim()
@@ -944,6 +1011,42 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_incomplete_complete_receipt() -> Result<(), String> {
+        let packet = valid_packet(&options());
+        let mut object = packet
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "packet should be an object".to_string())?;
+        let mut receipt = object
+            .get("run_receipt")
+            .and_then(Value::as_object)
+            .cloned()
+            .ok_or_else(|| "receipt should be an object".to_string())?;
+        receipt.insert("active_phase".to_string(), json!("artifact_io"));
+        receipt.insert("completed_artifacts".to_string(), json!([]));
+        object.insert("run_receipt".to_string(), Value::Object(receipt));
+
+        let violations = validate_packet_value(
+            &Value::Object(object),
+            &repo_root_for_display(),
+            &options(),
+            false,
+            Path::new(REVIEW_COMMENTS_MD),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("active_phase must be null"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("completed_artifacts must not be empty"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn validation_requires_markdown_artifact() {
         let violations = validate_packet_value(
             &valid_packet(&options()),
@@ -1026,7 +1129,7 @@ mod tests {
     fn write_wrapper_converts_producer_failure_to_error_packet() -> Result<(), String> {
         let (repo, options) = prepared_review_repo("ripr-review-comments-error")?;
         write_review_comments_with_runner(&repo, &options, |_repo, _options| {
-            Err(ReviewCommentsRunnerError::Failed(
+            Err(ReviewCommentsRunError::from(
                 "synthetic producer failure\nsecond line".to_string(),
             ))
         })?;
@@ -1047,10 +1150,23 @@ mod tests {
     }
 
     #[test]
+    fn write_wrapper_does_not_infer_timeout_from_error_text() -> Result<(), String> {
+        let (repo, options) = prepared_review_repo("ripr-review-comments-text-timeout")?;
+        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+            Err("a non-timeout failure mentions timed out in its context".to_string())
+        })?;
+
+        let packet = read_packet(&repo)?;
+        assert_eq!(packet["run_receipt"]["status"], "failed");
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
     fn write_wrapper_preserves_typed_timeout_receipt() -> Result<(), String> {
         let (repo, options) = prepared_review_repo("ripr-review-comments-timeout")?;
         write_review_comments_with_runner(&repo, &options, |_repo, _options| {
-            Err(ReviewCommentsRunnerError::TimedOut(
+            Err(ReviewCommentsRunError::timed_out(
                 "ripr review-comments timed out after 1 seconds".to_string(),
             ))
         })?;
@@ -1077,7 +1193,7 @@ mod tests {
         options.head = "HEAD".to_string();
 
         write_review_comments_with_runner(&repo, &options, |_repo, _options| {
-            Err(ReviewCommentsRunnerError::Failed(
+            Err(ReviewCommentsRunError::from(
                 "producer should not run for an empty diff".to_string(),
             ))
         })?;

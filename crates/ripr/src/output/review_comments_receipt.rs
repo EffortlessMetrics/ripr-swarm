@@ -42,7 +42,7 @@ impl ReviewCommentsRunReceipt {
         base: &str,
         head: &str,
         timeout_ms: u64,
-        artifacts: &[String],
+        expected_artifacts: &[String],
     ) -> Self {
         let root_identity = canonical_root_identity(root);
         let base_sha = resolve_revision(root, base);
@@ -58,7 +58,7 @@ impl ReviewCommentsRunReceipt {
             last_completed_phase: None,
             active_phase: Some("input_validation".to_string()),
             completed_artifacts: Vec::new(),
-            missing_artifacts: artifacts.to_vec(),
+            missing_artifacts: expected_artifacts.to_vec(),
             reusable_cache_identity,
             limitations: Vec::new(),
             non_claims: vec![

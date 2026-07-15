@@ -479,7 +479,8 @@
             "properties": {
               "active_phase": { "type": "string", "minLength": 1 },
               "limitations": { "minItems": 1 },
-              "non_claims": { "minItems": 1 }
+              "non_claims": { "minItems": 1 },
+              "missing_artifacts": { "minItems": 1 }
             }
           }
         },
@@ -493,7 +494,8 @@
             "required": ["limitations", "non_claims"],
             "properties": {
               "limitations": { "minItems": 1 },
-              "non_claims": { "minItems": 1 }
+              "non_claims": { "minItems": 1 },
+              "missing_artifacts": { "minItems": 1 }
             }
           }
         }
