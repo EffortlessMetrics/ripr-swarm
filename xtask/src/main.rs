@@ -72713,6 +72713,8 @@ fn should_skip_path(path: &str) -> bool {
         || path.starts_with(".claude/")
         || path == "target"
         || path.starts_with("target/")
+        || path.ends_with("/target")
+        || path.contains("/target/")
         || path == ".ripr/release"
         || path.starts_with(".ripr/release/")
         || path.ends_with("/.vscode-test")
@@ -85024,6 +85026,15 @@ fn has_unwrap_in_name() -> bool {
         assert!(should_skip_path("editors/vscode/out/src/extension.js"));
         assert!(should_skip_path("editors/vscode/dist/ripr-0.3.0.vsix"));
         assert!(!should_skip_path("editors/vscode/src/config.ts"));
+    }
+
+    #[test]
+    fn should_skip_path_ignores_nested_target_artifacts() {
+        assert!(should_skip_path("crates/ripr/target"));
+        assert!(should_skip_path(
+            "crates/ripr/target/ripr/review/run-receipt.json"
+        ));
+        assert!(!should_skip_path("crates/ripr/src/targeting.rs"));
     }
 
     #[test]

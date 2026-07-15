@@ -445,7 +445,59 @@
         "atomic_write_status": {
           "enum": ["not_written", "committed"]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": { "const": "complete" }
+            }
+          },
+          "then": {
+            "required": [
+              "last_completed_phase",
+              "active_phase",
+              "completed_artifacts",
+              "missing_artifacts"
+            ],
+            "properties": {
+              "last_completed_phase": { "const": "artifact_io" },
+              "active_phase": { "type": "null" },
+              "completed_artifacts": { "minItems": 1 },
+              "missing_artifacts": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "const": "limited_timeout" }
+            }
+          },
+          "then": {
+            "required": ["active_phase", "limitations", "non_claims"],
+            "properties": {
+              "active_phase": { "type": "string", "minLength": 1 },
+              "limitations": { "minItems": 1 },
+              "non_claims": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "const": "failed" }
+            }
+          },
+          "then": {
+            "required": ["limitations", "non_claims"],
+            "properties": {
+              "limitations": { "minItems": 1 },
+              "non_claims": { "minItems": 1 }
+            }
+          }
+        }
+      ]
     },
     "recommendation": {
       "type": "object",
