@@ -698,20 +698,20 @@ fn ensure_review_comments_receipt(
         .get("run_receipt")
         .cloned()
         .unwrap_or_else(|| review_comments_receipt(repo, options, status, error));
-    if status == "complete" {
-        if let Some(object) = receipt.as_object_mut() {
-            object.insert("status".to_string(), Value::String("complete".to_string()));
-            object.insert(
-                "last_completed_phase".to_string(),
-                Value::String("artifact_io".to_string()),
-            );
-            object.insert("active_phase".to_string(), Value::Null);
-            object.insert(
-                "completed_artifacts".to_string(),
-                serde_json::json!([REVIEW_COMMENTS_JSON, REVIEW_COMMENTS_MD]),
-            );
-            object.insert("missing_artifacts".to_string(), serde_json::json!([]));
-        }
+    if status == "complete"
+        && let Some(object) = receipt.as_object_mut()
+    {
+        object.insert("status".to_string(), Value::String("complete".to_string()));
+        object.insert(
+            "last_completed_phase".to_string(),
+            Value::String("artifact_io".to_string()),
+        );
+        object.insert("active_phase".to_string(), Value::Null);
+        object.insert(
+            "completed_artifacts".to_string(),
+            serde_json::json!([REVIEW_COMMENTS_JSON, REVIEW_COMMENTS_MD]),
+        );
+        object.insert("missing_artifacts".to_string(), serde_json::json!([]));
     }
     write_receipt_file(repo, &receipt)?;
     if let Some(object) = packet.as_object_mut() {
