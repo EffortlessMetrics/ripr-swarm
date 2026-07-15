@@ -5770,6 +5770,7 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
     runtime.block_on(async {
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
+        backend.initialize_test_workspace_root();
 
         let params = ExecuteCommandParams {
             command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
@@ -5789,7 +5790,11 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
         assert_eq!(status["analysis_status"]["run_status"], "no_snapshot");
         assert_eq!(status["analysis_status"]["repair_actions_available"], false);
         assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
-        assert_eq!(status["top_limitation"], serde_json::Value::Null);
+        assert_eq!(status["top_limitation"]["status"], "no_snapshot");
+        assert_eq!(
+            status["top_limitation"]["limitation_category"],
+            "no_snapshot"
+        );
         assert_eq!(
             status["limits_note"],
             "Static evidence only; advisory, not a gate decision."
@@ -5880,6 +5885,11 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
         );
         assert_eq!(status["analysis_status"]["repair_actions_available"], false);
         assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
+        assert_eq!(
+            status["top_limitation"]["status"],
+            "analysis_failed_retained_snapshot"
+        );
+        assert_eq!(status["top_limitation"]["run_status"], "stale");
 
         let retained_diagnostic = retained
             .diagnostics_by_uri
@@ -6130,7 +6140,8 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
             &serde_json::Value::Null,
             "expected non-null top_limitation"
         );
-        assert_eq!(limitation["category"], "wrong_root");
+        assert_eq!(limitation["status"], "artifact_rejected");
+        assert_eq!(limitation["limitation_category"], "wrong_root");
         assert!(
             limitation["repair_route"]
                 .as_str()
@@ -6501,10 +6512,9 @@ fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<
 }
 
 #[test]
-fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() -> Result<(), String>
-{
-    // When there is no snapshot yet the command must return Some(value) with
-    // status == "no_limitation" — not null, which is a meaningful "no blockers" answer.
+fn execute_command_collect_top_limitation_no_snapshot_returns_no_snapshot_status()
+-> Result<(), String> {
+    // No snapshot is an explicit incomplete state, never an all-clear sentinel.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -6522,9 +6532,7 @@ fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() ->
         let result = backend.execute_command(params).await;
         let value = result
             .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| {
-                "expected Some(value) with status no_limitation, got null".to_string()
-            })?;
+            .ok_or_else(|| "expected Some(value) with status no_snapshot, got null".to_string())?;
 
         assert_eq!(
             value["schema_version"], "0.1",
@@ -6536,9 +6544,13 @@ fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() ->
             "sentinel must carry kind=top_limitation"
         );
         assert_eq!(
-            value["status"], "no_limitation",
-            "no snapshot must yield status=no_limitation, got {value}"
+            value["status"], "no_snapshot",
+            "no snapshot must yield status=no_snapshot, got {value}"
         );
+        assert_eq!(value["limitation_category"], "no_snapshot");
+        assert_eq!(value["recovery_route"], "refresh");
+        assert_eq!(value["completeness"], "none");
+        assert!(value["non_claims"].as_array().is_some());
         Ok(())
     })
 }
