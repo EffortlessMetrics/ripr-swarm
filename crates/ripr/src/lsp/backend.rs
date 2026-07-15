@@ -664,6 +664,11 @@ impl Backend {
         .await;
     }
 
+    #[cfg(test)]
+    pub(super) fn invalidate_analysis_input_for_test(&self, reason: &str) {
+        self.invalidate_analysis_input(reason);
+    }
+
     fn workspace_root_authority(&self) -> WorkspaceRootAuthority {
         self.workspace_root
             .lock()
@@ -910,8 +915,11 @@ impl Backend {
                 snapshot.clone()
             }
             (Some(input_identity), _) => serde_json::json!({"input_identity": input_identity}),
-            (None, Some(snapshot)) => snapshot.clone(),
+            (None, Some(snapshot)) if health.state == AnalysisAttemptState::Succeeded => {
+                snapshot.clone()
+            }
             (None, None) => serde_json::Value::Null,
+            (None, Some(_)) => serde_json::Value::Null,
         };
         let last_success_input = snapshot_input
             .or_else(|| {

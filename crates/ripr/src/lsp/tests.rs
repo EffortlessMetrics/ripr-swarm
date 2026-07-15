@@ -6320,6 +6320,28 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
         );
         assert_eq!(status["top_limitation"]["run_status"], "stale");
 
+        backend.invalidate_analysis_input_for_test("workspace_manifest_or_lockfile_changed");
+        let invalidated_status = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command after invalidation failed: {err}"))?
+            .ok_or_else(|| "expected workspace status after invalidation".to_string())?;
+        assert_eq!(
+            invalidated_status["analysis_status"]["input_authority"]["current"],
+            serde_json::Value::Null,
+            "invalidated retained evidence must not be promoted to current input"
+        );
+        assert_eq!(
+            invalidated_status["analysis_status"]["input_authority"]["last_success"][
+                "input_identity"
+            ],
+            status["analysis_status"]["input_authority"]["last_success"]["input_identity"]
+        );
+
         let retained_diagnostic = retained
             .diagnostics_by_uri
             .values()
