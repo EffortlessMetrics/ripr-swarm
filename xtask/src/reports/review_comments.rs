@@ -349,9 +349,9 @@ fn validate_run_receipt(
     }
     match receipt_status {
         Some("complete") => {
-            if !receipt
+            if receipt
                 .get("last_completed_phase")
-                .is_some_and(|value| value.as_str() == Some("artifact_io"))
+                .is_none_or(|value| value.as_str() != Some("artifact_io"))
             {
                 violations.push(
                     "complete run_receipt.last_completed_phase must be artifact_io".to_string(),
@@ -377,10 +377,10 @@ fn validate_run_receipt(
             }
         }
         Some("limited_timeout" | "failed") => {
-            if !receipt
+            if receipt
                 .get("active_phase")
                 .and_then(Value::as_str)
-                .is_some_and(|phase| !phase.trim().is_empty())
+                .is_none_or(|phase| phase.trim().is_empty())
             {
                 violations.push(format!(
                     "{receipt_status:?} run_receipt.active_phase must name the interrupted phase"
