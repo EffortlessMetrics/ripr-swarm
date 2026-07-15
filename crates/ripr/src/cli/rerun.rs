@@ -2150,6 +2150,51 @@ mod tests {
     }
 
     #[test]
+    fn targeted_rerun_seam_preserves_producer_route_readiness() -> Result<(), String> {
+        let mut seam = baseline_fields();
+        seam.repair_route_readiness = RepairRouteReadiness {
+            state: RepairRouteState::Ready,
+            seam_id: "seam:error-variant".to_string(),
+            canonical_gap_id: Some("gap:error-variant".to_string()),
+            required_evidence: vec![
+                "producer-owned missing discriminator fact: PricingError::Other".to_string(),
+                "safe test target".to_string(),
+            ],
+            present_evidence: vec![
+                "producer-owned missing discriminator fact: PricingError::Other".to_string(),
+                "safe test target".to_string(),
+            ],
+            missing_evidence: Vec::new(),
+            target_selection: RepairTargetSelection::Proposed(NewTestTargetProposal {
+                kind: NewTestKind::Integration,
+                file: "tests/pricing.rs".into(),
+                owner: "pricing::classify_boundary".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            test_target: None,
+            proposed_oracle: Some(OracleKind::ExactErrorVariant),
+            current_oracle: Some(OracleKind::BroadError),
+            authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
+        };
+
+        let value = serde_json::to_value(&seam)
+            .map_err(|error| format!("serialize targeted rerun seam: {error}"))?;
+        if value["repair_route_readiness"]["state"] != "ready"
+            || value["repair_route_readiness"]["canonical_gap_id"] != "gap:error-variant"
+            || value["repair_route_readiness"]["proposed_oracle"] != "exact_error_variant"
+            || value["repair_route_readiness"]["target_selection"]["proposed"]["file"]
+                != "tests/pricing.rs"
+            || value["repair_route_readiness"]["authority_boundary"]
+                != REPAIR_ROUTE_AUTHORITY_BOUNDARY
+        {
+            return Err(format!(
+                "targeted rerun lost producer-owned route readiness: {value}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn human_rerun_report_names_current_state_only_boundary() -> Result<(), String> {
         let report = TargetedRerunReport {
             schema_version: "ripr-targeted-rerun-v1",
