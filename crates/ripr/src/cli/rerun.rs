@@ -2164,7 +2164,7 @@ mod tests {
         let value = serde_json::to_value(&seam)
             .map_err(|error| format!("serialize targeted rerun seam: {error}"))?;
         if value["repair_route_readiness"]["state"] != "ready"
-            || value["repair_route_readiness"]["proposed_oracle"] != "exact_error_variant"
+            || value["repair_route_readiness"]["proposed_oracle"] != "ExactErrorVariant"
             || value["repair_route_readiness"]["target_selection"]["existing"]["symbol_id"]
                 .as_str()
                 .is_none()
