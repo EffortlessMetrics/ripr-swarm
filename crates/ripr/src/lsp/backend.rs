@@ -2358,6 +2358,35 @@ fn top_gap_artifact_rejection(
     })
 }
 
+#[cfg(test)]
+mod top_limitation_selection_tests {
+    use super::*;
+
+    #[test]
+    fn top_gap_artifact_rejection_is_order_independent() {
+        use super::super::gap_artifacts::GapArtifactRejection;
+
+        let first_order = vec![
+            GapArtifactRejection::WrongRoot("/workspace/other".to_string()),
+            GapArtifactRejection::DisabledLanguage("typescript".to_string()),
+        ];
+        let second_order = vec![
+            GapArtifactRejection::DisabledLanguage("typescript".to_string()),
+            GapArtifactRejection::WrongRoot("/workspace/other".to_string()),
+        ];
+
+        let selected = |rejections: &[GapArtifactRejection]| {
+            let rejection = top_gap_artifact_rejection(rejections)
+                .expect("test input should contain a rejection");
+            (rejection.as_str(), limitation_sample_sources(rejection))
+        };
+        let expected = ("disabled_language", vec!["typescript".to_string()]);
+
+        assert_eq!(selected(&first_order), expected);
+        assert_eq!(selected(&second_order), expected);
+    }
+}
+
 fn workspace_status_rejection_repair(
     rejection: &super::gap_artifacts::GapArtifactRejection,
 ) -> (&'static str, &'static str) {

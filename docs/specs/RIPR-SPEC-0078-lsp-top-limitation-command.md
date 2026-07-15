@@ -24,7 +24,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #1696
 
 Support-tier impact:
 
