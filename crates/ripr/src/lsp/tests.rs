@@ -6194,6 +6194,22 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
             "no_snapshot"
         );
         assert_eq!(
+            status["analysis_status"]["input_authority"]["configuration_state"],
+            "valid"
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["repository_config_source"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["current"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["last_success"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
             status["limits_note"],
             "Static evidence only; advisory, not a gate decision."
         );
@@ -6491,6 +6507,20 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
         assert_eq!(
             status["diagnostics"]["actionable_diagnostics"].as_u64(),
             Some(0)
+        );
+        assert!(
+            status["analysis_status"]["input_authority"]["current"]["input_identity"]
+                .as_str()
+                .is_some_and(|identity| identity.starts_with("input:")),
+            "status must expose the current producer-owned input identity: {status}"
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["current"]["profile"],
+            "actionable"
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["last_success"]["input_identity"],
+            status["analysis_status"]["input_authority"]["current"]["input_identity"]
         );
         assert_eq!(status["refresh_command"], REFRESH_COMMAND);
         assert!(
