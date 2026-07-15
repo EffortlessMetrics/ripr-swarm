@@ -334,7 +334,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "repo-exposure-latency-report",
         "targeted-rerun-benchmark --root <path> --changed-test <path> [--samples <n>] [--timeout-ms <n>]",
         "repo-contract-report",
-        "pr-body --work-item <id>",
+        "pr-body --work-item <id> [--campaign <campaign-id>]",
         "closeout --goal <goal-id>",
         "evidence-health",
         "lane1-evidence-audit",
@@ -693,7 +693,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Writes the source-of-truth contract graph report.",
         ),
         command_entry(
-            "pr-body --work-item <id>",
+            "pr-body --work-item <id> [--campaign <campaign-id>]",
             "report_only",
             "target/ripr/reports/source-of-truth-pr-body.md",
             false,

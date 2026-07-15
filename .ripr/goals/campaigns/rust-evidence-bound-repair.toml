@@ -59,7 +59,7 @@ status = "done"
 branch = "codex/control-plane-rust-one-shot-goal"
 stackable = true
 acceptance = "Replace stale post-0.9.0 use-case-spec-spine execution state with this campaign, a reconciled plan, issues, dependencies, proof commands, non-goals, and closeout criteria. No production behavior change."
-commands = ["cargo xtask goals next", "cargo xtask check-goals", "cargo xtask check-doc-index", "cargo xtask check-pr-shape"]
+commands = ["cargo xtask goals next --campaign rust-one-shot-evidence-to-repair", "cargo xtask check-goals", "cargo xtask check-doc-index", "cargo xtask check-pr-shape"]
 
 [[work_item]]
 id = "control-plane/cargo-allow-active-goal-dialect"

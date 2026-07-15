@@ -65420,8 +65420,8 @@ fn write_repo_contract_work_item_json_array(body: &mut String, items: &[RepoCont
 }
 
 fn pr_body(args: &[String]) -> Result<(), String> {
-    let work_item_id = parse_pr_body_args(args)?;
-    let body = pr_body_from_root(Path::new("."), &work_item_id)?;
+    let (work_item_id, campaign) = parse_pr_body_args(args)?;
+    let body = pr_body_from_root_with_campaign(Path::new("."), &work_item_id, campaign.as_deref())?;
     ensure_reports_dir()?;
     let path = reports_dir().join("source-of-truth-pr-body.md");
     fs::write(&path, body)
@@ -65430,15 +65430,52 @@ fn pr_body(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_pr_body_args(args: &[String]) -> Result<String, String> {
-    match args {
-        [flag, value] if flag == "--work-item" && !value.trim().is_empty() => Ok(value.clone()),
-        _ => Err("usage: cargo xtask pr-body --work-item <id>".to_string()),
+fn parse_pr_body_args(args: &[String]) -> Result<(String, Option<String>), String> {
+    let mut work_item = None;
+    let mut campaign = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let value = args
+            .next()
+            .filter(|value| !value.trim().is_empty() && !value.trim_start().starts_with('-'));
+        match arg.as_str() {
+            "--work-item" => {
+                if work_item
+                    .replace(value.ok_or_else(pr_body_usage)?)
+                    .is_some()
+                {
+                    return Err("`--work-item` may be specified only once".to_string());
+                }
+            }
+            "--campaign" => {
+                if campaign.replace(value.ok_or_else(pr_body_usage)?).is_some() {
+                    return Err("`--campaign` may be specified only once".to_string());
+                }
+            }
+            _ => return Err(pr_body_usage()),
+        }
     }
+    Ok((
+        work_item.ok_or_else(pr_body_usage)?.to_string(),
+        campaign.map(|value| value.to_string()),
+    ))
 }
 
+fn pr_body_usage() -> String {
+    "usage: cargo xtask pr-body --work-item <id> [--campaign <campaign-id>]".to_string()
+}
+
+#[cfg(test)]
 fn pr_body_from_root(root: &Path, work_item_id: &str) -> Result<String, String> {
-    let (campaign_path, manifest, parse_violations) = load_campaign_context(root, None)?;
+    pr_body_from_root_with_campaign(root, work_item_id, None)
+}
+
+fn pr_body_from_root_with_campaign(
+    root: &Path,
+    work_item_id: &str,
+    campaign: Option<&str>,
+) -> Result<String, String> {
+    let (campaign_path, manifest, parse_violations) = load_campaign_context(root, campaign)?;
     if !parse_violations.is_empty() {
         return Err(format!(
             "{} has parse violations:\n- {}",
@@ -66696,22 +66733,8 @@ fn parse_campaign_pointer(path: &Path) -> Result<(CampaignPointer, Vec<String>),
 }
 
 fn campaign_path_for_id(root: &Path, selector: &str) -> Result<PathBuf, String> {
-    let directory = root.join(".ripr/goals/campaigns");
-    if !directory.exists() {
-        return Err(format!(
-            "campaign directory `{}` does not exist; cannot resolve `--campaign {selector}`",
-            normalize_repo_relative(root, &directory)
-        ));
-    }
     let mut candidates = Vec::new();
-    for entry in fs::read_dir(&directory)
-        .map_err(|err| format!("read {}: {err}", normalize_path(&directory)))?
-    {
-        let entry = entry.map_err(|err| format!("read campaign entry: {err}"))?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
-            continue;
-        }
+    for path in campaign_record_paths(root)? {
         let (manifest, _) = parse_campaign_manifest(&path)?;
         if manifest.id.as_deref() == Some(selector)
             || path.file_stem().and_then(|value| value.to_str()) == Some(selector)
@@ -66729,6 +66752,28 @@ fn campaign_path_for_id(root: &Path, selector: &str) -> Result<PathBuf, String> 
             "campaign selector `{selector}` is ambiguous under `.ripr/goals/campaigns/`"
         )),
     }
+}
+
+fn campaign_record_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let directory = root.join(".ripr/goals/campaigns");
+    if !directory.exists() {
+        return Err(format!(
+            "campaign directory `{}` does not exist",
+            normalize_repo_relative(root, &directory)
+        ));
+    }
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&directory)
+        .map_err(|err| format!("read {}: {err}", normalize_path(&directory)))?
+    {
+        let entry = entry.map_err(|err| format!("read campaign entry: {err}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) == Some("toml") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
 }
 
 fn load_campaign_context(
@@ -66797,11 +66842,30 @@ fn check_campaign() -> Result<(), String> {
         return finish_campaign_report(&violations);
     }
 
-    let (_manifest_path, manifest, parse_violations) = load_campaign_context(Path::new("."), None)?;
+    let (manifest_path, manifest, parse_violations) = load_campaign_context(Path::new("."), None)?;
     violations.extend(parse_violations);
-    validate_campaign_manifest(&manifest, &mut violations)?;
+    validate_campaign_records(Path::new("."), &manifest_path, &manifest, &mut violations)?;
     violations.extend(campaign_source_truth_violations()?);
     finish_campaign_report(&violations)
+}
+
+fn validate_campaign_records(
+    root: &Path,
+    selected_path: &str,
+    selected: &CampaignManifest,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    validate_campaign_manifest(selected, violations)?;
+    for path in campaign_record_paths(root)? {
+        let normalized = normalize_repo_relative(root, &path);
+        if normalized == selected_path {
+            continue;
+        }
+        let (campaign, parse_violations) = parse_campaign_manifest(&path)?;
+        violations.extend(parse_violations);
+        validate_campaign_manifest(&campaign, violations)?;
+    }
+    Ok(())
 }
 
 fn goals_status(args: &[String]) -> Result<(), String> {
@@ -99418,6 +99482,12 @@ owner = "repo-infra"
                 )
             );
             assert!(!body.contains("- [x] none"));
+            let explicit_body = super::pr_body_from_root_with_campaign(
+                root,
+                "docs/report",
+                Some("source-of-truth-control-plane"),
+            )?;
+            assert!(explicit_body.contains("Work item: `docs/report`"));
             Ok(())
         })
     }
@@ -99542,6 +99612,23 @@ owner = "repo-infra"
         let error = super::parse_pr_body_args(&["--work-item".to_string()])
             .expect_err("missing work item id should fail argument parsing");
         assert!(error.contains("cargo xtask pr-body --work-item <id>"));
+    }
+
+    #[test]
+    fn pr_body_accepts_explicit_campaign_selector() -> Result<(), String> {
+        let args = vec![
+            "--campaign".to_string(),
+            "rust-one-shot-evidence-to-repair".to_string(),
+            "--work-item".to_string(),
+            "docs/report".to_string(),
+        ];
+        let (work_item, campaign) = super::parse_pr_body_args(&args)?;
+        assert_eq!(work_item, "docs/report");
+        assert_eq!(
+            campaign.as_deref(),
+            Some("rust-one-shot-evidence-to-repair")
+        );
+        Ok(())
     }
 
     #[test]
@@ -100224,6 +100311,69 @@ commands = ["cargo xtask missing-command"]
                 "{violations:?}"
             );
         });
+    }
+
+    #[test]
+    fn campaign_record_validation_checks_non_pointer_records() -> Result<(), String> {
+        with_temp_cwd("campaign-record-validation", |root| {
+            fs::create_dir_all(root.join(".ripr/goals/campaigns"))
+                .map_err(|err| format!("failed to create campaign directory: {err}"))?;
+            write(
+                &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+                "selected-campaign\nextra-campaign\n| `docs/selected` | ready |\n| `docs/extra` | ready |\n",
+            );
+            let selected_path = root.join(".ripr/goals/campaigns/selected.toml");
+            write(
+                &selected_path,
+                r#"
+id = "selected-campaign"
+title = "Selected Campaign"
+status = "active"
+end_state = ["Selected proof exists."]
+
+[[work_item]]
+id = "docs/selected"
+status = "ready"
+branch = "docs-selected"
+stackable = false
+acceptance = "Selected proof exists."
+commands = ["cargo xtask check-pr"]
+"#,
+            );
+            write(
+                &root.join(".ripr/goals/campaigns/extra.toml"),
+                r#"
+id = "extra-campaign"
+title = "Extra Campaign"
+status = "active"
+end_state = ["Extra proof exists."]
+
+[[work_item]]
+id = "docs/extra"
+status = "ready"
+branch = "docs-extra"
+stackable = false
+acceptance = "Extra proof exists."
+commands = ["cargo xtask definitely-not-a-command"]
+"#,
+            );
+            let (selected, parse_violations) = parse_campaign_manifest(&selected_path)?;
+            assert!(parse_violations.is_empty(), "{parse_violations:?}");
+            let mut violations = Vec::new();
+            super::validate_campaign_records(
+                root,
+                ".ripr/goals/campaigns/selected.toml",
+                &selected,
+                &mut violations,
+            )?;
+            assert!(
+                violations.iter().any(|violation| violation.contains(
+                    "docs/extra lists unknown or unsupported command `cargo xtask definitely-not-a-command`"
+                )),
+                "{violations:?}"
+            );
+            Ok(())
+        })
     }
 
     #[test]
