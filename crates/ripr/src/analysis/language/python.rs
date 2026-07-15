@@ -148,8 +148,9 @@ struct PythonImport {
     imported: String,
     alias: String,
     /// The dotted source module of a `from M import Y` statement (e.g. `src.handler`).
-    /// Empty for a plain `import X` and for relative imports (`from . import Y`),
-    /// which therefore fail closed — they cannot lend free-function module identity.
+    /// Relative imports are resolved against the importing file when possible (for
+    /// example, `from .handler import validate` in `tests/test_api.py` resolves to
+    /// `tests.handler`). Empty for a plain `import X`.
     source_module: String,
 }
 
@@ -329,7 +330,7 @@ fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
         module_range,
     );
 
-    let imports = collect_imports_from_statements(&module.body);
+    let imports = collect_imports_from_statements(file, &module.body);
     collect_owners_from_statements(
         file,
         source,
@@ -1529,7 +1530,7 @@ fn fixture_parameter_names(args: &ast::Arguments, framework: &str) -> Vec<String
     names
 }
 
-fn collect_imports_from_statements(statements: &[Stmt]) -> Vec<PythonImport> {
+fn collect_imports_from_statements(file: &Path, statements: &[Stmt]) -> Vec<PythonImport> {
     let mut imports = Vec::new();
     for stmt in statements {
         match stmt {
@@ -1550,13 +1551,11 @@ fn collect_imports_from_statements(statements: &[Stmt]) -> Vec<PythonImport> {
             }
             Stmt::ImportFrom(import) => {
                 // `from src.handler import validate [as v]` — the source module
-                // (`src.handler`) is the free-function identity evidence. `None`
-                // here is a relative import (`from . import y`); leave it empty.
-                let source_module = import
-                    .module
-                    .as_ref()
-                    .map(|module| module.to_string())
-                    .unwrap_or_default();
+                // (`src.handler`) is the free-function identity evidence. For
+                // package-local tests, resolve explicit relative imports against
+                // the importing file so common Python layouts (`from .pricing
+                // import discount`) can still carry owner-module identity.
+                let source_module = import_source_module(file, import);
                 for alias in &import.names {
                     let imported = alias.name.to_string();
                     imports.push(PythonImport {
@@ -1574,6 +1573,35 @@ fn collect_imports_from_statements(statements: &[Stmt]) -> Vec<PythonImport> {
         }
     }
     imports
+}
+
+fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
+    let module = import
+        .module
+        .as_ref()
+        .map(|module| module.to_string())
+        .unwrap_or_default();
+    let level = import
+        .level
+        .as_ref()
+        .map(|level| level.to_usize())
+        .unwrap_or(0);
+    if level == 0 {
+        return module;
+    }
+    let normalized = normalized_path(file);
+    let mut parts = normalized.split('/').collect::<Vec<_>>();
+    parts.pop();
+    let package_depth = level.saturating_sub(1);
+    for _ in 0..package_depth {
+        if parts.pop().is_none() {
+            return String::new();
+        }
+    }
+    if !module.is_empty() {
+        parts.extend(module.split('.').filter(|part| !part.is_empty()));
+    }
+    parts.join(".")
 }
 
 fn is_parametrized(decorators: &[Expr]) -> bool {
@@ -2475,9 +2503,10 @@ fn imported_module_matches_owner(import: &PythonImport, owner: &PythonOwner) -> 
 
 /// Whether a `from M import Y` statement's source module `M` points at the owner's
 /// module. Compares the import's `source_module` last segment against the owner
-/// file stem (`from src.handler import validate` and `from handler import validate`
-/// both match an owner in `src/handler.py`). A plain `import X` or a relative
-/// import has an empty `source_module` and so never matches — fail closed.
+/// file stem (`from src.handler import validate`, `from handler import validate`,
+/// and a resolved `from .handler import validate` all match an owner in
+/// `src/handler.py`). A plain `import X` has an empty `source_module` and so
+/// never matches — fail closed.
 fn import_source_module_matches_owner(import: &PythonImport, owner: &PythonOwner) -> bool {
     if import.source_module.is_empty() {
         return false;
@@ -7562,6 +7591,35 @@ def test_build_user_smoke():
             finding.class,
             ExposureClass::Exposed,
             "importing the function from the owner's module is identity-bearing"
+        );
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+        Ok(())
+    }
+
+    #[test]
+    fn free_function_relative_import_from_owner_module_credits_exposed() -> Result<(), String> {
+        // Common package-local Python tests often use explicit relative imports.
+        // Resolve the importing file's package before checking free-function
+        // module identity so `from .handler import normalize` is not treated as
+        // unrelated bare-name token coincidence.
+        let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new("src/test_handler.py"),
+            "from .handler import normalize\n\n\ndef test_handler_normalize_relative():\n    assert normalize(\" ok \") == \"ok\"\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/handler.py"),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside normalize should classify".to_string());
+        };
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "a resolved relative import from the owner's module is identity-bearing"
         );
         assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
         Ok(())
