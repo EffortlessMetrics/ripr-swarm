@@ -1511,7 +1511,7 @@ mod tests {
         RepairTargetSelection,
     };
     use crate::analysis::seam_cache::FileFactCacheStats;
-    use crate::analysis::seam_classification::ClassifiedSeam;
+    use crate::analysis::ClassifiedSeam;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{
         RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
