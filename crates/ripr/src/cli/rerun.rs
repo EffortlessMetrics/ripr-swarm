@@ -1504,6 +1504,7 @@ mod tests {
         parse_options, render_human, resolve_gap_records, route_from_gap_records, same_root,
         scopes_from_gap_records, seam_from, seam_matches_resolved_scope,
     };
+    use crate::analysis::ClassifiedSeam;
     use crate::analysis::classify_seam;
     use crate::analysis::repair_route::{
         NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
@@ -1511,7 +1512,6 @@ mod tests {
         RepairTargetSelection,
     };
     use crate::analysis::seam_cache::FileFactCacheStats;
-    use crate::analysis::ClassifiedSeam;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{
         RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
