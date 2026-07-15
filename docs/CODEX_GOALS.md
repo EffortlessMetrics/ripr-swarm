@@ -7,7 +7,7 @@ campaign that may create many scoped PRs, blocked reports, receipts, and
 planning updates until the campaign end state is met.
 
 For the agent-neutral repository tracking model (proposals, specs, ADRs,
-campaigns, work items, the active goal manifest, and handoffs) that any
+campaigns, work items, campaign records, and handoffs) that any
 runner — Codex, Kiro, Claude Code, Cursor, or a generic agent — consumes,
 see [Repo tracking model](REPO_TRACKING_MODEL.md).
 
@@ -16,7 +16,8 @@ into RIPR's existing repo artifacts instead of adding a second task system:
 proposal/PRD means `docs/proposals/RIPR-PROP-*`, spec means
 `docs/specs/RIPR-SPEC-*`, ADR means `docs/adr/`, implementation plan means
 `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, or `plans/`,
-active goal means `.ripr/goals/active.toml`, policy ledger means `policy/*.toml`
+campaign record means a TOML file under `.ripr/goals/campaigns/`, compatibility pointer means
+`.ripr/goals/active.toml`, policy ledger means `policy/*.toml`
 or `.ripr/traceability.toml`, capability claims mean `docs/CAPABILITY_MATRIX.md`
 and `metrics/capabilities.toml`, support tiers mean
 `docs/status/SUPPORT_TIERS.md`, closeout means `docs/handoffs/`, and durable
@@ -184,23 +185,28 @@ They should name:
 
 ## Campaign Manifest
 
-The active campaign manifest is:
+Campaign records live under:
 
 ```text
-.ripr/goals/active.toml
+.ripr/goals/campaigns/
 ```
 
-It is the machine-readable pointer for campaign state. It names the active
-campaign, end state, work items, dependencies, stackability, and required
-commands.
+`.ripr/goals/active.toml` is retained only as a non-authoritative compatibility
+pointer during migration. It does not select the current campaign, issue,
+branch, PR, worktree, or execution wave. A root selects a bounded issue or
+work item from live portfolio evidence.
 
-The current `xtask` goals commands read this manifest:
+The current `xtask` goals commands support explicit campaign drill-down:
 
 ```bash
 rtk cargo xtask goals status
-rtk cargo xtask goals next
+rtk cargo xtask goals next --campaign <campaign-id>
 rtk cargo xtask goals report
 ```
+
+Unqualified `rtk cargo xtask goals next` returns migration guidance and does
+not silently select one campaign. The generated portfolio/work commands are
+the follow-on implementation seam for live issue and PR candidates.
 
 Validate the manifest with:
 
@@ -208,16 +214,17 @@ Validate the manifest with:
 rtk cargo xtask check-goals
 ```
 
-`check-goals` validates the active execution manifest and the focused tracker
-rails around it. `check-campaign` remains a compatibility alias. Focused
-tracker manifests must stay outside
-`.ripr/goals/active.toml`, done work items must stay tied to proof commands,
+`check-goals` validates campaign records and the focused tracker rails around
+the compatibility pointer. `check-campaign` remains a compatibility alias.
+Focused tracker manifests must stay outside
+`.ripr/goals/campaigns/`, done work items must stay tied to proof commands,
 and declared source-of-truth paths must point at existing proposal, plan, spec,
 receipt, and closeout files. When campaign docs reference a tracker manifest,
 the referenced manifest path must exist.
 
-Blocked work items are manifest state, not a separate mutation command. Record
-blocked work in the active manifest with `status = "blocked"`,
-`blocked_reason`, and `blocked_by` when applicable. `cargo xtask goals next`
-surfaces those blocked items and their reasons so agents do not infer ready work
-from chat history when the queue is intentionally blocked.
+Blocked work items are campaign-record state, not a separate mutation command.
+Record durable blockers in the relevant campaign record with
+`status = "blocked"`, `blocked_reason`, and `blocked_by` when applicable.
+`cargo xtask goals next --campaign <campaign-id>` surfaces those blocked items
+and their reasons for that campaign. It does not make the campaign a global
+queue or infer a repository-wide next item.

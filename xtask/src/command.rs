@@ -373,7 +373,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-badge-endpoints",
         "dogfood",
         "critic",
-        "goals status|next|report",
+        "goals status|next|report [--campaign <id>]",
         "reports index",
         "cache report",
         "cache gc [--dry-run] [--max-size-gb <n>] [--ttl-days <n>]",
@@ -973,11 +973,11 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Writes advisory reviewer-risk report.",
         ),
         command_entry(
-            "goals status|next|report",
+            "goals status|next|report [--campaign <id>]",
             "report_only",
             "target/ripr/reports/goals*.md",
             false,
-            "Reports active goal state without changing manifests.",
+            "Reports campaign context without selecting repository-wide execution state.",
         ),
         command_entry(
             "reports index",

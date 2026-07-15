@@ -1,16 +1,26 @@
 # Goal manifests
 
-Goal manifests are the machine-readable execution layer for `ripr` agents. They
-tell a cold-start agent what lane is active, which work items exist, what proof
-commands are required, and what claim boundaries apply.
+Campaign records are durable machine-readable context for `ripr` agents. They
+describe objectives, work items, required proof, and claim boundaries without
+selecting the repository's current issue, lane, branch, PR, worktree, or wave.
 
-The active manifest is:
+The migration compatibility pointer is:
 
 ```text
 .ripr/goals/active.toml
 ```
 
-Archived or focused lane manifests live beside it or under:
+It points at campaign records under:
+
+```text
+.ripr/goals/campaigns/
+```
+
+The pointer is non-authoritative and must not change merely because a root
+selects a wave. Live execution state comes from the generated portfolio and
+current GitHub/local evidence.
+
+Archived or focused campaign records live under:
 
 ```text
 .ripr/goals/archive/
@@ -18,13 +28,13 @@ Archived or focused lane manifests live beside it or under:
 
 ## Ownership
 
-Goal manifests own:
+Campaign records own:
 
-- current lane identity and status;
+- durable campaign identity and status;
 - linked proposal, spec, ADR, and plan paths;
 - machine-readable objectives and end-state checks;
 - work-item IDs, statuses, dependencies, and proof commands;
-- status pointers and claim boundaries.
+- stable work-item identities and claim boundaries.
 
 Goal manifests do not own:
 
@@ -45,13 +55,14 @@ Agents should read:
 1. `AGENTS.md`.
 2. `docs/REPO_TRACKING_MODEL.md`.
 3. `docs/agent-context/CONTEXT_SYSTEM.md`.
-4. `.ripr/goals/active.toml`.
-5. The linked implementation plan.
-6. The linked spec for the selected work item.
-7. Linked ADRs.
+4. The generated portfolio and current GitHub/local state.
+5. The selected issue/work-item packet and relevant campaign record.
+6. The linked implementation plan.
+7. The linked spec and ADRs.
 
-Then the agent should pick exactly one ready work item, run the listed proof
-commands, and stop if linked artifacts are missing or contradictory.
+Then the root should select exactly one bounded issue/work item for each writer,
+compile its packet, run the listed proof commands, and stop if linked artifacts
+are missing or contradictory.
 
 ## Status values
 
@@ -65,12 +76,10 @@ Use these work-item statuses:
   new entries.
 - `superseded`: replaced by another work item or lane.
 
-The top-level active manifest uses `active` while work is current and `closed`
-only when the campaign has landed and either `successor = "<campaign-id>"`
-points at the next selected campaign or `no_current_goal = true` intentionally
-marks the repo idle. A closed manifest should also have an archive copy when it
-represents completed lane history. The freshness marker prevents agents from
-silently continuing from stale execution state.
+Campaign records use `active` while their durable work is unfinished and
+`closed` after their end state is recorded. A closed record should also have an
+archive copy when it represents completed history. Campaign status is context;
+it is not a repository-wide scheduler or current-wave marker.
 
 ## Validation
 
@@ -78,10 +87,14 @@ For manifest-only changes, run at minimum:
 
 ```bash
 git diff --check
-cargo xtask goals next
+cargo xtask goals next --campaign <campaign-id>
 cargo xtask check-goals
 cargo xtask check-doc-index
 cargo xtask check-pr-shape
 ```
+
+Unqualified `cargo xtask goals next` intentionally returns migration guidance
+and does not select a campaign. Use the live portfolio and selected issue
+packet before starting work.
 
 Also run any commands listed by the changed work item.

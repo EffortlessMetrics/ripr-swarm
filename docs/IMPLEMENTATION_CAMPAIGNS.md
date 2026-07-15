@@ -6,7 +6,10 @@ state, and work items that should each follow the
 [scoped PR contract](SCOPED_PR_CONTRACT.md).
 
 The operational checklist remains in [Implementation plan](IMPLEMENTATION_PLAN.md).
-The machine-readable active campaign is `.ripr/goals/active.toml`.
+Durable machine-readable campaign records live under
+`.ripr/goals/campaigns/`. The legacy `.ripr/goals/active.toml` file is retained
+only as a non-authoritative compatibility pointer during the multi-campaign
+migration; live execution is selected from current portfolio evidence.
 
 ## Campaign 1: Agentic DevEx Foundation
 

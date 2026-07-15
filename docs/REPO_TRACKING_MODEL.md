@@ -2,8 +2,8 @@
 
 This is `ripr`'s agent-neutral, repo-owned tracking model. It is the
 centralized source of truth for proposals, behavior contracts, architectural
-decisions, multi-PR campaigns, the currently active campaign, scoped review
-units, and closeouts.
+decisions, multi-PR campaigns, scoped review units, and closeouts. It does not
+carry a repository-wide current campaign or execution wave.
 
 External agents have their own goal or task systems — Codex `/goal`, Kiro
 specs/tasks, Claude Code's task tools, Cursor rules, and so on. Those are
@@ -27,7 +27,8 @@ Each doc has exactly one role. Avoid mixing roles in one file.
 | Campaign ledger | [`docs/IMPLEMENTATION_CAMPAIGNS.md`](IMPLEMENTATION_CAMPAIGNS.md) | Multi-PR campaign history, open campaigns, and closed-campaign audits. |
 | Work queue | [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) | Current and upcoming implementation slices. |
 | Campaign-specific plan | [`plans/`](../plans/) | Extra sequencing, acceptance, proof commands, and rollback notes for a narrow campaign slice when the ledger would become too dense. |
-| Active execution manifest | `.ripr/goals/active.toml` | The current execution campaign; `status = "closed"` requires `successor = "<campaign-id>"` or `no_current_goal = true`. |
+| Campaign records | [`.ripr/goals/campaigns/`](../.ripr/goals/campaigns/) | Durable campaign objectives, work-item identities, dependencies, and proof classes. |
+| Compatibility pointer | `.ripr/goals/active.toml` | Non-authoritative migration pointer; it does not select current execution. |
 | Campaign archive | [`.ripr/goals/archive/`](../.ripr/goals/archive/) | Frozen manifests of closed campaigns. |
 | Scoped PR | The PR itself | Mergeable review units, governed by the [scoped PR contract](SCOPED_PR_CONTRACT.md). |
 | Closeout | [`docs/handoffs/`](handoffs/) | What happened, what passed, what remains. |
@@ -46,7 +47,7 @@ namespace:
 | Spec | `docs/specs/RIPR-SPEC-*` |
 | ADR | `docs/adr/` |
 | Implementation plan | `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, and `plans/` |
-| Active goal manifest | `.ripr/goals/active.toml` |
+| Campaign record | `.ripr/goals/campaigns/<campaign-id>.toml` |
 | Support tiers | `docs/status/SUPPORT_TIERS.md` |
 | Policy ledgers | `policy/*.toml`, `.ripr/traceability.toml`, `docs/CAPABILITY_MATRIX.md`, and `metrics/capabilities.toml` |
 | Closeout | `docs/handoffs/` |
@@ -78,10 +79,10 @@ or campaign history.
      Reviewer automation treats `plans/` files as documentation evidence and
      campaign-planning input, not production behavior.
 
-6. Active manifest (.ripr/goals/active.toml)
-     The agent/operator executes work items one PR at a time while the
-     campaign is active. After closeout, the top-level status may be `closed`
-     until the next campaign manifest replaces it.
+6. Live portfolio and selected issue/work-item packet
+     The root derives candidates from current GitHub/local evidence and
+     selects one bounded transition explicitly. Relevant campaign records
+     provide durable context but do not schedule the repository.
 
 7. Scoped PRs (governed by SCOPED_PR_CONTRACT.md)
      One production delta + the evidence package needed to review it.
@@ -112,10 +113,9 @@ To prevent overloading individual docs:
   duplicate proposal reasoning.
 - A campaign-specific plan adds operational detail for one campaign slice. It
   must not redefine specs, ADRs, or active manifest state.
-- The active manifest names the current execution campaign. It may stay on a
-  closed campaign only when the manifest also declares
-  `successor = "<campaign-id>"` or `no_current_goal = true`. Closed manifests
-  also move to the archive.
+- Campaign records describe durable objectives and work-item relationships.
+  Their status is not a repository-wide current-work authority. Closed
+  records also move to the archive when they represent completed history.
 - A scoped PR is the smallest reviewable unit. It must not bundle unrelated
   contracts.
 - A closeout records what happened. It must not invent new contracts; new
@@ -125,15 +125,16 @@ When in doubt about where something belongs, ask which question the reader
 will be asking when they reach for the doc. A reader asking "why does this
 exist?" wants the proposal. A reader asking "what must `ripr` do?" wants
 the spec. A reader asking "what is the agent doing right now?" wants the
-active manifest. A reader asking "what shipped last week?" wants the
+generated portfolio and selected packet. A reader asking "what shipped last week?" wants the
 handoffs.
 
 ## Agent neutrality
 
 Any agent or operator runner may consume these artifacts:
 
-- Codex `/goal` reads `.ripr/goals/active.toml` and writes blocked reports
-  under `target/ripr/reports/blocked.md`. See [Codex Goals](CODEX_GOALS.md).
+- Codex `/goal` reads the generated portfolio, selected packet, and relevant
+  campaign record, then writes blocked reports under
+  `target/ripr/reports/blocked.md`. See [Codex Goals](CODEX_GOALS.md).
 - Kiro specs/tasks, Claude Code task tools, Cursor rules, and other agent
   task systems may read the same manifest and the linked campaign
   references.
@@ -156,9 +157,13 @@ cargo xtask check-doc-index
 cargo xtask check-goals
 cargo xtask check-traceability
 cargo xtask check-capabilities
-cargo xtask goals next
+cargo xtask goals next --campaign <campaign-id>
 cargo xtask check-pr
 ```
+
+Unqualified `cargo xtask goals next` returns migration guidance and does not
+select a campaign. Use the generated portfolio and an explicit issue or
+campaign filter for execution.
 
 These checks keep the spec index, ADR index, campaign manifest, focused tracker
 manifests, traceability manifest, capability matrix, and PR-shape rails
