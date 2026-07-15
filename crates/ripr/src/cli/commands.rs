@@ -1532,7 +1532,7 @@ fn review_comments_with_diff_loader(
         );
         receipt.phase("configuration", "static_rendering");
         receipt.write_atomic(&receipt_path)?;
-        receipt.phase("configuration", "artifact_io");
+        receipt.phase("static_rendering", "artifact_io");
         receipt.write_atomic(&receipt_path)?;
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
@@ -1603,8 +1603,6 @@ fn review_comments_with_diff_loader(
         &selection,
         &analysis_scope,
     );
-    receipt.phase("static_rendering", "artifact_io");
-    receipt.write_atomic(&receipt_path)?;
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
