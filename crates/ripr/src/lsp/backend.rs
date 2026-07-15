@@ -1,12 +1,13 @@
 use super::AnalysisStatusNotification;
 use super::actions::code_action_response;
 use super::capabilities::{
-    WorkspaceRootResolution, initialize_result, root_from_initialize_params,
+    WorkspaceRootResolution, client_supports_diagnostic_refresh, client_supports_pull_diagnostics,
+    initialize_result_for_client, root_from_initialize_params,
 };
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
-    DiagnosticBatch, DiagnosticRefreshPlan, WorkspaceDiagnostics, diagnostic_refresh_plan,
-    take_all_uris,
+    DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
+    diagnostic_refresh_plan, take_all_uris,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -21,7 +22,10 @@ use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisHealth, AnalysisSnapshot, DocumentStore,
     WorkspaceRootAuthority, WorkspaceRootState, format_duration,
 };
-use super::uri::{file_uri_for_path, file_uri_is_within_root, file_uris_match};
+use super::uri::{
+    file_uri_for_path, file_uri_is_within_root, file_uris_match, path_from_file_uri,
+    path_is_within_root,
+};
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
@@ -30,6 +34,7 @@ use super::{
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::{AnalysisAbortKind, is_cancellation_error};
+use crate::config::LspDiagnosticProfile;
 use crate::domain::context_packet::ContextPacket;
 use crate::domain::{StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
@@ -43,8 +48,8 @@ use crate::output::gap_decision_ledger::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
@@ -53,8 +58,13 @@ use tower_lsp_server::ls_types::{
     CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, Diagnostic,
     DidChangeConfigurationParams, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, ExecuteCommandParams, FileEvent, Hover, HoverParams,
-    InitializeParams, InitializeResult, InitializedParams, LSPAny, MessageType, Registration, Uri,
+    DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
+    DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent, Hover, HoverParams,
+    InitializeParams, InitializeResult, InitializedParams, LSPAny, MessageType, Registration,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    UnchangedDocumentDiagnosticReport, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -69,8 +79,11 @@ pub(super) struct Backend {
     configuration_failure: Mutex<Option<AnalysisFailure>>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
-    latest_analysis: Mutex<Option<AnalysisSnapshot>>,
+    latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
+    diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
+    pull_diagnostics: Mutex<bool>,
+    diagnostic_refresh_support: Mutex<bool>,
     dynamic_file_watch_registration: Mutex<bool>,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
@@ -99,7 +112,10 @@ impl Backend {
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
+            diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
+            pull_diagnostics: Mutex::new(false),
+            diagnostic_refresh_support: Mutex::new(false),
             dynamic_file_watch_registration: Mutex::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
@@ -251,6 +267,7 @@ impl Backend {
         .await
         {
             Ok(Ok(mut diagnostics)) => {
+                diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
                 diagnostics
                     .snapshot
                     .refresh
@@ -332,11 +349,29 @@ impl Backend {
             snapshot,
             previous_diagnostics,
         } = transaction;
-        let published_uri_count = plan.publish_batches.len();
-        let cleared_uri_count = plan.clear_uris.len();
+        let push_delivery = !self.pull_diagnostics_enabled();
+        let published_uri_count = if push_delivery {
+            plan.publish_batches.len()
+        } else {
+            0
+        };
+        let cleared_uri_count = if push_delivery {
+            plan.clear_uris.len()
+        } else {
+            0
+        };
         let unchanged_uri_count = plan.unchanged_uri_count;
-        let published_payload_bytes = plan.published_payload_bytes;
-        let suppressed_payload_bytes = plan.suppressed_payload_bytes;
+        let published_payload_bytes = if push_delivery {
+            plan.published_payload_bytes
+        } else {
+            0
+        };
+        let suppressed_payload_bytes = if push_delivery {
+            plan.suppressed_payload_bytes
+        } else {
+            plan.published_payload_bytes
+                .saturating_add(plan.suppressed_payload_bytes)
+        };
         // Serialize the final authority check with root transitions and the
         // diagnostic publication/commit sequence.  An epoch check alone can
         // still race between the check and the first publish; holding this
@@ -352,29 +387,31 @@ impl Backend {
             .await;
             return cancellation_outcome(request);
         }
-        for batch in &plan.publish_batches {
-            if !self.refresh_request_is_current(request) {
-                self.rollback_refresh_transaction_if_authority_is_current(
-                    request,
-                    &previous_diagnostics,
-                    &plan,
-                )
-                .await;
-                return cancellation_outcome(request);
-            }
-            self.client
-                .publish_diagnostics(batch.uri.clone(), batch.diagnostics.clone(), None)
-                .await;
-        }
-        for uri in &plan.clear_uris {
-            if !self.refresh_request_is_current(request) {
-                self.rollback_refresh_transaction(&previous_diagnostics, &plan)
+        if !self.pull_diagnostics_enabled() {
+            for batch in &plan.publish_batches {
+                if !self.refresh_request_is_current(request) {
+                    self.rollback_refresh_transaction_if_authority_is_current(
+                        request,
+                        &previous_diagnostics,
+                        &plan,
+                    )
                     .await;
-                return cancellation_outcome(request);
+                    return cancellation_outcome(request);
+                }
+                self.client
+                    .publish_diagnostics(batch.uri.clone(), batch.diagnostics.clone(), None)
+                    .await;
             }
-            self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
-                .await;
+            for uri in &plan.clear_uris {
+                if !self.refresh_request_is_current(request) {
+                    self.rollback_refresh_transaction(&previous_diagnostics, &plan)
+                        .await;
+                    return cancellation_outcome(request);
+                }
+                self.client
+                    .publish_diagnostics(uri.clone(), Vec::new(), None)
+                    .await;
+            }
         }
         if !self.refresh_request_is_current(request) {
             self.rollback_refresh_transaction_if_authority_is_current(
@@ -400,6 +437,17 @@ impl Backend {
             )
             .await;
             return RefreshAttemptOutcome::Failed;
+        }
+        if self.pull_diagnostics_enabled()
+            && self.diagnostic_refresh_support_enabled()
+            && let Err(error) = self.client.workspace_diagnostic_refresh().await
+        {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("pull diagnostic refresh request failed: {error}"),
+                )
+                .await;
         }
         self.log_refresh_completed(
             summary,
@@ -433,8 +481,18 @@ impl Backend {
     #[cfg(test)]
     pub(super) fn refresh_plan(
         &self,
-        diagnostics: WorkspaceDiagnostics,
+        mut diagnostics: WorkspaceDiagnostics,
     ) -> Option<DiagnosticRefreshPlan> {
+        if diagnostics.snapshot.input_identity.is_none() {
+            let config = self.analysis_config().unwrap_or_default();
+            diagnostics.snapshot.input_identity = Some(
+                super::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
+                    diagnostics.snapshot.root.clone(),
+                    self.workspace_revision(),
+                    &config,
+                ),
+            );
+        }
         let transaction = self.prepare_refresh_transaction(diagnostics)?;
         let RefreshTransaction { plan, snapshot, .. } = transaction;
         self.commit_refresh_snapshot(snapshot, &plan)
@@ -476,6 +534,12 @@ impl Backend {
         snapshot: AnalysisSnapshot,
         plan: &DiagnosticRefreshPlan,
     ) -> bool {
+        if snapshot.input_identity.is_none() {
+            return false;
+        }
+        let snapshot = Arc::new(snapshot);
+        let diagnostic_result_ids =
+            Arc::new(DiagnosticResultIdCache::for_snapshot(Arc::clone(&snapshot)));
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return false;
         };
@@ -485,9 +549,13 @@ impl Backend {
         let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
             return false;
         };
+        let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
+            return false;
+        };
         *last_diagnostics = snapshot.diagnostics_by_uri.clone();
         *last_diagnostic_uris = plan.current_uris.clone();
         *latest_analysis = Some(snapshot);
+        *stored_result_ids = Some(diagnostic_result_ids);
         true
     }
 
@@ -496,6 +564,9 @@ impl Backend {
         previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
         plan: &DiagnosticRefreshPlan,
     ) {
+        if self.pull_diagnostics_enabled() {
+            return;
+        }
         let mut uris = previous_diagnostics
             .keys()
             .cloned()
@@ -530,6 +601,9 @@ impl Backend {
         }
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
+        }
+        if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
+            *diagnostic_result_ids = None;
         }
         take_all_uris(&mut last_diagnostic_uris)
     }
@@ -604,12 +678,42 @@ impl Backend {
         Some(config.clone())
     }
 
+    fn pull_diagnostics_enabled(&self) -> bool {
+        self.pull_diagnostics
+            .lock()
+            .map(|supported| *supported)
+            .unwrap_or(false)
+    }
+
+    fn diagnostic_refresh_support_enabled(&self) -> bool {
+        self.diagnostic_refresh_support
+            .lock()
+            .map(|supported| *supported)
+            .unwrap_or(false)
+    }
+
+    fn latest_pull_snapshot(
+        &self,
+    ) -> Option<(Arc<AnalysisSnapshot>, Arc<DiagnosticResultIdCache>)> {
+        let latest_analysis = self.latest_analysis.lock().ok()?;
+        let snapshot = latest_analysis.as_ref()?.clone();
+        let stored_result_ids = self.diagnostic_result_ids.lock().ok()?;
+        let result_ids = stored_result_ids
+            .as_ref()
+            .filter(|result_ids| result_ids.matches_snapshot(&snapshot))
+            .cloned()
+            .unwrap_or_else(|| {
+                Arc::new(DiagnosticResultIdCache::for_snapshot(Arc::clone(&snapshot)))
+            });
+        Some((snapshot, result_ids))
+    }
+
     #[cfg(test)]
     pub(super) fn latest_analysis_snapshot(&self) -> Option<AnalysisSnapshot> {
         let Ok(snapshot) = self.latest_analysis.lock() else {
             return None;
         };
-        snapshot.clone()
+        snapshot.as_ref().map(|value| value.as_ref().clone())
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -623,6 +727,16 @@ impl Backend {
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_analysis_attempt_state_for_test(&self, state: AnalysisAttemptState) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.attempt_id = Some(2);
+            health.state = state;
+            health.snapshot_id = Some("snapshot:test".to_string());
+            health.last_success_snapshot_id = Some("snapshot:test".to_string());
         }
     }
 
@@ -642,6 +756,7 @@ impl Backend {
             health.last_success_snapshot_id = Some(snapshot_id);
             health.last_success_at = Some(snapshot.refresh.generated_at);
             health.snapshot_run_status = Some(workspace_status_run_status(snapshot).to_string());
+            health.last_success_input_identity = snapshot.input_identity_id();
         }
         health
     }
@@ -654,6 +769,7 @@ impl Backend {
         health.state = AnalysisAttemptState::Queued;
         health.reason = Some(request.reason.as_str().to_string());
         health.requested_scope = Some(request.scope.as_str().to_string());
+        health.current_input_identity = Some(request.input_identity_id());
         health.failure = None;
     }
 
@@ -665,6 +781,7 @@ impl Backend {
         health.state = AnalysisAttemptState::Running;
         health.reason = Some(request.reason.as_str().to_string());
         health.requested_scope = Some(request.scope.as_str().to_string());
+        health.current_input_identity = Some(request.input_identity_id());
         if health.pending_attempt_id == Some(request.generation) {
             health.pending_attempt_id = None;
             health.pending_reason = None;
@@ -734,8 +851,19 @@ impl Backend {
                     .latest_analysis
                     .lock()
                     .ok()
-                    .and_then(|snapshot| snapshot.as_ref().map(workspace_status_run_status))
+                    .and_then(|snapshot| {
+                        snapshot
+                            .as_ref()
+                            .map(|snapshot| workspace_status_run_status(snapshot))
+                    })
                     .map(str::to_string);
+                health.current_input_identity = Some(request.input_identity_id());
+                health.last_success_input_identity =
+                    self.latest_analysis.lock().ok().and_then(|snapshot| {
+                        snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.input_identity_id())
+                    });
             }
             RefreshAttemptOutcome::Failed => {
                 // `mark_attempt_failed` records the bounded error and preserves
@@ -774,6 +902,8 @@ impl Backend {
             "requested_scope": health.requested_scope,
             "snapshot_id": health.snapshot_id,
             "last_success_snapshot_id": health.last_success_snapshot_id,
+            "current_input_identity": health.current_input_identity,
+            "last_success_input_identity": health.last_success_input_identity,
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
             "diagnostic_profile": self
@@ -861,8 +991,10 @@ impl Backend {
         if changed {
             self.refresh_scheduler.invalidate_input();
             let uris = self.clear_all_diagnostic_uris();
-            for uri in uris {
-                self.client.publish_diagnostics(uri, Vec::new(), None).await;
+            if !self.pull_diagnostics_enabled() {
+                for uri in uris {
+                    self.client.publish_diagnostics(uri, Vec::new(), None).await;
+                }
             }
             self.reset_health_for_input_change();
         }
@@ -909,6 +1041,8 @@ impl Backend {
             health.last_success_snapshot_id = None;
             health.last_success_at = None;
             health.snapshot_run_status = None;
+            health.current_input_identity = None;
+            health.last_success_input_identity = None;
             health.failure = None;
             health.pending_attempt_id = None;
             health.pending_reason = None;
@@ -923,6 +1057,7 @@ impl Backend {
             health.reason = Some(reason.to_string());
             health.requested_scope = Some(RefreshScope::Interactive.as_str().to_string());
             health.failure = None;
+            health.current_input_identity = None;
             health.pending_attempt_id = None;
             health.pending_reason = None;
             health.pending_scope = None;
@@ -942,6 +1077,7 @@ impl Backend {
             health.reason = Some(RefreshReason::ConfigReload.as_str().to_string());
             health.requested_scope = Some(RefreshScope::Interactive.as_str().to_string());
             health.failure = Some(failure);
+            health.current_input_identity = None;
         }
     }
 
@@ -1036,6 +1172,26 @@ impl Backend {
             .is_some_and(|uri| file_uris_match(&uri, &event.uri))
     }
 
+    fn file_event_is_workspace_manifest_or_lockfile(&self, event: &FileEvent) -> bool {
+        let Some(root) = self.effective_root() else {
+            return false;
+        };
+        let Some(path) = path_from_file_uri(&event.uri) else {
+            return false;
+        };
+        workspace_input_path_is_relevant(&root, &path)
+    }
+
+    pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> (bool, bool) {
+        let config_changed = changes
+            .iter()
+            .any(|event| self.file_event_is_repository_config(event));
+        let workspace_graph_changed = changes
+            .iter()
+            .any(|event| self.file_event_is_workspace_manifest_or_lockfile(event));
+        (config_changed, workspace_graph_changed)
+    }
+
     fn set_analysis_config(&self, config: LspAnalysisConfig) {
         let Ok(mut current_config) = self.analysis_config.lock() else {
             return;
@@ -1113,6 +1269,14 @@ impl Backend {
         let diagnostics = last_diagnostics.get(uri)?;
         diagnostic_at_position(diagnostics, position).map(diagnostic_hover_response)
     }
+}
+
+pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool {
+    path_is_within_root(root, path)
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "Cargo.toml" | "Cargo.lock"))
 }
 
 struct RefreshCancellationGuard<'a> {
@@ -1504,20 +1668,32 @@ impl LanguageServer for Backend {
             id: "ripr-config-file-watch".to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),
             register_options: Some(serde_json::json!({
-                "watchers": [{"globPattern": "**/ripr.toml"}]
+                "watchers": [
+                    {"globPattern": "**/ripr.toml"},
+                    {"globPattern": "**/Cargo.toml"},
+                    {"globPattern": "**/Cargo.lock"}
+                ]
             })),
         };
         if let Err(error) = self.client.register_capability(vec![registration]).await {
             self.client
                 .log_message(
                     MessageType::WARNING,
-                    format!("ripr config file watching unavailable: {error}"),
+                    format!("ripr workspace input watching unavailable: {error}"),
                 )
                 .await;
         }
     }
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
+        let supports_pull_diagnostics = client_supports_pull_diagnostics(&params);
+        let supports_diagnostic_refresh = client_supports_diagnostic_refresh(&params);
+        if let Ok(mut supported) = self.pull_diagnostics.lock() {
+            *supported = supports_pull_diagnostics;
+        }
+        if let Ok(mut supported) = self.diagnostic_refresh_support.lock() {
+            *supported = supports_diagnostic_refresh;
+        }
         let supports_dynamic_registration = params
             .capabilities
             .workspace
@@ -1556,7 +1732,7 @@ impl LanguageServer for Backend {
             self.set_configuration_failure(error);
             self.publish_analysis_status().await;
         }
-        Ok(initialize_result())
+        Ok(initialize_result_for_client(supports_pull_diagnostics))
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -1565,12 +1741,16 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        if params
-            .changes
-            .iter()
-            .any(|event| self.file_event_is_repository_config(event))
-        {
+        let (config_changed, workspace_graph_changed) =
+            self.watched_file_change_kinds(&params.changes);
+        if config_changed {
             self.reload_repository_config().await;
+        }
+        if workspace_graph_changed {
+            self.invalidate_analysis_input("workspace_manifest_or_lockfile_changed");
+            self.publish_analysis_status().await;
+            self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
+                .await;
         }
     }
 
@@ -1639,6 +1819,108 @@ impl LanguageServer for Backend {
             .await;
     }
 
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> LspResult<DocumentDiagnosticReportResult> {
+        let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
+            return Ok(
+                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                    related_documents: None,
+                    full_document_diagnostic_report:
+                        tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                            result_id: None,
+                            items: Vec::new(),
+                        },
+                })
+                .into(),
+            );
+        };
+        let uri = params.text_document.uri;
+        let result_id = result_ids.document_id(&snapshot, &uri);
+        if params.previous_result_id.as_deref() == Some(result_id.as_str()) {
+            return Ok(DocumentDiagnosticReport::Unchanged(
+                RelatedUnchangedDocumentDiagnosticReport {
+                    related_documents: None,
+                    unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                        result_id,
+                    },
+                },
+            )
+            .into());
+        }
+        let diagnostics = snapshot
+            .diagnostics_for_uri(&uri)
+            .map_or_else(Vec::new, |items| items.to_vec());
+        Ok(
+            DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                related_documents: None,
+                full_document_diagnostic_report:
+                    tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                        result_id: Some(result_id),
+                        items: diagnostics,
+                    },
+            })
+            .into(),
+        )
+    }
+
+    async fn workspace_diagnostic(
+        &self,
+        params: WorkspaceDiagnosticParams,
+    ) -> LspResult<WorkspaceDiagnosticReportResult> {
+        let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
+            return Ok(WorkspaceDiagnosticReport { items: Vec::new() }.into());
+        };
+        let mut uris = snapshot
+            .diagnostics_by_uri
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        uris.extend(
+            params
+                .previous_result_ids
+                .iter()
+                .map(|entry| entry.uri.clone()),
+        );
+        let mut items = Vec::with_capacity(uris.len());
+        for uri in uris {
+            let result_id = result_ids.document_id(&snapshot, &uri);
+            let previous = params
+                .previous_result_ids
+                .iter()
+                .find(|entry| entry.uri == uri)
+                .map(|entry| entry.value.as_str());
+            if previous == Some(result_id.as_str()) {
+                items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
+                    WorkspaceUnchangedDocumentDiagnosticReport {
+                        uri,
+                        version: None,
+                        unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                            result_id,
+                        },
+                    },
+                ));
+                continue;
+            }
+            let diagnostics = snapshot
+                .diagnostics_for_uri(&uri)
+                .map_or_else(Vec::new, |items| items.to_vec());
+            items.push(WorkspaceDocumentDiagnosticReport::Full(
+                WorkspaceFullDocumentDiagnosticReport {
+                    uri,
+                    version: None,
+                    full_document_diagnostic_report:
+                        tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                            result_id: Some(result_id),
+                            items: diagnostics,
+                        },
+                },
+            ));
+        }
+        Ok(WorkspaceDiagnosticReport { items }.into())
+    }
+
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         Ok(Some(
             self.hover_for_position(&params)
@@ -1659,7 +1941,7 @@ impl LanguageServer for Backend {
             .flatten();
         Ok(Some(code_action_response(
             &params,
-            action_snapshot.as_ref(),
+            action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
         )))
     }
 
@@ -1678,7 +1960,10 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|value| value.clone());
         let uri = &params.text_document.uri;
-        Ok(Some(code_lens_response(uri, snapshot.as_ref())))
+        Ok(Some(code_lens_response(
+            uri,
+            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+        )))
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<LSPAny>> {
@@ -1773,8 +2058,10 @@ impl Backend {
 
     fn collect_workspace_status(&self) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
+        let authority = self.workspace_root_authority();
         let snapshot = match self.latest_analysis.lock().ok()? {
             guard if guard.is_none() => {
+                let top_limitation = top_limitation_dto(&health, None, &authority).into_json();
                 return Some(serde_json::json!({
                     "schema_version": "0.1",
                     "tool": "ripr",
@@ -1785,7 +2072,7 @@ impl Backend {
                     "snapshot_duration_ms": serde_json::Value::Null,
                     "diagnostics": serde_json::Value::Null,
                     "top_actionable_packet": serde_json::Value::Null,
-                    "top_limitation": serde_json::Value::Null,
+                    "top_limitation": top_limitation,
                     "report_paths": workspace_status_report_paths(),
                     "refresh_command": REFRESH_COMMAND,
                     "limits_note": "Static evidence only; advisory, not a gate decision.",
@@ -1821,14 +2108,13 @@ impl Backend {
             .count();
         let gap_artifact_rejections = snapshot.gap_artifact_rejections.len();
 
-        let top_actionable_packet = if health.allows_current_repairs()
-            && self.workspace_root_authority().allows_analysis()
-        {
-            workspace_status_top_actionable_packet(&snapshot)
-        } else {
-            serde_json::Value::Null
-        };
-        let top_limitation = workspace_status_top_limitation(&snapshot);
+        let top_actionable_packet =
+            if health.allows_current_repairs() && authority.allows_analysis() {
+                workspace_status_top_actionable_packet(&snapshot)
+            } else {
+                serde_json::Value::Null
+            };
+        let top_limitation = top_limitation_dto(&health, Some(&snapshot), &authority).into_json();
 
         let run_status = health.run_status();
 
@@ -2010,18 +2296,410 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
     })
 }
 
-fn workspace_status_top_limitation(snapshot: &AnalysisSnapshot) -> serde_json::Value {
-    let rejection = snapshot.gap_artifact_rejections.first();
-    let Some(rejection) = rejection else {
-        return serde_json::Value::Null;
+#[derive(Debug, PartialEq, Eq)]
+struct TopLimitationDto {
+    status: &'static str,
+    limitation_category: &'static str,
+    run_status: &'static str,
+    snapshot_id: Option<String>,
+    input_identity: Option<String>,
+    scope: &'static str,
+    completeness: &'static str,
+    why_not_actionable: String,
+    recovery_route: &'static str,
+    sample_sources: Vec<String>,
+    selected_count: usize,
+    total_count: usize,
+    non_claims: Vec<&'static str>,
+}
+
+impl TopLimitationDto {
+    fn into_json(self) -> serde_json::Value {
+        let repair_route = self.recovery_route;
+        serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "top_limitation",
+            "status": self.status,
+            "category": self.limitation_category,
+            "limitation_category": self.limitation_category,
+            "run_status": self.run_status,
+            "snapshot_id": self.snapshot_id,
+            "input_identity": self.input_identity,
+            "scope": self.scope,
+            "completeness": self.completeness,
+            "repair_route": repair_route,
+            "recovery_route": repair_route,
+            "why_not_actionable": self.why_not_actionable,
+            "sample_sources": self.sample_sources,
+            "selected_count": self.selected_count,
+            "total_count": self.total_count,
+            "unlock_condition": repair_route,
+            "non_claims": self.non_claims,
+            "limits_note": "Static evidence only; advisory, not a gate decision.",
+        })
+    }
+}
+
+fn top_limitation_dto(
+    health: &AnalysisHealth,
+    snapshot: Option<&AnalysisSnapshot>,
+    authority: &WorkspaceRootAuthority,
+) -> TopLimitationDto {
+    let snapshot_id = health.snapshot_id.clone();
+    let input_identity = authority.input_identity();
+    let common = |status: &'static str,
+                  category: &'static str,
+                  completeness: &'static str,
+                  why_not_actionable: String,
+                  recovery_route: &'static str,
+                  sample_sources: Vec<String>,
+                  selected_count: usize,
+                  total_count: usize,
+                  non_claims: Vec<&'static str>| TopLimitationDto {
+        status,
+        limitation_category: category,
+        run_status: health.run_status(),
+        snapshot_id: snapshot_id.clone(),
+        input_identity: input_identity.clone(),
+        scope: "workspace",
+        completeness,
+        why_not_actionable,
+        recovery_route,
+        sample_sources,
+        selected_count,
+        total_count,
+        non_claims,
     };
-    let category = rejection.as_str();
-    let (repair_route, why_not_actionable) = workspace_status_rejection_repair(rejection);
-    serde_json::json!({
-        "category": category,
-        "repair_route": repair_route,
-        "why_not_actionable": why_not_actionable,
+
+    if !authority.allows_analysis() {
+        let (status, why_not_actionable, recovery_route) = match authority.state {
+            WorkspaceRootState::WorkspaceAmbiguous => (
+                "workspace_ambiguous",
+                "workspace root authority is ambiguous; analysis input is not selected",
+                "select_root_and_restart",
+            ),
+            WorkspaceRootState::RootUnavailable => (
+                "input_invalid",
+                "workspace root authority is unavailable; analysis input is not selected",
+                "select_root_and_restart",
+            ),
+            WorkspaceRootState::RootRemoved => (
+                "input_invalid",
+                "the selected workspace root was removed; analysis input is invalid",
+                "select_root_and_restart",
+            ),
+            WorkspaceRootState::RootChanged => (
+                "snapshot_stale",
+                "workspace root changed; the retained analysis input is stale",
+                "refresh",
+            ),
+            WorkspaceRootState::SelectedSingleRoot => (
+                "input_invalid",
+                "workspace root authority is not available for analysis",
+                "refresh",
+            ),
+        };
+        return common(
+            status,
+            status,
+            "incomplete",
+            why_not_actionable.to_string(),
+            recovery_route,
+            Vec::new(),
+            1,
+            1,
+            vec![
+                "not a repository-clean signal",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    let Some(snapshot) = snapshot else {
+        let (status, why_not_actionable, recovery_route, completeness) = match health.state {
+            AnalysisAttemptState::Queued => (
+                "analysis_queued",
+                "RIPR has queued an analysis attempt but has not produced a snapshot",
+                "wait_for_analysis",
+                "pending",
+            ),
+            AnalysisAttemptState::Running => (
+                "analysis_running",
+                "RIPR is analyzing the workspace and has not produced a snapshot",
+                "wait_for_analysis",
+                "pending",
+            ),
+            AnalysisAttemptState::Failed => (
+                "analysis_failed",
+                "analysis failed before a snapshot was available",
+                "refresh",
+                "incomplete",
+            ),
+            _ => (
+                "no_snapshot",
+                "RIPR has not completed an analysis snapshot yet",
+                "refresh",
+                "none",
+            ),
+        };
+        return common(
+            status,
+            status,
+            completeness,
+            health
+                .failure
+                .as_ref()
+                .map(|failure| format!("{}: {}", failure.kind, failure.message))
+                .unwrap_or_else(|| why_not_actionable.to_string()),
+            recovery_route,
+            Vec::new(),
+            1,
+            1,
+            vec![
+                "not a repository-clean signal",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    };
+
+    if health.state == AnalysisAttemptState::Failed {
+        let why = health
+            .failure
+            .as_ref()
+            .map(|failure| format!("the latest analysis failed: {}", failure.message))
+            .unwrap_or_else(|| "the latest analysis failed; the retained snapshot is stale".into());
+        return common(
+            "analysis_failed_retained_snapshot",
+            "analysis_failed_retained_snapshot",
+            "stale",
+            why,
+            "refresh",
+            snapshot_id.clone().into_iter().collect(),
+            1,
+            1,
+            vec![
+                "retained evidence is stale",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    if matches!(
+        health.state,
+        AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+    ) {
+        let (status, why_not_actionable) = if health.state == AnalysisAttemptState::Queued {
+            (
+                "analysis_queued",
+                "RIPR has queued a new analysis attempt; the retained snapshot is not current",
+            )
+        } else {
+            (
+                "analysis_running",
+                "RIPR is analyzing the workspace; the retained snapshot is not current",
+            )
+        };
+        return common(
+            status,
+            status,
+            "pending",
+            why_not_actionable.to_string(),
+            "wait_for_analysis",
+            snapshot_id.clone().into_iter().collect(),
+            1,
+            1,
+            vec![
+                "retained evidence is not current",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    let run_status = health.run_status();
+    if run_status == "stale" {
+        return common(
+            "snapshot_stale",
+            "snapshot_stale",
+            "stale",
+            "the retained analysis snapshot is not current for this workspace".to_string(),
+            "refresh",
+            snapshot_id.clone().into_iter().collect(),
+            1,
+            1,
+            vec![
+                "retained evidence is stale",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+    if run_status == "seams_deferred" {
+        return common(
+            "seams_deferred",
+            "seams_deferred",
+            "deferred",
+            "interactive analysis deferred the expensive seam inventory".to_string(),
+            "refresh",
+            Vec::new(),
+            1,
+            1,
+            vec![
+                "seam evidence is incomplete",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    if let Some(rejection) = top_gap_artifact_rejection(&snapshot.gap_artifact_rejections) {
+        let category = rejection.as_str();
+        let (repair_route, why_not_actionable) = workspace_status_rejection_repair(rejection);
+        return common(
+            "artifact_rejected",
+            category,
+            "limited",
+            why_not_actionable.to_string(),
+            repair_route,
+            limitation_sample_sources(rejection),
+            1,
+            snapshot.gap_artifact_rejections.len(),
+            limitation_non_claims(category),
+        );
+    }
+
+    let static_limit_count = snapshot
+        .findings
+        .iter()
+        .filter(|finding| finding.static_limit_kind.is_some())
+        .count()
+        + snapshot
+            .gap_artifacts
+            .iter()
+            .filter(|artifact| artifact.has_static_limit())
+            .count();
+    if static_limit_count > 0 {
+        return common(
+            "canonical_static_limitation",
+            "canonical_static_limitation",
+            "limited",
+            "producer-owned static evidence is limited; inspect the named limitation".to_string(),
+            "inspect_full_evidence",
+            snapshot
+                .findings
+                .iter()
+                .filter(|finding| finding.static_limit_kind.is_some())
+                .min_by_key(|finding| finding.id.as_str())
+                .map(|finding| vec![finding.id.clone()])
+                .unwrap_or_default(),
+            static_limit_count,
+            static_limit_count,
+            vec![
+                "not a repair packet",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    if run_status == "limited" || run_status == "cache_limited" {
+        return common(
+            "run_limited",
+            "run_limited",
+            "limited",
+            "the current analysis run is limited and does not represent complete scope".to_string(),
+            "refresh",
+            Vec::new(),
+            1,
+            1,
+            vec![
+                "not a repository-clean signal",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    if snapshot.diagnostic_profile == LspDiagnosticProfile::Actionable
+        && snapshot.finding_count() > 0
+        && snapshot.actionable_diagnostic_count() == 0
+    {
+        return common(
+            "no_actionable_item",
+            "no_actionable_item",
+            "complete",
+            "the current actionable profile filtered findings without a bounded next action; inspect full evidence for detail".to_string(),
+            "inspect_full_evidence",
+            Vec::new(),
+            snapshot.finding_count(),
+            snapshot.finding_count(),
+            vec![
+                "not a repository-clean signal",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    common(
+        "no_active_limitation_in_current_scope",
+        "no_active_limitation_in_current_scope",
+        "complete",
+        "no active limitation was reported in the current RIPR analysis scope".to_string(),
+        "inspect_full_evidence",
+        Vec::new(),
+        0,
+        0,
+        vec![
+            "not a repository-clean signal",
+            "not test adequacy",
+            "not runtime evidence",
+        ],
+    )
+}
+
+fn top_gap_artifact_rejection(
+    rejections: &[super::gap_artifacts::GapArtifactRejection],
+) -> Option<&super::gap_artifacts::GapArtifactRejection> {
+    rejections.iter().min_by_key(|rejection| {
+        format!(
+            "{}:{:?}",
+            rejection.as_str(),
+            limitation_sample_sources(rejection)
+        )
     })
+}
+
+#[cfg(test)]
+mod top_limitation_selection_tests {
+    use super::*;
+
+    #[test]
+    fn top_gap_artifact_rejection_is_order_independent() {
+        use super::super::gap_artifacts::GapArtifactRejection;
+
+        let first_order = vec![
+            GapArtifactRejection::WrongRoot("/workspace/other".to_string()),
+            GapArtifactRejection::DisabledLanguage("typescript".to_string()),
+        ];
+        let second_order = vec![
+            GapArtifactRejection::DisabledLanguage("typescript".to_string()),
+            GapArtifactRejection::WrongRoot("/workspace/other".to_string()),
+        ];
+
+        let selected = |rejections: &[GapArtifactRejection]| {
+            top_gap_artifact_rejection(rejections)
+                .map(|rejection| (rejection.as_str(), limitation_sample_sources(rejection)))
+        };
+        let expected = ("disabled_language", vec!["typescript".to_string()]);
+
+        assert_eq!(selected(&first_order), Some(expected.clone()));
+        assert_eq!(selected(&second_order), Some(expected));
+    }
 }
 
 fn workspace_status_rejection_repair(
@@ -2191,39 +2869,14 @@ impl Backend {
     }
 
     fn collect_top_limitation(&self) -> Option<LSPAny> {
+        let health = self.analysis_health_snapshot();
         let snapshot = self.latest_analysis.lock().ok()?.clone();
-        let Some(snapshot) = snapshot else {
-            // No snapshot yet — return the "no blockers" sentinel, not null.
-            return Some(serde_json::json!({
-                "schema_version": "0.1",
-                "tool": "ripr",
-                "kind": "top_limitation",
-                "status": "no_limitation",
-            }));
-        };
-        let rejection = snapshot.gap_artifact_rejections.first()?;
-        let category = rejection.as_str();
-        let (repair_route, why_not_actionable) = workspace_status_rejection_repair(rejection);
-        // sample_sources: emit the String payload if the variant carries one.
-        // gap_id-bearing sample sources are a deferred follow-up — the
-        // GapArtifactRejection enum does not carry a gap_id.
-        let sample_sources = limitation_sample_sources(rejection);
-        // unlock_condition is honest: the same analyzer route that must be
-        // implemented to remove the limitation.
-        let unlock_condition = repair_route;
-        let non_claims = limitation_non_claims(category);
-        Some(serde_json::json!({
-            "schema_version": "0.1",
-            "tool": "ripr",
-            "kind": "top_limitation",
-            "limitation_category": category,
-            "repair_route": repair_route,
-            "why_not_actionable": why_not_actionable,
-            "sample_sources": sample_sources,
-            "unlock_condition": unlock_condition,
-            "non_claims": non_claims,
-            "limits_note": "Static evidence only; advisory, not a gate decision.",
-        }))
+        let health = snapshot
+            .as_ref()
+            .map(|snapshot| self.effective_health_for_snapshot(health.clone(), snapshot))
+            .unwrap_or(health);
+        let authority = self.workspace_root_authority();
+        Some(top_limitation_dto(&health, snapshot.as_ref(), &authority).into_json())
     }
 
     fn collect_receipt_status(&self) -> Option<LSPAny> {
