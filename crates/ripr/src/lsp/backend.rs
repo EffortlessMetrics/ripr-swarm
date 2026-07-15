@@ -2376,14 +2376,13 @@ mod top_limitation_selection_tests {
         ];
 
         let selected = |rejections: &[GapArtifactRejection]| {
-            let rejection = top_gap_artifact_rejection(rejections)
-                .expect("test input should contain a rejection");
-            (rejection.as_str(), limitation_sample_sources(rejection))
+            top_gap_artifact_rejection(rejections)
+                .map(|rejection| (rejection.as_str(), limitation_sample_sources(rejection)))
         };
         let expected = ("disabled_language", vec!["typescript".to_string()]);
 
-        assert_eq!(selected(&first_order), expected);
-        assert_eq!(selected(&second_order), expected);
+        assert_eq!(selected(&first_order), Some(expected.clone()));
+        assert_eq!(selected(&second_order), Some(expected));
     }
 }
 
