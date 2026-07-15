@@ -131,6 +131,8 @@ pub(crate) struct GapRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) regeneration_commands: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) inspection_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) receipt: Option<GapReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) safe_gate_predicate: Option<SafeGatePredicate>,
@@ -503,6 +505,8 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
     let seam_id = string_at(evidence, &["seam_id"])
         .or_else(|| string_at(seam, &["seam_id"]))
         .unwrap_or("unknown-seam");
+    let inspection_command = (seam_id != "unknown-seam")
+        .then(|| format!("ripr agent brief --root . --seam-id {seam_id} --json"));
     let canonical_gap_id = string_at(evidence, &["canonical_gap_id"])
         .or_else(|| string_at(canonical_item, &["canonical_gap_id"]))
         .map(ToString::to_string)
@@ -553,6 +557,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         verification_commands,
         receipt_command,
         regeneration_commands: Vec::new(),
+        inspection_command,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
@@ -752,6 +757,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         verification_commands,
         receipt_command,
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: string_at(card, &["authority_boundary"])
@@ -907,6 +913,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         verification_commands,
         receipt_command: string_at(packet, &["receipt_command"]).map(ToString::to_string),
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: string_at(packet, &["authority_boundary"])
@@ -1064,6 +1071,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
         verification_commands,
         receipt_command: None,
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: string_at(card, &["authority_boundary"])
@@ -1153,6 +1161,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
         verification_commands: Vec::new(),
         receipt_command: None,
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
@@ -1237,6 +1246,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         verification_commands: Vec::new(),
         receipt_command: None,
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
@@ -1560,6 +1570,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
         verification_commands,
         receipt_command: None,
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),

@@ -81,6 +81,7 @@ GapRecord {
     evidence_ids,
     projection_eligibility,
     verification_commands,
+    inspection_command,
     receipt,
     movement,
     authority_boundary,
@@ -90,6 +91,9 @@ GapRecord {
 The exact Rust type and JSON version are implementation details, but the public
 ledger output must preserve these concepts with stable names or documented
 compatibility aliases.
+`inspection_command` is optional, but when present it must be an exact
+producer-owned command for inspecting the typed seam; consumers must not treat
+generic `evidence_ids` as a substitute seam identity.
 
 ### Kind
 

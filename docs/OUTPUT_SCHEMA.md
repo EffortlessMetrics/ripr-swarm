@@ -13902,6 +13902,7 @@ JSON shape:
       "verification_commands": [
         "cargo xtask fixtures boundary_gap"
       ],
+      "inspection_command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json",
       "safe_gate_predicate": {
         "policy_target_enabled": true,
         "suppressed": false,
@@ -13930,6 +13931,9 @@ JSON shape:
 when records are present but violate projection-safety checks, and `blocked`
 when no records can be read. The summary counts are projection inputs only;
 they are not gate authority.
+`inspection_command` is optional and is only emitted when a producer has typed
+seam identity for an exact local inspection route; ordered `evidence_ids`
+remain generic evidence references, not seam-ID fallbacks.
 
 ## Mutation Calibration Reports
 

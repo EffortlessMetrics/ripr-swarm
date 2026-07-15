@@ -111,7 +111,7 @@ fn gap_record_route_facts(record: &GapRecord) -> GateRouteFacts {
     let route = record.repair_route.as_ref();
     GateRouteFacts {
         canonical_gap_id: non_empty(&record.canonical_gap_id),
-        seam_id: None,
+        seam_id: typed_gap_record_seam_id(record),
         gap_state: non_empty(&record.gap_state),
         classification: None,
         changed_owner: record
@@ -138,8 +138,17 @@ fn gap_record_route_facts(record: &GapRecord) -> GateRouteFacts {
             .first()
             .and_then(|command| non_empty(command)),
         receipt_command: record.receipt_command.as_deref().and_then(non_empty),
-        inspection_command: None,
+        inspection_command: record.inspection_command.as_deref().and_then(non_empty),
     }
+}
+
+fn typed_gap_record_seam_id(record: &GapRecord) -> Option<String> {
+    record
+        .seam_id
+        .as_deref()
+        .and_then(non_empty_str)
+        .filter(|seam_id| *seam_id != "unknown-seam")
+        .map(ToString::to_string)
 }
 
 fn review_card_repair_target(item: &Value) -> Option<GateRepairTarget> {
@@ -502,6 +511,51 @@ mod tests {
                 .iter()
                 .any(|field| field == "seam_id"),
             "generic evidence identity must leave seam_id missing",
+        )
+    }
+
+    #[test]
+    fn typed_gap_record_seam_identity_and_inspection_command_complete_route() -> Result<(), String>
+    {
+        let record = GapRecord {
+            canonical_gap_id: "gap:shared".to_string(),
+            seam_id: Some("seam-a".to_string()),
+            gap_state: "actionable".to_string(),
+            anchor: Some(GapAnchor {
+                file: Some("crates/foo/src/lib.rs".to_string()),
+                line: Some(88),
+                owner: Some("foo::dispatch".to_string()),
+                ..GapAnchor::default()
+            }),
+            repair_route: Some(GapRepairRoute {
+                changed_behavior: Some("caller emits Event::Ready".to_string()),
+                missing_discriminator: Some("call observation for Event::Ready".to_string()),
+                assertion_shape: Some("assert exact emitted event".to_string()),
+                related_test: Some("dispatches_ready_event".to_string()),
+                target_file: Some("crates/foo/tests/dispatch.rs".to_string()),
+                target_line: Some(42),
+                ..GapRepairRoute::default()
+            }),
+            verification_commands: vec!["cargo test -p foo dispatches_ready_event".to_string()],
+            receipt_command: Some("ripr receipt write --gap gap:shared".to_string()),
+            inspection_command: Some(
+                "ripr agent brief --root . --seam-id seam-a --json".to_string(),
+            ),
+            ..GapRecord::default()
+        };
+
+        let candidate = crate::output::gate::candidate_from_gap_record(&record);
+        let route = build_gate_repair_route(&candidate);
+
+        require_equal(route.seam_id.as_deref(), Some("seam-a"), "seam id")?;
+        require_equal(
+            route.inspection_command.as_deref(),
+            Some("ripr agent brief --root . --seam-id seam-a --json"),
+            "inspection command",
+        )?;
+        require(
+            route.limitation.is_none(),
+            "typed gap record route should be complete",
         )
     }
 

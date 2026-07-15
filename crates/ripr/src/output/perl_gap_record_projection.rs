@@ -237,6 +237,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
         verification_commands: vec![verify_command.to_string()],
         receipt_command: Some(receipt_command),
         regeneration_commands: Vec::new(),
+        inspection_command: None,
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: PERL_AUTHORITY_BOUNDARY.to_string(),

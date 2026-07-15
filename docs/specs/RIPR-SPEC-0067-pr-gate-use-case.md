@@ -239,6 +239,9 @@ spelling.
 Generic ordered `GapRecord.evidence_ids` entries are not seam identities. Until
 the gap-record producer preserves a typed seam identity and exact inspection
 command, that source emits `incomplete_repair_route` rather than guessing.
+Rust gap-ledger records may satisfy that boundary by carrying both typed
+`seam_id` and an exact `inspection_command`; generic evidence IDs remain
+insufficient.
 
 `authority_boundary` is `static_ripr_evidence_only`. It means the route is
 static repair guidance under the configured gate policy, not runtime mutation
