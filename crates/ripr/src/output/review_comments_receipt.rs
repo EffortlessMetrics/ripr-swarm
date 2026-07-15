@@ -37,7 +37,13 @@ pub(crate) struct ReviewCommentsRunReceipt {
 }
 
 impl ReviewCommentsRunReceipt {
-    pub(crate) fn new(root: &Path, base: &str, head: &str, timeout_ms: u64) -> Self {
+    pub(crate) fn new(
+        root: &Path,
+        base: &str,
+        head: &str,
+        timeout_ms: u64,
+        expected_artifacts: &[String],
+    ) -> Self {
         let root_identity = canonical_root_identity(root);
         let base_sha = resolve_revision(root, base);
         let head_sha = resolve_revision(root, head);
@@ -52,7 +58,7 @@ impl ReviewCommentsRunReceipt {
             last_completed_phase: None,
             active_phase: Some("input_validation".to_string()),
             completed_artifacts: Vec::new(),
-            missing_artifacts: Vec::new(),
+            missing_artifacts: expected_artifacts.to_vec(),
             reusable_cache_identity,
             limitations: Vec::new(),
             non_claims: vec![
@@ -68,11 +74,11 @@ impl ReviewCommentsRunReceipt {
         self.active_phase = Some(active.to_string());
     }
 
-    pub(crate) fn complete(&mut self, artifacts: &[&str]) {
+    pub(crate) fn complete(&mut self, artifacts: &[String]) {
         self.status = "complete";
         self.last_completed_phase = Some("artifact_io".to_string());
         self.active_phase = None;
-        self.completed_artifacts = artifacts.iter().map(|path| (*path).to_string()).collect();
+        self.completed_artifacts = artifacts.to_vec();
         self.missing_artifacts.clear();
     }
 
@@ -80,7 +86,7 @@ impl ReviewCommentsRunReceipt {
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .ok_or_else(|| format!("receipt path {} has no parent", path.display()))?;
+            .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)
             .map_err(|err| format!("create receipt parent {} failed: {err}", parent.display()))?;
 

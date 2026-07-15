@@ -1483,11 +1483,17 @@ fn review_comments_with_diff_loader(
     apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
     let receipt_path =
         output::review_comments_receipt::ReviewCommentsRunReceipt::path_for_output(&options.out);
+    let markdown_path = review_comments_markdown_path(&options.out);
+    let artifacts = vec![
+        output::outcome::display_path(&options.out),
+        output::outcome::display_path(&markdown_path),
+    ];
     let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
         &input.root,
         &options.base,
         &options.head,
         options.timeout_ms,
+        &artifacts,
     );
     receipt.write_atomic(&receipt_path)?;
     receipt.phase("input_validation", "configuration");
@@ -1526,18 +1532,24 @@ fn review_comments_with_diff_loader(
         );
         receipt.phase("configuration", "static_rendering");
         receipt.write_atomic(&receipt_path)?;
-        receipt.complete(&["comments.json", "comments.md"]);
+        receipt.phase("configuration", "artifact_io");
+        receipt.write_atomic(&receipt_path)?;
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
-        let markdown_path = review_comments_markdown_path(&options.out);
         write_text_file(&options.out, &rendered_json)?;
         write_text_file(&markdown_path, &rendered_md)?;
+        receipt.complete(&artifacts);
+        let rendered_json =
+            output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+        write_text_file(&options.out, &rendered_json)?;
         receipt.write_atomic(&receipt_path)?;
         println!("Wrote {}", options.out.display());
         println!("Wrote {}", markdown_path.display());
         return Ok(());
     }
 
+    receipt.phase("configuration", "diff_discovery");
+    receipt.write_atomic(&receipt_path)?;
     let diff_text = load_diff(&input.root, &options.base, &options.head)?;
     receipt.phase("diff_discovery", "language_facts");
     receipt.write_atomic(&receipt_path)?;
@@ -1593,11 +1605,14 @@ fn review_comments_with_diff_loader(
     );
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
-    receipt.complete(&["comments.json", "comments.md"]);
+    receipt.phase("static_rendering", "artifact_io");
+    receipt.write_atomic(&receipt_path)?;
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
-    let markdown_path = review_comments_markdown_path(&options.out);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&markdown_path, &rendered_md)?;
+    receipt.complete(&artifacts);
+    let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+    write_text_file(&options.out, &rendered_json)?;
     receipt.write_atomic(&receipt_path)?;
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", markdown_path.display());

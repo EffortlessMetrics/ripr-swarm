@@ -2,6 +2,7 @@ use super::{ensure_parent_dir, write_parented_file};
 use crate::run::{capture_output_with_timeout, run_output_owned};
 use crate::verification_contracts::validate_json_file_against_schema;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -16,6 +17,30 @@ const REVIEW_COMMENTS_MD: &str = "target/ripr/review/comments.md";
 const REVIEW_COMMENTS_RECEIPT: &str = "target/ripr/review/run-receipt.json";
 const REVIEW_COMMENTS_SCHEMA: &str = "schemas/ripr/review-comments.schema.json";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
+
+#[derive(Debug)]
+struct ReviewCommentsRunError {
+    message: String,
+    timed_out: bool,
+}
+
+impl ReviewCommentsRunError {
+    fn timed_out(message: String) -> Self {
+        Self {
+            message,
+            timed_out: true,
+        }
+    }
+}
+
+impl From<String> for ReviewCommentsRunError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            timed_out: false,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReviewCommentsOptions {
@@ -97,28 +122,31 @@ fn write_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Result
     write_review_comments_with_runner(repo, options, run_ripr_review_comments)
 }
 
-fn write_review_comments_with_runner(
+fn write_review_comments_with_runner<E>(
     repo: &Path,
     options: &ReviewCommentsOptions,
-    run_producer: impl FnOnce(&Path, &ReviewCommentsOptions) -> Result<(), String>,
-) -> Result<(), String> {
+    run_producer: impl FnOnce(&Path, &ReviewCommentsOptions) -> Result<(), E>,
+) -> Result<(), String>
+where
+    E: Into<ReviewCommentsRunError>,
+{
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
     remove_stale_review_artifacts(repo)?;
     if !has_changed_paths(repo, &options.base, &options.head)? {
         write_empty_review_comments(repo, options)?;
     } else {
-        match run_producer(repo, options) {
+        match run_producer(repo, options).map_err(Into::into) {
             Ok(()) => ensure_review_comments_receipt(repo, options, "complete", None)?,
             Err(err) => {
-                let status = if err.contains("timed out") {
+                let status = if err.timed_out {
                     "limited_timeout"
                 } else {
                     "failed"
                 };
-                let receipt = review_comments_receipt(repo, options, status, Some(&err));
+                let receipt = review_comments_receipt(repo, options, status, Some(&err.message));
                 write_receipt_file(repo, &receipt)?;
-                write_error_review_comments(repo, options, &err, &receipt)?;
+                write_error_review_comments(repo, options, &err.message, &receipt)?;
             }
         }
     }
@@ -295,7 +323,8 @@ fn validate_run_receipt(
         "run_receipt.head_sha",
         violations,
     );
-    match receipt.get("status").and_then(Value::as_str) {
+    let receipt_status = receipt.get("status").and_then(Value::as_str);
+    match receipt_status {
         Some("in_progress" | "complete" | "limited_timeout" | "failed") => {}
         Some(other) => violations.push(format!(
             "run_receipt.status {other:?} is not contract-valid"
@@ -317,6 +346,58 @@ fn validate_run_receipt(
         if !receipt.get(key).is_some_and(Value::is_array) {
             violations.push(format!("run_receipt.{key} is missing or not an array"));
         }
+    }
+    match receipt_status {
+        Some("complete") => {
+            if !receipt
+                .get("last_completed_phase")
+                .is_some_and(|value| value.as_str() == Some("artifact_io"))
+            {
+                violations.push(
+                    "complete run_receipt.last_completed_phase must be artifact_io".to_string(),
+                );
+            }
+            if !receipt.get("active_phase").is_some_and(Value::is_null) {
+                violations.push("complete run_receipt.active_phase must be null".to_string());
+            }
+            if receipt
+                .get("completed_artifacts")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
+                violations
+                    .push("complete run_receipt.completed_artifacts must not be empty".to_string());
+            }
+            if receipt
+                .get("missing_artifacts")
+                .and_then(Value::as_array)
+                .is_some_and(|artifacts| !artifacts.is_empty())
+            {
+                violations.push("complete run_receipt.missing_artifacts must be empty".to_string());
+            }
+        }
+        Some("limited_timeout" | "failed") => {
+            if !receipt
+                .get("active_phase")
+                .and_then(Value::as_str)
+                .is_some_and(|phase| !phase.trim().is_empty())
+            {
+                violations.push(format!(
+                    "{receipt_status:?} run_receipt.active_phase must name the interrupted phase"
+                ));
+            }
+            if receipt
+                .get("missing_artifacts")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
+                violations.push(format!(
+                    "{receipt_status:?} run_receipt.missing_artifacts must not be empty"
+                ));
+            }
+        }
+        Some("in_progress") | None => {}
+        Some(_) => {}
     }
 }
 
@@ -352,7 +433,10 @@ fn non_empty_string(value: &Value) -> bool {
     value.as_str().is_some_and(|text| !text.trim().is_empty())
 }
 
-fn run_ripr_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Result<(), String> {
+fn run_ripr_review_comments(
+    repo: &Path,
+    options: &ReviewCommentsOptions,
+) -> Result<(), ReviewCommentsRunError> {
     let out = repo.join(REVIEW_COMMENTS_JSON);
     ensure_parent_dir(&out, REVIEW_COMMENTS_JSON)?;
 
@@ -375,7 +459,7 @@ fn run_ripr_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Res
     let binary = match env::var("RIPR_BIN") {
         Ok(binary) => {
             if binary.trim().is_empty() {
-                return Err("RIPR_BIN is set but empty".to_string());
+                return Err("RIPR_BIN is set but empty".to_string().into());
             }
             binary
         }
@@ -396,19 +480,19 @@ fn run_ripr_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Res
     let output =
         capture_output_with_timeout(&binary, &ripr_args, &[], timeout, "ripr review-comments")?;
     if output.timed_out {
-        return Err(format!(
+        return Err(ReviewCommentsRunError::timed_out(format!(
             "ripr review-comments timed out after {} seconds",
             output.duration.as_secs()
-        ));
+        )));
     }
     if output.status.is_some_and(|status| status.success()) {
         Ok(())
     } else {
-        Err(format!(
+        Err(ReviewCommentsRunError::from(format!(
             "ripr review-comments failed\nstdout:\n{}\nstderr:\n{}",
             output.stdout.trim(),
             output.stderr.trim()
-        ))
+        )))
     }
 }
 
@@ -422,7 +506,11 @@ fn review_comments_timeout_secs() -> Result<u64, String> {
 }
 
 fn review_comments_timeout_ms() -> Result<u64, String> {
-    review_comments_timeout_secs()?
+    let seconds = review_comments_timeout_secs()?;
+    if seconds == 0 {
+        return Err("RIPR_REVIEW_COMMENTS_TIMEOUT_SECS must be a positive integer".to_string());
+    }
+    seconds
         .checked_mul(1_000)
         .ok_or_else(|| "RIPR_REVIEW_COMMENTS_TIMEOUT_SECS is too large".to_string())
 }
@@ -606,10 +694,7 @@ fn ensure_review_comments_receipt(
     let mut packet: Value = serde_json::from_str(&text).map_err(|err| {
         format!("parse {REVIEW_COMMENTS_JSON} for receipt attachment failed: {err}")
     })?;
-    let receipt = packet
-        .get("run_receipt")
-        .cloned()
-        .unwrap_or_else(|| review_comments_receipt(repo, options, status, error));
+    let receipt = review_comments_receipt(repo, options, status, error);
     write_receipt_file(repo, &receipt)?;
     if let Some(object) = packet.as_object_mut() {
         object.insert("run_receipt".to_string(), receipt);
@@ -654,9 +739,10 @@ fn review_comments_receipt(
             "active_phase": "review_comments_process",
             "completed_artifacts": [],
             "missing_artifacts": ["comments.json", "comments.md"],
-            "reusable_cache_identity": format!(
-                "review-comments|{}|{}|{}",
-                options.base, options.head, options.root
+            "reusable_cache_identity": reusable_cache_identity(
+                &canonical_root_identity(&receipt_root),
+                &base_sha,
+                &head_sha,
             ),
             "limitations": [],
             "non_claims": [],
@@ -713,6 +799,29 @@ fn review_comments_receipt(
         }
     }
     receipt
+}
+
+fn canonical_root_identity(root: &Path) -> String {
+    let normalized = root
+        .canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/");
+    normalized
+        .strip_prefix("//?/")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ripr-review-comments\0");
+    hasher.update(root.as_bytes());
+    hasher.update([0]);
+    hasher.update(base.as_bytes());
+    hasher.update([0]);
+    hasher.update(head.as_bytes());
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 fn render_error_review_comments_markdown(packet: &Value) -> String {
@@ -886,6 +995,42 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_incomplete_complete_receipt() -> Result<(), String> {
+        let packet = valid_packet(&options());
+        let mut object = packet
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "packet should be an object".to_string())?;
+        let mut receipt = object
+            .get("run_receipt")
+            .and_then(Value::as_object)
+            .cloned()
+            .ok_or_else(|| "receipt should be an object".to_string())?;
+        receipt.insert("active_phase".to_string(), json!("artifact_io"));
+        receipt.insert("completed_artifacts".to_string(), json!([]));
+        object.insert("run_receipt".to_string(), Value::Object(receipt));
+
+        let violations = validate_packet_value(
+            &Value::Object(object),
+            &repo_root_for_display(),
+            &options(),
+            false,
+            Path::new(REVIEW_COMMENTS_MD),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("active_phase must be null"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("completed_artifacts must not be empty"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn validation_requires_markdown_artifact() {
         let violations = validate_packet_value(
             &valid_packet(&options()),
@@ -986,10 +1131,25 @@ mod tests {
     }
 
     #[test]
+    fn write_wrapper_does_not_infer_timeout_from_error_text() -> Result<(), String> {
+        let (repo, options) = prepared_review_repo("ripr-review-comments-text-timeout")?;
+        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+            Err("a non-timeout failure mentions timed out in its context".to_string())
+        })?;
+
+        let packet = read_packet(&repo)?;
+        assert_eq!(packet["run_receipt"]["status"], "failed");
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
     fn write_wrapper_preserves_typed_timeout_receipt() -> Result<(), String> {
         let (repo, options) = prepared_review_repo("ripr-review-comments-timeout")?;
         write_review_comments_with_runner(&repo, &options, |_repo, _options| {
-            Err("ripr review-comments timed out after 1 seconds".to_string())
+            Err(ReviewCommentsRunError::timed_out(
+                "ripr review-comments timed out after 1 seconds".to_string(),
+            ))
         })?;
 
         let packet = read_packet(&repo)?;
