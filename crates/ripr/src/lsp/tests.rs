@@ -123,14 +123,17 @@ fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
 #[cfg(windows)]
 #[test]
 fn workspace_input_watch_uses_case_insensitive_windows_containment() {
-    let root = Path::new(r"C:\workspace\ripr");
+    let root = std::env::temp_dir().join("ripr-workspace-input-watch-case");
+    let differently_cased_root = PathBuf::from(root.to_string_lossy().to_ascii_uppercase());
     assert!(workspace_input_path_is_relevant(
-        root,
-        Path::new(r"c:\Workspace\RIPR\Cargo.toml")
+        &root,
+        &differently_cased_root.join("Cargo.toml")
     ));
     assert!(!workspace_input_path_is_relevant(
-        root,
-        Path::new(r"c:\workspace\ripr-sibling\Cargo.toml")
+        &root,
+        &differently_cased_root
+            .with_file_name("RIPR-WORKSPACE-INPUT-WATCH-CASE-SIBLING")
+            .join("Cargo.toml")
     ));
 }
 
