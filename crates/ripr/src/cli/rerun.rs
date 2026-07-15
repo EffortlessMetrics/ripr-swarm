@@ -1502,15 +1502,23 @@ mod tests {
         cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
         graph_provenance_unavailable_fields, input_fingerprint_changes, parity_mismatch_fields,
         parse_options, render_human, resolve_gap_records, route_from_gap_records, same_root,
-        scopes_from_gap_records, seam_matches_resolved_scope,
+        scopes_from_gap_records, seam_from, seam_matches_resolved_scope,
     };
+    use crate::analysis::classify_seam;
     use crate::analysis::repair_route::{
         NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
         REPAIR_ROUTE_AUTHORITY_BOUNDARY, RepairRouteReadiness, RepairRouteState,
         RepairTargetSelection,
     };
     use crate::analysis::seam_cache::FileFactCacheStats;
-    use crate::domain::OracleKind;
+    use crate::analysis::seam_classification::ClassifiedSeam;
+    use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
+    };
+    use crate::domain::{
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+    };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -2151,47 +2159,83 @@ mod tests {
 
     #[test]
     fn targeted_rerun_seam_preserves_producer_route_readiness() -> Result<(), String> {
-        let mut seam = baseline_fields();
-        seam.repair_route_readiness = RepairRouteReadiness {
-            state: RepairRouteState::Ready,
-            seam_id: "seam:error-variant".to_string(),
-            canonical_gap_id: Some("gap:error-variant".to_string()),
-            required_evidence: vec![
-                "producer-owned missing discriminator fact: PricingError::Other".to_string(),
-                "safe test target".to_string(),
-            ],
-            present_evidence: vec![
-                "producer-owned missing discriminator fact: PricingError::Other".to_string(),
-                "safe test target".to_string(),
-            ],
-            missing_evidence: Vec::new(),
-            target_selection: RepairTargetSelection::Proposed(NewTestTargetProposal {
-                kind: NewTestKind::Integration,
-                file: "tests/pricing.rs".into(),
-                owner: "pricing::classify_boundary".to_string(),
-                provenance: NewTestProposalProvenance::ProducerOwned,
-            }),
-            test_target: None,
-            proposed_oracle: Some(OracleKind::ExactErrorVariant),
-            current_oracle: Some(OracleKind::BroadError),
-            authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
-        };
+        let seam = seam_from(&error_variant_entry());
 
         let value = serde_json::to_value(&seam)
             .map_err(|error| format!("serialize targeted rerun seam: {error}"))?;
         if value["repair_route_readiness"]["state"] != "ready"
-            || value["repair_route_readiness"]["canonical_gap_id"] != "gap:error-variant"
             || value["repair_route_readiness"]["proposed_oracle"] != "exact_error_variant"
-            || value["repair_route_readiness"]["target_selection"]["proposed"]["file"]
-                != "tests/pricing.rs"
+            || value["repair_route_readiness"]["target_selection"]["existing"]["symbol_id"]
+                .as_str()
+                .is_none()
+            || value["repair_route_readiness"]["test_target"]["file"] != "tests/pricing.rs"
             || value["repair_route_readiness"]["authority_boundary"]
                 != REPAIR_ROUTE_AUTHORITY_BOUNDARY
+            || value["missing_discriminators"][0]["value"] != "PricingError::Other"
         {
             return Err(format!(
                 "targeted rerun lost producer-owned route readiness: {value}"
             ));
         }
         Ok(())
+    }
+
+    fn error_variant_entry() -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::classify_boundary",
+            SeamKind::ErrorVariant,
+            9,
+            88,
+            "Err(PricingError::Other)",
+            RequiredDiscriminator::ErrorVariant {
+                variant: "PricingError::Other".to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        );
+        let evidence = TestGripEvidence {
+            seam_id: seam.id().clone(),
+            related_tests: vec![RelatedTestGrip {
+                test_name: "rejects_boundary".to_string(),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 4,
+                test_target: Some(TestTargetEvidence::fixture(
+                    "rejects_boundary",
+                    Path::new("tests/pricing.rs"),
+                    4,
+                )),
+                oracle_kind: OracleKind::BroadError,
+                oracle_strength: OracleStrength::Weak,
+                evidence_summary: "broad error assertion".to_string(),
+                relation_reason: RelationReason::DirectOwnerCall,
+                relation_confidence: RelationConfidence::High,
+            }],
+            reach: stage("owner is reached"),
+            activate: stage("exact error variant flows"),
+            propagate: stage("error channel flow"),
+            observe: stage("error is observed"),
+            discriminate: StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "broad error assertion misses the exact variant",
+            ),
+            observed_values: Vec::new(),
+            missing_discriminators: vec![MissingDiscriminatorFact {
+                value: "PricingError::Other".to_string(),
+                reason: "the changed error variant is not asserted exactly".to_string(),
+                flow_sink: None,
+            }],
+        };
+        let class = classify_seam(&seam, &evidence);
+        ClassifiedSeam {
+            seam,
+            evidence,
+            class,
+        }
+    }
+
+    fn stage(summary: &str) -> StageEvidence {
+        StageEvidence::new(StageState::Yes, Confidence::Medium, summary)
     }
 
     #[test]
