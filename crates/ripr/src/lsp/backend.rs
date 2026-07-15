@@ -6,8 +6,8 @@ use super::capabilities::{
 };
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
-    DiagnosticBatch, DiagnosticRefreshPlan, WorkspaceDiagnostics, diagnostic_refresh_plan,
-    document_diagnostic_result_id, take_all_uris,
+    DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
+    diagnostic_refresh_plan, take_all_uris,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -47,12 +47,12 @@ use crate::output::gap_decision_ledger::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
-use tower_lsp_server::jsonrpc::{Error as LspError, Result as LspResult};
+use tower_lsp_server::jsonrpc::Result as LspResult;
 use tower_lsp_server::ls_types::{
     CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, Diagnostic,
     DidChangeConfigurationParams, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
@@ -78,7 +78,8 @@ pub(super) struct Backend {
     configuration_failure: Mutex<Option<AnalysisFailure>>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
-    latest_analysis: Mutex<Option<AnalysisSnapshot>>,
+    latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
+    diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
     pull_diagnostics: Mutex<bool>,
     diagnostic_refresh_support: Mutex<bool>,
@@ -110,6 +111,7 @@ impl Backend {
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
+            diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
             pull_diagnostics: Mutex::new(false),
             diagnostic_refresh_support: Mutex::new(false),
@@ -534,6 +536,9 @@ impl Backend {
         if snapshot.input_identity.is_none() {
             return false;
         }
+        let snapshot = Arc::new(snapshot);
+        let diagnostic_result_ids =
+            Arc::new(DiagnosticResultIdCache::for_snapshot(Arc::clone(&snapshot)));
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
             return false;
         };
@@ -543,9 +548,13 @@ impl Backend {
         let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
             return false;
         };
+        let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
+            return false;
+        };
         *last_diagnostics = snapshot.diagnostics_by_uri.clone();
         *last_diagnostic_uris = plan.current_uris.clone();
         *latest_analysis = Some(snapshot);
+        *stored_result_ids = Some(diagnostic_result_ids);
         true
     }
 
@@ -591,6 +600,9 @@ impl Backend {
         }
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
+        }
+        if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
+            *diagnostic_result_ids = None;
         }
         take_all_uris(&mut last_diagnostic_uris)
     }
@@ -679,12 +691,20 @@ impl Backend {
             .unwrap_or(false)
     }
 
-    fn latest_completed_snapshot(&self) -> LspResult<AnalysisSnapshot> {
-        self.latest_analysis
-            .lock()
-            .ok()
-            .and_then(|snapshot| snapshot.clone())
-            .ok_or_else(LspError::internal_error)
+    fn latest_pull_snapshot(
+        &self,
+    ) -> Option<(Arc<AnalysisSnapshot>, Arc<DiagnosticResultIdCache>)> {
+        let latest_analysis = self.latest_analysis.lock().ok()?;
+        let snapshot = latest_analysis.as_ref()?.clone();
+        let stored_result_ids = self.diagnostic_result_ids.lock().ok()?;
+        let result_ids = stored_result_ids
+            .as_ref()
+            .filter(|result_ids| result_ids.matches_snapshot(&snapshot))
+            .cloned()
+            .unwrap_or_else(|| {
+                Arc::new(DiagnosticResultIdCache::for_snapshot(Arc::clone(&snapshot)))
+            });
+        Some((snapshot, result_ids))
     }
 
     #[cfg(test)]
@@ -692,7 +712,7 @@ impl Backend {
         let Ok(snapshot) = self.latest_analysis.lock() else {
             return None;
         };
-        snapshot.clone()
+        snapshot.as_ref().map(|value| value.as_ref().clone())
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -820,14 +840,18 @@ impl Backend {
                     .latest_analysis
                     .lock()
                     .ok()
-                    .and_then(|snapshot| snapshot.as_ref().map(workspace_status_run_status))
+                    .and_then(|snapshot| {
+                        snapshot
+                            .as_ref()
+                            .map(|snapshot| workspace_status_run_status(snapshot))
+                    })
                     .map(str::to_string);
                 health.current_input_identity = Some(request.input_identity_id());
                 health.last_success_input_identity =
                     self.latest_analysis.lock().ok().and_then(|snapshot| {
                         snapshot
                             .as_ref()
-                            .and_then(AnalysisSnapshot::input_identity_id)
+                            .and_then(|snapshot| snapshot.input_identity_id())
                     });
             }
             RefreshAttemptOutcome::Failed => {
@@ -1788,9 +1812,21 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentDiagnosticParams,
     ) -> LspResult<DocumentDiagnosticReportResult> {
-        let snapshot = self.latest_completed_snapshot()?;
+        let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
+            return Ok(
+                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                    related_documents: None,
+                    full_document_diagnostic_report:
+                        tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
+                            result_id: None,
+                            items: Vec::new(),
+                        },
+                })
+                .into(),
+            );
+        };
         let uri = params.text_document.uri;
-        let result_id = document_diagnostic_result_id(&snapshot, &uri);
+        let result_id = result_ids.document_id(&snapshot, &uri);
         if params.previous_result_id.as_deref() == Some(result_id.as_str()) {
             return Ok(DocumentDiagnosticReport::Unchanged(
                 RelatedUnchangedDocumentDiagnosticReport {
@@ -1822,7 +1858,9 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceDiagnosticParams,
     ) -> LspResult<WorkspaceDiagnosticReportResult> {
-        let snapshot = self.latest_completed_snapshot()?;
+        let Some((snapshot, result_ids)) = self.latest_pull_snapshot() else {
+            return Ok(WorkspaceDiagnosticReport { items: Vec::new() }.into());
+        };
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()
@@ -1836,7 +1874,7 @@ impl LanguageServer for Backend {
         );
         let mut items = Vec::with_capacity(uris.len());
         for uri in uris {
-            let result_id = document_diagnostic_result_id(&snapshot, &uri);
+            let result_id = result_ids.document_id(&snapshot, &uri);
             let previous = params
                 .previous_result_ids
                 .iter()
@@ -1892,7 +1930,7 @@ impl LanguageServer for Backend {
             .flatten();
         Ok(Some(code_action_response(
             &params,
-            action_snapshot.as_ref(),
+            action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
         )))
     }
 
@@ -1911,7 +1949,10 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|value| value.clone());
         let uri = &params.text_document.uri;
-        Ok(Some(code_lens_response(uri, snapshot.as_ref())))
+        Ok(Some(code_lens_response(
+            uri,
+            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+        )))
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<LSPAny>> {

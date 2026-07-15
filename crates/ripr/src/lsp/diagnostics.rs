@@ -4,7 +4,7 @@ use super::gap_artifacts::{
     validate_workspace_gap_artifact_report,
 };
 use super::state::{AnalysisSnapshot, RefreshMetadata};
-use super::uri::{file_uri_for_path, path_from_file_uri};
+use super::uri::{file_uri_for_path, file_uris_match, path_from_file_uri};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
@@ -26,6 +26,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
     Position, Range, Uri,
@@ -469,7 +470,6 @@ pub(super) fn document_diagnostic_result_id(snapshot: &AnalysisSnapshot, uri: &U
 /// Build a workspace identity from the ordered set of document identities.
 /// This is an observability/test identity; the LSP workspace report carries
 /// the per-document IDs because that is what clients use for unchanged data.
-#[cfg(test)]
 pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> String {
     let mut parts = vec![
         snapshot.mode.as_str().to_string(),
@@ -493,6 +493,51 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
         "ripr-workspace-diagnostics-v1",
         parts.iter().map(String::as_str),
     )
+}
+
+/// Snapshot-scoped identities used by pull diagnostics.
+///
+/// Computing a document identity serializes and normalizes its complete
+/// diagnostic payload. Cache those producer-owned values when a snapshot is
+/// committed so repeated pull requests only look up the requested document.
+#[derive(Debug)]
+pub(super) struct DiagnosticResultIdCache {
+    snapshot: Arc<AnalysisSnapshot>,
+    document_ids: BTreeMap<Uri, String>,
+    workspace_id: String,
+}
+
+impl DiagnosticResultIdCache {
+    pub(super) fn for_snapshot(snapshot: Arc<AnalysisSnapshot>) -> Self {
+        let document_ids = snapshot
+            .diagnostics_by_uri
+            .keys()
+            .map(|uri| (uri.clone(), document_diagnostic_result_id(&snapshot, uri)))
+            .collect();
+        let workspace_id = workspace_diagnostic_result_id(&snapshot);
+        Self {
+            snapshot,
+            document_ids,
+            workspace_id,
+        }
+    }
+
+    pub(super) fn matches_snapshot(&self, snapshot: &Arc<AnalysisSnapshot>) -> bool {
+        Arc::ptr_eq(&self.snapshot, snapshot) && !self.workspace_id.is_empty()
+    }
+
+    pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
+        self.document_ids
+            .get(uri)
+            .or_else(|| {
+                self.document_ids
+                    .iter()
+                    .find(|(stored_uri, _)| file_uris_match(stored_uri, uri))
+                    .map(|(_, result_id)| result_id)
+            })
+            .cloned()
+            .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
+    }
 }
 
 fn normalized_document_uri(root: &Path, uri: &Uri) -> String {
@@ -2707,6 +2752,7 @@ mod delivery_tests {
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         Ok(AnalysisSnapshot {
             root: PathBuf::from(root),
+            input_identity: None,
             base: Some("origin/main".to_string()),
             mode: crate::app::Mode::Draft,
             refresh: RefreshMetadata::default(),
