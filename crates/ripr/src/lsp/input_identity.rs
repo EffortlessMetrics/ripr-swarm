@@ -147,7 +147,6 @@ impl LspAnalysisInputIdentity {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::process::Command;
 
     fn identity(
         root: &str,
@@ -347,79 +346,6 @@ mod tests {
             if first.stable_id() == second.stable_id() {
                 return Err("changed workspace input retained the same stable id".to_string());
             }
-            Ok(())
-        })();
-        let _ = std::fs::remove_dir_all(&root);
-        result
-    }
-
-    #[test]
-    fn resolved_base_is_exact_and_unknown_refs_fail_closed() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
-            "ripr-lsp-base-identity-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| format!("clock failed: {error}"))?
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).map_err(|error| format!("create root failed: {error}"))?;
-        let result = (|| {
-            let init = Command::new("git")
-                .args(["init", "--quiet"])
-                .current_dir(&root)
-                .status()
-                .map_err(|error| format!("git init failed: {error}"))?;
-            if !init.success() {
-                return Err("git init returned a failure".to_string());
-            }
-            std::fs::write(root.join("input.txt"), "base\n")
-                .map_err(|error| format!("write input failed: {error}"))?;
-            let add = Command::new("git")
-                .args(["add", "input.txt"])
-                .current_dir(&root)
-                .status()
-                .map_err(|error| format!("git add failed: {error}"))?;
-            if !add.success() {
-                return Err("git add returned a failure".to_string());
-            }
-            let commit = Command::new("git")
-                .args([
-                    "-c",
-                    "user.name=ripr-test",
-                    "-c",
-                    "user.email=ripr-test@example.invalid",
-                    "commit",
-                    "--quiet",
-                    "-m",
-                    "base",
-                ])
-                .current_dir(&root)
-                .status()
-                .map_err(|error| format!("git commit failed: {error}"))?;
-            if !commit.success() {
-                return Err("git commit returned a failure".to_string());
-            }
-            let expected = String::from_utf8(
-                Command::new("git")
-                    .args(["rev-parse", "HEAD"])
-                    .current_dir(&root)
-                    .output()
-                    .map_err(|error| format!("git rev-parse failed: {error}"))?
-                    .stdout,
-            )
-            .map_err(|error| format!("git output was not UTF-8: {error}"))?
-            .trim()
-            .to_string();
-
-            assert_eq!(
-                crate::analysis::resolve_base_commit(&root, Some("HEAD")),
-                Some(expected)
-            );
-            assert_eq!(
-                crate::analysis::resolve_base_commit(&root, Some("missing-base")),
-                None
-            );
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);

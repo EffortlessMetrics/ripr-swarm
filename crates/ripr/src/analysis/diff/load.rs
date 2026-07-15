@@ -266,6 +266,34 @@ mod tests {
     }
 
     #[test]
+    fn explicit_base_resolves_to_exact_commit_and_unknown_refs_fail_closed() -> std::io::Result<()>
+    {
+        let dir = std::env::temp_dir().join("ripr-resolve-exact-base");
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let expected = String::from_utf8(
+            git_ref_output(&dir, "HEAD")
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "git HEAD was not resolved")
+                })?
+                .stdout,
+        )
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+        .trim()
+        .to_string();
+
+        assert_eq!(
+            resolve_base_commit(&dir, Some("HEAD")).as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(resolve_base_commit(&dir, Some("missing-base")), None);
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn resolve_default_base_uses_origin_master_when_symbolic_ref_points_there()
     -> std::io::Result<()> {
         // Simulates a repo whose remote default branch is "master" (not "main").
