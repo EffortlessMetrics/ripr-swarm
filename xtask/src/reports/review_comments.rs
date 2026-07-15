@@ -1114,7 +1114,7 @@ mod tests {
             .map_err(|err| format!("write success JSON: {err}"))?;
             fs::write(repo.join(REVIEW_COMMENTS_MD), "# RIPR PR Guidance\n")
                 .map_err(|err| format!("write success Markdown: {err}"))?;
-            Ok(())
+            Ok::<(), ReviewCommentsRunError>(())
         })?;
 
         let packet = read_packet(&repo)?;
