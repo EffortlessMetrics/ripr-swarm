@@ -21,7 +21,9 @@ use super::lens::{code_lens_response, lens_title_is_static_language_clean};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshReason, RefreshRequest, RefreshScope,
 };
-use super::state::{AnalysisSnapshot, DocumentStore, RefreshMetadata, format_duration};
+use super::state::{
+    AnalysisAttemptState, AnalysisSnapshot, DocumentStore, RefreshMetadata, format_duration,
+};
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -5916,6 +5918,54 @@ fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(),
                 .all(|title| { title.contains("Refresh") || title.contains("Inspect") }),
             "stale snapshots must expose only inspection and refresh actions: {action_titles:?}"
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn retained_snapshot_during_queued_or_running_refresh_reports_wait_state() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.initialize_test_workspace_root();
+        let finding = sample_finding();
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        );
+        backend
+            .refresh_plan(diagnostics)
+            .ok_or_else(|| "expected retained snapshot".to_string())?;
+
+        for (state, expected_status) in [
+            (AnalysisAttemptState::Queued, "analysis_queued"),
+            (AnalysisAttemptState::Running, "analysis_running"),
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let status = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                    arguments: vec![],
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("execute_command failed: {err}"))?
+                .ok_or_else(|| "expected workspace status".to_string())?;
+            assert_eq!(status["top_limitation"]["status"], expected_status);
+            assert_eq!(status["top_limitation"]["completeness"], "pending");
+            assert_eq!(
+                status["top_limitation"]["recovery_route"],
+                "wait_for_analysis"
+            );
+            assert_eq!(status["top_limitation"]["run_status"], "stale");
+        }
         Ok(())
     })
 }

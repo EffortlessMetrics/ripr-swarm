@@ -627,6 +627,16 @@ impl Backend {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn set_analysis_attempt_state_for_test(&self, state: AnalysisAttemptState) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.attempt_id = Some(2);
+            health.state = state;
+            health.snapshot_id = Some("snapshot:test".to_string());
+            health.last_success_snapshot_id = Some("snapshot:test".to_string());
+        }
+    }
+
     fn effective_health_for_snapshot(
         &self,
         mut health: AnalysisHealth,
@@ -2198,6 +2208,38 @@ fn top_limitation_dto(
             1,
             vec![
                 "retained evidence is stale",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+    }
+
+    if matches!(
+        health.state,
+        AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+    ) {
+        let (status, why_not_actionable) = if health.state == AnalysisAttemptState::Queued {
+            (
+                "analysis_queued",
+                "RIPR has queued a new analysis attempt; the retained snapshot is not current",
+            )
+        } else {
+            (
+                "analysis_running",
+                "RIPR is analyzing the workspace; the retained snapshot is not current",
+            )
+        };
+        return common(
+            status,
+            status,
+            "pending",
+            why_not_actionable.to_string(),
+            "wait_for_analysis",
+            snapshot_id.clone().into_iter().collect(),
+            1,
+            1,
+            vec![
+                "retained evidence is not current",
                 "not test adequacy",
                 "not runtime evidence",
             ],
