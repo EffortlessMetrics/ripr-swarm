@@ -274,7 +274,7 @@ fn walk(root: &Path, directory: &Path, found: &mut Vec<String>) -> Result<(), St
         let relative = path
             .strip_prefix(root)
             .map_err(|err| format!("strip root: {err}"))?;
-        let normalized = relative.to_string_lossy().replace('\\', "/");
+        let normalized = normalize_path(relative)?;
         if path.is_dir() {
             if normalized == ".git" || normalized == "target" || normalized.starts_with(".git/") {
                 continue;
@@ -290,6 +290,12 @@ fn walk(root: &Path, directory: &Path, found: &mut Vec<String>) -> Result<(), St
         }
     }
     Ok(())
+}
+
+fn normalize_path(path: &Path) -> Result<String, String> {
+    path.to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| format!("path is not UTF-8: {}", path.display()))
 }
 
 fn contains_marker(text: &str) -> bool {
@@ -517,6 +523,26 @@ mod tests {
     fn tracked_paths_reject_non_utf8_identity() -> Result<(), String> {
         if parse_tracked_paths(b"valid.rs\0invalid-\xff.rs\0").is_ok() {
             return Err("non-UTF-8 tracked path was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fallback_paths_reject_non_utf8_identity() -> Result<(), String> {
+        #[cfg(unix)]
+        let path = {
+            use std::ffi::OsString;
+            use std::os::unix::ffi::OsStringExt;
+            std::path::PathBuf::from(OsString::from_vec(vec![0xff]))
+        };
+        #[cfg(windows)]
+        let path = {
+            use std::ffi::OsString;
+            use std::os::windows::ffi::OsStringExt;
+            std::path::PathBuf::from(OsString::from_wide(&[0xd800]))
+        };
+        if super::normalize_path(&path).is_ok() {
+            return Err("non-UTF-8 fallback path was accepted".to_string());
         }
         Ok(())
     }
