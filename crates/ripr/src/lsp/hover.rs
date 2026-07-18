@@ -2,7 +2,7 @@ use super::HOVER_TEXT;
 use super::state::{AnalysisSnapshot, format_duration};
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
-use crate::domain::{Finding, StageEvidence, StageState};
+use crate::domain::{DiagnosticWitness, Finding, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -358,6 +358,9 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push("## Canonical Gap".to_string());
         lines.push(format!("ID: `{}`", gap.id));
     }
+    if let Some(witness) = DiagnosticWitness::from_finding(finding) {
+        push_diagnostic_witness(&mut lines, &witness);
+    }
 
     if !finding.related_tests.is_empty() {
         lines.push(String::new());
@@ -391,6 +394,71 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     }
 
     lines.join("\n")
+}
+
+fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness) {
+    lines.push(String::new());
+    lines.push("## Discriminator witness".to_string());
+    lines.push(format!("- kind: `{}`", witness.kind));
+    lines.push(format!("- probe family: `{}`", witness.probe_family));
+    lines.push(format!(
+        "- changed expression: `{}`",
+        witness.changed_expression
+    ));
+    if let Some(before) = &witness.before {
+        lines.push(format!("- before: `{before}`"));
+    }
+    if let Some(after) = &witness.after {
+        lines.push(format!("- after: `{after}`"));
+    }
+    if let Some(expected_sink) = &witness.expected_sink {
+        lines.push(format!("- expected sink: `{expected_sink}`"));
+    }
+    for missing in &witness.missing_discriminators {
+        lines.push(format!(
+            "- missing discriminator: `{}` — {}",
+            missing.value, missing.reason
+        ));
+    }
+    if let Some(fix_site) = &witness.fix_site {
+        lines.push(format!(
+            "- fix site: `{}:{}` `{}`",
+            fix_site.file, fix_site.line, fix_site.test_name
+        ));
+        if let Some(oracle) = &fix_site.current_oracle {
+            lines.push(format!(
+                "- current oracle: `{oracle}` ({}/{})",
+                fix_site.oracle_kind, fix_site.oracle_strength
+            ));
+        }
+        if let Some(location) = &fix_site.oracle_location {
+            lines.push(format!(
+                "- oracle source: `{}:{}`",
+                location.file, location.line
+            ));
+        }
+    }
+    if let Some(assertion) = &witness.suggested_assertion {
+        lines.push(format!("- suggested assertion: `{assertion}`"));
+    }
+    lines.push(format!("- explain: `{}`", witness.explain_command));
+    if let Some(value) = witness.confidence.value {
+        lines.push(format!(
+            "- confidence: {value:.2} ({})",
+            witness.confidence.basis
+        ));
+    } else {
+        lines.push(format!(
+            "- confidence: unavailable ({})",
+            witness.confidence.basis
+        ));
+    }
+    for limitation in &witness.limitations {
+        lines.push(format!(
+            "- limitation: `{}` — {}",
+            limitation.kind, limitation.detail
+        ));
+    }
 }
 
 fn push_preview_boundary(lines: &mut Vec<String>, finding: &Finding) {
@@ -1024,6 +1092,13 @@ mod seam_hover_tests {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
+                test_target: Some(
+                    crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                        "below_threshold_has_no_discount",
+                        std::path::Path::new("tests/pricing.rs"),
+                        12,
+                    ),
+                ),
                 oracle_kind: OracleKind::ExactValue,
                 oracle_strength: OracleStrength::Strong,
                 evidence_summary: "exact value assertion".to_string(),
@@ -1145,10 +1220,12 @@ mod seam_hover_tests {
     fn sample_snapshot(mode: Mode) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            input_identity: None,
             base: None,
             mode,
             refresh: super::super::state::RefreshMetadata::default(),
             findings: Vec::new(),
+            diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
@@ -1376,7 +1453,7 @@ mod seam_hover_tests {
             "## Suggested test shape",
             "- file: `tests/pricing.rs`",
             "- name: `discounted_total_boundary_discriminator`",
-            "- candidate value: `input that hits the boundary: amount >= discount_threshold`",
+            "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
             "- assertion template: `assert_eq!(discounted_total",
         ] {
