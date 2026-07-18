@@ -3879,45 +3879,71 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
 }
 
 pub(super) fn doctor(args: &[String]) -> Result<(), String> {
-    let root = match args {
-        [] => PathBuf::from("."),
-        [flag] if flag == "--help" || flag == "-h" => {
-            help::print_doctor_help();
-            return Ok(());
+    let mut root = std::path::PathBuf::from(".");
+    let mut json = false;
+    let mut args_iter = args.iter();
+    while let Some(arg) = args_iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                help::print_doctor_help();
+                return Ok(());
+            }
+            "--json" => json = true,
+            "--root" => {
+                if let Some(val) = args_iter.next() {
+                    root = std::path::PathBuf::from(val);
+                } else {
+                    return Err("missing value for --root".to_string());
+                }
+            }
+            other => return Err(format!("unknown doctor argument {other:?}")),
         }
-        [flag] if flag == "--root" => return Err("missing value for --root".to_string()),
-        [flag, value] if flag == "--root" => PathBuf::from(value),
-        [other, ..] => return Err(format!("unknown doctor argument {other:?}")),
-    };
+    }
 
+    let mut checks = Vec::new();
     let mut ok = true;
-    println!("ripr doctor");
-    println!("- root: {}", root.display());
 
     if root.is_dir() {
-        println!("✓ root directory exists");
+        checks.push(crate::output::doctor::DoctorCheck {
+            name: "root_directory".to_string(),
+            status: "ok".to_string(),
+            detail: format!("root: {}", root.display()),
+            recovery_route: None,
+        });
     } else {
-        println!("! root directory does not exist");
+        checks.push(crate::output::doctor::DoctorCheck {
+            name: "root_directory".to_string(),
+            status: "fail".to_string(),
+            detail: format!("root directory does not exist: {}", root.display()),
+            recovery_route: None,
+        });
         ok = false;
     }
 
     if root.join("Cargo.toml").exists() {
-        println!(
-            "✓ Cargo.toml found at {}",
-            root.join("Cargo.toml").display()
-        );
+        checks.push(crate::output::doctor::DoctorCheck {
+            name: "cargo_toml".to_string(),
+            status: "ok".to_string(),
+            detail: format!("Cargo.toml at {}", root.join("Cargo.toml").display()),
+            recovery_route: None,
+        });
     } else {
-        println!("! no Cargo.toml found at {}", root.display());
+        checks.push(crate::output::doctor::DoctorCheck {
+            name: "cargo_toml".to_string(),
+            status: "fail".to_string(),
+            detail: format!("no Cargo.toml found at {}", root.display()),
+            recovery_route: None,
+        });
         ok = false;
     }
 
-    report_config_status(&root, &mut ok);
-    report_cache_status(&root);
-    report_detected_languages(&root);
-    suggest_preview_language_enablement(&root);
-    report_detected_test_surfaces(&root);
-    report_perl_preview(&root);
-    report_known_limitations();
+    report_config_status(&root, &mut ok, &mut checks);
+    report_cache_status(&root, &mut checks);
+    report_detected_languages(&root, &mut checks);
+    suggest_preview_language_enablement(&root, &mut checks);
+    report_detected_test_surfaces(&root, &mut checks);
+    report_perl_preview(&root, &mut checks);
+    report_known_limitations(&mut checks);
 
     for (tool, args) in [
         ("git", vec!["--version"]),
@@ -3926,22 +3952,64 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     ] {
         match std::process::Command::new(tool).args(&args).output() {
             Ok(output) if output.status.success() => {
-                println!("✓ {}", String::from_utf8_lossy(&output.stdout).trim())
+                checks.push(crate::output::doctor::DoctorCheck {
+                    name: format!("{}_binary", tool),
+                    status: "ok".to_string(),
+                    detail: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                    recovery_route: None,
+                });
             }
             _ => {
-                println!("! {tool} not available");
+                checks.push(crate::output::doctor::DoctorCheck {
+                    name: format!("{}_binary", tool),
+                    status: "fail".to_string(),
+                    detail: format!("{} not available", tool),
+                    recovery_route: None,
+                });
                 ok = false;
             }
         }
     }
 
-    print_doctor_start_here_guidance(&root);
+    let overall = if ok { "ok" } else { "fail" };
+
+    if json {
+        let report = crate::output::doctor::DoctorReport {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            kind: "doctor".to_string(),
+            checks,
+            overall: overall.to_string(),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!("ripr doctor");
+        println!("- root: {}", root.display());
+        for check in checks {
+            let symbol = match check.status.as_str() {
+                "ok" => "✓",
+                "warn" => "~",
+                _ => "!",
+            };
+            println!("{} {}", symbol, check.detail);
+        }
+        print_doctor_start_here_guidance(&root);
+        if ok {
+            println!("✓ doctor checks passed");
+        } else {
+            println!(
+                "! doctor checks failed; run 
+ipr doctor --help for usage"
+            );
+        }
+    }
 
     if ok {
-        println!("✓ doctor checks passed");
         Ok(())
     } else {
-        println!("! doctor checks failed; run `ripr doctor --help` for usage");
         Err("doctor found issues".to_string())
     }
 }
@@ -4079,7 +4147,12 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
 /// Appends `[adapter not compiled]` when `LanguageId::is_available()` is
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
-fn report_detected_languages(root: &Path) {
+#[allow(
+    unused_variables,
+    clippy::ptr_arg,
+    reason = "stub for Slice B profiles"
+)]
+fn report_detected_languages(root: &Path, _checks: &mut Vec<crate::output::doctor::DoctorCheck>) {
     let detected = detect_languages(root);
     if detected.is_empty() {
         println!("- Detected languages: none detected");
@@ -4112,7 +4185,15 @@ fn report_detected_languages(root: &Path) {
 ///
 /// Emits nothing when either condition fails, when the root has no config
 /// file, or when the config cannot be loaded.
-fn suggest_preview_language_enablement(root: &Path) {
+#[allow(
+    unused_variables,
+    clippy::ptr_arg,
+    reason = "stub for Slice B profiles"
+)]
+fn suggest_preview_language_enablement(
+    root: &Path,
+    _checks: &mut Vec<crate::output::doctor::DoctorCheck>,
+) {
     for line in preview_language_enable_suggestions(root) {
         println!("{line}");
     }
@@ -4172,7 +4253,15 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
 /// Reports `<lang>: test framework not detected` rather than guessing when
 /// no clear marker is found — the function never claims a framework it cannot
 /// confirm.
-fn report_detected_test_surfaces(root: &Path) {
+#[allow(
+    unused_variables,
+    clippy::ptr_arg,
+    reason = "stub for Slice B profiles"
+)]
+fn report_detected_test_surfaces(
+    root: &Path,
+    _checks: &mut Vec<crate::output::doctor::DoctorCheck>,
+) {
     let detected = detect_languages(root);
     if detected.is_empty() {
         return;
@@ -4354,7 +4443,12 @@ fn which(bin: &str) -> bool {
 /// Conservative throughout: every line reports only what the static layer can
 /// determine. No claim is made that the producer works end-to-end (that is the
 /// two-binary proof, item 3). Prints only when Perl markers are detected.
-fn report_perl_preview(root: &Path) {
+#[allow(
+    unused_variables,
+    clippy::ptr_arg,
+    reason = "stub for Slice B profiles"
+)]
+fn report_perl_preview(root: &Path, _checks: &mut Vec<crate::output::doctor::DoctorCheck>) {
     let pm_count = count_files(root, "pm");
     let pl_count = count_files(root, "pl");
     let t_count = count_files(root, "t");
@@ -4599,7 +4693,12 @@ fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>)
     }
 }
 
-fn report_known_limitations() {
+#[allow(
+    unused_variables,
+    clippy::ptr_arg,
+    reason = "stub for Slice B profiles"
+)]
+fn report_known_limitations(_checks: &mut Vec<crate::output::doctor::DoctorCheck>) {
     println!("- Known limitations:");
     println!(
         "  TypeScript/JavaScript/Bun analysis is preview (advisory only); \
@@ -4621,7 +4720,12 @@ fn report_known_limitations() {
     );
 }
 
-fn report_cache_status(root: &Path) {
+#[allow(
+    unused_variables,
+    clippy::ptr_arg,
+    reason = "stub for Slice B profiles"
+)]
+fn report_cache_status(root: &Path, _checks: &mut Vec<crate::output::doctor::DoctorCheck>) {
     let cache_dir = analysis::seam_cache::cache_base_dir(root);
     let relocated =
         std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
@@ -4673,12 +4777,21 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn report_config_status(root: &Path, ok: &mut bool) {
+fn report_config_status(
+    root: &Path,
+    ok: &mut bool,
+    checks: &mut Vec<crate::output::doctor::DoctorCheck>,
+) {
     match load_for_root(root) {
         Ok(config) => {
             match config.source_path() {
                 Some(path) => {
-                    println!("✓ Config: loaded {CONFIG_FILE_NAME}");
+                    checks.push(crate::output::doctor::DoctorCheck {
+                        name: "config_".to_string(),
+                        status: "ok".to_string(),
+                        detail: "Config: loaded {CONFIG_FILE_NAME}".to_string(),
+                        recovery_route: None,
+                    });
                     println!("- Config path: {}", path.display());
                 }
                 None => println!("✓ Config: not found; using built-in defaults"),
@@ -4720,9 +4833,19 @@ fn report_config_status(root: &Path, ok: &mut bool) {
             }
         }
         Err(err) => {
-            println!("! Config: invalid {CONFIG_FILE_NAME}");
+            checks.push(crate::output::doctor::DoctorCheck {
+                name: "config_".to_string(),
+                status: "fail".to_string(),
+                detail: "Config: invalid {CONFIG_FILE_NAME}".to_string(),
+                recovery_route: None,
+            });
             println!("- Config path: {}", root.join(CONFIG_FILE_NAME).display());
-            println!("  error: {err}");
+            checks.push(crate::output::doctor::DoctorCheck {
+                name: "error_".to_string(),
+                status: "ok".to_string(),
+                detail: format!("error: {err}"),
+                recovery_route: None,
+            });
             *ok = false;
         }
     }

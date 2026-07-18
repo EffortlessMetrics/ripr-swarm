@@ -9,6 +9,7 @@ pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
 pub(crate) mod coverage_grip_frontier;
 pub(crate) mod diff_report;
+pub(crate) mod doctor;
 pub(crate) mod evidence_health;
 pub(crate) mod evidence_record;
 pub(crate) mod first_pr;
@@ -75,3 +76,4 @@ pub(crate) mod test_support {
             .map_err(|err| format!("read {} failed: {err}", path.display()))
     }
 }
+
