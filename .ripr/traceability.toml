@@ -6864,9 +6864,16 @@ tests = [
   "xtask::active_goal_authority::tests::repository_inventory_is_complete_and_deterministic",
   "xtask::active_goal_authority::tests::hidden_singleton_and_legacy_ready_block_migration",
   "xtask::active_goal_authority::tests::historical_reference_is_classified_without_authority",
+  "xtask::active_goal_authority::tests::repeated_identical_markers_have_distinct_occurrence_anchors",
+  "xtask::active_goal_authority::tests::semantic_anchors_ignore_whitespace_and_preserve_utf8",
+  "xtask::active_goal_authority::tests::rust_module_and_config_keys_are_structural_anchors",
+  "xtask::active_goal_authority::tests::stale_occurrences_change_semantic_identity",
+  "xtask::active_goal_authority::tests::declarations_after_test_modules_do_not_inherit_test_identity",
+  "xtask::active_goal_authority::tests::unreadable_text_inputs_are_reported",
 ]
 fixtures = [
   "fixtures/active-goal-authority-audit/consumers.toml",
+  "fixtures/active-goal-authority-audit/occurrences.json",
   "fixtures/active-goal-authority-audit/issue-contracts.json",
   "fixtures/active-goal-authority-audit/hidden-singleton",
   "fixtures/active-goal-authority-audit/historical-reference",
@@ -6885,4 +6892,6 @@ metrics = [
   "active_goal_authority_unclassified_total",
   "active_goal_authority_contradictions_total",
   "active_goal_authority_blockers_total",
+  "active_goal_authority_occurrence_inventory_ready",
+  "active_goal_authority_stale_occurrence_rows_total",
 ]

@@ -22,10 +22,11 @@ writer permission.
 
 ## Phase 2 work packets
 
-1. Replace broad live rules with exact `(path, anchor, marker_kind,
-   normalized_marker_hash)` rows. New occurrences in known files must block;
-   hidden readers under covered `docs/` and `xtask/` paths prove this. Tracked
-   in #1715.
+1. Implemented by #1715: broad selectors no longer certify live consumers.
+   Exact `(path, anchor, marker_kind, normalized_marker_hash)` rows bind each
+   reviewed occurrence to its authority policy. New or stale occurrences,
+   duplicate identities, and hidden readers under covered `docs/` and
+   `xtask/` paths block occurrence readiness.
 2. Replace issue ranges with individual captured snapshots for #1631-#1639,
    #1643-#1650, #1692, #1697, and #1701. Record body hash, `updated_at`,
    classification, evidence, and explicit `not_proven` freshness. Tracked in

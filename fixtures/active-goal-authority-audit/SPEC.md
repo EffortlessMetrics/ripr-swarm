@@ -10,16 +10,20 @@ This corpus proves RIPR-SPEC-0128 without changing active-goal authority.
 
 - `consumers.toml` contains reviewed classification, ownership, compatibility,
   target behavior, and proof rules.
+- `occurrences.json` binds each discovered marker to a reviewed consumer by
+  exact `(path, anchor, marker_kind, normalized_marker_hash)` identity.
 - `issue-contracts.json` captures issue-contract consumers without treating the
   capture as live GitHub state.
-- `hidden-singleton/` contains a singleton reader and legacy `ready` value but
-  no `.ripr/goals/active.toml`.
+- `hidden-singleton/` contains root, covered-`docs/`, and covered-`xtask/`
+  readers plus a legacy `ready` value, but no `.ripr/goals/active.toml`.
 - `historical-reference/` contains a source-linked historical reference with
   no current authority.
 
 ## Expected behavior
 
-The current repository and historical fixture have no unclassified consumers.
+The current repository and historical fixture have no unclassified
+occurrences. The repository occurrence inventory is ready while the separate
+issue-snapshot framework blocker remains.
 The hidden singleton fixture remains blocked because removing the manifest does
 not remove its reader. Its `LEGACY_STATUS` must remain exactly `ready`; changing
 or removing that token breaks the negative control, and the token alone grants

@@ -46,7 +46,9 @@ path-level rules and issue-range aggregates are not migration evidence.
 - Captured issue contracts are inventory evidence, not live GitHub state.
 - Broad live-consumer selectors cannot establish migration readiness.
 - Phase 2 keys reviewed occurrences by path, syntax-derived anchor, marker
-  kind, and normalized marker hash.
+  kind, and full normalized marker hash. Reviewed rows live in
+  `occurrences.json`; broad path selectors are descriptive hints only and
+  never certify an occurrence.
 - Phase 2 captures #1631-#1639, #1643-#1650, #1692, #1697, and #1701 as
   individual snapshots with evidence identity and freshness metadata.
 
@@ -76,13 +78,16 @@ non-authorization fixture, and a historical-reference non-blocker.
 ## Test Mapping
 
 Tests in `xtask/src/active_goal_authority.rs` cover repository completeness,
-determinism, hidden singleton readers, legacy-ready non-authorization, and
+determinism, exact duplicate rejection, stable UTF-8 and structural anchors,
+covered-path hidden singleton readers, legacy-ready non-authorization, and
 historical references.
 
 ## Implementation Mapping
 
 - `fixtures/active-goal-authority-audit/consumers.toml` — reviewed consumer
   classifications and migration ownership.
+- `fixtures/active-goal-authority-audit/occurrences.json` — exact reviewed
+  occurrence identities and their consumer-policy bindings.
 - `fixtures/active-goal-authority-audit/issue-contracts.json` — captured issue
   contract inventory.
 - `xtask/src/active_goal_authority.rs` — deterministic discovery, validation,
