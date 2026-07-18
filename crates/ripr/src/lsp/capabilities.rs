@@ -35,6 +35,7 @@ pub(super) fn initialize_result() -> InitializeResult {
                 ],
                 ..ExecuteCommandOptions::default()
             }),
+            position_encoding: Some(tower_lsp_server::ls_types::PositionEncodingKind::UTF16),
             ..ServerCapabilities::default()
         },
         server_info: Some(ServerInfo {

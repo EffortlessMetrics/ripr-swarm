@@ -31,7 +31,11 @@ const COLLECT_TOP_LIMITATION_COMMAND: &str = "ripr.collectTopLimitation";
 const COLLECT_RECEIPT_STATUS_COMMAND: &str = "ripr.collectReceiptStatus";
 const OPEN_RELATED_TEST_COMMAND: &str = "ripr.openRelatedTest";
 const REFRESH_COMMAND: &str = "ripr.refresh";
-const HOVER_TEXT: &str = "ripr estimates static RIPR exposure for changed Rust behavior. Run `ripr check --format json` for current findings.";
+const HOVER_TEXT: &str = "";
+
+// RIPR_AGENT_CAPABILITY will be negotiated in the next spec PR via ServerCapabilities.experimental
+#[allow(dead_code)]
+pub(super) const RIPR_AGENT_CAPABILITY: &str = "riprAgent";
 
 pub fn serve() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
