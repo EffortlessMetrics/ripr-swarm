@@ -6188,6 +6188,13 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
         assert_eq!(status["analysis_status"]["run_status"], "no_snapshot");
         assert_eq!(status["analysis_status"]["repair_actions_available"], false);
         assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
+        assert_eq!(
+            status["diagnostic_budget_state"],
+            serde_json::json!({
+                "status": "unavailable",
+                "reason": "no_snapshot",
+            })
+        );
         assert_eq!(status["top_limitation"]["status"], "no_snapshot");
         assert_eq!(
             status["top_limitation"]["limitation_category"],
@@ -6540,6 +6547,32 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             status["diagnostics"]["actionable_diagnostics"].as_u64(),
             Some(0)
         );
+        assert_eq!(
+            status["diagnostic_budget"]["total_canonical_items"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            status["diagnostic_budget"]["selected_count"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            status["diagnostic_budget"]["eligible_items"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            status["diagnostic_budget"]["omitted_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            status["diagnostic_budget"]["omitted"][0]["reason"],
+            "profile_filtered"
+        );
+        assert_eq!(status["diagnostic_budget_state"]["status"], "available");
+        assert_eq!(
+            status["diagnostic_budget"]["inline_detail_measurement"],
+            "not_available"
+        );
+        assert_eq!(status["diagnostic_budget"]["overflowed"], false);
         let current_input = &status["analysis_status"]["input_authority"]["current"];
         assert_eq!(
             status["analysis_status"]["input_authority"]["configuration_state"],
