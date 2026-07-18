@@ -4991,7 +4991,8 @@ Non-claims:
 
 Campaign ID: `use-case-spec-spine`
 
-Status: active
+Status: superseded for active execution on 2026-07-09 by Campaign 32. Its
+accepted specs remain source truth; its release-era execution sequence does not.
 
 RIPR has strong mechanism (reports, packets, runtime status, readiness,
 preview cards, limitation routes, receipts) and a weak product spine: no
@@ -5299,10 +5300,10 @@ proving all three outcomes:
 - **Limited** — `my $method = $config->{method}; $obj->$method();` — relation
   visible but dynamic dispatch yields a named limitation and no packet.
 
-The fixture landed (#1433); the **two-binary proof** (real `perllsp ripr-facts`
-output consumed end-to-end) is the still-open milestone that turns the consumer
-from scaffold into a working preview. Committed expected packets are regression
-fixtures, not proof.
+The fixture landed (#1433); the fixture-scoped **two-binary proof** (real
+`perl-ripr-facts` compatible output consumed end-to-end) landed in #1491 and
+turns the consumer from scaffold into a working preview. Committed expected
+packets remain regression fixtures, not producer proof.
 
 ### Release gates (usable alpha)
 
@@ -5312,15 +5313,15 @@ Contract & safety (**mechanically enforced**):
 - Zero public repair packets from heuristic-only relations, generic
   discriminators, low/unknown confidence, partial packets, or unsupported
   dynamics — enforced by the Perl `must_not_emit_repair_packet`
-  evidence-promotion-honesty corpus entry added in PR 16.
+  evidence-promotion-honesty corpus guard.
 - Validator parity demonstrates Perl uses the same shared packet authority as
   Rust/TypeScript/Python (PR 3 `validator_parity_perl_*` unit tests +
   cross-language corpus).
 - `lang-perl` feature-gated code path exercised in CI (PR 11 matrix job).
 
-Real-world evidence (**human-judgment, recorded in PR 18** — there is no
-`perl-real-repo-evals` corpus analogous to `python-real-repo-evals`; adding one
-is a post-alpha follow-up):
+Real-world evidence (**human-judgment, recorded in PR 18**; the checked
+`perl-real-repo-evals` corpus starts as producer-dependent launchpoints and
+does not by itself satisfy alpha promotion):
 - ≥5 materially different Perl repositories; ≥20 human-reviewed candidate routes.
 - top-1 repair-card precision ≥ 80%; verify-command validity ≥ 90%;
   false-actionable rate ≤ 5%; zero severe false-actionables permitting
@@ -5427,3 +5428,57 @@ cargo clippy --workspace --all-targets -- -D warnings
 # perl-lsp side (Phase B): cargo test -p perl-lsp-rs-core, cargo test -p perl-workspace
 # alpha gate (Phase D PR 18): the CPAN-style end-to-end fixture proves all three outcomes
 ```
+
+## Campaign 32: Rust Evidence-Bound Repair Trust and Adoption
+
+Campaign ID: `rust-one-shot-evidence-to-repair`
+
+Status: active
+
+Tracker: [RIPR-PLAN-0062](../plans/rust-one-shot-evidence-to-repair.md) ·
+`.ripr/goals/active.toml` · issues #1423, #1424, #1425, #1427, #1440
+
+The completed 0.9.0 release made Campaign 29's post-release activation gate
+obsolete. The current crate is 0.10.0, and the accepted targeted-rerun contract
+is now shipped infrastructure rather than the long-range destination. This
+campaign establishes trust in one exact, safe, test-only repair and current
+before/after receipt on real Rust work while keeping unsupported analysis
+explicitly limited.
+
+The queue preserves the shipped bounded-output, canonical-identity, gate-route,
+targeted-mutation, and targeted-rerun contracts. Remaining work is the
+authorized real CallPresence evidence packet and a receipt-backed route-quality
+corpus across at least three Rust repositories; synthetic fixtures remain
+separate from adoption evidence.
+
+| Work item | Status | Summary |
+| --- | --- | --- |
+| `control-plane/cargo-allow-spec-system-adoption` | done | Add advisory cargo-allow profile/ledger and doctor, audit, and worklist evidence without a second active goal. |
+| `control-plane/rust-one-shot-goal` | done | Replace the stale release-era active manifest and execution plan with Campaign 32. |
+| `control-plane/cargo-allow-active-goal-dialect` | blocked | Blocked on cargo-allow #2119 or a separately approved RIPR manifest migration. |
+| `output/bounded-start-here` | done | #1489 merged: bounded human output and `human-full` are on main. |
+| `docs/first-screen-agent-loop` | done | #1487 merged: the README first screen now describes the shipped bounded repair loop. |
+| `review/card-oracle-projection` | done | #1483 merged with explicit representative-oracle semantics. |
+| `review/canonical-working-set-id` | done | #1505 merged: working-set cards now carry domain-supplied canonical gap identity. |
+| `gate/exact-repair-route` | done | Structural route shipped: policy-eligible decisions expose the exact seam, missing discriminator, focused test intent, verify/receipt commands, and producer-owned inspection route without artifact archaeology. Real CallPresence producer eligibility remains a separate fail-closed follow-up. |
+| `gate/concrete-targeted-mutation` | done | #1545 merged: PR-evidence and impacted-evidence now carry a bounded producer-owned predicate/operator candidate and command, or an explicit no-safe-candidate limitation; mutation execution remains opt-in. |
+| `analysis/call-presence-gate-producer` | blocked | #1543 remains blocked on an authorized real/current-repo CallPresence receipt proving an unambiguous caller/observer route; `docs/handoffs/2026-07-12-call-presence-evidence-packet.md` records why synthetic positive tests and stale bounded scans do not qualify; helper-only, dynamic, method-string, and ambiguous cases stay named limitations. |
+| `analysis/field-constant-observation` | done | #1511 merged: safe direct field assignments and named-constant boundaries are credited with conservative invalidation and limitation guards. |
+| `analysis/constructor-field-observation` | done | #1515 merged: safe same-crate constructor and exact-field observers are credited while same-name and unlinked-alias ambiguity stays fail-closed. |
+| `perf/targeted-rerun` | done | Accepted RIPR-SPEC-0123 is shipped as regression-protected infrastructure: canonical-gap and changed-test selection, before/after movement, cache and invalidation disclosure, input fingerprints, graph provenance, selector-scoped parity, and the registered benchmark. |
+| `perf/rerun-gap-selection` | done | #1524 treats one canonical gap as a behavioral-debt group, deduplicates anchored scopes, preserves partial success, and names stale or conflicting route data. |
+| `perf/rerun-before-movement` | done | #1527 adds explicit before/after movement receipts with typed seam continuity and honest indeterminate states. |
+| `perf/rerun-cache-disclosure` | done | #1529 discloses producer-owned file-fact cache reuse and recomputation without inventing unavailable whole-analysis invalidation reasons. |
+| `perf/rerun-classification-parity` | done | #1558 adds opt-in two-sided selector-scoped comparison against the typed full inventory; missing, unexpected, and differing seams fail closed with retained details. |
+| `perf/rerun-evidence-parity` | done | Typed selected-scope route and oracle evidence parity is shipped and fails closed with retained mismatch details. |
+| `perf/rerun-invalidation-attribution` | done | Selected-input fingerprints and explicit invalidation reasons are shipped for file, workspace, configuration, graph, and selector-ledger changes. |
+| `perf/rerun-benchmark` | done | The registered current-main receipt records matched parity, 228 ms warm p50, 1,512 ms cold-full p50, and 6.63x speedup on the benchmark fixture. |
+| `perf/rerun-closeout` | done | SPEC-0123, plan, and issue #1424's completed closeout comment reconcile the targeted-rerun lane as complete infrastructure, with merged parity, invalidation, graph-provenance, benchmark, support-boundary, and remaining-limitation evidence. |
+| `perf/targeted-rerun-graph-provenance` | done | #1550 merged: receipts attribute local package/member and feature graph provenance, name unavailable external metadata, and fail parity closed on required graph mismatch without network inference. |
+| `dogfood/rust-route-quality-corpus` | active | #1560 has explicit authorization for the three internal adopting Rust repositories. The first real pilot audit is retained as explicit exclusions for timeouts, static limitations, false actionability, and invalid test paths; none enter the denominator. The schema, validator, and denominator-preserving scorecard remain ready for the next six-attempt pilot. Corpus collection is independent of CallPresence closure. |
+| `dogfood/route-quality-closeout` | blocked | Final closeout waits for the #1560 corpus threshold and #1543 CallPresence proof or durable limitation disposition; `metrics/rust-repair-trust/corpus.json` and `cargo xtask rust-repair-trust-report` preserve missing denominators as `limited`; keep synthetic fixtures separate and do not claim route-quality closure. |
+
+Hard boundaries: preview lanes remain preview; mutation execution stays explicit;
+there is no automatic test or consumer-source editing, default gate hardening,
+release/publish work, or claim beyond conservative static evidence. Every work
+item is one reviewable PR, a source-truth update, or a durable blocked report.

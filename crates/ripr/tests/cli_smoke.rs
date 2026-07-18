@@ -237,12 +237,14 @@ fn check_human_output_reports_sample_findings() {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 5 probe(s)"));
-    assert!(stdout.contains("Static exposure\n  weakly_exposed"));
-    assert!(stdout.contains("Evidence\n"));
-    assert!(stdout.contains("observed function argument value"));
-    assert!(stdout.contains("missing discriminator"));
-    assert!(stdout.contains("Next step\n"));
+    assert!(stdout.contains("Summary: 4 probe(s)"));
+    assert!(stdout.contains("Start here:"));
+    assert!(stdout.contains("Static exposure: weakly_exposed"));
+    assert!(stdout.contains("Evidence:"));
+    assert!(stdout.contains("Missing discriminator:"));
+    assert!(stdout.contains("Next step:"));
+    assert!(stdout.contains("lower-priority finding(s) omitted"));
+    assert!(stdout.contains("--format human-full"));
 }
 
 #[test]
@@ -1193,7 +1195,7 @@ fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
     );
     assert_eq!(
         json_pointer_str(&proof, "/seam/missing_discriminator")?,
-        "input that hits the boundary: amount >= discount_threshold"
+        "discount_threshold (equality boundary)"
     );
     assert_eq!(
         json_pointer_str(&proof, "/recommendation/placement")?,
@@ -1201,7 +1203,7 @@ fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
     );
     assert!(
         json_pointer_str(&proof, "/recommendation/suggested_test")?
-            .contains("amount >= discount_threshold")
+            .contains("amount == discount_threshold")
     );
     assert_eq!(
         json_pointer_str(&proof, "/evidence_movement/state")?,
@@ -1294,9 +1296,7 @@ fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
 
     let proof_md = std::fs::read_to_string(proof_md_path)?;
     assert!(proof_md.contains("Status: advisory"));
-    assert!(proof_md.contains(
-        "Missing discriminator: input that hits the boundary: amount >= discount_threshold"
-    ));
+    assert!(proof_md.contains("Missing discriminator: discount_threshold (equality boundary)"));
     assert!(proof_md.contains("After: weakly_gripped"));
     assert!(proof_md.contains("State: unchanged"));
     assert!(proof_md.contains("Gate: not configured"));
@@ -1734,8 +1734,9 @@ fn check_badge_json_output_has_native_badge_shape() {
     assert!(stdout.contains(r#""unsuppressed_exposure_gaps""#));
     assert!(stdout.contains(r#""duplicate_activation_and_oracle_shape": 0"#));
     assert!(!stdout.contains(r#""schemaVersion""#));
-    // The sample diff has 5 weakly_exposed findings; the badge headline reflects them.
-    assert!(stdout.contains(r#""message": "5""#));
+    // The sample diff has 4 weakly_exposed findings after nested call shapes are
+    // excluded; the badge headline reflects the surviving semantic probes.
+    assert!(stdout.contains(r#""message": "4""#));
     assert!(stdout.contains(r#""status": "warn""#));
     assert!(stdout.contains(r#""color": "orange""#));
 }
@@ -1758,7 +1759,7 @@ fn check_badge_shields_output_has_exactly_four_top_level_fields() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(r#""schemaVersion": 1"#));
     assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""message": "5""#));
+    assert!(stdout.contains(r#""message": "4""#));
     assert!(stdout.contains(r#""color": "orange""#));
     // Native-JSON-only fields must not leak into the Shields shape.
     for forbidden in [
@@ -2459,7 +2460,7 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     let json = std::fs::read_to_string(&out_json).map_err(|e| format!("read delta json: {e}"))?;
     assert!(json.contains("\"kind\": \"baseline_debt_delta\""));
     assert!(json.contains("\"still_present\": 1"));
-    assert!(json.contains("\"matched_by\": \"seam_id\""));
+    assert!(json.contains("\"matched_by\": \"canonical_gap_id\""));
     let md = std::fs::read_to_string(&out_md).map_err(|e| format!("read delta md: {e}"))?;
     assert!(md.contains("# RIPR Baseline Debt Delta"));
     assert!(md.contains("| Still present | 1 |"));
@@ -2485,6 +2486,140 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     assert!(missing_json.contains("\"missing_current_input\": 1"));
     assert!(missing_json.contains("required current gate-decision input"));
 
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn capped_pr_guidance_baseline_round_trip_preserves_shared_canonical_gap_seams()
+-> Result<(), String> {
+    let workspace = unique_temp_workspace("capped-baseline-round-trip");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let guidance =
+        workspace_root().join("fixtures/boundary_gap/expected/pr-guidance/capped/comments.json");
+    let gate = workspace.join("gate-decision.json");
+    let baseline = workspace.join("gate-baseline.json");
+    let delta = workspace.join("baseline-debt-delta.json");
+    let updated = workspace.join("updated-baseline.json");
+    let guidance_arg = guidance.display().to_string();
+    let gate_arg = gate.display().to_string();
+    let baseline_arg = baseline.display().to_string();
+    let delta_arg = delta.display().to_string();
+    let updated_arg = updated.display().to_string();
+
+    let gate_output = run_ripr(&[
+        "gate",
+        "evaluate",
+        "--root",
+        ".",
+        "--pr-guidance",
+        &guidance_arg,
+        "--mode",
+        "visible-only",
+        "--out",
+        &gate_arg,
+    ]);
+    assert_success(&gate_output);
+    let create = run_ripr(&[
+        "baseline",
+        "create",
+        "--from",
+        &gate_arg,
+        "--out",
+        &baseline_arg,
+    ]);
+    assert_success(&create);
+    let baseline_value: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&baseline).map_err(|e| format!("read baseline: {e}"))?,
+    )
+    .map_err(|e| format!("parse baseline: {e}"))?;
+    let entries = baseline_value
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "baseline entries missing".to_string())?;
+    let entry_count = entries.len();
+    assert!(
+        entry_count > 1,
+        "capped guidance must retain multiple seams"
+    );
+
+    let diff = run_ripr(&[
+        "baseline",
+        "diff",
+        "--baseline",
+        &baseline_arg,
+        "--current",
+        &gate_arg,
+        "--out",
+        &delta_arg,
+    ]);
+    assert_success(&diff);
+    let delta_value: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&delta).map_err(|e| format!("read delta: {e}"))?,
+    )
+    .map_err(|e| format!("parse delta: {e}"))?;
+    let summary = delta_value
+        .get("delta")
+        .ok_or_else(|| "delta counts missing".to_string())?;
+    assert_eq!(
+        summary
+            .get("still_present")
+            .and_then(serde_json::Value::as_u64),
+        Some(entry_count as u64)
+    );
+    assert_eq!(
+        summary.get("resolved").and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        summary
+            .get("new_policy_eligible")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        summary
+            .get("stale_baseline_entry")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+
+    let update = run_ripr(&[
+        "baseline",
+        "update",
+        "--baseline",
+        &baseline_arg,
+        "--current",
+        &gate_arg,
+        "--remove-resolved",
+        "--out",
+        &updated_arg,
+    ]);
+    assert_success(&update);
+    let updated_value: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&updated).map_err(|e| format!("read updated baseline: {e}"))?,
+    )
+    .map_err(|e| format!("parse updated baseline: {e}"))?;
+    assert_eq!(
+        updated_value
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(entry_count)
+    );
+    assert_eq!(
+        updated_value
+            .pointer("/update/removed_resolved")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    assert!(
+        updated_value
+            .pointer("/update/warnings")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(Vec::is_empty),
+        "unchanged capped evidence must not produce ambiguous or stale warnings: {updated_value}"
+    );
     let _ = std::fs::remove_dir_all(&workspace);
     Ok(())
 }
@@ -2591,6 +2726,716 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     assert!(packets.contains(r#""task": "write_targeted_test""#));
 
     let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn rerun_changed_test_emits_current_state_only_for_boundary_gap_fixture() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--json",
+    ]);
+    assert_success(&output);
+    let json = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        r#""schema_version": "ripr-targeted-rerun-v1""#,
+        r#""state": "current_state_only""#,
+        r#""changed_test": "tests/pricing.rs""#,
+        r#""canonical_gap_id": "gap:"#,
+        r#""repair_route_readiness": {"#,
+        r#""state": "ready""#,
+        "gap movement is not inferred",
+    ] {
+        if !json.contains(expected) {
+            return Err(format!("rerun report missing {expected:?}: {json}"));
+        }
+    }
+    for forbidden in ["\"improved\"", "\"closed\"", "\"regressed\""] {
+        if json.contains(forbidden) {
+            return Err(format!(
+                "current-state report must not infer {forbidden}: {json}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_changed_test_check_parity_matches_full_pipeline_for_boundary_gap() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--check-parity",
+        "--json",
+    ]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("parse parity rerun JSON: {err}"))?;
+    if report["state"] != "current_state_only"
+        || report["parity"]["state"] != "matched"
+        || report["parity"]["selected_seam_count"] != report["parity"]["matched_seam_count"]
+        || report["parity"]["mismatches"] != serde_json::json!([])
+        || report["parity"]["input_mismatches"] != serde_json::json!([])
+        || report["parity"]["selected_seam_count"] != serde_json::json!(1)
+        || !report["cache"]["input_fingerprint"].is_object()
+        || report["cache"]["input_fingerprint"]["workspace_manifests_hash"]
+            .as_str()
+            .is_none()
+        || report["cache"]["input_fingerprint"]["lockfile_hash"]
+            .as_str()
+            .is_none()
+        || report
+            .get("limitation")
+            .is_some_and(|value| !value.is_null())
+        || !report["seams"][0]["related_tests"].is_array()
+        || !report["seams"][0]["missing_discriminators"].is_array()
+    {
+        return Err(format!("unexpected parity rerun receipt: {report}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_before_receipt_names_toolchain_fingerprint_change() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr_with_env(
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--json",
+        ],
+        &[("RUSTUP_TOOLCHAIN", "toolchain-before")],
+    );
+    assert_success(&before);
+    let workspace = unique_temp_workspace("rerun-input-fingerprint");
+    std::fs::create_dir_all(&workspace)
+        .map_err(|err| format!("create fingerprint workspace: {err}"))?;
+    let before_path = workspace.join("before.json");
+    std::fs::write(&before_path, &before.stdout)
+        .map_err(|err| format!("write fingerprint before receipt: {err}"))?;
+    let before_arg = before_path.to_string_lossy().into_owned();
+    let after = run_ripr_with_env(
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--before",
+            &before_arg,
+            "--json",
+        ],
+        &[("RUSTUP_TOOLCHAIN", "toolchain-after")],
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+    assert_success(&after);
+    let report: serde_json::Value = serde_json::from_slice(&after.stdout)
+        .map_err(|err| format!("parse fingerprint rerun JSON: {err}"))?;
+    if report["cache"]["invalidation_status"] != "workspace_input_changed"
+        || !report["cache"]["recomputation_reasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons
+                    .iter()
+                    .any(|reason| reason.as_str() == Some("input_changed:toolchain_hash"))
+            })
+    {
+        return Err(format!("unexpected input fingerprint disclosure: {report}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_gap_before_receipt_names_selector_ledger_change() -> Result<(), String> {
+    let root_arg = "fixtures/boundary_gap/input";
+    let changed = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--json",
+    ])
+    .map_err(|err| format!("run changed-test rerun: {err}"))?;
+    assert_success(&changed);
+    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
+        .map_err(|err| format!("parse changed-test rerun JSON: {err}"))?;
+    let seam = changed_json["seams"]
+        .as_array()
+        .and_then(|seams| seams.first())
+        .ok_or_else(|| "changed-test rerun emitted no seam".to_string())?;
+    let canonical_gap_id = seam["canonical_gap_id"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks canonical_gap_id".to_string())?;
+    let file = seam["file"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks file".to_string())?;
+    let owner = seam["owner"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks owner".to_string())?;
+
+    let workspace = unique_temp_workspace("rerun-ledger-fingerprint");
+    std::fs::create_dir_all(&workspace)
+        .map_err(|err| format!("create ledger fingerprint workspace: {err}"))?;
+    let ledger = workspace.join("gap-ledger.json");
+    let ledger_json = serde_json::json!({
+        "kind": "gap_decision_ledger",
+        "root": root_arg,
+        "records": [{
+            "canonical_gap_id": canonical_gap_id,
+            "anchor": { "file": file, "owner": owner },
+            "verification_commands": ["cargo test -p pricing boundary"],
+            "receipt_command": "ripr receipt write --gap first"
+        }]
+    });
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&ledger_json)
+            .map_err(|err| format!("serialize ledger fingerprint input: {err}"))?,
+    )
+    .map_err(|err| format!("write ledger fingerprint input: {err}"))?;
+    let ledger_arg = ledger.to_string_lossy().into_owned();
+    let before = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run ledger fingerprint before rerun: {err}"))?;
+    assert_success(&before);
+    let before_path = workspace.join("before.json");
+    std::fs::write(&before_path, &before.stdout)
+        .map_err(|err| format!("write ledger fingerprint before receipt: {err}"))?;
+
+    let mut changed_ledger = ledger_json;
+    changed_ledger["records"][0]["receipt_command"] =
+        serde_json::Value::String("ripr receipt write --gap second".to_string());
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&changed_ledger)
+            .map_err(|err| format!("serialize changed ledger fingerprint input: {err}"))?,
+    )
+    .map_err(|err| format!("write changed ledger fingerprint input: {err}"))?;
+    let before_arg = before_path.to_string_lossy().into_owned();
+    let after = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--before",
+        &before_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run ledger fingerprint after rerun: {err}"))?;
+    let _ = std::fs::remove_dir_all(&workspace);
+    assert_success(&after);
+    let report: serde_json::Value = serde_json::from_slice(&after.stdout)
+        .map_err(|err| format!("parse ledger fingerprint after JSON: {err}"))?;
+    if report["cache"]["invalidation_status"] != "workspace_input_changed"
+        || !report["cache"]["recomputation_reasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons
+                    .iter()
+                    .any(|reason| reason.as_str() == Some("input_changed:selector_ledger_hash"))
+            })
+    {
+        return Err(format!(
+            "unexpected selector ledger fingerprint disclosure: {report}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_check_parity_names_capped_inventory_and_suppresses_movement() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/observation_verified_field_construction/input");
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/item_tests.rs",
+        "--json",
+    ]);
+    assert_success(&before);
+    let workspace = unique_temp_workspace("parity-before");
+    std::fs::create_dir_all(&workspace).map_err(|err| format!("create before workspace: {err}"))?;
+    let before_path = workspace.join("before.json");
+    std::fs::write(&before_path, &before.stdout)
+        .map_err(|err| format!("write before receipt: {err}"))?;
+    let before_arg = before_path.to_string_lossy().into_owned();
+    let after = run_ripr_with_env(
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/item_tests.rs",
+            "--before",
+            &before_arg,
+            "--check-parity",
+            "--json",
+        ],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+    assert_success(&after);
+    let report: serde_json::Value = serde_json::from_slice(&after.stdout)
+        .map_err(|err| format!("parse capped parity rerun JSON: {err}"))?;
+    if report["state"] != "limited"
+        || report["parity"]["state"] != "limited"
+        || report["limitation"]["kind"] != "full_pipeline_parity_incomplete"
+        || report.get("movement").is_some_and(|value| !value.is_null())
+    {
+        return Err(format!("unexpected capped parity rerun receipt: {report}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_changed_test_uses_explicit_before_receipt_for_static_movement() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/boundary_gap/input");
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--json",
+    ]);
+    assert_success(&before);
+    let before_path = workspace_root().join("target").join(format!(
+        "rerun-before-{}-{}.json",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&before_path, &before.stdout).map_err(|err| {
+        format!(
+            "write explicit before receipt {}: {err}",
+            before_path.display()
+        )
+    })?;
+    let before_arg = before_path.to_string_lossy().into_owned();
+    let displayed_before = before_arg.replace('\\', "/");
+    let after = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--before",
+        &before_arg,
+        "--json",
+    ]);
+    let _ = std::fs::remove_file(&before_path);
+    assert_success(&after);
+    let json: serde_json::Value = serde_json::from_slice(&after.stdout)
+        .map_err(|err| format!("parse targeted rerun movement JSON: {err}"))?;
+    let selected_seam_count = json["seams"].as_array().map_or(0, Vec::len);
+    if json["state"] != "unchanged"
+        || json["movement"]["state"] != "unchanged"
+        || json["movement"]["before"] != displayed_before
+        || json["movement"]["matched_seam_count"] != serde_json::json!(selected_seam_count)
+    {
+        return Err(format!("unexpected explicit-before rerun receipt: {json}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Result<(), String> {
+    let root_arg = "fixtures/boundary_gap/input";
+    let changed = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--json",
+    ])
+    .map_err(|err| format!("run changed-test rerun: {err}"))?;
+    assert_success(&changed);
+    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
+        .map_err(|err| format!("parse changed-test rerun JSON: {err}"))?;
+    let seam = changed_json["seams"]
+        .as_array()
+        .and_then(|seams| seams.first())
+        .ok_or_else(|| "changed-test rerun emitted no seam".to_string())?;
+    let canonical_gap_id = seam["canonical_gap_id"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks canonical_gap_id".to_string())?;
+    let file = seam["file"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks file".to_string())?;
+    let owner = seam["owner"]
+        .as_str()
+        .ok_or_else(|| "changed-test rerun seam lacks owner".to_string())?;
+
+    let ledger_dir = workspace_root().join("target").join(format!(
+        "rerun-gap-ledger-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&ledger_dir)
+        .map_err(|err| format!("create ledger dir {}: {err}", ledger_dir.display()))?;
+    let ledger = ledger_dir.join("gap-ledger.json");
+    let ledger_json = serde_json::json!({
+        "kind": "gap_decision_ledger",
+        "root": root_arg,
+        "records": [{
+            "canonical_gap_id": canonical_gap_id,
+            "anchor": { "file": file, "owner": owner },
+            "verification_commands": ["cargo test -p pricing boundary"],
+            "receipt_command": "ripr outcome --before before.json --after after.json"
+        }]
+    });
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&ledger_json)
+            .map_err(|err| format!("serialize gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write gap ledger {}: {err}", ledger.display()))?;
+    let ledger_arg = ledger
+        .strip_prefix(workspace_root())
+        .map_err(|err| format!("make ledger path relative to workspace: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let selected = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run canonical gap rerun: {err}"))?;
+    assert_success(&selected);
+    let selected_json: serde_json::Value = serde_json::from_slice(&selected.stdout)
+        .map_err(|err| format!("parse gap rerun JSON: {err}"))?;
+    if selected_json["state"] != "current_state_only"
+        || selected_json["selector"]["kind"] != "canonical_gap"
+        || selected_json["selector"]["canonical_gap_id"] != canonical_gap_id
+        || selected_json["seams"].as_array().is_none_or(Vec::is_empty)
+        || selected_json["route"]["verify_commands"][0] != "cargo test -p pricing boundary"
+    {
+        return Err(format!(
+            "unexpected canonical gap rerun report: {selected_json}"
+        ));
+    }
+
+    let unresolved = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        "gap:missing",
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run unresolved gap rerun: {err}"))?;
+    assert_success(&unresolved);
+    let unresolved_json: serde_json::Value = serde_json::from_slice(&unresolved.stdout)
+        .map_err(|err| format!("parse unresolved gap rerun JSON: {err}"))?;
+    if unresolved_json["state"] != "limited"
+        || unresolved_json["limitation"]["kind"] != "canonical_gap_unresolved"
+        || unresolved_json["seams"] != serde_json::json!([])
+    {
+        return Err(format!(
+            "unexpected unresolved gap rerun report: {unresolved_json}"
+        ));
+    }
+
+    let mut duplicate_ledger = ledger_json.clone();
+    duplicate_ledger["records"]
+        .as_array_mut()
+        .ok_or_else(|| "constructed gap ledger is missing records array".to_string())?
+        .push(ledger_json["records"][0].clone());
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&duplicate_ledger)
+            .map_err(|err| format!("serialize duplicate gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write duplicate gap ledger {}: {err}", ledger.display()))?;
+    let duplicate = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run duplicate gap rerun: {err}"))?;
+    assert_success(&duplicate);
+    let duplicate_json: serde_json::Value = serde_json::from_slice(&duplicate.stdout)
+        .map_err(|err| format!("parse duplicate gap rerun JSON: {err}"))?;
+    if duplicate_json["state"] != "current_state_only"
+        || duplicate_json["selector"]["matched_record_count"] != 2
+        || duplicate_json["selector"]["recomputed_scope_count"] != 1
+        || duplicate_json["seams"].as_array().map_or(0, Vec::len) != 1
+    {
+        return Err(format!(
+            "unexpected duplicate gap rerun report: {duplicate_json}"
+        ));
+    }
+
+    let mut mixed_ledger = ledger_json.clone();
+    let stale_record = serde_json::json!({
+        "canonical_gap_id": canonical_gap_id,
+        "anchor": { "file": "tests/pricing.rs", "owner": "missing::owner" },
+        "verification_commands": ["cargo test -p pricing stale"],
+        "receipt_command": "ripr outcome --before before.json --after after.json"
+    });
+    mixed_ledger["records"]
+        .as_array_mut()
+        .ok_or_else(|| "constructed mixed gap ledger is missing records array".to_string())?
+        .push(stale_record);
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&mixed_ledger)
+            .map_err(|err| format!("serialize mixed gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write mixed gap ledger {}: {err}", ledger.display()))?;
+    let mixed = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run mixed gap rerun: {err}"))?;
+    assert_success(&mixed);
+    let mixed_json: serde_json::Value = serde_json::from_slice(&mixed.stdout)
+        .map_err(|err| format!("parse mixed gap rerun JSON: {err}"))?;
+    if mixed_json["state"] != "current_state_only"
+        || mixed_json["seams"].as_array().map_or(0, Vec::len) != 1
+        || mixed_json["scope_limitations"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+        || mixed_json["scope_limitations"][0]["kind"] != "gap_scope_unresolved"
+    {
+        return Err(format!("unexpected mixed gap rerun report: {mixed_json}"));
+    }
+
+    let mut conflict_ledger = ledger_json.clone();
+    let mut conflicting_record = ledger_json["records"][0].clone();
+    conflicting_record["receipt_command"] = serde_json::json!("ripr receipt write --gap conflict");
+    conflict_ledger["records"]
+        .as_array_mut()
+        .ok_or_else(|| "constructed conflict gap ledger is missing records array".to_string())?
+        .push(conflicting_record);
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&conflict_ledger)
+            .map_err(|err| format!("serialize conflict gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write conflict gap ledger {}: {err}", ledger.display()))?;
+    let conflict = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run conflict gap rerun: {err}"))?;
+    assert_success(&conflict);
+    let conflict_json: serde_json::Value = serde_json::from_slice(&conflict.stdout)
+        .map_err(|err| format!("parse conflict gap rerun JSON: {err}"))?;
+    if conflict_json["state"] != "current_state_only"
+        || conflict_json["seams"].as_array().map_or(0, Vec::len) != 1
+        || conflict_json["route"].get("receipt_command").is_none()
+        || conflict_json["route"]["receipt_command"] != serde_json::Value::Null
+        || conflict_json["route"]["receipt_command_conflict"]["kind"] != "receipt_command_conflict"
+    {
+        return Err(format!(
+            "unexpected receipt conflict gap rerun report: {conflict_json}"
+        ));
+    }
+
+    let mut stale_ledger = ledger_json;
+    stale_ledger["root"] = serde_json::json!(ledger_dir.join("other-root"));
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&stale_ledger)
+            .map_err(|err| format!("serialize stale gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write stale gap ledger {}: {err}", ledger.display()))?;
+    let stale = run_ripr_in_workspace(&[
+        "rerun",
+        "--root",
+        root_arg,
+        "--gap",
+        canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ])
+    .map_err(|err| format!("run stale gap rerun: {err}"))?;
+    assert_success(&stale);
+    let stale_json: serde_json::Value = serde_json::from_slice(&stale.stdout)
+        .map_err(|err| format!("parse stale gap rerun JSON: {err}"))?;
+    if stale_json["state"] != "limited" || stale_json["limitation"]["kind"] != "stale_gap_ledger" {
+        return Err(format!("unexpected stale gap rerun report: {stale_json}"));
+    }
+
+    let _ = std::fs::remove_dir_all(&ledger_dir);
+    Ok(())
+}
+
+fn multi_seam_gap_workspace() -> Result<PathBuf, String> {
+    let root = unique_temp_workspace("rerun-multi-gap");
+    std::fs::create_dir_all(root.join("src"))
+        .map_err(|err| format!("create multi-gap src directory: {err}"))?;
+    std::fs::create_dir_all(root.join("tests"))
+        .map_err(|err| format!("create multi-gap test directory: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"rerun_multi_gap_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write multi-gap Cargo.toml: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        return amount - 10;\n    }\n    if amount >= threshold {\n        return amount - 20;\n    }\n    amount\n}\n",
+    )
+    .map_err(|err| format!("write multi-gap library: {err}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use rerun_multi_gap_fixture::discounted_total;\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n",
+    )
+    .map_err(|err| format!("write multi-gap test: {err}"))?;
+    Ok(root)
+}
+
+#[test]
+fn rerun_gap_groups_multiple_current_seams() -> Result<(), String> {
+    let root = multi_seam_gap_workspace()?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let changed = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--changed-test",
+        "tests/pricing.rs",
+        "--json",
+    ]);
+    assert_success(&changed);
+    let changed_json: serde_json::Value = serde_json::from_slice(&changed.stdout)
+        .map_err(|err| format!("parse multi-seam changed-test rerun JSON: {err}"))?;
+    let seams = changed_json["seams"]
+        .as_array()
+        .ok_or_else(|| format!("multi-seam changed-test report has no seams: {changed_json}"))?;
+    let (canonical_gap_id, matching_seams) = seams
+        .iter()
+        .filter_map(|candidate| candidate["canonical_gap_id"].as_str())
+        .find_map(|candidate_id| {
+            let matching = seams
+                .iter()
+                .filter(|seam| seam["canonical_gap_id"] == candidate_id)
+                .collect::<Vec<_>>();
+            (matching.len() >= 2).then_some((candidate_id.to_string(), matching))
+        })
+        .ok_or_else(|| {
+            format!(
+                "expected two current seams with one canonical gap in multi-seam fixture: {changed_json}"
+            )
+        })?;
+    let records = matching_seams
+        .iter()
+        .map(|seam| {
+            serde_json::json!({
+                "canonical_gap_id": canonical_gap_id,
+                "anchor": {
+                    "file": seam["file"],
+                    "owner": seam["owner"],
+                },
+                "verification_commands": ["cargo test -p rerun_multi_gap_fixture far_above_threshold_discounts"],
+                "receipt_command": "ripr receipt write --gap grouped"
+            })
+        })
+        .collect::<Vec<_>>();
+    let ledger = root.join("gap-ledger.json");
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "kind": "gap_decision_ledger",
+            "root": root_arg.clone(),
+            "records": records.clone(),
+        }))
+        .map_err(|err| format!("serialize multi-seam gap ledger: {err}"))?,
+    )
+    .map_err(|err| format!("write multi-seam gap ledger: {err}"))?;
+    let ledger_arg = ledger.to_string_lossy().into_owned();
+    let grouped = run_ripr(&[
+        "rerun",
+        "--root",
+        &root_arg,
+        "--gap",
+        &canonical_gap_id,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ]);
+    assert_success(&grouped);
+    let grouped_json: serde_json::Value = serde_json::from_slice(&grouped.stdout)
+        .map_err(|err| format!("parse grouped multi-seam rerun JSON: {err}"))?;
+    let grouped_seams = grouped_json["seams"]
+        .as_array()
+        .ok_or_else(|| format!("grouped multi-seam report has no seams: {grouped_json}"))?;
+    let unique_seam_ids = grouped_seams
+        .iter()
+        .filter_map(|seam| seam["seam_id"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if grouped_json["state"] != "current_state_only"
+        || grouped_json["selector"]["matched_record_count"] != serde_json::json!(records.len())
+        || grouped_json["selector"]["recomputed_scope_count"] != 1
+        || grouped_seams.len() != matching_seams.len()
+        || unique_seam_ids.len() != matching_seams.len()
+        || grouped_seams
+            .iter()
+            .any(|seam| seam["canonical_gap_id"] != serde_json::json!(canonical_gap_id))
+    {
+        return Err(format!(
+            "multi-seam canonical grouping was not preserved: {grouped_json}"
+        ));
+    }
+    std::fs::remove_dir_all(&root)
+        .map_err(|err| format!("remove multi-seam workspace {}: {err}", root.display()))?;
     Ok(())
 }
 
