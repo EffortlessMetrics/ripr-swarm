@@ -254,6 +254,18 @@ fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
             VALID_VERIFY_STATUSES.join(", ")
         ));
     }
+    if let Some(current_head) = opts.current_head.as_deref() {
+        validate_current_head(current_head)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_current_head(value: &str) -> Result<(), String> {
+    if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(
+            "receipt write --current-head requires a 40-character hexadecimal SHA".to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -395,7 +407,7 @@ mod tests {
             packet_id: Some("packet-abc123".to_string()),
             verify_command: "cargo test -p ripr".to_string(),
             verify_status: "passed".to_string(),
-            current_head: Some("abc1234567890".to_string()),
+            current_head: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
             out: None,
             json: true,
         };
@@ -414,7 +426,10 @@ mod tests {
         assert_eq!(value["packet_id_available"], true);
         assert_eq!(value["verify_command"], "cargo test -p ripr");
         assert_eq!(value["verify_status"], "passed");
-        assert_eq!(value["current_head"], "abc1234567890");
+        assert_eq!(
+            value["current_head"],
+            "0123456789abcdef0123456789abcdef01234567"
+        );
         assert!(value["written_at"].as_str().unwrap_or("").contains('T'));
         assert!(
             value["limits_note"]
@@ -486,6 +501,28 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn receipt_write_invalid_current_head_exits_nonzero() -> Result<(), String> {
+        for current_head in ["abc1234567890", "0123456789abcdef0123456789abcdef0123456g"] {
+            let mut opts = write_opts("gap:demo:aabbccdd", "passed");
+            opts.current_head = Some(current_head.to_string());
+            match write_receipt(&opts) {
+                Ok(_) => {
+                    return Err(format!(
+                        "write_receipt should reject invalid current head {current_head:?}"
+                    ));
+                }
+                Err(err) if err.contains("40-character hexadecimal SHA") => {}
+                Err(err) => {
+                    return Err(format!(
+                        "error should explain current-head format, got: {err}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
