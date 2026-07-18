@@ -32,6 +32,8 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
 mod agent_gap_packet;
+#[path = "commands/cache.rs"]
+mod cache_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -84,6 +86,10 @@ pub(super) fn receipt(args: &[String]) -> Result<(), String> {
 
 pub(super) fn swarm(args: &[String]) -> Result<(), String> {
     swarm_command::run(args)
+}
+
+pub(super) fn cache(args: &[String]) -> Result<(), String> {
+    cache_command::run(args)
 }
 
 fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {

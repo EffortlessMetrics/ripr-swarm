@@ -34,6 +34,7 @@ pub(super) enum CliCommand {
     PrEvidence(Vec<String>),
     ImpactedEvidence(Vec<String>),
     RiprPlus(Vec<String>),
+    Cache(Vec<String>),
 }
 
 impl CliCommand {
@@ -73,6 +74,7 @@ impl CliCommand {
             Some("pr-evidence") => Ok(Self::PrEvidence(command_args)),
             Some("impacted-evidence") => Ok(Self::ImpactedEvidence(command_args)),
             Some("plus") => Ok(Self::RiprPlus(command_args)),
+            Some("cache") => Ok(Self::Cache(command_args)),
             Some(command) => Err(unknown_command_error(command)),
         }
     }
@@ -105,6 +107,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "context",
     "doctor",
     "lsp",
+    "cache",
 ];
 
 fn unknown_command_error(command: &str) -> String {
@@ -208,6 +211,7 @@ mod tests {
                 CliCommand::ImpactedEvidence(Vec::new()),
             ),
             (Some("plus"), CliCommand::RiprPlus(Vec::new())),
+            (Some("cache"), CliCommand::Cache(Vec::new())),
         ] {
             assert_eq!(CliCommand::from_parts(arg, Vec::new()), Ok(expected));
         }
