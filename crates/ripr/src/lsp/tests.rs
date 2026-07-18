@@ -60,6 +60,11 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
         result.capabilities.hover_provider,
         Some(HoverProviderCapability::Simple(true))
     );
+    assert_eq!(
+        result.capabilities.position_encoding,
+        Some(tower_lsp_server::ls_types::PositionEncodingKind::UTF16),
+        "RIPR must advertise UTF-16 positions so non-ASCII diagnostics map to the right source span"
+    );
     let Some(provider) = result.capabilities.execute_command_provider else {
         return Err("expected execute command provider".to_string());
     };
