@@ -277,6 +277,24 @@ covered_by = ["cargo xtask check-file-policy"]
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = ".allow/profiles/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Owned cargo-allow spec-system profile configuration."
+covered_by = ["cargo-allow doctor --profile spec-system --config .allow/profiles/spec-system.toml --format json"]
+
+[[allow]]
+glob = ".allow/artifacts/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Owned cargo-allow spec-system artifact graph ledger."
+covered_by = ["cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit --format json"]
+
+[[allow]]
 glob = ".ripr/*.toml"
 kind = "policy_metadata"
 owner = "repo-policy"
@@ -320,6 +338,15 @@ surface = "repo"
 classification = "metadata"
 reason = "Machine-readable capability and metrics metadata."
 covered_by = ["cargo xtask check-capabilities"]
+
+[[allow]]
+glob = "metrics/rust-repair-trust/*.json"
+kind = "trust_corpus_metadata"
+owner = "ripr/repair-trust"
+surface = "repo"
+classification = "metadata"
+reason = "Governed receipt-backed Rust repair-trust corpus input; empty or incomplete input remains limited."
+covered_by = ["cargo xtask rust-repair-trust-report", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "policy/*.toml"
@@ -423,6 +450,15 @@ reason = "Fixture workspaces may intentionally contain analyzed source files."
 covered_by = ["cargo xtask check-fixture-contracts", "cargo xtask fixtures"]
 
 [[allow]]
+glob = "benchmarks/targeted_rerun_benchmark/**"
+kind = "benchmark_fixture"
+owner = "targeted-rerun"
+surface = "fixtures"
+classification = "fixture"
+reason = "Controlled Rust workspace used by the SPEC-0123 targeted-rerun benchmark receipt."
+covered_by = ["cargo xtask targeted-rerun-benchmark", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "tests/fixtures/verification/**/*.json"
 kind = "verification_contract_fixture"
 owner = "contracts"
@@ -430,6 +466,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Sample JSON packets proving portable verification schemas are executable."
 covered_by = ["cargo xtask check-verification-contracts"]
+
+[[allow]]
+glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
+kind = "causal_attribution_fixture"
+owner = "analysis/causal-attribution"
+surface = "fixtures"
+classification = "fixture"
+reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
+covered_by = ["cargo test -p ripr causal_delta", "cargo xtask check-file-policy"]
 
 # ---------------------------------------------------------------------------
 # Brand / assets
