@@ -75,7 +75,11 @@ pub(crate) fn run() -> Result<(), String> {
 }
 
 pub(crate) fn run_at(root: &Path, reports: &Path) -> Result<(), String> {
-    let audit = audit_root(root)?;
+    run_at_with_mode(root, reports, false)
+}
+
+fn run_at_with_mode(root: &Path, reports: &Path, fixture_mode: bool) -> Result<(), String> {
+    let audit = audit_root_with_mode(root, fixture_mode)?;
     fs::create_dir_all(reports).map_err(|err| format!("create reports directory: {err}"))?;
     fs::write(
         reports.join("active-goal-authority-audit.json"),
@@ -108,12 +112,12 @@ pub(crate) fn run_at(root: &Path, reports: &Path) -> Result<(), String> {
     }
 }
 
-fn audit_root(root: &Path) -> Result<Audit, String> {
+fn audit_root_with_mode(root: &Path, fixture_mode: bool) -> Result<Audit, String> {
     let rules = parse_rules(
         &fs::read_to_string(root.join(INVENTORY))
             .map_err(|err| format!("read {INVENTORY}: {err}"))?,
     )?;
-    let issue_rows = issue_contract_rows(root)?;
+    let issue_rows = issue_contract_rows(root, fixture_mode)?;
     let occurrences = discover_occurrences(root)?;
     let discovered = occurrences
         .iter()
@@ -186,7 +190,7 @@ fn audit_root(root: &Path) -> Result<Audit, String> {
     })
 }
 
-fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
+fn issue_contract_rows(root: &Path, fixture_mode: bool) -> Result<Vec<(String, Rule)>, String> {
     let text = fs::read_to_string(root.join(ISSUE_CONTRACTS))
         .map_err(|err| format!("read {ISSUE_CONTRACTS}: {err}"))?;
     let value: serde_json::Value =
@@ -195,7 +199,6 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
         .get("contracts")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| format!("{ISSUE_CONTRACTS} must contain contracts[]"))?;
-    let fixture_mode = !root.join(".git").exists();
     if contracts.is_empty() {
         return Err(format!(
             "{ISSUE_CONTRACTS} must capture at least one issue contract"
@@ -276,9 +279,18 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
         rows.push((format!("github:{issue}"), rule));
     }
     validate_issue_snapshot_set(&seen_issues, fixture_mode)?;
-    if let Some(references) = value
-        .get("external_references")
-        .and_then(serde_json::Value::as_array)
+    let references = match value.get("external_references") {
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| format!("{ISSUE_CONTRACTS} external_references must be an array"))?,
+        None if fixture_mode => return Ok(rows),
+        None => {
+            return Err(format!(
+                "{ISSUE_CONTRACTS} must contain external_references[]"
+            ));
+        }
+    };
+    let mut seen_external_ids = BTreeSet::new();
     {
         for reference in references {
             let get = |field: &str| {
@@ -306,6 +318,9 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
                 }
             }
             let id = get("id");
+            if !seen_external_ids.insert(id.clone()) {
+                return Err(format!("duplicate external reference identity {id}"));
+            }
             let rule = validate_rule(Rule {
                 id: format!("external-reference-{id}"),
                 selector: format!("external:{id}"),
@@ -943,10 +958,11 @@ fn render_markdown(audit: &Audit) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        REQUIRED_ISSUE_SNAPSHOTS, audit_root, discover, duplicate_occurrence_contradictions,
-        is_canonical_issue_identity, is_lower_sha256, is_utc_rfc3339_seconds, issue_contract_rows,
-        occurrences_in_text, parse_rules, parse_tracked_paths, render_json, run_at,
-        selector_matches, validate_issue_snapshot_set,
+        REQUIRED_ISSUE_SNAPSHOTS, audit_root_with_mode, discover,
+        duplicate_occurrence_contradictions, is_canonical_issue_identity, is_lower_sha256,
+        is_utc_rfc3339_seconds, issue_contract_rows, occurrences_in_text, parse_rules,
+        parse_tracked_paths, render_json, run_at_with_mode, selector_matches,
+        validate_issue_snapshot_set,
     };
     use std::collections::BTreeSet;
     use std::fs;
@@ -1050,7 +1066,7 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
 
     #[test]
     fn occurrence_projection_preserves_legacy_consumers() -> Result<(), String> {
-        let audit = audit_root(Path::new("../"))?;
+        let audit = audit_root_with_mode(Path::new("../"), false)?;
         let json = render_json(&audit)?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|err| format!("parse report: {err}"))?;
@@ -1120,7 +1136,7 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
 
     #[test]
     fn repository_inventory_is_complete_and_deterministic() -> Result<(), String> {
-        let first = audit_root(Path::new("../"))?;
+        let first = audit_root_with_mode(Path::new("../"), false)?;
         if !first.unclassified.is_empty() {
             return Err(format!("unclassified: {:?}", first.unclassified));
         }
@@ -1136,8 +1152,8 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
             ));
         }
         let fixture = Path::new("../fixtures/active-goal-authority-audit/historical-reference");
-        let fixture_first = audit_root(fixture)?;
-        let fixture_second = audit_root(fixture)?;
+        let fixture_first = audit_root_with_mode(fixture, true)?;
+        let fixture_second = audit_root_with_mode(fixture, true)?;
         if fixture_first.semantic_digest != fixture_second.semantic_digest {
             return Err("equivalent inputs changed semantic digest".to_string());
         }
@@ -1174,9 +1190,10 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
 
     #[test]
     fn hidden_singleton_and_legacy_ready_block_migration() -> Result<(), String> {
-        let audit = audit_root(Path::new(
-            "../fixtures/active-goal-authority-audit/hidden-singleton",
-        ))?;
+        let audit = audit_root_with_mode(
+            Path::new("../fixtures/active-goal-authority-audit/hidden-singleton"),
+            true,
+        )?;
         if !audit
             .unclassified
             .iter()
@@ -1220,7 +1237,7 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
             return Err("duplicate consumer id was accepted".to_string());
         }
         let root = Path::new("../fixtures/active-goal-authority-audit/duplicate-issues");
-        if issue_contract_rows(root).is_ok() {
+        if issue_contract_rows(root, true).is_ok() {
             return Err("duplicate issue identity was accepted".to_string());
         }
         Ok(())
@@ -1264,10 +1281,59 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
     }
 
     #[test]
+    fn non_git_roots_and_external_references_fail_closed() -> Result<(), String> {
+        let root = Path::new("../target/ripr")
+            .join(format!("issue-contract-validation-{}", std::process::id()));
+        let fixture_dir = root.join("fixtures/active-goal-authority-audit");
+        fs::create_dir_all(&fixture_dir)
+            .map_err(|err| format!("create issue-contract validation fixture: {err}"))?;
+        let source =
+            fs::read_to_string("../fixtures/active-goal-authority-audit/issue-contracts.json")
+                .map_err(|err| format!("read issue contracts: {err}"))?;
+        let mut value: serde_json::Value =
+            serde_json::from_str(&source).map_err(|err| format!("parse issue contracts: {err}"))?;
+
+        value["external_references"] = serde_json::json!({});
+        fs::write(
+            fixture_dir.join("issue-contracts.json"),
+            serde_json::to_vec(&value)
+                .map_err(|err| format!("serialize wrong-type fixture: {err}"))?,
+        )
+        .map_err(|err| format!("write wrong-type fixture: {err}"))?;
+        if issue_contract_rows(&root, false).is_ok() {
+            return Err("non-array external references were accepted".to_string());
+        }
+
+        let mut value: serde_json::Value =
+            serde_json::from_str(&source).map_err(|err| format!("parse issue contracts: {err}"))?;
+        let references = value["external_references"]
+            .as_array_mut()
+            .ok_or_else(|| "source external references are not an array".to_string())?;
+        let duplicate = references
+            .first()
+            .cloned()
+            .ok_or_else(|| "source external references are empty".to_string())?;
+        references.push(duplicate);
+        fs::write(
+            fixture_dir.join("issue-contracts.json"),
+            serde_json::to_vec(&value)
+                .map_err(|err| format!("serialize duplicate fixture: {err}"))?,
+        )
+        .map_err(|err| format!("write duplicate fixture: {err}"))?;
+        let result = issue_contract_rows(&root, false);
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove issue-contract validation fixture: {err}"))?;
+        if result.is_ok() {
+            return Err("duplicate external reference identity was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn blocked_command_returns_error_after_writing_both_reports() -> Result<(), String> {
         let fixture = Path::new("../fixtures/active-goal-authority-audit/hidden-singleton");
         let reports = fixture.join("target/ripr/reports");
-        let result = run_at(fixture, &reports);
+        let result = run_at_with_mode(fixture, &reports, true);
         if result.is_ok() {
             return Err("blocked command unexpectedly returned success".to_string());
         }
@@ -1286,9 +1352,10 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
 
     #[test]
     fn historical_reference_is_classified_without_authority() -> Result<(), String> {
-        let audit = audit_root(Path::new(
-            "../fixtures/active-goal-authority-audit/historical-reference",
-        ))?;
+        let audit = audit_root_with_mode(
+            Path::new("../fixtures/active-goal-authority-audit/historical-reference"),
+            true,
+        )?;
         if !audit.unclassified.is_empty() {
             return Err(format!(
                 "historical fixture unclassified: {:?}",
