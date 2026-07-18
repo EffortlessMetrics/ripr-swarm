@@ -2343,10 +2343,13 @@ fn release_server_manifest(args: &[String]) -> Result<(), String> {
     let repository = required_release_arg(args, "repository", "REPOSITORY")?;
     let version = normalize_release_version(&version);
     let dist_dir = Path::new("dist");
-    let checksums_path = dist_dir.join("checksums.txt");
-    if checksums_path.exists() {
-        fs::remove_file(&checksums_path)
-            .map_err(|err| format!("failed to remove {}: {err}", checksums_path.display()))?;
+    // Published as `SHA256SUMS` (the near-universal ecosystem convention) so
+    // consumers can run `sha256sum -c SHA256SUMS` against the release assets.
+    // The content format is unchanged (`<sha256>  <file_name>` per line).
+    let sha256sums_path = dist_dir.join("SHA256SUMS");
+    if sha256sums_path.exists() {
+        fs::remove_file(&sha256sums_path)
+            .map_err(|err| format!("failed to remove {}: {err}", sha256sums_path.display()))?;
     }
 
     let mut assets = serde_json::Map::new();
@@ -2378,15 +2381,15 @@ fn release_server_manifest(args: &[String]) -> Result<(), String> {
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if file_name.ends_with(".sha256") || file_name == "checksums.txt" {
+        if file_name.ends_with(".sha256") || file_name == "SHA256SUMS" {
             continue;
         }
         checksum_lines.push(format!("{}  {file_name}", sha256_file(&path)?));
     }
-    fs::write(&checksums_path, format!("{}\n", checksum_lines.join("\n")))
-        .map_err(|err| format!("failed to write {}: {err}", checksums_path.display()))?;
+    fs::write(&sha256sums_path, format!("{}\n", checksum_lines.join("\n")))
+        .map_err(|err| format!("failed to write {}: {err}", sha256sums_path.display()))?;
     eprintln!("wrote {}", manifest_path.display());
-    eprintln!("wrote {}", checksums_path.display());
+    eprintln!("wrote {}", sha256sums_path.display());
     Ok(())
 }
 
@@ -83199,12 +83202,16 @@ TypeScript repair packet (advisory)
                 "windows-sha"
             );
 
-            let checksums = fs::read_to_string(dist.join("checksums.txt"))
-                .map_err(|err| format!("read checksums: {err}"))?;
+            let checksums = fs::read_to_string(dist.join("SHA256SUMS"))
+                .map_err(|err| format!("read SHA256SUMS: {err}"))?;
             assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"));
             assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"));
             assert!(checksums.contains("  ripr-server-manifest-v1.2.3.json"));
             assert!(!checksums.contains(".sha256"));
+            assert!(
+                !dist.join("checksums.txt").exists(),
+                "legacy checksums.txt must not be produced after the SHA256SUMS rename"
+            );
             Ok(())
         })
     }
