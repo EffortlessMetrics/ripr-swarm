@@ -79606,14 +79606,7 @@ TypeScript repair packet (advisory)
             (&rust_control_fixture, "exposed"),
             (&ts_control_fixture, "exposed"),
         ] {
-            let check_json = serde_json::json!({
-                "summary": {"findings": 1},
-                "findings": [{"id": classification, "classification": classification}]
-            });
-            write(
-                &fixture.join("expected/check.json"),
-                &serde_json::to_string_pretty(&check_json).map_err(|err| err.to_string())?,
-            );
+            write_evidence_promotion_check(fixture, classification)?;
         }
 
         // Mirror the real Perl charter case shape: a byte-pinned advisory-only
@@ -79723,6 +79716,68 @@ TypeScript repair packet (advisory)
                     && violation.contains("promoted to exposed")
             }),
             "expected the dishonest Perl advisory re-bless to be caught, got {dishonest_violations:?}"
+        );
+        Ok(())
+    }
+
+    // Guard the *live* corpus (#1729): the mechanism test above proves the gate
+    // catches a dishonest re-bless of a Perl advisory case, but only against a
+    // synthetic corpus. This pins the other failure mode #1729 raised — the
+    // real `perl_preview_card_advisory_no_repair_packet` charter case being
+    // silently demoted or removed so the gate stops consuming it. It must stay
+    // in the enforced path: tier `pure` (not clone/flag-gated), a byte-pinned
+    // `source_report`, and the `must_not_promote` + `expected_class:
+    // weakly_exposed` assertions. Complements CI's live gate run.
+    #[test]
+    fn perl_advisory_charter_case_stays_enforced_in_live_corpus() -> Result<(), String> {
+        let corpus_path = super::repo_rooted_fixture_path(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+        let text = fs::read_to_string(&corpus_path)
+            .map_err(|err| format!("read live honesty corpus: {err}"))?;
+        let corpus: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("parse live honesty corpus: {err}"))?;
+        let cases = corpus
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or("live honesty corpus has no `cases` array")?;
+        let perl_case = cases
+            .iter()
+            .find(|case| {
+                case.get("id").and_then(Value::as_str)
+                    == Some("perl_preview_card_advisory_no_repair_packet")
+            })
+            .ok_or(
+                "live honesty corpus dropped the Perl advisory charter case \
+                 `perl_preview_card_advisory_no_repair_packet` — the gate would stop enforcing it",
+            )?;
+
+        assert_eq!(
+            perl_case.get("tier").and_then(Value::as_str),
+            Some("pure"),
+            "Perl charter case must stay tier `pure` so it runs on the default gate (not clone/flag-gated)"
+        );
+        assert!(
+            perl_case
+                .get("source_report")
+                .and_then(Value::as_str)
+                .is_some_and(|report| !report.trim().is_empty()),
+            "Perl charter case must keep a byte-pinned `source_report`"
+        );
+        let assertions = perl_case
+            .get("assertions")
+            .and_then(Value::as_array)
+            .ok_or("Perl charter case lost its typed `assertions` array")?;
+        assert!(
+            assertions.iter().any(|assertion| {
+                assertion.get("type").and_then(Value::as_str) == Some("must_not_promote")
+            }),
+            "Perl charter case must keep the `must_not_promote` assertion (cardinal-sin-seam invariant)"
+        );
+        assert!(
+            assertions.iter().any(|assertion| {
+                assertion.get("type").and_then(Value::as_str) == Some("expected_class")
+                    && assertion.get("class").and_then(Value::as_str) == Some("weakly_exposed")
+            }),
+            "Perl charter case must keep `expected_class: weakly_exposed`"
         );
         Ok(())
     }
