@@ -1035,7 +1035,8 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
             return Err("fixture unexpectedly contains active.toml".to_string());
         }
         let source = fs::read_to_string(
-            "../fixtures/active-goal-authority-audit/hidden-singleton/hidden_reader.rs",
+            workspace_root()
+                .join("fixtures/active-goal-authority-audit/hidden-singleton/hidden_reader.rs"),
         )
         .map_err(|err| format!("read hidden reader: {err}"))?;
         if !source.contains("const LEGACY_STATUS: &str = \"ready\";") {
@@ -1062,8 +1063,8 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
         if parse_rules(&duplicated).is_ok() {
             return Err("duplicate consumer id was accepted".to_string());
         }
-        let root = Path::new("../fixtures/active-goal-authority-audit/duplicate-issues");
-        if issue_contract_rows(root).is_ok() {
+        let root = workspace_root().join("fixtures/active-goal-authority-audit/duplicate-issues");
+        if issue_contract_rows(&root).is_ok() {
             return Err("duplicate issue identity was accepted".to_string());
         }
         Ok(())
