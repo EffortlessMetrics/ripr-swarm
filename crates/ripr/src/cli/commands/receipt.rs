@@ -95,6 +95,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
     let mut packet_id: Option<String> = None;
     let mut verify_command: Option<String> = None;
     let mut verify_status: Option<String> = None;
+    let mut current_head: Option<String> = None;
     let mut out: Option<PathBuf> = None;
     let mut json = false;
 
@@ -132,6 +133,14 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 let value = expect_value(args, i, "--status")?;
                 verify_status = Some(value.to_string());
             }
+            "--current-head" => {
+                i += 1;
+                let value = expect_value(args, i, "--current-head")?;
+                if value.trim().is_empty() {
+                    return Err("receipt write --current-head requires a non-empty SHA".to_string());
+                }
+                current_head = Some(value.to_string());
+            }
             "--out" => {
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
@@ -158,6 +167,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
         packet_id,
         verify_command,
         verify_status,
+        current_head,
         out,
         json,
     })
@@ -239,6 +249,8 @@ Usage: ripr receipt <subcommand>
 
 Subcommands:
   write    Author a receipt JSON for a completed repair attempt.
+             Options:
+               --current-head <SHA>  Optional exact head SHA for review receipts.
   check    Structurally validate a receipt JSON file.
 
 The `ripr receipt write` command is the canonical receipt command.

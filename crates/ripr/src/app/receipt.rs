@@ -35,6 +35,7 @@ pub(crate) struct ReceiptWriteOptions {
     pub(crate) packet_id: Option<String>,
     pub(crate) verify_command: String,
     pub(crate) verify_status: String,
+    pub(crate) current_head: Option<String>,
     /// When `None`, defaults to `target/ripr/receipts/<canonical_gap_id>.json`.
     pub(crate) out: Option<PathBuf>,
     pub(crate) json: bool,
@@ -113,6 +114,7 @@ pub(crate) fn write_receipt(opts: &ReceiptWriteOptions) -> Result<String, String
         "packet_id_available": packet_id_available,
         "verify_command": opts.verify_command,
         "verify_status": opts.verify_status,
+        "current_head": opts.current_head.clone(),
         "written_at": written_at,
         "limits_note": "Static evidence only. Receipt records what was run; does not certify semantic correctness."
     });
@@ -378,6 +380,7 @@ mod tests {
             packet_id: None,
             verify_command: "cargo test -p ripr".to_string(),
             verify_status: status.to_string(),
+            current_head: None,
             out: None,
             json: true,
         }
@@ -392,6 +395,7 @@ mod tests {
             packet_id: Some("packet-abc123".to_string()),
             verify_command: "cargo test -p ripr".to_string(),
             verify_status: "passed".to_string(),
+            current_head: Some("abc1234567890".to_string()),
             out: None,
             json: true,
         };
@@ -410,6 +414,7 @@ mod tests {
         assert_eq!(value["packet_id_available"], true);
         assert_eq!(value["verify_command"], "cargo test -p ripr");
         assert_eq!(value["verify_status"], "passed");
+        assert_eq!(value["current_head"], "abc1234567890");
         assert!(value["written_at"].as_str().unwrap_or("").contains('T'));
         assert!(
             value["limits_note"]
@@ -428,6 +433,7 @@ mod tests {
             .map_err(|err| format!("receipt JSON should parse: {err}"))?;
         assert_eq!(value["packet_id"], serde_json::Value::Null);
         assert_eq!(value["packet_id_available"], false);
+        assert_eq!(value["current_head"], serde_json::Value::Null);
         Ok(())
     }
 
@@ -449,6 +455,7 @@ mod tests {
             packet_id: None,
             verify_command: "cargo test".to_string(),
             verify_status: "passed".to_string(),
+            current_head: None,
             out: None,
             json: true,
         };
@@ -488,6 +495,7 @@ mod tests {
             packet_id: None,
             verify_command: "".to_string(),
             verify_status: "passed".to_string(),
+            current_head: None,
             out: None,
             json: true,
         };
