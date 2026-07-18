@@ -1061,12 +1061,15 @@ impl Backend {
     fn collect_top_limitation(&self) -> Option<LSPAny> {
         let snapshot = self.latest_analysis.lock().ok()?.clone();
         let Some(snapshot) = snapshot else {
-            // No snapshot yet — return the "no blockers" sentinel, not null.
+            // No snapshot yet — disclose as "no_snapshot", not "no_limitation".
+            // Returning "no_limitation" when evidence is absent is a false-all-clear
+            // (RIPR-SPEC-0078). The client must show a pending/loading state, not
+            // a clean status, until the first diagnostic refresh completes.
             return Some(serde_json::json!({
                 "schema_version": "0.1",
                 "tool": "ripr",
                 "kind": "top_limitation",
-                "status": "no_limitation",
+                "status": "no_snapshot",
             }));
         };
         let rejection = snapshot.gap_artifact_rejections.first()?;

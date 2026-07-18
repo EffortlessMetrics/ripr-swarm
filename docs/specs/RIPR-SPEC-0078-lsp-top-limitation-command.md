@@ -56,7 +56,7 @@ be implemented to remove it?
 `ripr.collectTopLimitation` is a new LSP `executeCommand` that:
 
 1. Locks `latest_analysis` briefly.
-2. If no snapshot exists yet, returns the `no_limitation` sentinel (see
+2. If no snapshot exists yet, returns the `no_snapshot` sentinel (see
    Outputs). This is a meaningful "no blockers detected" answer, not null.
 3. If `gap_artifact_rejections` is empty on the snapshot, returns null
    (the first rejection is absent; no limitation to report).
@@ -137,14 +137,14 @@ Full limitation packet (when snapshot exists and has rejections):
 }
 ```
 
-No-limitation sentinel (when no snapshot exists):
+No-snapshot sentinel (when no snapshot exists):
 
 ```json
 {
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "top_limitation",
-  "status": "no_limitation"
+  "status": "no_snapshot"
 }
 ```
 
@@ -153,7 +153,7 @@ command returns null.
 
 ## Acceptance Examples
 
-1. No snapshot → `Some(value)` with `status == "no_limitation"`, not null.
+1. No snapshot → `Some(value)` with `status == "no_snapshot"`, not null.
 2. Snapshot with `DisabledLanguage("typescript")` rejection → full
    packet with `limitation_category == "disabled_language"`, non-empty
    `repair_route`, non-empty `why_not_actionable`, `non_claims` is array,
@@ -163,7 +163,7 @@ command returns null.
 
 ## Test Mapping
 
-- `crates/ripr/src/lsp/tests.rs::execute_command_collect_top_limitation_no_snapshot_returns_no_limitation`
+- `crates/ripr/src/lsp/tests.rs::execute_command_collect_top_limitation_no_snapshot_returns_no_snapshot`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_top_limitation_with_rejection_returns_limitation`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_top_limitation_registered_in_capabilities`
 
@@ -187,6 +187,6 @@ command returns null.
 
 ## Failure Modes
 
-- No snapshot → `no_limitation` sentinel (safe fallback, not null).
+- No snapshot → `no_snapshot` sentinel (safe fallback, not null).
 - No rejections in snapshot → null (nothing to report).
 - Lock failure → null (graceful degradation; never panics).

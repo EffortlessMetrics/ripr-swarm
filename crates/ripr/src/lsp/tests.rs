@@ -5744,10 +5744,10 @@ fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<
 }
 
 #[test]
-fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() -> Result<(), String>
+fn execute_command_collect_top_limitation_no_snapshot_returns_no_snapshot() -> Result<(), String>
 {
     // When there is no snapshot yet the command must return Some(value) with
-    // status == "no_limitation" — not null, which is a meaningful "no blockers" answer.
+    // status == "no_snapshot" — not null, disclosing that the refresh is pending.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -5765,7 +5765,7 @@ fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() ->
         let value = result
             .map_err(|err| format!("execute_command failed: {err}"))?
             .ok_or_else(|| {
-                "expected Some(value) with status no_limitation, got null".to_string()
+                "expected Some(value) with status no_snapshot, got null".to_string()
             })?;
 
         assert_eq!(
@@ -5778,8 +5778,8 @@ fn execute_command_collect_top_limitation_no_snapshot_returns_no_limitation() ->
             "sentinel must carry kind=top_limitation"
         );
         assert_eq!(
-            value["status"], "no_limitation",
-            "no snapshot must yield status=no_limitation, got {value}"
+            value["status"], "no_snapshot",
+            "no snapshot must yield status=no_snapshot, got {value}"
         );
         Ok(())
     })
