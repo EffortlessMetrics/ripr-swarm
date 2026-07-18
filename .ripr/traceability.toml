@@ -6857,9 +6857,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0127"
+id = "RIPR-SPEC-0128"
 name = "Active-goal authority audit"
-spec = "docs/specs/RIPR-SPEC-0127-active-goal-authority-audit.md"
+spec = "docs/specs/RIPR-SPEC-0128-active-goal-authority-audit.md"
 tests = [
   "xtask::active_goal_authority::tests::repository_inventory_is_complete_and_deterministic",
   "xtask::active_goal_authority::tests::hidden_singleton_and_legacy_ready_block_migration",

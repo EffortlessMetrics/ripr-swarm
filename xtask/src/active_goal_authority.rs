@@ -225,8 +225,7 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
 fn discover(root: &Path) -> Result<Vec<String>, String> {
     if root.join(".git").exists() {
         let mut paths = Vec::new();
-        let tracked = crate::run::run_output_in_dir("git", &["ls-files"], root)?;
-        for normalized in tracked.lines().map(str::to_string) {
+        for normalized in tracked_paths(root)? {
             if super::should_skip_path(&normalized) {
                 continue;
             }
@@ -245,6 +244,23 @@ fn discover(root: &Path) -> Result<Vec<String>, String> {
     walk(root, root, &mut paths)?;
     paths.sort();
     Ok(paths)
+}
+
+fn tracked_paths(root: &Path) -> Result<Vec<String>, String> {
+    let output = crate::run::run_output_bytes_in_dir("git", &["ls-files", "-z"], root)?;
+    parse_tracked_paths(&output)
+}
+
+fn parse_tracked_paths(output: &[u8]) -> Result<Vec<String>, String> {
+    output
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(str::to_string)
+                .map_err(|err| format!("git ls-files path was not UTF-8: {err}"))
+        })
+        .collect()
 }
 
 fn walk(root: &Path, directory: &Path, found: &mut Vec<String>) -> Result<(), String> {
@@ -481,9 +497,29 @@ fn render_markdown(audit: &Audit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_root, discover, issue_contract_rows, parse_rules, run_at, selector_matches};
+    use super::{
+        audit_root, discover, issue_contract_rows, parse_rules, parse_tracked_paths, run_at,
+        selector_matches,
+    };
     use std::fs;
     use std::path::Path;
+
+    #[test]
+    fn nul_delimited_tracked_paths_preserve_newlines() -> Result<(), String> {
+        let paths = parse_tracked_paths(b"plain.rs\0line\nbreak.rs\0")?;
+        if paths != ["plain.rs", "line\nbreak.rs"] {
+            return Err(format!("tracked paths changed identity: {paths:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tracked_paths_reject_non_utf8_identity() -> Result<(), String> {
+        if parse_tracked_paths(b"valid.rs\0invalid-\xff.rs\0").is_ok() {
+            return Err("non-UTF-8 tracked path was accepted".to_string());
+        }
+        Ok(())
+    }
 
     #[test]
     fn selectors_are_exact_or_directory_scoped() -> Result<(), String> {

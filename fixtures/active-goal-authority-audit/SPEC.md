@@ -1,10 +1,10 @@
 # Active-goal authority audit fixture
 
-Spec: RIPR-SPEC-0127
+Spec: RIPR-SPEC-0128
 
 ## Purpose
 
-This corpus proves RIPR-SPEC-0127 without changing active-goal authority.
+This corpus proves RIPR-SPEC-0128 without changing active-goal authority.
 
 ## Inputs
 

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0127: Active-goal authority audit
+# RIPR-SPEC-0128: Active-goal authority audit
 
 Status: proposed
 

@@ -169,11 +169,11 @@ pub(crate) fn run_output(program: &str, args: &[&str]) -> Result<String, String>
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-pub(crate) fn run_output_in_dir(
+pub(crate) fn run_output_bytes_in_dir(
     program: &str,
     args: &[&str],
     cwd: &Path,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     let output = Command::new(program)
         .args(args)
         .current_dir(cwd)
@@ -187,7 +187,7 @@ pub(crate) fn run_output_in_dir(
             cwd.display()
         ));
     }
-    String::from_utf8(output.stdout).map_err(|err| format!("{program} output was not UTF-8: {err}"))
+    Ok(output.stdout)
 }
 
 pub(crate) fn run_output_owned(program: &str, args: &[String]) -> Result<String, String> {
