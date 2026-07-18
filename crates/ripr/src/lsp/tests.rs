@@ -6202,6 +6202,10 @@ fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_stat
             serde_json::Value::Null
         );
         assert_eq!(
+            status["analysis_status"]["input_authority"]["session_options_present"],
+            false
+        );
+        assert_eq!(
             status["analysis_status"]["input_authority"]["current"],
             serde_json::Value::Null
         );
@@ -6537,6 +6541,18 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             Some(0)
         );
         let current_input = &status["analysis_status"]["input_authority"]["current"];
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["configuration_state"],
+            "valid"
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["repository_config_source"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["session_options_present"],
+            false
+        );
         assert!(
             current_input["input_identity"]
                 .as_str()
