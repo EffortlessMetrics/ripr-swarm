@@ -64,19 +64,18 @@ can answer these questions from the repository instead of from chat history:
 
 ## Current repo path
 
-This repo uses `.ripr/goals/active.toml` as the active execution manifest.
-Reusable proof-stack bootstraps may choose another repo-specific active-goal
-path, but `ripr` agents should follow the repo-local `.ripr` path unless a
-later PR changes the schema and documentation together.
+This repo keeps durable campaign context under `.ripr/goals/campaigns/`.
+`.ripr/goals/active.toml` is a non-authoritative compatibility pointer; it does
+not select or authorize live work.
 
-When the active manifest has no ready work items, agents should run
-`cargo xtask goals next` and follow the printed blocker boundary. A valid
-blocked-only manifest is not stale, and it is not permission to choose work from
-chat history as if it belonged to the blocked goal.
+Agents select work from current GitHub, repository, and local ownership evidence.
+For campaign-local context they may run `cargo xtask goals next --campaign
+<campaign-id>`; unqualified `goals next` intentionally returns selection
+guidance and never appoints a campaign.
 
-`cargo xtask pr-body --work-item <id>` can generate
+`cargo xtask pr-body --work-item <id> --campaign <campaign-id>` can generate
 `target/ripr/reports/source-of-truth-pr-body.md` from one ready or active work
-item in the active-goal manifest. It refuses blocked or already done items so
+item in an explicitly selected durable campaign record. It refuses blocked or already done items so
 blocked state cannot become PR text by accident. It also requires linked
 artifact IDs to resolve through `policy/doc-artifacts.toml`, so a generated PR
 body cannot carry an unresolved proposal, spec, or plan reference into review.
@@ -106,7 +105,7 @@ cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-support-tiers
 cargo xtask check-goals
-cargo xtask goals next
+cargo xtask goals next --campaign <campaign-id>
 cargo xtask repo-contract-report
 ```
 
@@ -116,6 +115,11 @@ gate, change support-tier claims, or replace the narrower validators listed
 above. The report includes ready and blocked work-item state so the next agent
 can see that a blocked item is not selectable without resolving the recorded
 blocker first.
+
+Schema `0.2` exposes that state only as non-authoritative `campaign_context`
+and `recorded_*` history. Legacy `active_goal` is null and legacy queue arrays
+are empty; current GitHub, repository, and local ownership evidence selects
+live work.
 
 ## Claim boundary
 

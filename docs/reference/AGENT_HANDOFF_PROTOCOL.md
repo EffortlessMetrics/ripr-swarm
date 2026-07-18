@@ -71,7 +71,7 @@ the floor; CodeRabbit is a ceiling-helper.
 | `git` history | source of truth for code and policy | permanent |
 | Issues, PRs, PR bodies | reviewable trace of decisions and design pivots | permanent (GitHub-side) |
 | `docs/` | settled product/architecture/protocol decisions | permanent (in-repo) |
-| `.ripr/goals/active.toml` | current campaign manifest | rolling (one campaign at a time) |
+| `.ripr/goals/campaigns/*.toml` | durable campaign context | append/update by bounded campaign |
 | `target/ripr/reports/` | build/CI artifacts; ephemeral handoff drafts | local-only / per-CI-run |
 | this conversation transcript | fast-loop coordination | session-only |
 

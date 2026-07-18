@@ -4,9 +4,10 @@ Lane trackers record lane-local implementation state. They are not the whole
 product board and they do not replace proposals, specs, ADRs, capability
 evidence, traceability, or closeout handoffs.
 
-The active Codex Goals manifest at `.ripr/goals/active.toml` is an operator
-manifest for the current repo-wide execution sequence. It can point at PR/CI,
-editor, policy, release, or cleanup work while a lane tracker still records a
+Durable Codex Goals records under `.ripr/goals/campaigns/` preserve campaign
+context but do not appoint a current repo-wide execution sequence. Current
+GitHub, repository, and local ownership evidence selects PR/CI, editor, policy,
+release, or cleanup work while a lane tracker still records a
 different lane's durable plan. Do not treat the active manifest as the only
 source of product truth.
 
@@ -22,7 +23,7 @@ Use one document for one job:
 | ADR | durable architecture decisions | `docs/adr/` |
 | Lane tracker | lane-local state, active slices, non-goals, sequencing | `docs/lanes/` |
 | Implementation plan | repo-wide sequence, campaign summaries, and lane-local PR sequencing | `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, `plans/` |
-| Active goals manifest | current Codex/Droid operator sequence | `.ripr/goals/active.toml` |
+| Durable campaign records | campaign objectives, work-item history, and proof context | `.ripr/goals/campaigns/` |
 | Capability matrix | maturity, scope, and proof evidence | `docs/CAPABILITY_MATRIX.md`, `metrics/capabilities.toml` |
 | Traceability | spec, fixture, test, code, and metric linkage | `.ripr/traceability.toml` |
 | Closeout / handoff | what landed, proof, remaining work, restart context | `docs/handoffs/` |
@@ -60,9 +61,9 @@ Lane 1 should use these layers:
 - Traceability: the spec/test/code/fixture/metric chain.
 - Closeout: what landed, what proof ran, and what remains unknown.
 
-Lane 1 should not use `.ripr/goals/active.toml` as a substitute for the lane
-tracker. Update the active manifest only when the repo-wide operator sequence
-explicitly makes Lane 1 active.
+Lane 1 should not use `.ripr/goals/active.toml` or a durable campaign record as
+a substitute for current live selection or the lane tracker. Update campaign
+context only when its durable objective, history, or proof facts change.
 
 ## Lane 1 Boundary
 

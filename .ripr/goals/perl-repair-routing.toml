@@ -4,9 +4,9 @@ status = "tracker"
 lane = 2
 
 # Focused Perl usable-alpha tracker.
-# This is not the active Codex Goals manifest. `.ripr/goals/active.toml` remains
-# the active execution manifest (currently `use-case-spec-spine`). Promotion into
-# `active.toml` is a maintainer decision recorded here.
+# This is not the active Codex Goals manifest. This tracker is durable campaign
+# context, not live execution authority.
+# `.ripr/goals/active.toml` is only a non-authoritative compatibility pointer.
 #
 # Durable plan: docs/IMPLEMENTATION_CAMPAIGNS.md -> Campaign 31
 # Spec: docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md (proposed)

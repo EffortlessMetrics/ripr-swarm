@@ -4,9 +4,9 @@ status = "tracker"
 lane = 1
 
 # Focused Python release-readiness tracker.
-# This is not the active Codex Goals manifest. `.ripr/goals/active.toml` remains
-# the active execution manifest (use-case spec spine, frozen until 0.9.0 ships).
-# Promotion into `active.toml` is a maintainer decision recorded here.
+# This is not the active Codex Goals manifest. This tracker is durable campaign
+# context, not live execution authority.
+# `.ripr/goals/active.toml` is only a non-authoritative compatibility pointer.
 #
 # Public tracker: https://github.com/EffortlessMetrics/ripr-swarm/issues/1160
 # Ruff parser-substrate watchpoint (NOT a release gate): EffortlessMetrics/ripr#1430

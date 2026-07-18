@@ -4478,6 +4478,8 @@ id = "RIPR-SPEC-0060"
 name = "Source-of-truth stack"
 spec = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
 tests = [
+  "xtask/src/main.rs::repo_contract_report_writes_graph_markdown_and_json",
+  "xtask/src/main.rs::repo_contract_report_renders_empty_and_warning_states",
   "xtask/src/main.rs::support_tiers_accept_valid_fixture",
   "xtask/src/main.rs::support_tiers_command_accepts_valid_fixture",
   "xtask/src/main.rs::support_tiers_reject_stable_claim_without_proof",

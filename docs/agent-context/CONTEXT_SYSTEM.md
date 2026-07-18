@@ -23,7 +23,7 @@ protection, `pull_request_target` defaults, or default CI blocking.
 
 `AGENTS.md` already tells agents to recover long-running work from
 repository artifacts rather than chat history, starting from the roadmap,
-implementation plan, campaigns, active goal manifest, capability matrix,
+implementation plan, durable campaigns, compatibility pointer, capability matrix,
 specs, traceability, and learnings. That works, but the links between
 those artifacts are still implicit prose — an agent has to *read* the
 campaign to find the spec, and *read* the spec to find the code paths.
@@ -49,7 +49,7 @@ typed manifests:
 | Orientation | What the repo is, where to start, what is risky. | `AGENTS.md`, `docs/agent-context/`. |
 | Product truth | What `ripr` must do (durable behavior contracts). | `docs/specs/`, `docs/OUTPUT_SCHEMA.md`, `docs/STATIC_EXPOSURE_MODEL.md`, `docs/CONFIGURATION.md`. |
 | Decision | Why a load-bearing decision was made and what it constrains. | `docs/adr/`. |
-| Execution | What the agent or operator should work on now. | `docs/ROADMAP.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, `.ripr/goals/active.toml`, `.ripr/goals/archive/`. |
+| Execution context | Durable campaign and plan context; live work selection comes from current GitHub, repository, and local ownership evidence. | `docs/ROADMAP.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, `.ripr/goals/campaigns/`, `.ripr/goals/archive/`. |
 | Evidence | What actually happened, with provenance. | `target/ripr/reports/`, `target/ripr/receipts/`, `fixtures/`, `metrics/`, `.ripr/traceability.toml`, `docs/handoffs/`, `docs/LEARNINGS.md`. |
 
 A doc lives in exactly one layer. A spec is not a plan; a plan is not a
@@ -70,7 +70,7 @@ translate it into the existing RIPR graph and the accepted
 | Spec | `docs/specs/RIPR-SPEC-*` |
 | ADR | `docs/adr/` |
 | Implementation plan | `docs/IMPLEMENTATION_PLAN.md` and `docs/IMPLEMENTATION_CAMPAIGNS.md` |
-| Active goal manifest | `.ripr/goals/active.toml` |
+| Durable campaign records | `.ripr/goals/campaigns/` |
 | Support tiers | `docs/status/SUPPORT_TIERS.md` |
 | Policy ledgers | `policy/*.toml`, `.ripr/traceability.toml`, `docs/CAPABILITY_MATRIX.md`, and `metrics/capabilities.toml` |
 | Closeout | `docs/handoffs/` |
@@ -216,7 +216,7 @@ proposal (docs/proposals/RIPR-PROP-NNNN-*.md)
   -> specs (docs/specs/RIPR-SPEC-NNNN-*.md)
   -> ADRs when a durable decision is needed (docs/adr/)
   -> campaign entry (docs/IMPLEMENTATION_CAMPAIGNS.md)
-  -> active manifest (.ripr/goals/active.toml)
+  -> durable campaign record (.ripr/goals/campaigns/)
   -> scoped PRs (one production delta + evidence package)
   -> receipts and reports (target/ripr/)
   -> closeout handoff (docs/handoffs/YYYY-MM-DD-<campaign>-closeout.md)
@@ -309,7 +309,7 @@ agent-side task state (Codex /goal, Kiro tasks, Claude Code TaskCreate, ...)
   |  reads / writes
   v
 repo-side typed context graph
-  proposals -> specs -> ADRs -> campaigns -> active.toml -> work items
+  proposals -> specs -> ADRs -> durable campaigns -> work items
                      -> traceability -> context manifests -> reports
                      -> handoffs / learnings
 ```
@@ -351,7 +351,7 @@ Each future xtask check is its own PR:
   - IDs match filenames
   - linked docs and code paths exist
   - required sections per kind exist
-  - active campaign has a proposal/spec link
+  - durable campaign has a proposal/spec link
   - work items have acceptance and commands
   - ADRs have consequences and revisit criteria
   - specs have test and implementation mappings

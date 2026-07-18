@@ -3,9 +3,9 @@ title = "Lane 4 PR / CI Review Cockpit"
 status = "tracker"
 lane = 4
 
-# Focused Lane 4 tracker. This is not the active Codex Goals manifest.
-# `.ripr/goals/active.toml` remains the active execution manifest for
-# Campaign 27: Language Adapter Preview.
+# Focused Lane 4 historical tracker. It is not the active Codex Goals manifest.
+# It is durable context, not live execution
+# authority; `.ripr/goals/active.toml` is only a compatibility pointer.
 
 objective = """
 Turn explicit RIPR PR-time artifacts into a reviewer-first advisory cockpit:

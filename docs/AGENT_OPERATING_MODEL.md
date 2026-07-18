@@ -237,8 +237,8 @@ picking up unfamiliar work:
 | --- | --- |
 | `docs/ROADMAP.md` | Direction and checkpoints |
 | `docs/IMPLEMENTATION_PLAN.md` | Next scoped PR |
-| `docs/IMPLEMENTATION_CAMPAIGNS.md` | Active multi-PR campaigns |
-| `.ripr/goals/active.toml` | Machine-readable campaign state |
+| `docs/IMPLEMENTATION_CAMPAIGNS.md` | Durable multi-PR campaign history and context |
+| `.ripr/goals/campaigns/` | Machine-readable durable campaign records; not live execution authority |
 | `docs/CAPABILITY_MATRIX.md` | Current capability status per area |
 | `docs/PR_AUTOMATION.md` | Shape / check / guide model |
 | `docs/specs/` + `.ripr/traceability.toml` | Spec → test → code map |
@@ -250,5 +250,5 @@ the session: a failure mode, a performance constraint, a hidden invariant, or
 a clarification that would have saved time.
 
 Choose the smallest vertical slice with one production delta and one evidence
-package. Do not infer ready work from chat history when the campaign manifest
-shows only blocked work.
+package. Do not infer ready work from chat history or a durable campaign record;
+select it from current GitHub, repository, and local ownership evidence.

@@ -753,10 +753,11 @@ self-hosted routed-runner closeout.
 
 ## Source-Of-Truth PR Body Scaffold
 
-Use the active goal manifest to draft a PR body for one bounded work item:
+Use an explicitly selected durable campaign record to draft a PR body for one
+bounded work item:
 
 ```bash
-cargo xtask pr-body --work-item <id>
+cargo xtask pr-body --work-item <id> --campaign <campaign-id>
 ```
 
 The command writes:
@@ -765,8 +766,8 @@ The command writes:
 target/ripr/reports/source-of-truth-pr-body.md
 ```
 
-The scaffold links the active goal, work item, proposal/spec/plan references
+The scaffold links the selected campaign, work item, proposal/spec/plan references
 when present, acceptance text, non-goals, and proof commands. It deliberately
 leaves support-tier and policy impact checkboxes unchecked because those claims
-must be reviewed from the actual diff and proof, not inferred from active-goal
+must be reviewed from the actual diff and proof, not inferred from campaign
 metadata.

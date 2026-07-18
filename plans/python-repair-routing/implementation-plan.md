@@ -26,8 +26,8 @@ Linked ADRs:
 
 Active goal:
 
-- Not active. The active execution manifest remains
-  [`.ripr/goals/active.toml`](../../.ripr/goals/active.toml). This plan does
+- Not selected for live execution. Durable campaign context remains in
+  [`.ripr/goals/python-repair-routing.toml`](../../.ripr/goals/python-repair-routing.toml). This plan does
   not supersede the routed-runner proof goal unless a later activation PR
   explicitly selects it.
 
@@ -165,7 +165,7 @@ implementation spreads.
 - No fixture or golden changes.
 - No CLI, output-schema, LSP, generated-CI, swarm, receipt, or gate behavior
   changes.
-- No active-goal manifest changes.
+- No durable campaign-record or compatibility-pointer changes.
 - No support-tier promotion.
 
 #### Acceptance

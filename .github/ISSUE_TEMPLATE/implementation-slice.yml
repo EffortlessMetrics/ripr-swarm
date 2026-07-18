@@ -7,7 +7,7 @@ body:
     id: work_item
     attributes:
       label: Work item
-      description: Work-item ID from `.ripr/goals/active.toml` or the linked plan.
+      description: Work-item ID from a linked durable campaign record or plan; this does not grant live execution authority.
       placeholder: "first-pr/front-door-polish"
     validations:
       required: true

@@ -4940,7 +4940,7 @@ pub(crate) fn reports_index_impl() -> Result<(), String> {
     let missing = report_index_missing_expected(&reports, &changes);
     let lane1_packets = report_index_lane1_readiness_packets(&reports);
     let status = report_index_status(&reports, &missing, &campaign.issues);
-    let next_commands = report_index_next_commands(&missing, &lane1_packets);
+    let next_commands = report_index_next_commands(&missing, &lane1_packets, &campaign.id);
 
     let markdown = report_index_markdown(
         status,
@@ -64951,9 +64951,9 @@ struct RepoContractWorkItem {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RepoContractSummary {
-    active_goal_id: Option<String>,
-    active_goal_title: Option<String>,
-    active_goal_status: Option<String>,
+    campaign_id: Option<String>,
+    campaign_title: Option<String>,
+    campaign_status: Option<String>,
     artifacts: Vec<RepoContractArtifact>,
     ready_work_items: Vec<RepoContractWorkItem>,
     blocked_work_items: Vec<RepoContractWorkItem>,
@@ -64997,9 +64997,9 @@ fn repo_contract_summary(root: &Path) -> Result<RepoContractSummary, String> {
     let mut missing_links = Vec::new();
     missing_links.extend(doc_artifact_violations(root, &ledger_path)?);
 
-    let mut active_goal_id = None;
-    let mut active_goal_title = None;
-    let mut active_goal_status = None;
+    let mut campaign_id = None;
+    let mut campaign_title = None;
+    let mut campaign_status = None;
     let mut ready_work_items = Vec::new();
     let mut blocked_work_items = Vec::new();
     let mut done_work_items = Vec::new();
@@ -65009,9 +65009,9 @@ fn repo_contract_summary(root: &Path) -> Result<RepoContractSummary, String> {
         missing_links.extend(parse_violations);
         validate_campaign_manifest(&manifest, &mut missing_links)?;
         missing_links.extend(campaign_source_truth_violations_for_root(root)?);
-        active_goal_id = manifest.id.clone();
-        active_goal_title = manifest.title.clone();
-        active_goal_status = manifest.status.clone();
+        campaign_id = manifest.id.clone();
+        campaign_title = manifest.title.clone();
+        campaign_status = manifest.status.clone();
         for item in &manifest.work_items {
             match item.status.as_deref() {
                 Some("ready") => ready_work_items.push(repo_contract_work_item_from_campaign(item)),
@@ -65038,9 +65038,9 @@ fn repo_contract_summary(root: &Path) -> Result<RepoContractSummary, String> {
     missing_links.dedup();
 
     Ok(RepoContractSummary {
-        active_goal_id,
-        active_goal_title,
-        active_goal_status,
+        campaign_id,
+        campaign_title,
+        campaign_status,
         artifacts,
         ready_work_items,
         blocked_work_items,
@@ -65119,24 +65119,25 @@ fn repo_contract_report_markdown(summary: &RepoContractSummary) -> String {
         repo_contract_report_status(summary)
     ));
     body.push_str("Mode: advisory\n\n");
-    body.push_str("## Active Goal\n\n");
+    body.push_str("## Compatibility Campaign Context\n\n");
+    body.push_str("This is durable context selected by a non-authoritative compatibility pointer. It does not select or authorize live work.\n\n");
     body.push_str(&format!(
         "- id: `{}`\n",
-        summary.active_goal_id.as_deref().unwrap_or("<missing>")
+        summary.campaign_id.as_deref().unwrap_or("<missing>")
     ));
     body.push_str(&format!(
         "- title: {}\n",
-        summary.active_goal_title.as_deref().unwrap_or("<missing>")
+        summary.campaign_title.as_deref().unwrap_or("<missing>")
     ));
     body.push_str(&format!(
         "- status: `{}`\n\n",
-        summary.active_goal_status.as_deref().unwrap_or("<missing>")
+        summary.campaign_status.as_deref().unwrap_or("<missing>")
     ));
 
-    body.push_str("## Ready Work Items\n\n");
+    body.push_str("## Recorded Ready Work Items\n\n");
     write_repo_contract_work_items(&mut body, &summary.ready_work_items);
 
-    body.push_str("## Blocked Work Items\n\n");
+    body.push_str("## Recorded Blocked Work Items\n\n");
     write_repo_contract_work_items(&mut body, &summary.blocked_work_items);
 
     body.push_str("## Accepted Proposals\n\n");
@@ -65224,7 +65225,7 @@ fn repo_contract_report_markdown(summary: &RepoContractSummary) -> String {
         body.push('\n');
     }
 
-    body.push_str("## Recently Completed Work\n\n");
+    body.push_str("## Recorded Completed Work\n\n");
     write_repo_contract_work_items(&mut body, &summary.done_work_items);
     body
 }
@@ -65309,16 +65310,17 @@ fn repo_contract_report_json(summary: &RepoContractSummary) -> String {
         .collect::<Vec<_>>();
 
     body.push_str("{\n");
-    body.push_str("  \"schema_version\": \"0.1\",\n");
+    body.push_str("  \"schema_version\": \"0.2\",\n");
     body.push_str("  \"report_id\": \"source_of_truth_graph\",\n");
     body.push_str("  \"mode\": \"advisory\",\n");
     body.push_str(&format!("  \"status\": \"{}\",\n", json_escape(status)));
     body.push_str(&format!(
-        "  \"active_goal\": {{ \"id\": {}, \"title\": {}, \"status\": {} }},\n",
-        json_optional_string(summary.active_goal_id.as_deref()),
-        json_optional_string(summary.active_goal_title.as_deref()),
-        json_optional_string(summary.active_goal_status.as_deref())
+        "  \"campaign_context\": {{ \"source\": \".ripr/goals/active.toml\", \"selected_via\": \"compatibility_pointer\", \"authority\": \"non_authoritative_compatibility_context\", \"id\": {}, \"title\": {}, \"status\": {}, \"non_claims\": [\"live_work_selection\", \"mutation_authority\", \"merge_authority\"] }},\n",
+        json_optional_string(summary.campaign_id.as_deref()),
+        json_optional_string(summary.campaign_title.as_deref()),
+        json_optional_string(summary.campaign_status.as_deref())
     ));
+    body.push_str("  \"active_goal\": null,\n");
     body.push_str("  \"artifacts\": [");
     write_repo_contract_artifact_json_array(&mut body, &artifacts);
     body.push_str("],\n");
@@ -65331,15 +65333,18 @@ fn repo_contract_report_json(summary: &RepoContractSummary) -> String {
     body.push_str("  \"open_adrs\": [");
     write_repo_contract_artifact_json_array(&mut body, &open_adrs);
     body.push_str("],\n");
-    body.push_str("  \"ready_work_items\": [");
+    body.push_str("  \"recorded_ready_work_items\": [");
     write_repo_contract_work_item_json_array(&mut body, &summary.ready_work_items);
     body.push_str("],\n");
-    body.push_str("  \"blocked_work_items\": [");
+    body.push_str("  \"recorded_blocked_work_items\": [");
     write_repo_contract_work_item_json_array(&mut body, &summary.blocked_work_items);
     body.push_str("],\n");
-    body.push_str("  \"recently_completed_work\": [");
+    body.push_str("  \"recorded_completed_work\": [");
     write_repo_contract_work_item_json_array(&mut body, &summary.done_work_items);
     body.push_str("],\n");
+    body.push_str("  \"ready_work_items\": [],\n");
+    body.push_str("  \"blocked_work_items\": [],\n");
+    body.push_str("  \"recently_completed_work\": [],\n");
     body.push_str("  \"superseded_artifacts\": [");
     write_repo_contract_artifact_json_array(&mut body, &superseded_artifacts);
     body.push_str("],\n");
@@ -66669,7 +66674,7 @@ fn goals(args: &[String]) -> Result<(), String> {
         Some("next") => goals_next(&args[1..]),
         None => goals_status(&[]),
         Some(other) => Err(format!(
-            "unknown goals command `{other}`\nusage: cargo xtask goals status [--campaign <id>]\n       cargo xtask goals next [--campaign <id>]\n       cargo xtask goals report [--campaign <id>]"
+            "unknown goals command `{other}`\nusage: cargo xtask goals status [--campaign <campaign-id>]\n       cargo xtask goals next [--campaign <campaign-id>]\n       cargo xtask goals report [--campaign <campaign-id>]"
         )),
     }
 }
@@ -66687,7 +66692,7 @@ fn campaign_selector(args: &[String]) -> Result<Option<&str>, String> {
             }
         } else {
             return Err(format!(
-                "unknown goals argument `{arg}`\nusage: cargo xtask goals status [--campaign <id>]\n       cargo xtask goals next [--campaign <id>]\n       cargo xtask goals report [--campaign <id>]"
+                "unknown goals argument `{arg}`\nusage: cargo xtask goals status [--campaign <campaign-id>]\n       cargo xtask goals next [--campaign <campaign-id>]\n       cargo xtask goals report [--campaign <campaign-id>]"
             ));
         }
     }
@@ -70064,9 +70069,8 @@ fn receipts_dir() -> PathBuf {
 }
 
 fn report_index_campaign() -> ReportIndexCampaign {
-    let path = Path::new(".ripr/goals/active.toml");
-    match parse_campaign_manifest(path) {
-        Ok((manifest, violations)) => {
+    match load_campaign_context(Path::new("."), None) {
+        Ok((_campaign_path, manifest, violations)) => {
             let ready_work_items = manifest
                 .work_items
                 .iter()
@@ -70676,6 +70680,7 @@ fn report_index_is_lane1_readiness_file(file: &str) -> bool {
 fn report_index_next_commands(
     missing: &[String],
     lane1_packets: &[ReportIndexRepoOpsPacket],
+    campaign_id: &str,
 ) -> Vec<String> {
     let mut commands = BTreeSet::<String>::new();
     if missing
@@ -70712,7 +70717,7 @@ fn report_index_next_commands(
         .iter()
         .any(|path| path.ends_with("/goals-next.md") || path.ends_with("\\goals-next.md"))
     {
-        commands.insert("cargo xtask goals next".to_string());
+        commands.insert(format!("cargo xtask goals next --campaign {campaign_id}"));
     }
     if missing
         .iter()
@@ -72039,7 +72044,8 @@ fn critic_findings(
             severity: "warn",
             message: "Campaign state changed without a goals-next report.",
             evidence: vec![format_report_status(reports, "goals-next.md")],
-            recommended_action: "Run `cargo xtask goals next` before review.",
+            recommended_action:
+                "Run `cargo xtask goals next --campaign <campaign-id>` for the changed campaign before review.",
         });
     }
 
@@ -87417,7 +87423,7 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
             status: "fail".to_string(),
         }];
         let packets = report_index_lane1_readiness_packets(&reports);
-        let commands = report_index_next_commands(&[], &packets);
+        let commands = report_index_next_commands(&[], &packets, "test-campaign");
 
         assert_eq!(super::report_index_status(&reports, &[], &[]), "warn");
         assert_eq!(report_index_lane1_overall_status(&packets), "fail");
@@ -87478,13 +87484,22 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
     #[test]
     fn report_index_next_commands_include_missing_lane1_readiness() {
         let packets = report_index_lane1_readiness_packets(&[]);
-        let commands = report_index_next_commands(&[], &packets);
+        let commands = report_index_next_commands(&[], &packets, "test-campaign");
 
         assert!(commands.contains(&"cargo xtask evidence-health".to_string()));
         assert!(commands.contains(&"cargo xtask lane1-evidence-audit".to_string()));
         assert!(commands.contains(&"cargo xtask evidence-quality-scorecard".to_string()));
         assert!(commands.contains(&"cargo xtask evidence-quality-trend".to_string()));
         assert!(commands.contains(&"cargo xtask badge-basis".to_string()));
+    }
+
+    #[test]
+    fn report_index_qualifies_missing_goals_report_with_campaign_identity() {
+        let missing = vec!["target/ripr/reports/goals-next.md".to_string()];
+        let commands = report_index_next_commands(&missing, &[], "campaign-alpha");
+
+        assert!(commands.contains(&"cargo xtask goals next --campaign campaign-alpha".to_string()));
+        assert!(!commands.contains(&"cargo xtask goals next".to_string()));
     }
 
     #[test]
@@ -99278,34 +99293,46 @@ metric = "language_adapter_python_repair_routing_quality_metrics"
             write_repo_contract_report_fixture(root, true);
 
             let (markdown, json) = super::repo_contract_report_from_root(root)?;
-            assert!(markdown.contains("## Active Goal"));
+            assert!(markdown.contains("## Compatibility Campaign Context"));
+            assert!(markdown.contains("It does not select or authorize live work."));
             assert!(markdown.contains("Status: pass"));
             assert!(markdown.contains("`docs/report`"));
             assert!(markdown.contains("`RIPR-ADR-0001`: `proposed`"));
             assert!(markdown.contains("`RIPR-PROP-0002` -> `RIPR-PROP-0001`"));
             assert!(markdown.contains("## Support-Tier Impacts"));
             let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
-            assert_eq!(value["schema_version"], "0.1");
+            assert_eq!(value["schema_version"], "0.2");
             assert_eq!(value["report_id"], "source_of_truth_graph");
             assert_eq!(value["mode"], "advisory");
             assert_eq!(value["status"], "pass");
-            assert_eq!(value["active_goal"]["id"], "source-of-truth-control-plane");
+            assert_eq!(value["schema_version"], "0.2");
+            assert_eq!(
+                value["campaign_context"]["id"],
+                "source-of-truth-control-plane"
+            );
+            assert_eq!(
+                value["campaign_context"]["authority"],
+                "non_authoritative_compatibility_context"
+            );
+            assert_eq!(value["active_goal"], Value::Null);
+            assert_eq!(value["ready_work_items"], serde_json::json!([]));
+            assert_eq!(value["blocked_work_items"], serde_json::json!([]));
             assert!(
-                value["ready_work_items"]
+                value["recorded_ready_work_items"]
                     .as_array()
                     .is_some_and(|items| items.iter().any(|item| item["id"] == "docs/report"))
             );
             assert!(
-                value["ready_work_items"]
+                value["recorded_ready_work_items"]
                     .as_array()
                     .is_some_and(|items| items.len() == 2)
             );
-            assert!(markdown.contains("## Blocked Work Items"));
+            assert!(markdown.contains("## Recorded Blocked Work Items"));
             assert!(markdown.contains("`docs/wait`"));
             assert!(markdown.contains("blocked reason: Waiting on runner proof."));
             assert!(markdown.contains("blocked by: docs/wait"));
             assert!(
-                value["blocked_work_items"]
+                value["recorded_blocked_work_items"]
                     .as_array()
                     .is_some_and(|items| items.iter().any(|item| {
                         item["id"] == "docs/wait"
@@ -99313,7 +99340,7 @@ metric = "language_adapter_python_repair_routing_quality_metrics"
                     }))
             );
             assert!(
-                value["blocked_work_items"]
+                value["recorded_blocked_work_items"]
                     .as_array()
                     .is_some_and(|items| items.iter().any(|item| {
                         item["id"] == "docs/wait-dependent"
@@ -99363,7 +99390,7 @@ metric = "language_adapter_python_repair_routing_quality_metrics"
                 .map_err(|err| format!("failed to read graph json: {err}"))?;
             assert!(markdown.contains("Mode: advisory"));
             let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
-            assert_eq!(value["schema_version"], "0.1");
+            assert_eq!(value["schema_version"], "0.2");
             assert_eq!(value["report_id"], "source_of_truth_graph");
             assert_eq!(value["status"], "pass");
             Ok(())
@@ -99419,9 +99446,9 @@ owner = "repo-infra"
     #[test]
     fn repo_contract_report_renders_empty_and_warning_states() -> Result<(), String> {
         let summary = super::RepoContractSummary {
-            active_goal_id: None,
-            active_goal_title: None,
-            active_goal_status: None,
+            campaign_id: None,
+            campaign_title: None,
+            campaign_status: None,
             artifacts: Vec::new(),
             ready_work_items: Vec::new(),
             blocked_work_items: Vec::new(),
@@ -99441,7 +99468,7 @@ owner = "repo-infra"
         let json = super::repo_contract_report_json(&summary);
         let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
         assert_eq!(value["status"], "warn");
-        assert_eq!(value["active_goal"]["id"], Value::Null);
+        assert_eq!(value["campaign_context"]["id"], Value::Null);
         assert_eq!(
             value["blocked_work_items"].as_array().map(Vec::len),
             Some(0)

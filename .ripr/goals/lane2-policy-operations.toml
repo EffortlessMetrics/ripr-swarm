@@ -4,7 +4,7 @@ status = "closed"
 issue = "closed by focused Lane 2 closeout"
 
 # Focused Lane 2 tracker. This is not the active Codex Goals manifest.
-# `.ripr/goals/active.toml` remains the active execution manifest for
+# `.ripr/goals/active.toml` remains only the compatibility pointer for
 # Campaign 27: Language Adapter Preview.
 
 objective = """

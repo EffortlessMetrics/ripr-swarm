@@ -58,10 +58,10 @@ safer.
 
 ## Execution State
 
-The active execution queue is `.ripr/goals/active.toml`. When that manifest
-records `status = "closed"` and `no_current_goal = true`, no plan listed here is
-automatically active. Select a successor from repo-owned roadmap, proposal,
-spec, ADR, issue, or campaign state before starting behavior work.
+Durable campaign context lives under `.ripr/goals/campaigns/`;
+`.ripr/goals/active.toml` is only a non-authoritative compatibility pointer.
+No plan listed here is automatically active. Select live work from current
+GitHub, repository, and local ownership evidence before starting behavior work.
 
 ## Plan Index
 
@@ -110,7 +110,7 @@ For docs-only plan changes, run at minimum:
 
 ```bash
 git diff --check
-cargo xtask goals next
+cargo xtask goals next --campaign <campaign-id>
 cargo xtask check-doc-index
 cargo xtask check-pr-shape
 ```

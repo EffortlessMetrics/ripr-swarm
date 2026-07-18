@@ -9,10 +9,10 @@ For normal source-of-truth work in this repo:
 
 1. Check the live GitHub board: open PRs, open issues, required checks, bot
    comments, linked specs/plans, and current branch state.
-2. Read [`.ripr/goals/active.toml`](../../.ripr/goals/active.toml).
-3. Run `cargo xtask goals next` when choosing work from the manifest.
-4. If the manifest is active and has a ready work item, select the next ready
-   work item.
+2. Read the relevant durable record under [`.ripr/goals/campaigns/`](../../.ripr/goals/campaigns/).
+3. Select live work from current GitHub, repository, and local ownership evidence.
+4. Use `cargo xtask goals next --campaign <campaign-id>` only for bounded
+   campaign-local context.
 5. If the manifest is active but all unfinished items are blocked, do not infer
    ready work for that blocked goal from chat history. Resolve the named
    blocker, record an accepted bounded blocker in the manifest, or choose a
@@ -29,13 +29,13 @@ For normal source-of-truth work in this repo:
 14. Write a PR body with links, scope, proof, claim boundary, and rollback.
 15. Add or update closeout notes only when the lane or goal completes.
 
-The active-goal manifest can be valid and still have no selectable work. In
-that state, `cargo xtask goals next` is the durable handoff: it prints the
+The durable campaign record can be valid and still have no selectable work. In
+that state, `cargo xtask goals next --campaign <campaign-id>` is a bounded handoff: it prints the
 blocked work items, issue links, blocker text, and acceptance boundary. Treat
 that output as a stop sign for the blocked goal, not as permission to invent a
 new PR-sized slice inside it.
 
-If the active manifest is closed or stale, do not invent the next campaign. Use
+If a campaign record is closed or stale, do not invent the next campaign. Use
 the linked plans and the user's current scoped prompt as the active contract,
 and record the gap instead of fabricating manifest state.
 
@@ -58,7 +58,7 @@ the evidence less reviewable.
 
 Agents must verify every named command, workflow, lint, path, feature, and
 policy before relying on it. In this repo, `cargo xtask check-goals`,
-`cargo xtask goals next`, `cargo xtask check-doc-artifacts`,
+`cargo xtask goals next --campaign <campaign-id>`, `cargo xtask check-doc-artifacts`,
 `cargo xtask check-support-tiers`, and `cargo xtask repo-contract-report` exist
 today. `repo-contract-report` is advisory/report-only proof of the generated
 source-of-truth graph packet; it must not be cited as enforcement, support-tier

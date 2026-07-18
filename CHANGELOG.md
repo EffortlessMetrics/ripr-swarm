@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The advisory repo-contract graph now uses schema `0.2` and reports durable
+  campaign context without treating the compatibility pointer or recorded
+  work-item statuses as live execution authority. Legacy `active_goal` and
+  queue fields remain inert (`null` / empty) for migration safety.
+
 - Rust equality-boundary analysis now credits exact, source-ordered direct
   field assignments from same-file literal constants and bounded `+/-` integer
   offsets. Other owners, fields, similarly named constants, helper-only writes,

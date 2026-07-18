@@ -9,7 +9,7 @@ assignees: []
 ## Source of truth
 
 - Active campaign:
-- Work item id (matches `.ripr/goals/active.toml`):
+- Work item id (matches the linked durable campaign record):
 - Branch (will be cut from `main`):
 - Latest merged PR on `main` at planning time:
 - Follow-up / next-blocked work item:
@@ -23,8 +23,9 @@ will diverge from current `main`.
 
 - [ ] Local `main` is up to date (`git fetch origin && git status` shows no
       lag versus `origin/main`).
-- [ ] The work item id appears in `.ripr/goals/active.toml` with
-      `status = "ready"` (or `status = "active"`) and is not blocked.
+- [ ] The work item id appears in the linked `.ripr/goals/campaigns/*.toml`
+      record, and separate current GitHub/repository/local evidence selects it
+      for this lane; durable `ready` or `active` metadata alone grants no authority.
 - [ ] The "latest merged PR" listed above matches `git log -1 origin/main
       --oneline` at the time of cut.
 - [ ] Any source files / line numbers cited below still exist and contain

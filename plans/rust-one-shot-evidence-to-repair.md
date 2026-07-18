@@ -3,7 +3,7 @@
 Status: active  
 Owner: product-swarm  
 Plan artifact: RIPR-PLAN-0062  
-Linked goal: `.ripr/goals/active.toml`  
+Linked campaign: `.ripr/goals/campaigns/rust-evidence-bound-repair.toml`
 Linked issues: #1423, #1424, #1425, #1427, #1440, #1543, #1560
 Starting PRs: #1489, #1487, #1483
 
@@ -28,8 +28,8 @@ RIPR xtask remains the repo-facing proof executor and may invoke cargo-allow,
 but must not independently reimplement the same graph rules. Every campaign
 control-plane PR records cargo-allow doctor, audit, and worklist outputs.
 
-The profile is advisory while its findings are made low-noise. The sole RIPR
-execution manifest at `.ripr/goals/active.toml` is deliberately not enforced
+The profile is advisory while its findings are made low-noise. The durable RIPR
+campaign record is deliberately not enforced by cargo-allow
 until cargo-allow issue #2119 can validate its dialect without creating a second
 active goal or discarding execution metadata. The installed cargo-allow 0.1.10
 requires `--config .allow/profiles/spec-system.toml` for this owned profile;
@@ -117,8 +117,8 @@ Certification is current-head evidence. Receipts name the exact head SHA, later
 mutation invalidates prior certification, and a reviewer who changes the branch
 acts as a fixer rather than an independent reviewer for that pass. Cargo-allow
 remains advisory structural authority, RIPR xtask remains proof executor, and
-`.ripr/goals/active.toml` remains the sole execution manifest until #2119 is
-resolved.
+`.ripr/goals/campaigns/rust-evidence-bound-repair.toml` remains durable campaign
+context while #2119 is unresolved; it does not select or authorize live work.
 
 ## Contract
 

@@ -88,6 +88,17 @@ What should the next agent do?
 
 ## Behavior
 
+The advisory repo-contract graph uses schema `0.2`. Its
+`campaign_context` object is durable context only and carries
+`authority = "non_authoritative_compatibility_context"`; it must not be rendered or consumed as a
+current goal, queue, lease, or work authorization. Recorded work-item arrays
+are named `recorded_ready_work_items`, `recorded_blocked_work_items`, and
+`recorded_completed_work`. Live selection comes from current GitHub,
+repository, and local ownership evidence. For transition safety, schema `0.2`
+keeps `active_goal: null` and the legacy queue-looking arrays empty. Consumers
+must migrate to `campaign_context` and `recorded_*`; the inert legacy fields
+cannot preserve or imply execution authority.
+
 The repo maintains a linked source-of-truth stack with distinct artifact roles:
 
 | Layer | Artifact | Behavior |
@@ -202,6 +213,8 @@ Focused tests for `cargo xtask check-goals` source-of-truth coverage include:
 - `rejects_blocked_item_without_blocker`;
 - `rejects_unknown_referenced_artifact`;
 - `rejects_unsupported_policy_field`.
+- `repo_contract_report_writes_graph_markdown_and_json` verifies schema `0.2`,
+  durable-context authority, and absence of the obsolete `active_goal` key.
 
 Focused tests for `cargo xtask check-support-tiers` include:
 
@@ -229,11 +242,13 @@ This spec coordinates these accepted source-of-truth surfaces:
 - `cargo xtask check-doc-artifacts`;
 - support-tier claim map in `docs/status/SUPPORT_TIERS.md`;
 - `cargo xtask check-support-tiers`;
-- active goal manifest documentation and `cargo xtask check-goals` coverage;
+- durable campaign record documentation, the non-authoritative compatibility
+  pointer, and `cargo xtask check-goals` coverage;
 - PR and issue templates under `.github/`;
 - advisory source-of-truth CI before blocking promotion;
 - `cargo xtask repo-contract-report`;
-- `cargo xtask pr-body --work-item <id>`, limited to ready or active work items
+- `cargo xtask pr-body --work-item <id> --campaign <campaign-id>`, limited to
+  ready or active recorded work items
   with resolved proposal, spec, and plan references;
 - `cargo xtask closeout --goal <goal-id>`.
 - [source-of-truth closeout](../handoffs/2026-05-23-source-of-truth-control-plane-closeout.md).

@@ -12,7 +12,7 @@ Proposals decompose into:
 - campaign and work-item entries in
   [`docs/IMPLEMENTATION_CAMPAIGNS.md`](../IMPLEMENTATION_CAMPAIGNS.md) and
   [`docs/IMPLEMENTATION_PLAN.md`](../IMPLEMENTATION_PLAN.md)
-- the active execution manifest at `.ripr/goals/active.toml`
+- durable campaign records under `.ripr/goals/campaigns/` (not live execution authority)
 - fixtures, tests, goldens, output contracts, and metrics in the rest of the
   repo
 - a closeout handoff in [`docs/handoffs/`](../handoffs/) when the campaign

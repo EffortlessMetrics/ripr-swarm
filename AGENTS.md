@@ -480,7 +480,9 @@ authorizes recursive fan-out.
 
 Before spawning a wave:
 
-1. Reconcile live Git, open PRs, `.ripr/goals/active.toml`, linked plans/specs,
+1. Reconcile live Git, open PRs, durable campaign records under
+   `.ripr/goals/campaigns/`, the non-authoritative compatibility pointer,
+   linked plans/specs,
    current base/head, and working-tree state. Live source beats transcript or
    stale planning prose.
 2. Give every subtask one bounded objective, decision contribution, input/base
@@ -594,7 +596,7 @@ from repository artifacts instead of chat history.
 When picking up work:
 
 - start from `docs/ROADMAP.md` and `docs/IMPLEMENTATION_PLAN.md`
-- use `docs/IMPLEMENTATION_CAMPAIGNS.md` and `.ripr/goals/active.toml` when
+- use `docs/IMPLEMENTATION_CAMPAIGNS.md` and `.ripr/goals/campaigns/` when
   working through a Codex Goals campaign
 - use `docs/CAPABILITY_MATRIX.md` to identify current capability status
 - use `docs/PR_AUTOMATION.md` to understand local shaping and PR reports

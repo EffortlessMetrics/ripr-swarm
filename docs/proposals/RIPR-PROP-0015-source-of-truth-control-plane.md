@@ -280,7 +280,8 @@ This proposal moved to `accepted` on 2026-05-23 because:
 - PR and issue templates include proposal/spec/ADR/plan/proof/claim
   boundary/rollback fields;
 - source-of-truth CI runs advisory before any blocking promotion;
-- repo-contract reports show active goal, ready items, accepted artifacts,
+- repo-contract schema `0.2` reports durable, non-authoritative campaign context;
+  legacy active-goal/current-queue fields remain inert during migration, while accepted artifacts,
   support-tier impacts, policy impacts, missing links, superseded artifacts,
   and recently completed work;
 - PR body and closeout generation can consume the same graph;

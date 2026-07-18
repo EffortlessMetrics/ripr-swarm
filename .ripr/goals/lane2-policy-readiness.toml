@@ -3,9 +3,9 @@ title = "Policy Readiness and Preview Evidence Governance"
 status = "tracker"
 issue = "https://github.com/EffortlessMetrics/ripr/issues/755"
 
-# Focused Lane 2 tracker. This is not the active Codex Goals manifest.
-# `.ripr/goals/active.toml` remains the active execution manifest for
-# Campaign 27: Language Adapter Preview.
+# Focused Lane 2 historical tracker. It is not the active Codex Goals manifest.
+# It is durable context, not live execution
+# authority; `.ripr/goals/active.toml` is only a compatibility pointer.
 
 objective = """
 Make RIPR policy decisions auditable across stable Rust evidence and preview

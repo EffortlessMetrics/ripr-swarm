@@ -10,7 +10,7 @@ document may link to other layers, but it must not absorb their responsibilities
 | Spec | Behavior contract, evidence requirements, acceptance examples | Product rationale, durable architecture decisions, PR sequencing | [`docs/specs/`](../specs/) |
 | ADR | Durable architecture or product decision | Full behavior contract, proposal rationale, task queue | [`docs/adr/`](../adr/) |
 | Implementation plan | PR-sized sequence, dependencies, proof commands, rollback | Why, behavior contract, support-tier truth, policy exception truth | [`plans/`](../../plans/) |
-| Active goal manifest | Current machine-readable execution state | Durable design history, broad roadmap, human-only todos | [`.ripr/goals/active.toml`](../../.ripr/goals/active.toml) |
+| Durable campaign record | Machine-readable objectives, work-item history, dependencies, and proof classes; not live execution authority | Current GitHub/PR/check/claim state or root-selected work | [`.ripr/goals/campaigns/`](../../.ripr/goals/campaigns/) |
 | Support tiers | Product claim to proof-command mapping | Specs, CI lane ownership, policy exceptions | [`docs/status/SUPPORT_TIERS.md`](../status/SUPPORT_TIERS.md) |
 | Policy ledgers | Exceptions, owners, reasons, review posture, governed obligations | Product claims, behavior contracts, PR sequencing | [`policy/`](../../policy/) |
 | CI and proof commands | Mechanical evidence for the current slice | Product promises without support-tier mapping | [`.github/workflows/`](../../.github/workflows/) and `cargo xtask` |
@@ -22,7 +22,7 @@ document may link to other layers, but it must not absorb their responsibilities
 - A spec answers "what exact behavior must be true?"
 - An ADR answers "what durable decision governs this?"
 - A plan answers "what PR-sized step lands next?"
-- An active goal answers "what is executing now?"
+- A durable campaign answers "what bounded objective, history, and proof context exists?"
 - A support-tier row answers "what may users believe, and what proves it?"
 - A policy ledger answers "what exception or obligation exists, who owns it,
   and when is it reviewed?"
