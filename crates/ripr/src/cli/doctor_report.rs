@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn render_json_produces_valid_json() {
+    fn render_json_produces_valid_json() -> Result<(), String> {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(
             "root_directory",
@@ -181,22 +181,26 @@ mod tests {
             Some("root exists".to_string()),
         );
         report.add_section("cache", vec!["cache: target/ripr/cache".to_string()]);
-        let json = report.render_json().unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = report.render_json()?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
         assert_eq!(parsed["schema_version"], "0.1");
         assert_eq!(parsed["tool"], "ripr");
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");
         assert_eq!(parsed["checks"][0]["status"], "pass");
         assert_eq!(parsed["sections"][0]["name"], "cache");
+        Ok(())
     }
 
     #[test]
-    fn sections_are_optional() {
+    fn sections_are_optional() -> Result<(), String> {
         let report = DoctorReport::new("/workspace");
-        let json = report.render_json().unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = report.render_json()?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
         assert!(parsed["sections"].is_array());
-        assert_eq!(parsed["sections"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["sections"].as_array().map(Vec::len), Some(0));
+        Ok(())
     }
 }
