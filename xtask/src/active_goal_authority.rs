@@ -52,7 +52,7 @@ pub(crate) fn run() -> Result<(), String> {
     run_at(Path::new("."), Path::new("target/ripr/reports"))
 }
 
-fn run_at(root: &Path, reports: &Path) -> Result<(), String> {
+pub(crate) fn run_at(root: &Path, reports: &Path) -> Result<(), String> {
     let audit = audit_root(root)?;
     fs::create_dir_all(reports).map_err(|err| format!("create reports directory: {err}"))?;
     fs::write(
@@ -169,6 +169,7 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
         ));
     }
     let mut rows = Vec::new();
+    let mut seen_issues = BTreeSet::new();
     for contract in contracts {
         for field in [
             "issue",
@@ -199,6 +200,9 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
                 .to_string()
         };
         let issue = get("issue");
+        if !seen_issues.insert(issue.clone()) {
+            return Err(format!("duplicate issue contract identity {issue}"));
+        }
         let rule = validate_rule(Rule {
             id: format!("issue-contract-{issue}"),
             selector: format!("github:{issue}"),
@@ -331,6 +335,12 @@ fn parse_rules(text: &str) -> Result<Vec<Rule>, String> {
     }
     if rules.is_empty() {
         return Err("consumer inventory is empty".to_string());
+    }
+    let mut ids = BTreeSet::new();
+    for rule in &rules {
+        if !ids.insert(rule.id.as_str()) {
+            return Err(format!("duplicate consumer inventory id {}", rule.id));
+        }
     }
     Ok(rules)
 }
@@ -470,7 +480,7 @@ fn render_markdown(audit: &Audit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_root, run_at, selector_matches};
+    use super::{audit_root, issue_contract_rows, parse_rules, run_at, selector_matches};
     use std::fs;
     use std::path::Path;
 
@@ -525,8 +535,12 @@ mod tests {
         let audit = audit_root(Path::new(
             "../fixtures/active-goal-authority-audit/hidden-singleton",
         ))?;
-        if audit.unclassified.is_empty() {
-            return Err("hidden singleton reader did not block migration".to_string());
+        if !audit
+            .unclassified
+            .iter()
+            .any(|path| path == "hidden_reader.rs")
+        {
+            return Err("hidden_reader.rs did not block migration".to_string());
         }
         if audit
             .unclassified
@@ -534,6 +548,38 @@ mod tests {
             .any(|path| path.ends_with("active.toml"))
         {
             return Err("fixture unexpectedly contains active.toml".to_string());
+        }
+        let source = fs::read_to_string(
+            "../fixtures/active-goal-authority-audit/hidden-singleton/hidden_reader.rs",
+        )
+        .map_err(|err| format!("read hidden reader: {err}"))?;
+        if !source.contains("const LEGACY_STATUS: &str = \"ready\";") {
+            return Err("legacy ready control is missing or changed".to_string());
+        }
+        if source
+            .replace("\"ready\"", "\"pending\"")
+            .contains("const LEGACY_STATUS: &str = \"ready\";")
+        {
+            return Err("legacy ready control did not discriminate changed status".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_consumer_and_issue_identities_are_rejected() -> Result<(), String> {
+        let duplicate_rule =
+            include_str!("../../fixtures/active-goal-authority-audit/consumers.toml");
+        let first = duplicate_rule
+            .split("[[consumer]]")
+            .nth(1)
+            .ok_or_else(|| "inventory has no consumer".to_string())?;
+        let duplicated = format!("[[consumer]]{first}[[consumer]]{first}");
+        if parse_rules(&duplicated).is_ok() {
+            return Err("duplicate consumer id was accepted".to_string());
+        }
+        let root = Path::new("../fixtures/active-goal-authority-audit/duplicate-issues");
+        if issue_contract_rows(root).is_ok() {
+            return Err("duplicate issue identity was accepted".to_string());
         }
         Ok(())
     }

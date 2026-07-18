@@ -21,7 +21,9 @@ This corpus proves RIPR-SPEC-0127 without changing active-goal authority.
 
 The current repository and historical fixture have no unclassified consumers.
 The hidden singleton fixture remains blocked because removing the manifest does
-not remove its reader. Equivalent inputs preserve the semantic digest.
+not remove its reader. Its `LEGACY_STATUS` must remain exactly `ready`; changing
+or removing that token breaks the negative control, and the token alone grants
+no authority. Equivalent inputs preserve the semantic digest.
 
 ## Given
 
