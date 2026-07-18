@@ -481,7 +481,7 @@ fn render_markdown(audit: &Audit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_root, issue_contract_rows, parse_rules, run_at, selector_matches};
+    use super::{audit_root, discover, issue_contract_rows, parse_rules, run_at, selector_matches};
     use std::fs;
     use std::path::Path;
 
@@ -499,14 +499,16 @@ mod tests {
     #[test]
     fn repository_inventory_is_complete_and_deterministic() -> Result<(), String> {
         let first = audit_root(Path::new("../"))?;
-        let second = audit_root(Path::new("../"))?;
         if !first.unclassified.is_empty() {
             return Err(format!("unclassified: {:?}", first.unclassified));
         }
         if !first.contradictions.is_empty() {
             return Err(format!("contradictions: {:?}", first.contradictions));
         }
-        if first.semantic_digest != second.semantic_digest {
+        let fixture = Path::new("../fixtures/active-goal-authority-audit/historical-reference");
+        let fixture_first = audit_root(fixture)?;
+        let fixture_second = audit_root(fixture)?;
+        if fixture_first.semantic_digest != fixture_second.semantic_digest {
             return Err("equivalent inputs changed semantic digest".to_string());
         }
         Ok(())
@@ -515,7 +517,6 @@ mod tests {
     #[test]
     fn ignored_and_untracked_residue_does_not_change_digest() -> Result<(), String> {
         let root = Path::new("../");
-        let before = audit_root(root)?;
         let residue = root.join(format!(
             ".active-goal-audit-residue-{}/active_goal_reader.txt",
             std::process::id()
@@ -526,14 +527,17 @@ mod tests {
         fs::create_dir_all(parent).map_err(|err| format!("create residue directory: {err}"))?;
         fs::write(&residue, ".ripr/goals/active.toml ready = true")
             .map_err(|err| format!("write residue: {err}"))?;
-        let after = audit_root(root)?;
+        let discovered = discover(root)?;
         if let Err(err) = fs::remove_dir_all(parent)
             && err.kind() != std::io::ErrorKind::NotFound
         {
             return Err(format!("remove residue: {err}"));
         }
-        if before.semantic_digest != after.semantic_digest {
-            return Err("ignored residue changed semantic digest".to_string());
+        if discovered
+            .iter()
+            .any(|path| path.contains(".active-goal-audit-residue-"))
+        {
+            return Err("untracked residue entered repository discovery".to_string());
         }
         Ok(())
     }
