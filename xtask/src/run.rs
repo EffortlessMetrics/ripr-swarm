@@ -187,6 +187,8 @@ pub(crate) fn run_output_in_dir(
             cwd.display()
         ));
     }
+    // Root-scoped repository discovery consumes path identities. Unlike display-only
+    // command output, lossy decoding could merge or skip distinct tracked paths.
     String::from_utf8(output.stdout).map_err(|err| format!("{program} output was not UTF-8: {err}"))
 }
 

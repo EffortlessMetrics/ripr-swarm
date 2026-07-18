@@ -225,8 +225,8 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
 fn discover(root: &Path) -> Result<Vec<String>, String> {
     if root.join(".git").exists() {
         let mut paths = Vec::new();
-        let tracked = crate::run::run_output_in_dir("git", &["ls-files"], root)?;
-        for normalized in tracked.lines().map(str::to_string) {
+        let tracked = crate::run::run_output_in_dir("git", &["ls-files", "-z"], root)?;
+        for normalized in nul_delimited_paths(&tracked) {
             if super::should_skip_path(&normalized) {
                 continue;
             }
@@ -245,6 +245,10 @@ fn discover(root: &Path) -> Result<Vec<String>, String> {
     walk(root, root, &mut paths)?;
     paths.sort();
     Ok(paths)
+}
+
+fn nul_delimited_paths(output: &str) -> impl Iterator<Item = String> + '_ {
+    output.split_terminator('\0').map(str::to_string)
 }
 
 fn walk(root: &Path, directory: &Path, found: &mut Vec<String>) -> Result<(), String> {
@@ -481,7 +485,10 @@ fn render_markdown(audit: &Audit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_root, discover, issue_contract_rows, parse_rules, run_at, selector_matches};
+    use super::{
+        audit_root, discover, issue_contract_rows, nul_delimited_paths, parse_rules, run_at,
+        selector_matches,
+    };
     use std::fs;
     use std::path::Path;
 
@@ -510,6 +517,15 @@ mod tests {
         let fixture_second = audit_root(fixture)?;
         if fixture_first.semantic_digest != fixture_second.semantic_digest {
             return Err("equivalent inputs changed semantic digest".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tracked_path_parser_preserves_newlines_inside_nul_delimited_names() -> Result<(), String> {
+        let paths = nul_delimited_paths("ordinary.rs\0docs/active\ngoal.md\0").collect::<Vec<_>>();
+        if paths != ["ordinary.rs", "docs/active\ngoal.md"] {
+            return Err(format!("NUL-delimited tracked paths changed: {paths:?}"));
         }
         Ok(())
     }
