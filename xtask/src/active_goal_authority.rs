@@ -225,7 +225,8 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
 fn discover(root: &Path) -> Result<Vec<String>, String> {
     if root.join(".git").exists() {
         let mut paths = Vec::new();
-        for normalized in super::tracked_files()? {
+        let tracked = crate::run::run_output_in_dir("git", &["ls-files"], root)?;
+        for normalized in tracked.lines().map(str::to_string) {
             if super::should_skip_path(&normalized) {
                 continue;
             }
@@ -526,10 +527,10 @@ mod tests {
         fs::write(&residue, ".ripr/goals/active.toml ready = true")
             .map_err(|err| format!("write residue: {err}"))?;
         let after = audit_root(root)?;
-        if let Err(err) = fs::remove_dir_all(parent) {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!("remove residue: {err}"));
-            }
+        if let Err(err) = fs::remove_dir_all(parent)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(format!("remove residue: {err}"));
         }
         if before.semantic_digest != after.semantic_digest {
             return Err("ignored residue changed semantic digest".to_string());
