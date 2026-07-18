@@ -160,7 +160,7 @@ Settings App managed rules:
 
 - block force pushes to `main`
 - block branch deletion for `main`
-- leave conversation resolution disabled unless a focused policy PR promotes it
+- require conversation resolution before merge
 - leave linear history disabled; merge policy is enforced by squash-only
   repository settings
 - use squash merge for PRs

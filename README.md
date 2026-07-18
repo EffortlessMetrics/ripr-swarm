@@ -32,31 +32,24 @@
 
 <!-- VS Marketplace install count is manually maintained. Refresh the count and date from publisher metrics whenever you check; do not use live VS Marketplace Shields routes. -->
 
-`ripr` reads a PR diff and tells your reviewers and coding agents which changed
-behavior the current tests *reach* but don't actually *check* — the question
-mutation testing answers, asked at draft time without running a single mutant.
-Where a test would not catch the change breaking, it routes one focused,
-test-only repair: what to assert, where, the command that verifies it, and a
-before/after receipt.
+**ripr shows your agents where tests are needed and which tests are too weak to trust — without running mutation testing.**
 
-## The first useful run
+`ripr` answers this question: which changed behavior your tests run but don't actually check?
 
-```text
-one PR
--> one gap
--> one focused test
--> one before/after receipt
-```
+**The RIPR loop:** `diff` → `gap` → `repair card` → `focused test` → `receipt`
+
+Run this first:
 
 ```bash
 cargo install ripr
 ripr first-pr --root . --base origin/main --head HEAD
 ```
 
+## The first useful run
+
 That's the whole loop: ripr names the top repairable gap, you add one focused
 test outside ripr, and the receipt records whether the gap closed. `ripr.toml`
 is optional; the zero-config run is the intended first interface.
-
 ## Where it fits
 
 ```text
