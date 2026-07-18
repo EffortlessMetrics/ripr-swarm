@@ -36,6 +36,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::targeted_rerun_benchmark(&args)
         }
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
+        XtaskCommand::ActiveGoalAuthorityAudit => super::active_goal_authority::run(),
         XtaskCommand::PrBody(args) => super::pr_body(&args),
         XtaskCommand::Closeout(args) => super::closeout(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
