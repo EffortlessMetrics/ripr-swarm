@@ -1,6 +1,6 @@
 # Active-goal authority migration audit
 
-Status: accepted prerequisite contract for #1697
+Status: Phase 1 framework; #1697 remains blocked
 
 ## Scope
 
@@ -17,8 +17,21 @@ writer permission.
    compatibility period, fields, authority effect, and proof.
 3. Prove historical references remain readable, while hidden readers and
    legacy ready status cannot authorize current work.
-4. After this audit lands, #1701 may migrate durable campaign records and
-   explicit campaign views. It must rerun the audit against its exact head.
+4. #1701 may migrate only after the occurrence and issue-snapshot framework
+   blockers are burned down and #1697 is independently closed.
+
+## Phase 2 work packets
+
+1. Replace broad live rules with exact `(path, anchor, marker_kind,
+   normalized_marker_hash)` rows. New occurrences in known files must block;
+   hidden readers under covered `docs/` and `xtask/` paths prove this. Tracked
+   in #1715.
+2. Replace issue ranges with individual captured snapshots for #1631-#1639,
+   #1643-#1650, #1692, #1697, and #1701. Record body hash, `updated_at`,
+   classification, evidence, and explicit `not_proven` freshness. Tracked in
+   #1716.
+3. Review every remaining blocker on the exact head. Only zero blockers may
+   satisfy #1697. Phase 1 cannot unblock #1701.
 
 ## Migration proof
 

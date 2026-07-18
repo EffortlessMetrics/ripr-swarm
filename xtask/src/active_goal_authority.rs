@@ -45,11 +45,15 @@ struct Audit {
     unused_rules: Vec<String>,
     contradictions: Vec<String>,
     semantic_digest: String,
+    framework_blockers: Vec<String>,
 }
 
 pub(crate) fn run() -> Result<(), String> {
-    let audit = audit_root(Path::new("."))?;
-    let reports = Path::new("target/ripr/reports");
+    run_at(Path::new("."), Path::new("target/ripr/reports"))
+}
+
+fn run_at(root: &Path, reports: &Path) -> Result<(), String> {
+    let audit = audit_root(root)?;
     fs::create_dir_all(reports).map_err(|err| format!("create reports directory: {err}"))?;
     fs::write(
         reports.join("active-goal-authority-audit.json"),
@@ -64,9 +68,22 @@ pub(crate) fn run() -> Result<(), String> {
     println!(
         "active-goal authority audit: {} consumers, {} blockers",
         audit.rows.len(),
-        audit.unclassified.len() + audit.contradictions.len()
+        audit.unclassified.len() + audit.contradictions.len() + audit.framework_blockers.len()
     );
-    Ok(())
+    if audit.unclassified.is_empty()
+        && audit.contradictions.is_empty()
+        && audit.framework_blockers.is_empty()
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "active-goal authority audit blocked: {} unclassified discoveries, {} contradictions, {} framework blockers; inspect {}",
+            audit.unclassified.len(),
+            audit.contradictions.len(),
+            audit.framework_blockers.len(),
+            reports.join("active-goal-authority-audit.json").display()
+        ))
+    }
 }
 
 fn audit_root(root: &Path) -> Result<Audit, String> {
@@ -118,7 +135,14 @@ fn audit_root(root: &Path) -> Result<Audit, String> {
         .filter(|rule| !used.contains(&rule.id))
         .map(|rule| rule.id.clone())
         .collect();
-    let semantic = semantic_text(&rows, &unclassified, &unused_rules, &contradictions);
+    let framework_blockers = vec![
+        "occurrence_inventory_not_proven: path-level rules must be replaced by reviewed (path, anchor, marker_kind, normalized_marker_hash) rows; broad live selectors are not migration evidence".to_string(),
+        "issue_snapshots_not_proven: current individual snapshots are required for #1631-#1639, #1643-#1650, #1692, #1697, and #1701; range aggregates are not migration evidence".to_string(),
+    ];
+    let mut semantic = semantic_text(&rows, &unclassified, &unused_rules, &contradictions);
+    for blocker in &framework_blockers {
+        semantic.push_str(&format!("framework_blocker|{blocker}\n"));
+    }
     let semantic_digest = format!("{:x}", Sha256::digest(semantic.as_bytes()));
     Ok(Audit {
         rows,
@@ -126,6 +150,7 @@ fn audit_root(root: &Path) -> Result<Audit, String> {
         unused_rules,
         contradictions,
         semantic_digest,
+        framework_blockers,
     })
 }
 
@@ -194,6 +219,23 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
 }
 
 fn discover(root: &Path) -> Result<Vec<String>, String> {
+    if root.join(".git").exists() {
+        let mut paths = Vec::new();
+        for normalized in super::tracked_files()? {
+            if super::should_skip_path(&normalized) {
+                continue;
+            }
+            let path = root.join(&normalized);
+            let Ok(text) = fs::read_to_string(path) else {
+                continue;
+            };
+            if contains_marker(&text) {
+                paths.push(normalized);
+            }
+        }
+        paths.sort();
+        return Ok(paths);
+    }
     let mut paths = Vec::new();
     walk(root, root, &mut paths)?;
     paths.sort();
@@ -221,13 +263,17 @@ fn walk(root: &Path, directory: &Path, found: &mut Vec<String>) -> Result<(), St
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
-            let lowered = text.to_ascii_lowercase();
-            if MARKERS.iter().any(|marker| lowered.contains(marker)) {
+            if contains_marker(&text) {
                 found.push(normalized);
             }
         }
     }
     Ok(())
+}
+
+fn contains_marker(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    MARKERS.iter().any(|marker| lowered.contains(marker))
 }
 
 fn parse_rules(text: &str) -> Result<Vec<Rule>, String> {
@@ -373,10 +419,11 @@ fn render_json(audit: &Audit) -> Result<String, String> {
     })).collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "schema_version":"0.1", "semantic_digest":audit.semantic_digest,
-        "migration_ready": audit.unclassified.is_empty() && audit.contradictions.is_empty(),
+        "migration_ready": audit.unclassified.is_empty() && audit.contradictions.is_empty() && audit.framework_blockers.is_empty(),
         "consumers":rows, "unclassified_discoveries":audit.unclassified,
         "unused_inventory_rows":audit.unused_rules, "contradictions":audit.contradictions,
-        "blockers": audit.unclassified.len() + audit.contradictions.len(),
+        "framework_blockers": audit.framework_blockers,
+        "blockers": audit.unclassified.len() + audit.contradictions.len() + audit.framework_blockers.len(),
         "non_claims":["live_work_selection","mutation_authority","campaign_priority","github_state_freshness"]
     }))
     .map(|text| text + "\n")
@@ -384,7 +431,9 @@ fn render_json(audit: &Audit) -> Result<String, String> {
 }
 
 fn render_markdown(audit: &Audit) -> String {
-    let ready = audit.unclassified.is_empty() && audit.contradictions.is_empty();
+    let ready = audit.unclassified.is_empty()
+        && audit.contradictions.is_empty()
+        && audit.framework_blockers.is_empty();
     let mut out = format!(
         "# Active-goal authority audit\n\nSchema: `0.1`\n\nSemantic digest: `{}`\n\nMigration ready: `{ready}`\n\nThis report inventories tracked singleton consumers. It does not select work, authorize mutation, rank campaigns, or read live GitHub state.\n\n## Consumers\n\n| Path | Classification | Owner | Follow-up | Authority effect |\n| --- | --- | --- | --- | --- |\n",
         audit.semantic_digest
@@ -405,6 +454,9 @@ fn render_markdown(audit: &Audit) -> String {
     for value in &audit.contradictions {
         out.push_str(&format!("- contradiction: {value}\n"));
     }
+    for value in &audit.framework_blockers {
+        out.push_str(&format!("- framework: {value}\n"));
+    }
     out.push_str("\n## Unused inventory rows\n\n");
     if audit.unused_rules.is_empty() {
         out.push_str("None.\n");
@@ -418,7 +470,8 @@ fn render_markdown(audit: &Audit) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_root, selector_matches};
+    use super::{audit_root, run_at, selector_matches};
+    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -449,6 +502,25 @@ mod tests {
     }
 
     #[test]
+    fn ignored_and_untracked_residue_does_not_change_digest() -> Result<(), String> {
+        let root = Path::new("../");
+        let before = audit_root(root)?;
+        let residue = root.join("target-review-residue/active_goal_reader.txt");
+        let parent = residue
+            .parent()
+            .ok_or_else(|| "residue path has no parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|err| format!("create residue directory: {err}"))?;
+        fs::write(&residue, ".ripr/goals/active.toml ready = true")
+            .map_err(|err| format!("write residue: {err}"))?;
+        let after = audit_root(root)?;
+        fs::remove_dir_all(parent).map_err(|err| format!("remove residue: {err}"))?;
+        if before.semantic_digest != after.semantic_digest {
+            return Err("ignored residue changed semantic digest".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn hidden_singleton_and_legacy_ready_block_migration() -> Result<(), String> {
         let audit = audit_root(Path::new(
             "../fixtures/active-goal-authority-audit/hidden-singleton",
@@ -463,6 +535,27 @@ mod tests {
         {
             return Err("fixture unexpectedly contains active.toml".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn blocked_command_returns_error_after_writing_both_reports() -> Result<(), String> {
+        let fixture = Path::new("../fixtures/active-goal-authority-audit/hidden-singleton");
+        let reports = fixture.join("target/ripr/reports");
+        let result = run_at(fixture, &reports);
+        if result.is_ok() {
+            return Err("blocked command unexpectedly returned success".to_string());
+        }
+        for name in [
+            "active-goal-authority-audit.json",
+            "active-goal-authority-audit.md",
+        ] {
+            if !reports.join(name).is_file() {
+                return Err(format!("blocked command did not preserve {name}"));
+            }
+        }
+        fs::remove_dir_all(fixture.join("target"))
+            .map_err(|err| format!("remove fixture reports: {err}"))?;
         Ok(())
     }
 

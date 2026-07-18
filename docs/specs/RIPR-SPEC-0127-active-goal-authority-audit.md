@@ -1,10 +1,10 @@
 # RIPR-SPEC-0127: Active-goal authority audit
 
-Status: accepted
+Status: proposed
 
 This specification defines the audit-only prerequisite for removing singleton
-execution authority from `.ripr/goals/active.toml`. It implements issue #1697
-and does not perform the migration owned by #1701.
+execution authority from `.ripr/goals/active.toml`. It does not satisfy issue
+#1697 and does not perform or unblock the migration owned by #1701.
 
 ## Problem
 
@@ -25,11 +25,13 @@ effect, target classification, owner, dependent issue, compatibility period,
 and positive and negative proof. The closed classifications are those defined
 by #1697.
 
-Unclassified discoveries, equally specific contradictory rules, and
-`unknown_needs_decision` rows block `migration_ready`. Unused inventory rules
+Unclassified discoveries, equally specific contradictory rules,
+`unknown_needs_decision` rows, incomplete occurrence review, and incomplete
+individual issue snapshots block `migration_ready`. Unused inventory rules
 remain visible but do not by themselves strengthen or weaken readiness. The
-report still emits when blockers exist so the exact repair route remains
-inspectable.
+report still emits and the command returns nonzero when blockers exist so the
+exact repair route remains inspectable. Phase 1 intentionally reports that
+path-level rules and issue-range aggregates are not migration evidence.
 
 ## Required invariants
 
@@ -42,6 +44,11 @@ inspectable.
 - Removing only `active.toml` does not hide a remaining singleton reader.
 - The command reads repository inputs and writes only ignored reports.
 - Captured issue contracts are inventory evidence, not live GitHub state.
+- Broad live-consumer selectors cannot establish migration readiness.
+- Phase 2 keys reviewed occurrences by path, syntax-derived anchor, marker
+  kind, and normalized marker hash.
+- Phase 2 captures #1631-#1639, #1643-#1650, #1692, #1697, and #1701 as
+  individual snapshots with evidence identity and freshness metadata.
 
 ## Required Evidence
 
