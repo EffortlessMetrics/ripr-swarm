@@ -29,8 +29,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
-    Position, Range, Uri,
+    Range, Uri,
 };
+#[cfg(test)]
+use tower_lsp_server::ls_types::Position;
 
 pub struct DiagnosticBatch {
     pub uri: Uri,
