@@ -32,6 +32,16 @@ export async function resolveServer(
     return probeCandidate(configuredPath, 'configured', `configured ripr.server.path ${configuredPath}`);
   }
 
+  // Workspace Trust guard (issue #1623).
+  // Do not download or execute a server binary in untrusted workspaces.
+  if (!vscode.workspace.isTrusted && config.autoDownload) {
+    output.appendLine(
+      'ripr: Workspace Trust is required for managed server download. ' +
+      'Falling back to ripr on PATH. Enable workspace trust or set ripr.server.path manually.'
+    );
+    return probeCandidate('ripr', 'path', 'ripr on PATH (workspace untrusted, download skipped)');
+  }
+
   const platform = currentRiprPlatform();
   const version = requestedServerVersion(context, config);
   let downloadFailure: string | undefined;

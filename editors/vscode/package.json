@@ -93,6 +93,10 @@
       "serialize-javascript": "^7.0.5"
     }
   },
+  "workspaceTrust": {
+    "request": "onDemand",
+    "description": "ripr downloads and executes a server binary. Workspace Trust is required for automatic server download."
+  },
   "contributes": {
     "configuration": {
       "title": "ripr",
