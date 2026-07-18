@@ -4,7 +4,7 @@ Status: proposed
 
 This specification defines the audit-only prerequisite for removing singleton
 execution authority from `.ripr/goals/active.toml`. It does not satisfy issue
-#1697 and does not perform or unblock the migration owned by #1701.
+issue `#1697` and does not perform or unblock the migration owned by #1701.
 
 ## Problem
 
