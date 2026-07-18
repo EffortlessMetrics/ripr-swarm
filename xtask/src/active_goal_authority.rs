@@ -284,6 +284,8 @@ fn discover_occurrences(root: &Path) -> Result<Vec<Occurrence>, String> {
 
 fn occurrences_in_text(path: &str, text: &str) -> Vec<Occurrence> {
     let lines = text.lines().collect::<Vec<_>>();
+    let mut line_starts = vec![0];
+    line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
     let rust_owners = if Path::new(path).extension().and_then(|value| value.to_str()) == Some("rs")
     {
         collect_rust_owners(text)
@@ -296,7 +298,13 @@ fn occurrences_in_text(path: &str, text: &str) -> Vec<Occurrence> {
         for marker in MARKERS {
             for (column, _) in marker_matches(&lowered, marker) {
                 let normalized = line.split_whitespace().collect::<Vec<_>>().join(" ");
-                let anchor = structural_anchor(path, &lines, index, column, &rust_owners);
+                let anchor = structural_anchor(
+                    path,
+                    &lines,
+                    index,
+                    line_starts[index] + column,
+                    &rust_owners,
+                );
                 let marker_kind = marker_kind(marker).to_string();
                 let normalized_marker_hash = format!("{:x}", Sha256::digest(normalized.as_bytes()));
                 occurrences.push(Occurrence {
@@ -358,16 +366,11 @@ fn structural_anchor(
     path: &str,
     lines: &[&str],
     index: usize,
-    column: usize,
+    byte_offset: usize,
     rust_owners: &[RustOwner],
 ) -> String {
     let extension = Path::new(path).extension().and_then(|value| value.to_str());
     if extension == Some("rs") {
-        let byte_offset = lines[..index]
-            .iter()
-            .map(|line| line.len() + 1)
-            .sum::<usize>()
-            + column;
         return rust_owners
             .iter()
             .filter(|owner| owner.start <= byte_offset && byte_offset < owner.end)
@@ -873,6 +876,12 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
             || occurrences[3].anchor != "impl TraitB for Shared > fn load"
         {
             return Err(format!("Rust syntax owners changed: {occurrences:?}"));
+        }
+        let crlf = occurrences_in_text("src/lib.rs", &source.replace('\n', "\r\n"));
+        if occurrences != crlf {
+            return Err(format!(
+                "line-ending style changed Rust occurrence identity: {crlf:?}"
+            ));
         }
         Ok(())
     }
