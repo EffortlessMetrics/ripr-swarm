@@ -328,14 +328,14 @@ fn diagnostic_canonical_id(
     diagnostic: &tower_lsp_server::ls_types::Diagnostic,
     document: &str,
 ) -> String {
-    if let Some(data) = &diagnostic.data {
-        if let Some(obj) = data.as_object() {
-            if let Some(id) = obj.get("seam_id").and_then(|v| v.as_str()) {
-                return id.to_string();
-            }
-            if let Some(id) = obj.get("gap_id").and_then(|v| v.as_str()) {
-                return id.to_string();
-            }
+    if let Some(data) = &diagnostic.data
+        && let Some(obj) = data.as_object()
+    {
+        if let Some(id) = obj.get("seam_id").and_then(|v| v.as_str()) {
+            return id.to_string();
+        }
+        if let Some(id) = obj.get("gap_id").and_then(|v| v.as_str()) {
+            return id.to_string();
         }
     }
     let line = diagnostic.range.start.line;
