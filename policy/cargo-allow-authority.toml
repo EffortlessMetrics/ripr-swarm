@@ -1,0 +1,53 @@
+# RIPR cargo-allow authority map
+# Maps spec requirement owners to the source files they govern.
+# Used by future cargo xtask check-cargo-allow-atomic to verify
+# that PRs touching governed files include the corresponding spec slice.
+# Format: [[authority]]
+#   spec = "RIPR-SPEC-XXXX"
+#   owns = ["path/to/file", "path/to/dir/"]
+
+schema_version = "0.1"
+dialect = "ripr-authority-map"
+
+# Analysis pipeline
+[[authority]]
+spec = "RIPR-SPEC-0108"
+owner = "evidence-promotion-honesty"
+owned_paths = [
+  "crates/ripr/src/analysis/classifier.rs",
+  "fixtures/evidence-promotion-honesty-corpus/",
+]
+
+# LSP diagnostics policy
+[[authority]]
+spec = "RIPR-SPEC-0076"
+owner = "lsp-diagnostics"
+owned_paths = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+]
+
+# LSP top-limitation
+[[authority]]
+spec = "RIPR-SPEC-0078"
+owner = "lsp-top-limitation"
+owned_paths = [
+  "crates/ripr/src/lsp/backend.rs",
+]
+
+# LSP seam inventory deferral
+[[authority]]
+spec = "RIPR-SPEC-0105"
+owner = "lsp-defer-seam-inventory"
+owned_paths = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/state.rs",
+]
+
+# Output contracts
+[[authority]]
+spec = "RIPR-SPEC-0060"
+owner = "json-output-schema"
+owned_paths = [
+  "schemas/",
+  "crates/ripr/src/output/json.rs",
+]

@@ -453,3 +453,12 @@ classification = "generated"
 reason = "Generated Shields endpoint JSON for public README badges."
 generated_by = "cargo xtask badges"
 covered_by = ["cargo xtask badges --check", "cargo xtask badges", "cargo xtask check-badge-endpoints", "cargo xtask update-badge-endpoints"]
+
+[[allow]]
+glob = "policy/cargo-allow-authority.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Authority map for future cargo-allow spec-v2 integration (issue #1653)"
+covered_by = ["cargo xtask check-file-policy"]
