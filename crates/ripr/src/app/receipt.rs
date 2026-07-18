@@ -858,6 +858,7 @@ mod tests {
             packet_id: None,
             verify_command: "cargo test".to_string(),
             verify_status: "passed".to_string(),
+            current_head: None,
             out: Some(PathBuf::from("custom/path/r.json")),
             json: true,
         };
