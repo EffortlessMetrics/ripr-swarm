@@ -36,6 +36,8 @@ struct Rule {
     target_behavior: String,
     positive_proof: String,
     negative_proof: String,
+    captured_body_hash: String,
+    captured_updated_at: String,
 }
 
 #[derive(Debug)]
@@ -137,7 +139,6 @@ fn audit_root(root: &Path) -> Result<Audit, String> {
         .collect();
     let framework_blockers = vec![
         "occurrence_inventory_not_proven: path-level rules must be replaced by reviewed (path, anchor, marker_kind, normalized_marker_hash) rows; broad live selectors are not migration evidence".to_string(),
-        "issue_snapshots_not_proven: current individual snapshots are required for #1631-#1639, #1643-#1650, #1692, #1697, and #1701; range aggregates are not migration evidence".to_string(),
     ];
     let mut semantic = semantic_text(&rows, &unclassified, &unused_rules, &contradictions);
     for blocker in &framework_blockers {
@@ -183,6 +184,8 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
             "target_behavior",
             "positive_proof",
             "negative_proof",
+            "captured_body_hash",
+            "captured_updated_at",
         ] {
             if contract
                 .get(field)
@@ -216,6 +219,8 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
             target_behavior: get("target_behavior"),
             positive_proof: get("positive_proof"),
             negative_proof: get("negative_proof"),
+            captured_body_hash: get("captured_body_hash"),
+            captured_updated_at: get("captured_updated_at"),
         })?;
         rows.push((format!("github:{issue}"), rule));
     }
@@ -415,7 +420,7 @@ fn semantic_text(
     let mut text = String::new();
     for (path, rule) in rows {
         text.push_str(&format!(
-            "{path}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
+            "{path}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
             rule.id,
             rule.classification,
             rule.owner,
@@ -426,7 +431,9 @@ fn semantic_text(
             rule.authority,
             rule.target_behavior,
             rule.positive_proof,
-            rule.negative_proof
+            rule.negative_proof,
+            rule.captured_body_hash,
+            rule.captured_updated_at
         ));
     }
     for value in unclassified {
@@ -448,7 +455,9 @@ fn render_json(audit: &Audit) -> Result<String, String> {
         "compatibility_period": rule.compatibility_period, "current_behavior": rule.current_behavior,
         "fields_consumed": rule.fields, "authority_effect": rule.authority,
         "target_behavior": rule.target_behavior, "positive_proof": rule.positive_proof,
-        "negative_proof": rule.negative_proof
+        "negative_proof": rule.negative_proof,
+        "captured_body_hash": rule.captured_body_hash,
+        "captured_updated_at": rule.captured_updated_at
     })).collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "schema_version":"0.1", "semantic_digest":audit.semantic_digest,
