@@ -5,6 +5,10 @@ use std::path::Path;
 
 const INVENTORY: &str = "fixtures/active-goal-authority-audit/consumers.toml";
 const ISSUE_CONTRACTS: &str = "fixtures/active-goal-authority-audit/issue-contracts.json";
+const REQUIRED_ISSUE_SNAPSHOTS: [&str; 20] = [
+    "#1631", "#1632", "#1633", "#1634", "#1635", "#1636", "#1637", "#1638", "#1639", "#1643",
+    "#1644", "#1645", "#1646", "#1647", "#1648", "#1649", "#1650", "#1692", "#1697", "#1701",
+];
 const MARKERS: [&str; 4] = [
     ".ripr/goals/active.toml",
     "active_goal",
@@ -191,6 +195,7 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
         .get("contracts")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| format!("{ISSUE_CONTRACTS} must contain contracts[]"))?;
+    let fixture_mode = !root.join(".git").exists();
     if contracts.is_empty() {
         return Err(format!(
             "{ISSUE_CONTRACTS} must capture at least one issue contract"
@@ -233,6 +238,25 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
         if !seen_issues.insert(issue.clone()) {
             return Err(format!("duplicate issue contract identity {issue}"));
         }
+        if !fixture_mode {
+            if !is_canonical_issue_identity(&issue) {
+                return Err(format!(
+                    "issue snapshot identity must be canonical #<decimal>: {issue}"
+                ));
+            }
+            let body_hash = get("captured_body_hash");
+            if !is_lower_sha256(&body_hash) {
+                return Err(format!(
+                    "issue snapshot {issue} captured_body_hash must be lowercase SHA-256"
+                ));
+            }
+            let updated_at = get("captured_updated_at");
+            if !is_utc_rfc3339_seconds(&updated_at) {
+                return Err(format!(
+                    "issue snapshot {issue} captured_updated_at must be UTC RFC3339 seconds"
+                ));
+            }
+        }
         let rule = validate_rule(Rule {
             id: format!("issue-contract-{issue}"),
             selector: format!("github:{issue}"),
@@ -251,7 +275,134 @@ fn issue_contract_rows(root: &Path) -> Result<Vec<(String, Rule)>, String> {
         })?;
         rows.push((format!("github:{issue}"), rule));
     }
+    validate_issue_snapshot_set(&seen_issues, fixture_mode)?;
+    if let Some(references) = value
+        .get("external_references")
+        .and_then(serde_json::Value::as_array)
+    {
+        for reference in references {
+            let get = |field: &str| {
+                reference
+                    .get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            for field in [
+                "id",
+                "classification",
+                "owner",
+                "dependent_issue",
+                "compatibility_period",
+                "current_behavior",
+                "fields",
+                "authority",
+                "target_behavior",
+                "positive_proof",
+                "negative_proof",
+            ] {
+                if get(field).is_empty() {
+                    return Err(format!("external reference is missing non-empty {field}"));
+                }
+            }
+            let id = get("id");
+            let rule = validate_rule(Rule {
+                id: format!("external-reference-{id}"),
+                selector: format!("external:{id}"),
+                classification: get("classification"),
+                owner: get("owner"),
+                dependent_issue: get("dependent_issue"),
+                compatibility_period: get("compatibility_period"),
+                current_behavior: get("current_behavior"),
+                fields: get("fields"),
+                authority: get("authority"),
+                target_behavior: get("target_behavior"),
+                positive_proof: get("positive_proof"),
+                negative_proof: get("negative_proof"),
+                captured_body_hash: String::new(),
+                captured_updated_at: String::new(),
+            })?;
+            rows.push((format!("external:{id}"), rule));
+        }
+    }
     Ok(rows)
+}
+
+fn is_canonical_issue_identity(value: &str) -> bool {
+    value.strip_prefix('#').is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn validate_issue_snapshot_set(
+    seen_issues: &BTreeSet<String>,
+    fixture_mode: bool,
+) -> Result<(), String> {
+    if fixture_mode {
+        return Ok(());
+    }
+    let required = REQUIRED_ISSUE_SNAPSHOTS
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let actual = seen_issues
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actual == required {
+        return Ok(());
+    }
+    let missing = required.difference(&actual).copied().collect::<Vec<_>>();
+    let unexpected = actual.difference(&required).copied().collect::<Vec<_>>();
+    Err(format!(
+        "issue snapshot set mismatch; missing: [{}]; unexpected: [{}]",
+        missing.join(", "),
+        unexpected.join(", ")
+    ))
+}
+
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_utc_rfc3339_seconds(value: &str) -> bool {
+    if value.len() != 20 {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    let shape_is_valid = bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit()
+        });
+    if !shape_is_valid {
+        return false;
+    }
+    let parse_u8 = |start: usize, end: usize| value.get(start..end)?.parse::<u8>().ok();
+    let year = value.get(0..4).and_then(|part| part.parse::<u16>().ok());
+    let month = parse_u8(5, 7);
+    let day = parse_u8(8, 10);
+    let Some((year, month, day)) = year.zip(month).zip(day).map(|((y, m), d)| (y, m, d)) else {
+        return false;
+    };
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=max_day).contains(&day)
+        && matches!(parse_u8(11, 13), Some(0..=23))
+        && matches!(parse_u8(14, 16), Some(0..=59))
+        && matches!(parse_u8(17, 19), Some(0..=59))
 }
 
 #[cfg(test)]
@@ -792,10 +943,12 @@ fn render_markdown(audit: &Audit) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        audit_root, discover, duplicate_occurrence_contradictions, issue_contract_rows,
+        REQUIRED_ISSUE_SNAPSHOTS, audit_root, discover, duplicate_occurrence_contradictions,
+        is_canonical_issue_identity, is_lower_sha256, is_utc_rfc3339_seconds, issue_contract_rows,
         occurrences_in_text, parse_rules, parse_tracked_paths, render_json, run_at,
-        selector_matches,
+        selector_matches, validate_issue_snapshot_set,
     };
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::Path;
 
@@ -1069,6 +1222,43 @@ fn noise() { let inactive_goal = "active goals"; let active_goal_id = 1; }
         let root = Path::new("../fixtures/active-goal-authority-audit/duplicate-issues");
         if issue_contract_rows(root).is_ok() {
             return Err("duplicate issue identity was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_snapshot_identity_and_metadata_fail_closed() -> Result<(), String> {
+        let complete = REQUIRED_ISSUE_SNAPSHOTS
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        validate_issue_snapshot_set(&complete, false)?;
+
+        let mut missing = complete.clone();
+        missing.remove("#1697");
+        if validate_issue_snapshot_set(&missing, false).is_ok() {
+            return Err("missing required issue snapshot was accepted".to_string());
+        }
+        let mut unexpected = complete;
+        unexpected.insert("#1631-#1639".to_string());
+        if validate_issue_snapshot_set(&unexpected, false).is_ok() {
+            return Err("range issue identity was accepted into the required set".to_string());
+        }
+        if is_canonical_issue_identity("#1631-#1639") || !is_canonical_issue_identity("#1631") {
+            return Err("canonical issue identity validation changed".to_string());
+        }
+        if !is_lower_sha256(&"a".repeat(64))
+            || is_lower_sha256(&"A".repeat(64))
+            || is_lower_sha256("mock-hash")
+        {
+            return Err("captured body hash validation changed".to_string());
+        }
+        if !is_utc_rfc3339_seconds("2026-07-18T03:24:41Z")
+            || is_utc_rfc3339_seconds("2026-99-18T03:24:41Z")
+            || is_utc_rfc3339_seconds("2026-02-30T03:24:41Z")
+            || is_utc_rfc3339_seconds("mock-date")
+        {
+            return Err("captured timestamp validation changed".to_string());
         }
         Ok(())
     }

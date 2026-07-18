@@ -45,6 +45,14 @@ contradiction and fail closed rather than receiving insertion-sensitive
 ordinals or collapsing silently. Rust anchors come from syntax ownership;
 identifier and prose markers require token boundaries.
 
+Issue-snapshot readiness requires exactly one captured row for each of
+`#1631` through `#1639`, `#1643` through `#1650`, `#1692`, `#1697`,
+and `#1701`. Range identities, missing or unexpected rows, non-SHA-256 body
+hashes, and non-UTC RFC3339-second timestamps fail closed. External
+compatibility references use a separate typed collection and cannot satisfy an
+issue-snapshot requirement. Captured hashes and timestamps make the offline
+input deterministic; they do not prove live GitHub freshness.
+
 ## Required invariants
 
 - Equivalent repository inputs produce byte-equivalent semantic rows and digest.
@@ -91,7 +99,9 @@ Tests in `xtask/src/active_goal_authority.rs` cover repository completeness,
 determinism, hidden singleton readers, legacy-ready non-authorization, and
 historical references. Occurrence tests cover line-movement stability,
 authority-bearing content drift, non-vacuous required fields, and preservation
-of the Phase 1 consumer projection.
+of the Phase 1 consumer projection. Issue-snapshot tests cover required-set
+cardinality, range rejection, hash and timestamp formats, and duplicate
+identity rejection.
 
 ## Implementation Mapping
 

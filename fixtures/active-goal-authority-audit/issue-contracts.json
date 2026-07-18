@@ -300,9 +300,11 @@
       "negative_proof": "campaign files do not authorize current work",
       "captured_body_hash": "3d518540c4254406a18e293f6641e4734e258d739e770b002326c9fdb21ac454",
       "captured_updated_at": "2026-07-18T03:29:24Z"
-    },
+    }
+  ],
+  "external_references": [
     {
-      "issue": "cargo-allow#2119/#2259/#2299",
+      "id": "cargo-allow#2119/#2259/#2299",
       "classification": "compatibility_reader_only",
       "owner": "cargo-allow-adoption",
       "dependent_issue": "#1701",
@@ -312,9 +314,7 @@
       "authority": "structural validation only",
       "target_behavior": "consume upstream portable non-singleton structure",
       "positive_proof": "RIPR consumes the upstream non-singleton structural profile",
-      "negative_proof": "RIPR does not mint a competing portable graph",
-      "captured_body_hash": "not_applicable",
-      "captured_updated_at": "not_applicable"
+      "negative_proof": "RIPR does not mint a competing portable graph"
     }
   ]
 }
