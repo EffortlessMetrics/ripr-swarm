@@ -338,8 +338,10 @@ mod tests {
     #[test]
     fn diagnostic_profile_participates_in_refresh_identity() -> Result<(), String> {
         let root = PathBuf::from("/workspace");
-        let mut actionable = LspAnalysisConfig::default();
-        actionable.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let actionable = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Actionable,
+            ..LspAnalysisConfig::default()
+        };
         let mut full = actionable.clone();
         full.diagnostic_profile = LspDiagnosticProfile::Full;
 
