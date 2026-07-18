@@ -44,6 +44,9 @@ path-level rules and issue-range aggregates are not migration evidence.
 - Removing only `active.toml` does not hide a remaining singleton reader.
 - The command reads repository inputs and writes only ignored reports.
 - Captured issue contracts are inventory evidence, not live GitHub state.
+- Every readable tracked UTF-8 file is scanned regardless of extension.
+  NUL-bearing content is explicitly treated as binary; unreadable or non-UTF-8
+  non-binary content blocks readiness.
 - Broad live-consumer selectors cannot establish migration readiness.
 - Phase 2 keys reviewed occurrences by path, syntax-derived anchor, marker
   kind, and full normalized marker hash. Reviewed rows live in

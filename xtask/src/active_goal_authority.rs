@@ -340,15 +340,24 @@ fn discover(root: &Path) -> Result<Discovery, String> {
             if super::should_skip_path(&normalized) || normalized == OCCURRENCE_INVENTORY {
                 continue;
             }
-            if !is_auditable_text_path(&normalized) {
+            let path = root.join(&normalized);
+            let bytes = match fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    read_failures.push(format!(
+                        "tracked file {normalized} could not be read: {err}"
+                    ));
+                    continue;
+                }
+            };
+            if bytes.contains(&0) {
                 continue;
             }
-            let path = root.join(&normalized);
-            let text = match fs::read_to_string(path) {
+            let text = match String::from_utf8(bytes) {
                 Ok(text) => text,
                 Err(err) => {
                     read_failures.push(format!(
-                        "tracked text {normalized} could not be read as UTF-8: {err}"
+                        "tracked non-binary file {normalized} was not UTF-8: {err}"
                     ));
                     continue;
                 }
@@ -415,14 +424,23 @@ fn walk(
             }
             walk(root, &path, found, read_failures)?;
         } else if path.is_file() {
-            if !is_auditable_text_path(&normalized) {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    read_failures.push(format!(
+                        "tracked file {normalized} could not be read: {err}"
+                    ));
+                    continue;
+                }
+            };
+            if bytes.contains(&0) {
                 continue;
             }
-            let text = match fs::read_to_string(&path) {
+            let text = match String::from_utf8(bytes) {
                 Ok(text) => text,
                 Err(err) => {
                     read_failures.push(format!(
-                        "tracked text {normalized} could not be read as UTF-8: {err}"
+                        "tracked non-binary file {normalized} was not UTF-8: {err}"
                     ));
                     continue;
                 }
@@ -431,36 +449,6 @@ fn walk(
         }
     }
     Ok(())
-}
-
-fn is_auditable_text_path(path: &str) -> bool {
-    matches!(
-        Path::new(path)
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some(
-            "rs" | "md"
-                | "toml"
-                | "json"
-                | "yml"
-                | "yaml"
-                | "txt"
-                | "lock"
-                | "spec"
-                | "diff"
-                | "html"
-                | "ts"
-                | "js"
-                | "py"
-                | "pl"
-                | "sh"
-                | "ps1"
-                | "xml"
-                | "csv"
-        )
-    )
 }
 
 fn normalize_path(path: &Path) -> Result<String, String> {
@@ -1294,6 +1282,45 @@ mod tests {
             return Err(format!(
                 "unreadable tracked text was not reported: {:?}",
                 discovery.read_failures
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extensionless_text_is_scanned_and_nul_binary_is_explicitly_skipped() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-active-goal-content-policy-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|err| format!("create content fixture: {err}"))?;
+        fs::write(root.join("NOTICE"), "The active goal is reviewed.")
+            .map_err(|err| format!("write extensionless fixture: {err}"))?;
+        fs::write(root.join("binary.bin"), b"active_goal\0binary")
+            .map_err(|err| format!("write binary fixture: {err}"))?;
+        let discovery = discover(&root)?;
+        fs::remove_dir_all(&root).map_err(|err| format!("remove content fixture: {err}"))?;
+        if discovery
+            .occurrences
+            .iter()
+            .filter(|row| row.path == "NOTICE")
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "extensionless text was not scanned exactly once: {:?}",
+                discovery.occurrences
+            ));
+        }
+        if discovery
+            .occurrences
+            .iter()
+            .any(|row| row.path == "binary.bin")
+            || !discovery.read_failures.is_empty()
+        {
+            return Err(format!(
+                "NUL-bearing binary was not skipped cleanly: {:?}, {:?}",
+                discovery.occurrences, discovery.read_failures
             ));
         }
         Ok(())

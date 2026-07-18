@@ -6870,6 +6870,7 @@ tests = [
   "xtask::active_goal_authority::tests::stale_occurrences_change_semantic_identity",
   "xtask::active_goal_authority::tests::declarations_after_test_modules_do_not_inherit_test_identity",
   "xtask::active_goal_authority::tests::unreadable_text_inputs_are_reported",
+  "xtask::active_goal_authority::tests::extensionless_text_is_scanned_and_nul_binary_is_explicitly_skipped",
 ]
 fixtures = [
   "fixtures/active-goal-authority-audit/consumers.toml",
