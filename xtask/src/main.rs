@@ -5544,7 +5544,8 @@ fn is_manifest_only_fixture_dir(path: &Path) -> bool {
         .is_some_and(|name| {
             matches!(
                 name,
-                "actionable-gap-outcomes-corpus"
+                "active-goal-authority-audit"
+                    | "actionable-gap-outcomes-corpus"
                     | "bun-ub-cross-language-dogfood"
                     | "cross-language-oracle-graph-corpus"
                     | "editor_gap_cockpit"
