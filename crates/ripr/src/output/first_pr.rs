@@ -51,8 +51,8 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    println!("ripr first-pr — side effects and cost disclosure");
-    println!("  cost class:      O(diff_size × workspace_files)");
+    println!("ripr first-pr - side effects and cost disclosure");
+    println!("  cost class:      varies with diff and workspace size");
     println!("  writes to:       target/ripr/reports/");
     println!("  cache location:  target/ripr/cache/");
     println!("  git reads:       yes (diff between base and head)");
