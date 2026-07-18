@@ -187,6 +187,8 @@ pub(crate) fn run_output_bytes_in_dir(
             cwd.display()
         ));
     }
+    // Repository discovery consumes path identity as bytes. The caller performs
+    // strict UTF-8 validation after splitting the NUL-delimited path stream.
     Ok(output.stdout)
 }
 
