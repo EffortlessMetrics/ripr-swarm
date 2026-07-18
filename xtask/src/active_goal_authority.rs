@@ -515,7 +515,10 @@ mod tests {
     fn ignored_and_untracked_residue_does_not_change_digest() -> Result<(), String> {
         let root = Path::new("../");
         let before = audit_root(root)?;
-        let residue = root.join("target-review-residue/active_goal_reader.txt");
+        let residue = root.join(format!(
+            ".active-goal-audit-residue-{}/active_goal_reader.txt",
+            std::process::id()
+        ));
         let parent = residue
             .parent()
             .ok_or_else(|| "residue path has no parent".to_string())?;
@@ -523,7 +526,11 @@ mod tests {
         fs::write(&residue, ".ripr/goals/active.toml ready = true")
             .map_err(|err| format!("write residue: {err}"))?;
         let after = audit_root(root)?;
-        fs::remove_dir_all(parent).map_err(|err| format!("remove residue: {err}"))?;
+        if let Err(err) = fs::remove_dir_all(parent) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("remove residue: {err}"));
+            }
+        }
         if before.semantic_digest != after.semantic_digest {
             return Err("ignored residue changed semantic digest".to_string());
         }
