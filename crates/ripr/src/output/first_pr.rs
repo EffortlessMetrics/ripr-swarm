@@ -50,6 +50,15 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
         print_help();
         return Ok(());
     }
+
+    println!("ripr first-pr — side effects and cost disclosure");
+    println!("  cost class:      O(diff_size × workspace_files)");
+    println!("  writes to:       target/ripr/reports/");
+    println!("  cache location:  target/ripr/cache/");
+    println!("  git reads:       yes (diff between base and head)");
+    println!("  network:         none");
+    println!("  runtime hint:    seconds on typical diffs; minutes on large diffs\n");
+
     let options = parse_options(args)?;
     let repo = repo_root()?;
     if options.check {
