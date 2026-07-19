@@ -150,6 +150,13 @@ pub(crate) struct CacheStatus {
 }
 
 /// Inspect a cache directory without following symlinks or fabricating counts.
+///
+/// This is best-effort diagnostic output, not a security boundary or an atomic
+/// snapshot. The standard-library path-based traversal has no portable
+/// directory-handle-relative API, so a concurrent rename can still make a
+/// reported total stale. Symlink entries are skipped and traversal failures
+/// are surfaced as `partial`; callers must not use this report to authorize
+/// access or make security decisions.
 pub(crate) fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
     let metadata = match std::fs::symlink_metadata(cache_dir) {
         Ok(metadata) => metadata,

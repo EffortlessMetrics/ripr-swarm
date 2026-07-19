@@ -4,6 +4,8 @@ use crate::analysis::seam_cache::{
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
+const CACHE_STATUS_SCHEMA_VERSION: &str = "0.1";
+
 fn parse_status_args(args: &[String]) -> Result<bool, String> {
     let mut is_json = false;
     for arg in args {
@@ -26,6 +28,7 @@ fn render_status(cache_dir: &Path, status: &CacheStatus, is_json: bool) -> Resul
     let cache_dir_str = cache_dir.display().to_string();
     if is_json {
         serde_json::to_string_pretty(&json!({
+            "schema_version": CACHE_STATUS_SCHEMA_VERSION,
             "cache_dir": cache_dir_str,
             "status": status.state,
             "total_size_bytes": status.total_size_bytes,
@@ -41,7 +44,7 @@ fn render_status(cache_dir: &Path, status: &CacheStatus, is_json: bool) -> Resul
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+    if matches!(args, [arg] if arg == "--help" || arg == "-h") {
         println!("Usage: ripr cache status [--json]");
         return Ok(());
     }
@@ -54,6 +57,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         return Err(format!(
             "unknown cache subcommand {subcommand:?}; expected `status`"
         ));
+    }
+
+    if matches!(rest, [arg] if arg == "--help" || arg == "-h") {
+        println!("Usage: ripr cache status [--json]");
+        return Ok(());
     }
 
     let is_json = parse_status_args(rest)?;
@@ -182,6 +190,15 @@ mod tests {
         if unknown.is_ok() {
             return Err("unknown cache subcommand unexpectedly passed".to_string());
         }
+        if run(&[
+            "status".to_string(),
+            "--jsoon".to_string(),
+            "--help".to_string(),
+        ])
+        .is_ok()
+        {
+            return Err("unknown status argument was hidden by help".to_string());
+        }
         Ok(())
     }
 
@@ -207,6 +224,13 @@ mod tests {
         }
         if value.get("entry_count").and_then(serde_json::Value::as_u64) != Some(2) {
             return Err(format!("JSON output omitted entry count: {json}"));
+        }
+        if value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_str)
+            != Some(CACHE_STATUS_SCHEMA_VERSION)
+        {
+            return Err(format!("JSON output omitted schema version: {json}"));
         }
         Ok(())
     }
