@@ -6,12 +6,21 @@ on:
       version:
         description: "Release version, for example 0.2.0 or v0.2.0"
         required: true
+      publish:
+        description: "Publish assembled assets to a GitHub Release"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-ripr-server-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -53,15 +62,17 @@ jobs:
         run: cargo build -p ripr --release --target ${{ matrix.target }}
 
       - name: Package server archive
-        run: cargo xtask release-server-archive --version "${{ github.event.inputs.version || github.ref_name }}" --target "${{ matrix.target }}" --executable "${{ matrix.executable }}" --archive "${{ matrix.archive }}"
+        run: cargo xtask release-server-archive --version "${{ inputs.version || github.ref_name }}" --target "${{ matrix.target }}" --executable "${{ matrix.executable }}" --archive "${{ matrix.archive }}"
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v7
         with:
           name: ripr-server-${{ matrix.target }}
           path: dist/*
+          retention-days: 7
 
   manifest:
+    name: assemble release assets
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -76,10 +87,34 @@ jobs:
           merge-multiple: true
 
       - name: Generate manifest and checksums
-        run: cargo xtask release-server-manifest --version "${{ github.event.inputs.version || github.ref_name }}" --repository "${{ github.repository }}"
+        run: cargo xtask release-server-manifest --version "${{ inputs.version || github.ref_name }}" --repository "${{ github.repository }}"
+
+      - name: Upload assembled release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: ripr-server-release-assets
+          path: dist/*
+          retention-days: 7
+
+  publish:
+    name: publish GitHub Release assets
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    needs: manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ripr-server-release-assets
+          path: dist
 
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: cargo xtask release-upload-assets --version "${{ github.event.inputs.version || github.ref_name }}"
+        run: cargo xtask release-upload-assets --version "${{ inputs.version || github.ref_name }}"
