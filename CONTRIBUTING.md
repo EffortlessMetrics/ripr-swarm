@@ -18,7 +18,14 @@ traceability without reconstructing intent from chat history.
    cargo build --workspace
    ```
 
-3. Run the test suite as a sanity check:
+3. Run a cheap sanity check before paying for the full test suite:
+
+   ```bash
+   cargo check --workspace --all-targets
+   ```
+
+   Once that passes, run the full test suite — it is slower and compiles
+   more of the workspace, including test-only code:
 
    ```bash
    cargo test --workspace
