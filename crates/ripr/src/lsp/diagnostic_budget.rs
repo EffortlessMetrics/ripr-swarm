@@ -499,6 +499,48 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_bridge_fails_closed_for_missing_or_negative_eligibility() -> Result<(), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let no_metadata = tower_lsp_server::ls_types::Diagnostic::default();
+        let non_headline_seam = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "seam:advisory",
+                "headline_eligible": false,
+            })),
+            ..Default::default()
+        };
+        let incomplete_preview = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "finding:incomplete-preview",
+                "preview_actionability": {"repair_packet_ready": false},
+            })),
+            ..Default::default()
+        };
+        let diagnostics = std::collections::BTreeMap::from([(
+            uri,
+            vec![no_metadata, non_headline_seam, incomplete_preview],
+        )]);
+
+        let items = build_budget_items_from_diagnostics(&diagnostics)
+            .map_err(|err| format!("build budget items: {err}"))?;
+        if items.len() != 3
+            || items
+                .iter()
+                .any(|item| item.eligibility != DiagnosticBudgetEligibility::ProfileFiltered)
+        {
+            return Err(format!(
+                "missing or negative producer eligibility was over-credited: {items:?}"
+            ));
+        }
+        if !items[0].canonical_id.starts_with("location:file:///workspace/src/lib.rs:") {
+            return Err(format!("legacy diagnostic identity was not deterministic: {items:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn selection_is_deterministic_and_uses_evidence_owned_order() -> Result<(), String> {
         let budget = DiagnosticBudget {
             max_items_per_document: 2,
