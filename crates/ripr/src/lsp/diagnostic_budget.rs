@@ -534,8 +534,13 @@ mod tests {
                 "missing or negative producer eligibility was over-credited: {items:?}"
             ));
         }
-        if !items[0].canonical_id.starts_with("location:file:///workspace/src/lib.rs:") {
-            return Err(format!("legacy diagnostic identity was not deterministic: {items:?}"));
+        if !items[0]
+            .canonical_id
+            .starts_with("location:file:///workspace/src/lib.rs:")
+        {
+            return Err(format!(
+                "legacy diagnostic identity was not deterministic: {items:?}"
+            ));
         }
         Ok(())
     }
