@@ -11,11 +11,29 @@ Use:
 .github/workflows/release-server-binaries.yml
 ```
 
-Manual dispatch:
+A manual dispatch is a **no-publish rehearsal by default**:
 
 ```bash
-gh workflow run release-server-binaries.yml -f version=0.8.0
+gh workflow run release-server-binaries.yml \
+  -f version=0.8.0 \
+  -f publish=false
 ```
+
+That path builds every target, assembles the manifest and `SHA256SUMS`, and
+retains the complete release-asset set as a workflow artifact. It does not create
+or modify a GitHub Release.
+
+Publication from a manual dispatch is an explicit operator action:
+
+```bash
+gh workflow run release-server-binaries.yml \
+  -f version=0.8.0 \
+  -f publish=true
+```
+
+Use `publish=true` only after reviewing the rehearsal artifacts and confirming
+the intended release authority. A `v*` tag push remains the automatic publish
+path.
 
 The workflow builds:
 
@@ -26,7 +44,6 @@ aarch64-apple-darwin
 x86_64-unknown-linux-gnu
 aarch64-unknown-linux-gnu
 ```
-
 
 Packaging and manifest assembly intentionally live in Rust-first automation:
 
@@ -39,7 +56,7 @@ cargo xtask release-upload-assets --version <VERSION>
 The workflow should only orchestrate those commands instead of keeping archive,
 checksum, manifest, or upload branching logic in shell or PowerShell.
 
-and uploads these assets to the matching GitHub Release:
+The assembled asset set is:
 
 ```text
 ripr-server-v<VERSION>-<target>.zip
