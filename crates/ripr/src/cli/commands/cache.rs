@@ -161,6 +161,12 @@ mod tests {
     }
 
     #[test]
+    fn run_status_modes_are_successful() -> Result<(), String> {
+        run(&["status".to_string()])?;
+        run(&["status".to_string(), "--json".to_string()])
+    }
+
+    #[test]
     fn run_rejects_missing_and_unknown_subcommands() -> Result<(), String> {
         let missing =
             run(&[]).map_err(|error| format!("missing subcommand unexpectedly passed: {error}"));
