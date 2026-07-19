@@ -4180,17 +4180,12 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     report_perl_preview(&root);
     report_known_limitations();
 
-    for (tool, tool_args) in [
-        ("git", vec!["--version"]),
-        ("cargo", vec!["--version"]),
-        ("rustc", vec!["--version"]),
-    ] {
-        match std::process::Command::new(tool).args(&tool_args).output() {
-            Ok(output) if output.status.success() => {
-                println!("✓ {}", String::from_utf8_lossy(&output.stdout).trim())
-            }
-            _ => {
-                println!("! {tool} not available");
+    for tool in ["git", "cargo", "rustc"] {
+        let (status, evidence) = doctor_tool_check(tool);
+        match status {
+            crate::cli::doctor_report::DoctorStatus::Pass => println!("✓ {evidence}"),
+            crate::cli::doctor_report::DoctorStatus::Fail => {
+                println!("! {evidence}");
                 ok = false;
             }
         }
