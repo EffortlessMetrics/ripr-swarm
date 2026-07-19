@@ -7,9 +7,11 @@
 //!
 //! **Encoding:** selected from the negotiated `general.positionEncodings`
 //! client capability at `initialize` (see #1626 PR B / #1749). The chosen
-//! [`PositionEncodingKind`] is plumbed through these functions so character
-//! offsets match what the server advertised. UTF-16 is the default when the
-//! client advertises nothing.
+//! [`PositionEncodingKind`] is plumbed through these functions so an expression
+//! span's *width* is measured in the negotiated encoding. UTF-16 is the default
+//! when the client advertises nothing. Converting an analyzer column to a
+//! negotiated-encoding *start* offset for non-ASCII line prefixes is a separate
+//! concern tracked with the non-ASCII fixtures (#1737).
 
 use tower_lsp_server::ls_types::{Position, PositionEncodingKind, Range};
 

@@ -264,6 +264,29 @@ mod tests {
     }
 
     #[test]
+    fn position_encoding_survives_repo_reload_and_session_option_changes() -> Result<(), String> {
+        let config = LspAnalysisConfig {
+            position_encoding: PositionEncodingKind::UTF8,
+            ..LspAnalysisConfig::default()
+        };
+
+        let reloaded = config.reload_repo_config(RiprConfig::default());
+        if reloaded.position_encoding != PositionEncodingKind::UTF8 {
+            return Err("reload_repo_config dropped the negotiated position encoding".to_string());
+        }
+
+        let with_options = config
+            .with_changed_session_options(&json!({ "diagnosticProfile": "full" }))
+            .ok_or_else(|| "session option change should rebuild the config".to_string())?;
+        if with_options.position_encoding != PositionEncodingKind::UTF8 {
+            return Err(
+                "with_changed_session_options dropped the negotiated position encoding".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn unknown_diagnostic_profile_init_option_keeps_the_default() {
         let params = params_with(json!({"diagnosticProfile": "unknown"}));
         let config = LspAnalysisConfig::from_initialize_params(&params, RiprConfig::default());

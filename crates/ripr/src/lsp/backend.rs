@@ -2,7 +2,7 @@ use super::AnalysisStatusNotification;
 use super::actions::code_action_response;
 use super::capabilities::{
     WorkspaceRootResolution, client_supports_diagnostic_refresh, client_supports_pull_diagnostics,
-    initialize_result_for_client, negotiate_position_encoding, root_from_initialize_params,
+    initialize_result_for_client, root_from_initialize_params,
 };
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
@@ -1747,7 +1747,6 @@ impl LanguageServer for Backend {
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let supports_pull_diagnostics = client_supports_pull_diagnostics(&params);
-        let position_encoding = negotiate_position_encoding(&params);
         let supports_diagnostic_refresh = client_supports_diagnostic_refresh(&params);
         if let Ok(mut supported) = self.pull_diagnostics.lock() {
             *supported = supports_pull_diagnostics;
@@ -1775,10 +1774,12 @@ impl LanguageServer for Backend {
             }
             _ => (crate::config::RiprConfig::default(), None),
         };
-        self.set_analysis_config(LspAnalysisConfig::from_initialize_params(
-            &params,
-            repo_config,
-        ));
+        let analysis_config = LspAnalysisConfig::from_initialize_params(&params, repo_config);
+        // `from_initialize_params` is the sole owner of the position-encoding
+        // negotiation; read the chosen encoding back so the initialize response
+        // advertises exactly what the config will use.
+        let position_encoding = analysis_config.position_encoding.clone();
+        self.set_analysis_config(analysis_config);
         self.set_workspace_root_authority(WorkspaceRootAuthority::unavailable(
             "initial workspace root resolution pending",
         ));
