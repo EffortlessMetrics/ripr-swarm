@@ -2296,6 +2296,43 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    #[test]
+    fn finding_span_width_uses_negotiated_encoding_end_to_end() -> Result<(), String> {
+        // "café" is 4 UTF-16 code units, 4 UTF-32 scalars, and 5 UTF-8 bytes.
+        let mut finding = policy_finding();
+        finding.probe.expression = "café".to_string();
+        finding.probe.location.column = 1;
+
+        let width_for = |encoding: &PositionEncodingKind| -> Result<u32, String> {
+            let grouped = finding_diagnostics_by_uri_with_profile(
+                Path::new("/workspace"),
+                std::slice::from_ref(&finding),
+                &SeverityConfig::default(),
+                true,
+                LspDiagnosticProfile::Full,
+                None,
+                encoding,
+            )?;
+            let diagnostic = grouped
+                .values()
+                .flatten()
+                .next()
+                .ok_or_else(|| "expected a finding diagnostic".to_string())?;
+            Ok(diagnostic.range.end.character - diagnostic.range.start.character)
+        };
+
+        if width_for(&PositionEncodingKind::UTF8)? != 5 {
+            return Err("UTF-8 client did not receive a byte-width finding span".to_string());
+        }
+        if width_for(&PositionEncodingKind::UTF16)? != 4 {
+            return Err("UTF-16 finding span width regressed".to_string());
+        }
+        if width_for(&PositionEncodingKind::UTF32)? != 4 {
+            return Err("UTF-32 client did not receive a scalar-width finding span".to_string());
+        }
+        Ok(())
+    }
+
     // Test 1: WeaklyExposed + static_limit_kind=Some → advisory → INFORMATION (never WARNING).
     #[test]
     fn no_warning_for_finding_with_static_limit() -> Result<(), String> {

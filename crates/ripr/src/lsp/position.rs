@@ -12,6 +12,18 @@
 //! when the client advertises nothing. Converting an analyzer column to a
 //! negotiated-encoding *start* offset for non-ASCII line prefixes is a separate
 //! concern tracked with the non-ASCII fixtures (#1737).
+//!
+//! **Range-constructor inventory** — which spans depend on source-text width:
+//! - [`expression_span_range`] — the span width is the negotiated-encoding
+//!   width of the changed expression, so it is **encoding-aware**.
+//! - [`line_span_range`] — a fixed `0..MAX_LINE_SPAN_WIDTH` column span used by
+//!   seam/gap diagnostics that have no specific expression; it measures no
+//!   source text, so it is **encoding-independent** (line-only).
+//!
+//! Hover, code-action, and lens surfaces reuse these ranges or the analyzer's
+//! own locators; none measure source-text width. `expression_span_range` is
+//! therefore the only encoding-sensitive width in the LSP layer. Line
+//! terminators (CR/LF) never appear inside a single-line expression span.
 
 use tower_lsp_server::ls_types::{Position, PositionEncodingKind, Range};
 
@@ -115,6 +127,38 @@ mod tests {
         assert_eq!(character_width("🎉", &PositionEncodingKind::UTF8), 4);
         assert_eq!(character_width("🎉", &PositionEncodingKind::UTF16), 2);
         assert_eq!(character_width("🎉", &PositionEncodingKind::UTF32), 1);
+    }
+
+    #[test]
+    fn character_width_cjk_and_accented_text() {
+        // CJK are BMP scalars: 3 UTF-8 bytes, 1 UTF-16 unit, 1 scalar each.
+        assert_eq!(character_width("日本語", &PositionEncodingKind::UTF8), 9);
+        assert_eq!(character_width("日本語", &PositionEncodingKind::UTF16), 3);
+        assert_eq!(character_width("日本語", &PositionEncodingKind::UTF32), 3);
+        // "café": é is 2 UTF-8 bytes, 1 UTF-16 unit, 1 scalar.
+        assert_eq!(character_width("café", &PositionEncodingKind::UTF8), 5);
+        assert_eq!(character_width("café", &PositionEncodingKind::UTF16), 4);
+        assert_eq!(character_width("café", &PositionEncodingKind::UTF32), 4);
+    }
+
+    #[test]
+    fn character_width_combining_sequence_counts_each_scalar() {
+        // "e" + U+0301 (combining acute): two scalars. U+0301 is 2 UTF-8 bytes.
+        let combining = "e\u{0301}";
+        assert_eq!(character_width(combining, &PositionEncodingKind::UTF8), 3);
+        assert_eq!(character_width(combining, &PositionEncodingKind::UTF16), 2);
+        assert_eq!(character_width(combining, &PositionEncodingKind::UTF32), 2);
+    }
+
+    #[test]
+    fn character_width_tab_is_one_unit_in_every_encoding() {
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            assert_eq!(character_width("\t", &encoding), 1);
+        }
     }
 
     #[test]
