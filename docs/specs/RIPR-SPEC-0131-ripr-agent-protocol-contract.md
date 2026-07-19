@@ -21,6 +21,8 @@ Linked ADRs:
 
 Support-tier impact:
 
+- See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
+
 - None. This contract makes the capability-only `riprAgent` surface
   discoverable and versioned. It does not promote lifecycle, evidence, or
   repair usefulness beyond the existing advisory boundary.
