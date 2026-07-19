@@ -6685,9 +6685,6 @@ fn workspace_status_budget_identity_changes_with_diagnostic_snapshot() -> Result
         let diagnostic = |id: &str| Diagnostic {
             data: Some(serde_json::json!({
                 "diagnostic_id": id,
-                "canonical_gap_id": id,
-                "gap_state": "actionable",
-                "repairability": "repairable",
             })),
             ..Default::default()
         };
@@ -6708,7 +6705,7 @@ fn workspace_status_budget_identity_changes_with_diagnostic_snapshot() -> Result
             PathBuf::from("/workspace"),
             uri.clone(),
             vec![diagnostic("gap:first")],
-            Vec::new(),
+            vec![sample_finding()],
         );
         backend
             .refresh_plan(first)
@@ -6723,7 +6720,7 @@ fn workspace_status_budget_identity_changes_with_diagnostic_snapshot() -> Result
             PathBuf::from("/workspace"),
             uri,
             vec![diagnostic("gap:second")],
-            Vec::new(),
+            vec![sample_finding()],
         );
         backend
             .refresh_plan(second)
