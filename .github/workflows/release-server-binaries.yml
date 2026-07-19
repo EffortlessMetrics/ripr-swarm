@@ -53,6 +53,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -62,7 +64,9 @@ jobs:
         run: cargo build -p ripr --release --target ${{ matrix.target }}
 
       - name: Package server archive
-        run: cargo xtask release-server-archive --version "${{ inputs.version || github.ref_name }}" --target "${{ matrix.target }}" --executable "${{ matrix.executable }}" --archive "${{ matrix.archive }}"
+        env:
+          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+        run: cargo xtask release-server-archive --version "$RELEASE_VERSION" --target "${{ matrix.target }}" --executable "${{ matrix.executable }}" --archive "${{ matrix.archive }}"
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v7
@@ -77,6 +81,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -87,7 +93,10 @@ jobs:
           merge-multiple: true
 
       - name: Generate manifest and checksums
-        run: cargo xtask release-server-manifest --version "${{ inputs.version || github.ref_name }}" --repository "${{ github.repository }}"
+        env:
+          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: cargo xtask release-server-manifest --version "$RELEASE_VERSION" --repository "$RELEASE_REPOSITORY"
 
       - name: Upload assembled release assets
         uses: actions/upload-artifact@v7
@@ -105,6 +114,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -117,4 +128,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: cargo xtask release-upload-assets --version "${{ inputs.version || github.ref_name }}"
+          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+        run: cargo xtask release-upload-assets --version "$RELEASE_VERSION"
