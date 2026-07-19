@@ -1,5 +1,6 @@
+use crate::analysis::seam_cache::{CACHE_DIR_ENV, cache_base_dir_from_env};
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CacheStatus {
@@ -9,7 +10,7 @@ struct CacheStatus {
 }
 
 fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
-    let metadata = match std::fs::metadata(cache_dir) {
+    let metadata = match std::fs::symlink_metadata(cache_dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return CacheStatus {
@@ -26,7 +27,7 @@ fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
             };
         }
     };
-    if !metadata.is_dir() {
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return CacheStatus {
             state: "unavailable",
             total_size_bytes: 0,
@@ -48,11 +49,14 @@ fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
                 partially_readable = true;
                 continue;
             };
-            let Ok(metadata) = entry.metadata() else {
+            let Ok(metadata) = entry.symlink_metadata() else {
                 partially_readable = true;
                 continue;
             };
             let file_type = metadata.file_type();
+            if file_type.is_symlink() {
+                continue;
+            }
             if file_type.is_dir() {
                 stack.push(entry.path());
             } else if file_type.is_file() {
@@ -67,6 +71,24 @@ fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
         total_size_bytes,
         entry_count,
     }
+}
+
+fn parse_status_args(args: &[String]) -> Result<bool, String> {
+    let mut is_json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => is_json = true,
+            other => return Err(format!("unknown cache status argument {other:?}")),
+        }
+    }
+    Ok(is_json)
+}
+
+fn cache_dir_for_root(
+    workspace_root: &Path,
+    env_value: Result<String, std::env::VarError>,
+) -> PathBuf {
+    cache_base_dir_from_env(workspace_root, env_value)
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -85,10 +107,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let is_json = rest.iter().any(|arg| arg == "--json");
+    let is_json = parse_status_args(rest)?;
     let current_dir =
         std::env::current_dir().map_err(|e| format!("failed to get current dir: {}", e))?;
-    let cache_dir = current_dir.join("target").join("ripr").join("cache");
+    let cache_dir = cache_dir_for_root(&current_dir, std::env::var(CACHE_DIR_ENV));
     let cache_dir_str = cache_dir.display().to_string();
 
     let status = inspect_cache_dir(&cache_dir);
@@ -176,6 +198,28 @@ mod tests {
             return Err(format!(
                 "expected unavailable status, got {:?}",
                 status.state
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_status_arguments_fail_closed() -> Result<(), String> {
+        let args = vec!["--jsoon".to_string()];
+        if parse_status_args(&args).is_ok() {
+            return Err("unknown cache status argument was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn relocated_cache_root_is_used_for_status() -> Result<(), String> {
+        let workspace = temp_dir("workspace");
+        let relocated = temp_dir("relocated");
+        let resolved = cache_dir_for_root(&workspace, Ok(relocated.display().to_string()));
+        if resolved != relocated {
+            return Err(format!(
+                "expected relocated cache root {relocated:?}, got {resolved:?}"
             ));
         }
         Ok(())
