@@ -6,6 +6,7 @@ mod commands_context;
 mod commands_numeric;
 mod commands_options;
 mod commands_timestamps;
+mod doctor_report;
 mod execute;
 mod help;
 mod parse;

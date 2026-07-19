@@ -4123,18 +4123,35 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
 }
 
 pub(super) fn doctor(args: &[String]) -> Result<(), String> {
-    let root = match args {
-        [] => PathBuf::from("."),
-        [flag] if flag == "--help" || flag == "-h" => {
-            help::print_doctor_help();
-            return Ok(());
+    let mut json_output = false;
+    let mut root_args: Vec<&str> = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                help::print_doctor_help();
+                return Ok(());
+            }
+            "--json" => json_output = true,
+            _ => root_args.push(arg.as_str()),
         }
-        [flag] if flag == "--root" => return Err("missing value for --root".to_string()),
-        [flag, value] if flag == "--root" => PathBuf::from(value),
+    }
+    let root = match root_args.as_slice() {
+        [] => PathBuf::from("."),
+        ["--root"] => return Err("missing value for --root".to_string()),
+        ["--root", value] => PathBuf::from(value),
         [other, ..] => return Err(format!("unknown doctor argument {other:?}")),
     };
 
-    let mut ok = true;
+    if json_output {
+        return doctor_json(&root);
+    }
+
+    // Human-readable path (unchanged behavior).
+    let core_report = evaluate_doctor_core(&root);
+    let mut ok = matches!(
+        core_report.status,
+        crate::cli::doctor_report::DoctorStatus::Pass
+    );
     println!("ripr doctor");
     println!("- root: {}", root.display());
 
@@ -4163,12 +4180,12 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     report_perl_preview(&root);
     report_known_limitations();
 
-    for (tool, args) in [
+    for (tool, tool_args) in [
         ("git", vec!["--version"]),
         ("cargo", vec!["--version"]),
         ("rustc", vec!["--version"]),
     ] {
-        match std::process::Command::new(tool).args(&args).output() {
+        match std::process::Command::new(tool).args(&tool_args).output() {
             Ok(output) if output.status.success() => {
                 println!("✓ {}", String::from_utf8_lossy(&output.stdout).trim())
             }
@@ -4187,6 +4204,93 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     } else {
         println!("! doctor checks failed; run `ripr doctor --help` for usage");
         Err("doctor found issues".to_string())
+    }
+}
+
+/// Typed JSON doctor output. Captures top-level checks as structured
+/// `DoctorCheck` values. Deeper sub-checks (languages, cache, perl, and test
+/// surfaces) remain on the human-oriented path for a follow-up
+/// PR to type individually. See #1771 / #1614.
+fn doctor_json(root: &Path) -> Result<(), String> {
+    let report = evaluate_doctor_core(root);
+    println!("{}", report.render_json()?);
+    doctor_report_result(&report)
+}
+
+fn evaluate_doctor_core(root: &Path) -> crate::cli::doctor_report::DoctorReport {
+    use crate::cli::doctor_report::{DoctorReport, DoctorStatus};
+
+    let mut report = DoctorReport::new(&root.display().to_string());
+    if root.is_dir() {
+        report.add_check(
+            "root_directory",
+            DoctorStatus::Pass,
+            Some(format!("root directory exists at {}", root.display())),
+        );
+    } else {
+        report.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some(format!(
+                "root directory does not exist at {}",
+                root.display()
+            )),
+        );
+    }
+    if root.join("Cargo.toml").exists() {
+        report.add_check(
+            "cargo_toml",
+            DoctorStatus::Pass,
+            Some(format!(
+                "Cargo.toml found at {}",
+                root.join("Cargo.toml").display()
+            )),
+        );
+    } else {
+        report.add_check(
+            "cargo_toml",
+            DoctorStatus::Fail,
+            Some(format!("no Cargo.toml found at {}", root.display())),
+        );
+    }
+    match load_for_root(root) {
+        Ok(config) => report.add_check(
+            "config",
+            DoctorStatus::Pass,
+            Some(match config.source_path() {
+                Some(path) => format!("loaded {} at {}", CONFIG_FILE_NAME, path.display()),
+                None => format!("{CONFIG_FILE_NAME} not found; using built-in defaults"),
+            }),
+        ),
+        Err(error) => report.add_check(
+            "config",
+            DoctorStatus::Fail,
+            Some(format!("invalid {CONFIG_FILE_NAME}: {error}")),
+        ),
+    }
+    for tool in ["git", "cargo", "rustc"] {
+        let (status, evidence) = doctor_tool_check(tool);
+        report.add_check(&format!("tool_{tool}"), status, Some(evidence));
+    }
+    report
+}
+
+fn doctor_tool_check(tool: &str) -> (crate::cli::doctor_report::DoctorStatus, String) {
+    use crate::cli::doctor_report::DoctorStatus;
+
+    match std::process::Command::new(tool).arg("--version").output() {
+        Ok(output) if output.status.success() => (
+            DoctorStatus::Pass,
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ),
+        _ => (DoctorStatus::Fail, format!("{tool} not available")),
+    }
+}
+
+fn doctor_report_result(report: &crate::cli::doctor_report::DoctorReport) -> Result<(), String> {
+    match report.status {
+        crate::cli::doctor_report::DoctorStatus::Pass => Ok(()),
+        crate::cli::doctor_report::DoctorStatus::Fail => Err("doctor found issues".to_string()),
     }
 }
 
@@ -10281,6 +10385,56 @@ language = "rust"
     #[test]
     fn doctor_accepts_default_root() {
         assert_eq!(doctor(&args(&[])), Ok(()));
+    }
+
+    #[test]
+    fn doctor_core_report_fails_closed_for_invalid_config() -> Result<(), String> {
+        let dir = unique_command_test_dir("doctor-invalid-config");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
+            .map_err(|err| format!("write invalid config: {err}"))?;
+
+        let report = evaluate_doctor_core(&dir);
+        if report.status != crate::cli::doctor_report::DoctorStatus::Fail {
+            return Err(format!(
+                "invalid config should fail, got {:?}",
+                report.status
+            ));
+        }
+        let config_check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "config")
+            .ok_or_else(|| "missing config check".to_string())?;
+        if config_check.status != crate::cli::doctor_report::DoctorStatus::Fail {
+            return Err(format!(
+                "invalid config check should fail, got {:?}",
+                config_check.status
+            ));
+        }
+        if !config_check
+            .evidence
+            .as_deref()
+            .is_some_and(|evidence| evidence.contains("invalid ripr.toml"))
+        {
+            return Err(format!(
+                "invalid config evidence was not actionable: {:?}",
+                config_check.evidence
+            ));
+        }
+
+        let json = report.render_json()?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| format!("parse report JSON: {err}"))?;
+        if value["status"] != "fail"
+            || value["checks"][2]["name"] != "config"
+            || value["checks"][2]["status"] != "fail"
+        {
+            return Err(format!("unexpected invalid-config JSON report: {value}"));
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     // --- preview_language_enable_suggestions tests ---
