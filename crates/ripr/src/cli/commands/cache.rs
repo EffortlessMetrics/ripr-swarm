@@ -112,17 +112,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_cache_is_reported_without_fabricated_counts() {
+    fn missing_cache_is_reported_without_fabricated_counts() -> Result<(), String> {
         let path = temp_dir("missing");
         let status = inspect_cache_dir(&path);
-        assert_eq!(
-            status,
-            CacheStatus {
-                state: "not_found",
-                total_size_bytes: 0,
-                entry_count: 0,
-            }
-        );
+        let expected = CacheStatus {
+            state: "not_found",
+            total_size_bytes: 0,
+            entry_count: 0,
+        };
+        if status != expected {
+            return Err(format!("expected {expected:?}, got {status:?}"));
+        }
+        Ok(())
     }
 
     #[test]
@@ -135,9 +136,15 @@ mod tests {
         let status = inspect_cache_dir(&root);
         let cleanup = fs::remove_dir_all(&root).map_err(|error| error.to_string());
         cleanup?;
-        assert_eq!(status.state, "ok");
-        assert_eq!(status.total_size_bytes, 7);
-        assert_eq!(status.entry_count, 2);
+        if status.state != "ok" {
+            return Err(format!("expected ok status, got {:?}", status.state));
+        }
+        if status.total_size_bytes != 7 {
+            return Err(format!("expected 7 bytes, got {}", status.total_size_bytes));
+        }
+        if status.entry_count != 2 {
+            return Err(format!("expected 2 entries, got {}", status.entry_count));
+        }
         Ok(())
     }
 }
