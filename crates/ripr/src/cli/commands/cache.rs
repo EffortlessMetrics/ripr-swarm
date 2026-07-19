@@ -9,9 +9,26 @@ struct CacheStatus {
 }
 
 fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
-    if !cache_dir.exists() {
+    let metadata = match std::fs::metadata(cache_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return CacheStatus {
+                state: "not_found",
+                total_size_bytes: 0,
+                entry_count: 0,
+            };
+        }
+        Err(_) => {
+            return CacheStatus {
+                state: "unavailable",
+                total_size_bytes: 0,
+                entry_count: 0,
+            };
+        }
+    };
+    if !metadata.is_dir() {
         return CacheStatus {
-            state: "not_found",
+            state: "unavailable",
             total_size_bytes: 0,
             entry_count: 0,
         };
@@ -144,6 +161,22 @@ mod tests {
         }
         if status.entry_count != 2 {
             return Err(format!("expected 2 entries, got {}", status.entry_count));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cache_file_is_not_treated_as_a_directory() -> Result<(), String> {
+        let path = temp_dir("file");
+        fs::write(&path, b"not a cache directory").map_err(|error| error.to_string())?;
+        let status = inspect_cache_dir(&path);
+        let cleanup = fs::remove_file(&path).map_err(|error| error.to_string());
+        cleanup?;
+        if status.state != "unavailable" {
+            return Err(format!(
+                "expected unavailable status, got {:?}",
+                status.state
+            ));
         }
         Ok(())
     }
