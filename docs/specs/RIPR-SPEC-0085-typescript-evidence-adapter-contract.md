@@ -243,6 +243,13 @@ typescript_target_unresolved
 typescript_import_graph_unresolved
 ```
 
+`typescript_table_case_unresolved` is emitted only from a real table-case
+producer: an oracle-eligible `test.each(...)` / `it.each(...)` test whose
+matcher expected value is row-derived or otherwise dynamic. The finding may
+still carry useful preview evidence, but the adapter does not bind table rows
+to concrete expected values, so the limitation stays advisory and emits no
+repair packet by itself.
+
 ### Source-to-test ownership and the cross-language boundary
 
 Ownership prefers same-package, direct-import, nearby-naming, runner-path
@@ -354,7 +361,7 @@ PR 9  bun_bridge.rs    cross-language bridge inventory (report-only)
 PR 10 classifier.rs    cross-language oracle routing
 PR 11 bun_bridge.rs    Bun stable-byte profile (consumes the adapter, never forks it)
 PR 12 dogfood          real TS evidence-to-repair attempts
-PR 13 reports          TypeScript route-quality slice
+PR 13 reports          TypeScript limitation leaderboard + route-quality slice
 ```
 
 ## Metrics
@@ -363,5 +370,14 @@ PR 13 reports          TypeScript route-quality slice
   proposed status of this contract until the wave implements and dogfoods
   it. Real capability metrics (packets attempted/improved, unknown-runner
   count, helper-gated count, cross-language unknown-bridge count) are
-  introduced by the route-quality PR and remain `not_available` until a
+  introduced by route-quality reports and remain `not_available` until a
   real producer populates them.
+- `typescript_limitation_leaderboard_reports` — `ripr reports ts-limitations`
+  can aggregate existing check-output limitation evidence by kind without
+  rerunning analysis or promoting TypeScript/JavaScript preview authority.
+- `language_adapter_typescript_false_actionable_audit` — the checked
+  TypeScript-family preview false-actionable audit corpus and the dogfood/report
+  projections track whether rows that must remain non-actionable accidentally
+  become packet-ready, actionable, or complete-packet-shaped. The metric remains
+  advisory and does not promote TypeScript/JavaScript support tiers, gates,
+  badge inputs, baselines, or RIPR Zero authority.

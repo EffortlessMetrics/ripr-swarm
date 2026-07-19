@@ -9,6 +9,7 @@ use crate::cli::agent::{
     parse_agent_args,
 };
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
+use crate::cli::commands_numeric::parse_positive_u64;
 use crate::cli::help;
 use crate::cli::parse::{expect_value, parse_format, parse_mode};
 use crate::config::{
@@ -27,6 +28,8 @@ use crate::cli::commands_agent_support::{
 };
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
+
+const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
 
 #[path = "commands/agent_dispatch.rs"]
 mod agent_dispatch;
@@ -178,7 +181,7 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent packet")?;
 
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
-        let rendered = render_agent_packet_from_gap_ledger(gap_ledger, gap_id)?;
+        let rendered = render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id)?;
         print!("{rendered}");
         return Ok(());
     }
@@ -721,13 +724,18 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("reports requires subcommand `index` or `gap-ledger`".to_string());
+        return Err(
+            "reports requires subcommand `index`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+                .to_string(),
+        );
     };
     match subcommand.as_str() {
         "index" => report_packet_index(rest),
         "gap-ledger" => gap_decision_ledger(rest),
+        "ts-limitations" => typescript_limitations(rest),
+        "ts-false-actionable" => typescript_false_actionable(rest),
         _ => Err(format!(
-            "unknown reports subcommand {subcommand:?}; expected `index` or `gap-ledger`"
+            "unknown reports subcommand {subcommand:?}; expected `index`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
         )),
     }
 }
@@ -768,6 +776,55 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
     let rendered_json = output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let rendered_md = output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
+    write_text_file(&options.out, &rendered_json)?;
+    write_text_file(&options.out_md, &rendered_md)?;
+    println!("Wrote {}", options.out.display());
+    println!("Wrote {}", options.out_md.display());
+    Ok(())
+}
+
+fn typescript_limitations(args: &[String]) -> Result<(), String> {
+    let options = parse_typescript_limitations_options(args)?;
+    let input = output::typescript_limitations::TypeScriptLimitationLeaderboardInput {
+        root: options.root,
+        generated_at: typescript_limitations_generated_at()?,
+        check_output_path: output::baseline_delta::display_path(&options.check_output),
+        check_output_json: read_optional_text_for_report("check output", &options.check_output),
+    };
+    let report =
+        output::typescript_limitations::build_typescript_limitation_leaderboard_report(input);
+    let rendered_json =
+        output::typescript_limitations::render_typescript_limitation_leaderboard_json(&report)?;
+    let rendered_md =
+        output::typescript_limitations::render_typescript_limitation_leaderboard_markdown(&report);
+    write_text_file(&options.out, &rendered_json)?;
+    write_text_file(&options.out_md, &rendered_md)?;
+    println!("Wrote {}", options.out.display());
+    println!("Wrote {}", options.out_md.display());
+    Ok(())
+}
+
+fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
+    let options = parse_typescript_false_actionable_options(args)?;
+    let input = output::typescript_false_actionable::TypeScriptFalseActionableAuditInput {
+        root: options.root,
+        generated_at: typescript_false_actionable_generated_at()?,
+        corpus_path: output::baseline_delta::display_path(&options.corpus),
+        corpus_json: read_optional_text_for_report(
+            "TypeScript false-actionable audit corpus",
+            &options.corpus,
+        ),
+    };
+    let report =
+        output::typescript_false_actionable::build_typescript_false_actionable_audit_report(input);
+    let rendered_json =
+        output::typescript_false_actionable::render_typescript_false_actionable_audit_json(
+            &report,
+        )?;
+    let rendered_md =
+        output::typescript_false_actionable::render_typescript_false_actionable_audit_markdown(
+            &report,
+        );
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", options.out.display());
@@ -1430,6 +1487,23 @@ fn review_comments_with_diff_loader(
         ..CheckInput::default()
     };
     apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    let receipt_path =
+        output::review_comments_receipt::ReviewCommentsRunReceipt::path_for_output(&options.out);
+    let markdown_path = review_comments_markdown_path(&options.out);
+    let artifacts = vec![
+        output::outcome::display_path(&options.out),
+        output::outcome::display_path(&markdown_path),
+    ];
+    let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
+        &input.root,
+        &options.base,
+        &options.head,
+        options.timeout_ms,
+        &artifacts,
+    );
+    receipt.write_atomic(&receipt_path)?;
+    receipt.phase("input_validation", "configuration");
+    receipt.write_atomic(&receipt_path)?;
 
     if let Some(gap_ledger) = &options.gap_ledger {
         let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
@@ -1462,17 +1536,33 @@ fn review_comments_with_diff_loader(
             &gap_ledger_path,
             &records,
         );
-        let markdown_path = review_comments_markdown_path(&options.out);
+        receipt.phase("configuration", "static_rendering");
+        receipt.write_atomic(&receipt_path)?;
+        receipt.phase("static_rendering", "artifact_io");
+        receipt.write_atomic(&receipt_path)?;
+        let rendered_json =
+            output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         write_text_file(&markdown_path, &rendered_md)?;
+        receipt.complete(&artifacts);
+        let rendered_json =
+            output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+        write_text_file(&options.out, &rendered_json)?;
+        receipt.write_atomic(&receipt_path)?;
         println!("Wrote {}", options.out.display());
         println!("Wrote {}", markdown_path.display());
         return Ok(());
     }
 
+    receipt.phase("configuration", "diff_discovery");
+    receipt.write_atomic(&receipt_path)?;
     let diff_text = load_diff(&input.root, &options.base, &options.head)?;
+    receipt.phase("diff_discovery", "language_facts");
+    receipt.write_atomic(&receipt_path)?;
     let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
     let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
+    receipt.phase("language_facts", "canonical_analysis");
+    receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_owners(changed_owners);
     let changed_owner_names = working_set
@@ -1486,12 +1576,16 @@ fn review_comments_with_diff_loader(
         &working_set.files,
         &changed_owner_names,
     )?;
+    receipt.phase("canonical_analysis", "route_construction");
+    receipt.write_atomic(&receipt_path)?;
     let selection = select_agent_brief_seams(
         &scoped_inventory.classified,
         &working_set,
         output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
         AgentBriefPolicy::from_config(&config),
     );
+    receipt.phase("route_construction", "static_rendering");
+    receipt.write_atomic(&receipt_path)?;
     let analysis_scope = output::review_comments::ReviewCommentsAnalysisScope::limited_diff_scope(
         &working_set,
         &scoped_inventory,
@@ -1515,9 +1609,15 @@ fn review_comments_with_diff_loader(
         &selection,
         &analysis_scope,
     );
-    let markdown_path = review_comments_markdown_path(&options.out);
+    receipt.phase("static_rendering", "artifact_io");
+    receipt.write_atomic(&receipt_path)?;
+    let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&markdown_path, &rendered_md)?;
+    receipt.complete(&artifacts);
+    let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+    write_text_file(&options.out, &rendered_json)?;
+    receipt.write_atomic(&receipt_path)?;
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", markdown_path.display());
     Ok(())
@@ -1773,6 +1873,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
     let mut head: Option<String> = None;
     let mut gap_ledger = None;
     let mut out = PathBuf::from("target/ripr/review/comments.json");
+    let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -1815,6 +1916,11 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 }
                 out = PathBuf::from(value);
             }
+            "--timeout-ms" => {
+                i += 1;
+                timeout_ms =
+                    parse_positive_u64(expect_value(args, i, "--timeout-ms")?, "--timeout-ms")?;
+            }
             other => return Err(format!("unknown review-comments argument {other:?}")),
         }
         i += 1;
@@ -1826,6 +1932,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         head: head.ok_or_else(|| "review-comments requires --head <sha>".to_string())?,
         gap_ledger,
         out,
+        timeout_ms,
     })
 }
 
@@ -2826,6 +2933,112 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
     })
 }
 
+fn parse_typescript_limitations_options(
+    args: &[String],
+) -> Result<TypeScriptLimitationsOptions, String> {
+    let mut root = ".".to_string();
+    let mut check_output = None;
+    let mut out = PathBuf::from(output::typescript_limitations::DEFAULT_TYPESCRIPT_LIMITATIONS_OUT);
+    let mut out_md =
+        PathBuf::from(output::typescript_limitations::DEFAULT_TYPESCRIPT_LIMITATIONS_MD_OUT);
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                root = non_empty_string_arg(args, i, "--root", "reports ts-limitations")?;
+            }
+            "--check-output" => {
+                i += 1;
+                check_output = Some(non_empty_path_arg(
+                    args,
+                    i,
+                    "--check-output",
+                    "reports ts-limitations",
+                )?);
+            }
+            "--out" => {
+                i += 1;
+                out = non_empty_path_arg(args, i, "--out", "reports ts-limitations")?;
+            }
+            "--out-md" => {
+                i += 1;
+                out_md = non_empty_path_arg(args, i, "--out-md", "reports ts-limitations")?;
+            }
+            other => return Err(format!("unknown reports ts-limitations argument {other:?}")),
+        }
+        i += 1;
+    }
+
+    let Some(check_output) = check_output else {
+        return Err("reports ts-limitations requires --check-output PATH".to_string());
+    };
+
+    Ok(TypeScriptLimitationsOptions {
+        root,
+        check_output,
+        out,
+        out_md,
+    })
+}
+
+fn parse_typescript_false_actionable_options(
+    args: &[String],
+) -> Result<TypeScriptFalseActionableOptions, String> {
+    let mut root = ".".to_string();
+    let mut corpus = None;
+    let mut out =
+        PathBuf::from(output::typescript_false_actionable::DEFAULT_TYPESCRIPT_FALSE_ACTIONABLE_OUT);
+    let mut out_md = PathBuf::from(
+        output::typescript_false_actionable::DEFAULT_TYPESCRIPT_FALSE_ACTIONABLE_MD_OUT,
+    );
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                root = non_empty_string_arg(args, i, "--root", "reports ts-false-actionable")?;
+            }
+            "--corpus" => {
+                i += 1;
+                corpus = Some(non_empty_path_arg(
+                    args,
+                    i,
+                    "--corpus",
+                    "reports ts-false-actionable",
+                )?);
+            }
+            "--out" => {
+                i += 1;
+                out = non_empty_path_arg(args, i, "--out", "reports ts-false-actionable")?;
+            }
+            "--out-md" => {
+                i += 1;
+                out_md = non_empty_path_arg(args, i, "--out-md", "reports ts-false-actionable")?;
+            }
+            other => {
+                return Err(format!(
+                    "unknown reports ts-false-actionable argument {other:?}"
+                ));
+            }
+        }
+        i += 1;
+    }
+
+    let Some(corpus) = corpus else {
+        return Err("reports ts-false-actionable requires --corpus PATH".to_string());
+    };
+
+    Ok(TypeScriptFalseActionableOptions {
+        root,
+        corpus,
+        out,
+        out_md,
+    })
+}
+
 fn parse_coverage_grip_frontier_options(
     args: &[String],
 ) -> Result<CoverageGripFrontierOptions, String> {
@@ -3246,6 +3459,14 @@ fn gap_decision_ledger_generated_at() -> Result<String, String> {
     generated_at_unix_ms()
 }
 
+fn typescript_limitations_generated_at() -> Result<String, String> {
+    generated_at_unix_ms()
+}
+
+fn typescript_false_actionable_generated_at() -> Result<String, String> {
+    generated_at_unix_ms()
+}
+
 fn policy_readiness_generated_at() -> Result<String, String> {
     generated_at_unix_ms()
 }
@@ -3339,6 +3560,21 @@ fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
     let mut path = json_path.to_path_buf();
     path.set_extension("md");
     path
+}
+
+fn repo_scope_diff_bound_warning(
+    format: OutputFormat,
+    base_explicitly_provided: bool,
+    diff_file: Option<&Path>,
+) -> Option<String> {
+    if !format.is_repo_scope() || (!base_explicitly_provided && diff_file.is_none()) {
+        return None;
+    }
+    Some(format!(
+        "ripr: format {} is repo-scoped; --base/--diff does not bound it.\n\
+Use --format json for diff-scoped findings, or --format repo-exposure-summary-json for a bounded repo summary.",
+        format.primary_cli_name()
+    ))
 }
 
 pub(super) fn check(args: &[String]) -> Result<(), String> {
@@ -3444,11 +3680,14 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     if input.suppression_policy.is_some()
         && !matches!(
             input.format,
-            OutputFormat::Human | OutputFormat::Json | OutputFormat::Github
+            OutputFormat::Human
+                | OutputFormat::HumanFull
+                | OutputFormat::Json
+                | OutputFormat::Github
         )
     {
         return Err(
-            "--suppression-policy applies to the findings-based check formats (human, json, github); \
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
         );
@@ -3456,6 +3695,11 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
+    if let Some(warning) =
+        repo_scope_diff_bound_warning(format, base_explicitly_provided, input.diff_file.as_deref())
+    {
+        eprintln!("{warning}");
+    }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
         write_stdout_chunked(&render_check_gap_ledger_badge(
             gap_ledger, &format, &config,
@@ -4846,6 +5090,39 @@ mod tests {
         Ok(dest)
     }
 
+    #[test]
+    fn repo_scope_format_with_base_emits_scope_warning() -> Result<(), String> {
+        let warning = repo_scope_diff_bound_warning(OutputFormat::RepoExposureJson, true, None)
+            .ok_or_else(|| "repo-scoped format plus --base should warn".to_string())?;
+
+        assert!(warning.contains("format repo-exposure-json is repo-scoped"));
+        assert!(warning.contains("--base/--diff does not bound it"));
+        assert!(warning.contains("--format json"));
+        assert!(warning.contains("--format repo-exposure-summary-json"));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_scope_format_with_diff_emits_scope_warning() -> Result<(), String> {
+        let warning = repo_scope_diff_bound_warning(
+            OutputFormat::RepoSarif,
+            false,
+            Some(Path::new("changes.diff")),
+        )
+        .ok_or_else(|| "repo-scoped format plus --diff should warn".to_string())?;
+
+        assert!(warning.contains("format repo-sarif is repo-scoped"));
+        assert!(warning.contains("--base/--diff does not bound it"));
+        Ok(())
+    }
+
+    #[test]
+    fn diff_json_with_base_does_not_emit_repo_scope_warning() {
+        let warning = repo_scope_diff_bound_warning(OutputFormat::Json, true, None);
+
+        assert!(warning.is_none());
+    }
+
     struct GeneratedWorkflowSmokeFixture<'a> {
         commands: &'a [&'a str],
         artifact_paths: &'a [&'a str],
@@ -5222,10 +5499,126 @@ mod tests {
         assert_eq!(
             reports(&args(&["unknown"])),
             Err(
-                "unknown reports subcommand \"unknown\"; expected `index` or `gap-ledger`"
+                "unknown reports subcommand \"unknown\"; expected `index`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn reports_ts_limitations_requires_check_output_input() {
+        assert_eq!(
+            reports(&args(&["ts-limitations"])),
+            Err("reports ts-limitations requires --check-output PATH".to_string())
+        );
+        assert_eq!(
+            reports(&args(&["ts-limitations", "--check-output"])),
+            Err("missing value for --check-output".to_string())
+        );
+    }
+
+    #[test]
+    fn reports_ts_limitations_writes_json_and_markdown_reports() -> Result<(), String> {
+        let dir = unique_command_test_dir("ts-limitations");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create TypeScript limitations dir: {err}"))?;
+        let check_output =
+            repo_root().join("fixtures/typescript_static_limit_taxonomy/expected/check.json");
+        let out = dir.join("typescript-limitations.json");
+        let out_md = dir.join("typescript-limitations.md");
+
+        reports(&args(&[
+            "ts-limitations",
+            "--check-output",
+            &check_output.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+
+        let json_text = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read TypeScript limitations JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json_text)
+            .map_err(|err| format!("parse TypeScript limitations JSON: {err}"))?;
+        assert_eq!(value["kind"], "typescript_limitation_leaderboard");
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["summary"]["typescript_family_findings_total"], 4);
+        assert_eq!(
+            value["summary"]["top_limitation_kind"],
+            "typescript_package_root_unresolved"
+        );
+        assert!(json_text.contains("typescript_import_graph_unresolved"));
+        assert!(json_text.contains("static_limit_kind"));
+
+        let markdown = std::fs::read_to_string(&out_md)
+            .map_err(|err| format!("read TypeScript limitations Markdown: {err}"))?;
+        assert!(markdown.contains("# RIPR TypeScript Limitation Leaderboard"));
+        assert!(markdown.contains("typescript_package_root_unresolved"));
+        assert!(markdown.contains("badge artifacts keep their existing authority"));
+
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove TypeScript limitations dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn reports_ts_false_actionable_requires_corpus_input() {
+        assert_eq!(
+            reports(&args(&["ts-false-actionable"])),
+            Err("reports ts-false-actionable requires --corpus PATH".to_string())
+        );
+        assert_eq!(
+            reports(&args(&["ts-false-actionable", "--corpus"])),
+            Err("missing value for --corpus".to_string())
+        );
+    }
+
+    #[test]
+    fn reports_ts_false_actionable_writes_json_and_markdown_reports() -> Result<(), String> {
+        let dir = unique_command_test_dir("ts-false-actionable");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create TypeScript false-actionable dir: {err}"))?;
+        let corpus =
+            repo_root().join("fixtures/typescript-preview-false-actionable-audit/corpus.json");
+        let out = dir.join("typescript-false-actionable-audit.json");
+        let out_md = dir.join("typescript-false-actionable-audit.md");
+
+        reports(&args(&[
+            "ts-false-actionable",
+            "--corpus",
+            &corpus.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+
+        let json_text = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read TypeScript false-actionable JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json_text)
+            .map_err(|err| format!("parse TypeScript false-actionable JSON: {err}"))?;
+        assert_eq!(value["kind"], "typescript_false_actionable_audit");
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["summary"]["cases_total"], 14);
+        assert_eq!(value["summary"]["false_actionable_total"], 0);
+        assert_eq!(value["summary"]["false_actionable_rate"], 0.0);
+        assert_eq!(value["summary"]["preview_boundary_violation_total"], 0);
+        assert!(
+            json_text.contains("This report does not edit source, generate tests, call providers")
+        );
+
+        let markdown = std::fs::read_to_string(&out_md)
+            .map_err(|err| format!("read TypeScript false-actionable Markdown: {err}"))?;
+        assert!(markdown.contains("# RIPR TypeScript False-Actionable Audit"));
+        assert!(markdown.contains("False actionable: `0` / `14` (`0.000`)"));
+        assert!(
+            markdown.contains("Gate-decision and badge artifacts keep their existing authority")
+        );
+
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove TypeScript false-actionable dir: {err}"))?;
+        Ok(())
     }
 
     #[test]
@@ -5608,6 +6001,7 @@ mod tests {
                 head: "HEAD".to_string(),
                 gap_ledger: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
+                timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
         );
         assert_eq!(
@@ -5627,6 +6021,7 @@ mod tests {
                     "target/ripr/reports/gap-decision-ledger.json"
                 )),
                 out: PathBuf::from("target/ripr/review/comments.json"),
+                timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
         );
     }
@@ -7631,8 +8026,12 @@ language = "rust"
         let root = unique_command_test_dir("review-comments-diff-error");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let root_arg = root.display().to_string();
+        let out = root.join("comments.json");
+        let out_arg = out.display().to_string();
         let result = review_comments_with_diff_loader(
-            &args(&["--root", &root_arg, "--base", "main", "--head", "HEAD"]),
+            &args(&[
+                "--root", &root_arg, "--base", "main", "--head", "HEAD", "--out", &out_arg,
+            ]),
             |_root, _base, _head| Err("synthetic diff failure".to_string()),
         );
 

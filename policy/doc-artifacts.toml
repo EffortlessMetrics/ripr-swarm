@@ -150,6 +150,15 @@ status = "proposed"
 owner = "product-swarm"
 
 [[artifact]]
+id = "RIPR-PLAN-0062"
+kind = "plan"
+path = "plans/rust-one-shot-evidence-to-repair.md"
+status = "proposed"
+owner = "product-swarm"
+linked_proposal = "RIPR-PROP-0015"
+linked_spec = "RIPR-SPEC-0060"
+
+[[artifact]]
 id = "RIPR-SPEC-0065"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0065-evidence-to-repair-use-case-roadmap.md"
@@ -569,3 +578,27 @@ path = "docs/specs/RIPR-SPEC-0121-perl-lsp-swarm-scratch-gc-orphan-reaper-paths.
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "perl-lsp-swarm CI scratch-GC orphan-reaper path mismatch: spec-only — the fix lands in the perl-lsp-swarm repo (unreachable from this session), mirroring ripr-swarm scratch-gc.yml which sweeps inside each scratch subdir at -maxdepth 1 rather than scanning the parent at depth 1. No ripr product, schema, or classification change."
+
+[[artifact]]
+id = "RIPR-SPEC-0122"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Bounded human check output: default human output becomes a start-here triage view, human-full preserves the exhaustive evidence report, repo-scoped formats disclose that --base/--diff do not bound them, and first-pr --check missing-packet errors explain validate-only recovery. Human-only/default-output contract change; no JSON schema, analyzer, classification, or gate-policy change."
+
+[[artifact]]
+id = "RIPR-SPEC-0123"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Accepted and shipped targeted Rust rerun contract: explicit canonical-gap or changed-test selection, content-keyed fact reuse, named invalidation and cold fallback, identity and receipt continuity, local graph provenance, and a reproducible cold-versus-warm benchmark receipt. No dependency, runtime mutation, source edit, default gate, or support-tier promotion."
+
+[[artifact]]
+id = "RIPR-SPEC-0124"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0124-lsp-diagnostic-delivery-stability.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Accepted contract for #1565: canonical per-URI diagnostic ordering, root-independent diagnostic identities, unchanged publication suppression, removed-URI clearing, normalized equivalent-root digest comparison, and server-side publication telemetry. No editor prompt-cache, latency, runtime mutation, or test-adequacy claim."

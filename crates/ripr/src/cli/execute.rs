@@ -1,5 +1,5 @@
 use crate::cli::command::CliCommand;
-use crate::cli::{commands, help};
+use crate::cli::{commands, help, rerun};
 
 pub(super) fn execute(command: CliCommand) -> Result<(), String> {
     match command {
@@ -44,6 +44,7 @@ pub(super) fn execute(command: CliCommand) -> Result<(), String> {
         CliCommand::ImpactedEvidence(args) => commands::impacted_evidence(&args),
         CliCommand::RiprPlus(args) => commands::ripr_plus(&args),
         CliCommand::Cache(args) => commands::cache(&args),
+        CliCommand::Rerun(args) => rerun::run(&args),
     }
 }
 
@@ -59,6 +60,17 @@ mod tests {
     fn execute_handles_top_level_help_and_version() {
         assert_eq!(execute(CliCommand::Help), Ok(()));
         assert_eq!(execute(CliCommand::Version), Ok(()));
+    }
+
+    #[test]
+    fn execute_dispatches_rerun_parse_errors() {
+        assert_eq!(
+            execute(CliCommand::Rerun(Vec::new())),
+            Err(
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>"
+                    .to_string()
+            )
+        );
     }
 
     #[test]

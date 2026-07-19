@@ -84,6 +84,24 @@ Codex Goals runs should use repository artifacts instead of chat history:
 - `.ripr/goals/active.toml`
 - `target/ripr/reports/`
 
+## Issue Compilation Contract
+
+Before an implementation worker starts, the orchestrator compiles the work
+into a bounded issue packet containing verified repository state, one invariant
+or production delta, exact source-of-truth links, intended files or ownership
+seam, positive acceptance cases, adversarial and negative controls, explicit
+non-goals, proof commands, dependency and land order, and stop conditions for
+contradicted premises or architectural expansion.
+
+The implementation worker repairs concrete review or CI defects within that
+packet. When the packet premise is contradicted, required scope expands, or
+several workers repeat the same failure, return the work to orchestration for
+recompilation rather than escalating models or improvising architecture.
+
+Execution waves are limited by CI and merge capacity, not available model
+quota. Do not release another conflicting wave while protected-run queues,
+fixture runners, or integration collisions are saturated.
+
 ## Multiple PRs
 
 A Codex goal may create multiple scoped PRs in one run only when the work items
@@ -99,13 +117,40 @@ campaign manifest marks those work items as stackable.
 
 Goal manifests do not carry a special merge-permission field. Merge readiness
 comes from ordinary repo policy: branch protection, required checks, draft
-state, review comments, current operator direction, scope/risk, and whether the
-PR's issues have been reviewed and addressed.
+state, resolved review conversations, scope/risk, and whether the PR's issues
+have been reviewed and addressed.
+
+## Solo-Maintainer Review and Merge Contract
+
+`ripr-swarm` does not depend on an external approving reviewer for ordinary PRs.
+Codex or ChatGPT owns the technical review loop:
+
+1. Read the complete current-head diff, issue/spec, and PR claim boundary.
+2. Read every bot review, inline thread, and advisory CI report.
+3. Verify each finding against the current code.
+4. Fix valid findings; explain invalid, obsolete, or out-of-scope findings with
+   evidence.
+5. Improve tests, schemas, docs, and PR wording when review exposes a real gap.
+6. Resolve every review conversation.
+7. Confirm the exact reviewed head and the required `Ripr Rust Small Result`.
+8. Squash-merge or queue auto-merge, then clean the branch/worktree and continue.
+
+Bot reviews are inputs, not approval authorities. CodeRabbit, Codex review,
+Droid, ub-review, coverage, Codecov, Test Analytics, PR planning, and future
+Clippy remain advisory unless a focused policy change explicitly promotes one.
+Never ask the maintainer to arrange an external approval. If GitHub reports an
+approval requirement, diagnose live branch protection and rulesets as settings
+drift and route the repair through the repository-operations issue.
+
+A pending advisory review or flaky infrastructure job parks only the affected
+merge step. Continue an independent dependency-safe work item when available;
+do not mark the whole Codex Goal blocked. Issue at most one evidence-backed
+rerun for an infrastructure cancellation and preserve the original receipt.
 
 ## Stop Conditions
 
 A Codex Goals run should stop or write a blocked report when continuing would
-require human judgment or would broaden scope.
+require owner judgment or would broaden scope beyond the compiled work item.
 
 Stop for:
 
@@ -117,6 +162,10 @@ Stop for:
 - credential, publish, or marketplace decisions
 - non-stackable dependency boundaries for dependent work items
 - missing acceptance evidence that cannot be produced within the work item
+
+An external PR approval is not a normal stop condition. Neither is an unchanged
+advisory bot queue. Diagnose repository-policy drift, preserve the pending PR,
+and continue another independent lane where the campaign permits it.
 
 Blocked reports should be written to:
 
@@ -130,7 +179,7 @@ They should name:
 - work item
 - failing command
 - blocker
-- why continuing would broaden scope or require human judgment
+- why continuing would broaden scope or require owner judgment
 - recommended next action
 
 ## Campaign Manifest
