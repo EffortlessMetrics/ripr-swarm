@@ -7,8 +7,8 @@ traceability without reconstructing intent from chat history.
 ## Local Setup
 
 1. Install [`rustup`](https://rustup.rs/) if you don't already have it.
-   `rust-toolchain.toml` pins the toolchain (currently `1.95.0` with the
-   `rustfmt` and `clippy` components); `rustup` picks it up automatically
+   `rust-toolchain.toml` pins the exact toolchain version and its
+   `rustfmt` and `clippy` components; `rustup` picks it up automatically
    the first time you run a `cargo` command in this repo.
 2. Clone the repo and build the workspace:
 
