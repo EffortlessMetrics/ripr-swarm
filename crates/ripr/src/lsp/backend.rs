@@ -2,7 +2,7 @@ use super::AnalysisStatusNotification;
 use super::actions::code_action_response;
 use super::capabilities::{
     WorkspaceRootResolution, client_supports_diagnostic_refresh, client_supports_pull_diagnostics,
-    initialize_result_for_client, root_from_initialize_params,
+    initialize_result_for_client, negotiate_position_encoding, root_from_initialize_params,
 };
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
@@ -1747,6 +1747,7 @@ impl LanguageServer for Backend {
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
         let supports_pull_diagnostics = client_supports_pull_diagnostics(&params);
+        let position_encoding = negotiate_position_encoding(&params);
         let supports_diagnostic_refresh = client_supports_diagnostic_refresh(&params);
         if let Ok(mut supported) = self.pull_diagnostics.lock() {
             *supported = supports_pull_diagnostics;
@@ -1792,7 +1793,10 @@ impl LanguageServer for Backend {
             self.set_configuration_failure(error);
             self.publish_analysis_status().await;
         }
-        Ok(initialize_result_for_client(supports_pull_diagnostics))
+        Ok(initialize_result_for_client(
+            supports_pull_diagnostics,
+            position_encoding,
+        ))
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
