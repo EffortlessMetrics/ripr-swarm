@@ -555,13 +555,16 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::doctor_json_and_tool_failures_return_errors",
   "crates/ripr/src/cli/commands.rs::tests::doctor_human_projection_fails_for_missing_root",
   "crates/ripr/src/cli/commands.rs::tests::doctor_json_flag_accepts_explicit_root",
-  "crates/ripr/src/cli/doctor_report.rs::tests::render_text_names_checks_without_evidence_and_passes"
+  "crates/ripr/src/output/doctor.rs::tests::render_text_names_checks_without_evidence_and_passes",
+  "crates/ripr/src/output/doctor.rs::tests::config_check_redacts_source_excerpt_from_malformed_toml",
+  "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_fails_closed_for_guaranteed_missing_tool"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/config.rs",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/output/doctor.rs",
   "crates/ripr/src/lsp/config.rs",
   "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/lsp/diagnostics.rs",
