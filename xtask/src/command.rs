@@ -802,13 +802,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Writes release-readiness evidence; does not publish.",
         ),
         command_entry(
-            "issue-intake --issue <number>",
-            "report_only",
-            "target/ripr/reports/issue-intake-<number>.json",
-            false,
-            "Fetches a live GitHub issue and emits a typed intake packet.",
-        ),
-        command_entry(
             "release-server-archive --version <version> --target <triple> --executable <name> --archive <zip|tar.gz>",
             "mutating",
             "target/release artifacts",
@@ -1381,6 +1374,13 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "cargo publish dry-run staging output",
             false,
             "Runs publish dry run without publishing.",
+        ),
+        command_entry(
+            "issue-intake --issue <number>",
+            "report_only",
+            "target/ripr/reports/issue-intake-<number>.json",
+            false,
+            "Fetches a live GitHub issue and emits a typed intake packet.",
         ),
     ]
 }
