@@ -3,7 +3,7 @@ use super::{
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
     COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND,
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::fmt;
 use tower_lsp_server::ls_types::LSPAny;
 
@@ -145,6 +145,54 @@ impl<'de> Deserialize<'de> for RiprAgentSchemaVersion {
     {
         let value = String::deserialize(deserializer)?;
         Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// A nullable wire field that must be present, even when its value is `null`.
+///
+/// `Option<T>` alone cannot distinguish an omitted field from an explicit
+/// `null`, so protocol envelopes use this wrapper where the schema requires a
+/// field to be present for forward-compatible validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum RiprAgentRequiredNullable<T> {
+    Null,
+    Value(T),
+}
+
+impl<T: Serialize> Serialize for RiprAgentRequiredNullable<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Null => serializer.serialize_none(),
+            Self::Value(value) => serializer.serialize_some(value),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for RiprAgentRequiredNullable<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer).map(|value| match value {
+            Some(value) => Self::Value(value),
+            None => Self::Null,
+        })
+    }
+}
+
+fn require_nullable<T: DeserializeOwned>(
+    value: serde_json::Value,
+    _field: &'static str,
+) -> Result<RiprAgentRequiredNullable<T>, String> {
+    if value.is_null() {
+        Ok(RiprAgentRequiredNullable::Null)
+    } else {
+        serde_json::from_value(value)
+            .map(RiprAgentRequiredNullable::Value)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -352,15 +400,42 @@ pub(super) struct RiprAgentCapability {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "RiprAgentRequestEnvelopeWire")]
 pub(super) struct RiprAgentRequestEnvelope {
     #[serde(flatten)]
     pub(super) versions: RiprAgentVersionIdentity,
     pub(super) request: RiprAgentRequest,
     pub(super) mode: RiprAgentRequestMode,
-    pub(super) profile: Option<RiprAgentProfile>,
-    pub(super) snapshot_id: Option<String>,
-    pub(super) continuation_id: Option<String>,
+    pub(super) profile: RiprAgentRequiredNullable<RiprAgentProfile>,
+    pub(super) snapshot_id: RiprAgentRequiredNullable<String>,
+    pub(super) continuation_id: RiprAgentRequiredNullable<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RiprAgentRequestEnvelopeWire {
+    #[serde(flatten)]
+    versions: RiprAgentVersionIdentity,
+    request: RiprAgentRequest,
+    mode: RiprAgentRequestMode,
+    profile: serde_json::Value,
+    snapshot_id: serde_json::Value,
+    continuation_id: serde_json::Value,
+}
+
+impl TryFrom<RiprAgentRequestEnvelopeWire> for RiprAgentRequestEnvelope {
+    type Error = String;
+
+    fn try_from(value: RiprAgentRequestEnvelopeWire) -> Result<Self, Self::Error> {
+        Ok(Self {
+            versions: value.versions,
+            request: value.request,
+            mode: value.mode,
+            profile: require_nullable(value.profile, "profile")?,
+            snapshot_id: require_nullable(value.snapshot_id, "snapshot_id")?,
+            continuation_id: require_nullable(value.continuation_id, "continuation_id")?,
+        })
+    }
 }
 
 impl RiprAgentCapability {
@@ -401,42 +476,133 @@ struct RiprAgentServerCapability {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "RiprAgentSuccessEnvelopeWire")]
 pub(super) struct RiprAgentSuccessEnvelope {
     #[serde(flatten)]
     pub(super) versions: RiprAgentVersionIdentity,
     pub(super) request: RiprAgentRequest,
     pub(super) kind: RiprAgentResponseKind,
     status: RiprAgentSuccessStatus,
-    pub(super) snapshot_id: Option<String>,
-    pub(super) input_identity: Option<String>,
-    pub(super) root_identity: Option<String>,
-    pub(super) config_identity: Option<String>,
-    pub(super) base_identity: Option<String>,
+    pub(super) snapshot_id: RiprAgentRequiredNullable<String>,
+    pub(super) input_identity: RiprAgentRequiredNullable<String>,
+    pub(super) root_identity: RiprAgentRequiredNullable<String>,
+    pub(super) config_identity: RiprAgentRequiredNullable<String>,
+    pub(super) base_identity: RiprAgentRequiredNullable<String>,
     freshness: RiprAgentFreshness,
     run_status: RiprAgentRunStatus,
-    pub(super) profile: Option<RiprAgentProfile>,
-    pub(super) budget_identity: Option<String>,
+    pub(super) profile: RiprAgentRequiredNullable<RiprAgentProfile>,
+    pub(super) budget_identity: RiprAgentRequiredNullable<String>,
     selected_count: u64,
     omitted_count: u64,
     total_count: u64,
-    complete_evidence_identity: Option<String>,
-    continuation_identity: Option<String>,
+    complete_evidence_identity: RiprAgentRequiredNullable<String>,
+    continuation_identity: RiprAgentRequiredNullable<String>,
     pub(super) allowed_edit_surface: RiprAgentAllowedEditSurface,
     pub(super) must_not_change: Vec<RiprAgentMustNotChange>,
-    verify_route: Option<String>,
-    receipt_route: Option<String>,
+    verify_route: RiprAgentRequiredNullable<String>,
+    receipt_route: RiprAgentRequiredNullable<String>,
     limitations: Vec<String>,
     non_claims: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RiprAgentSuccessEnvelopeWire {
+    #[serde(flatten)]
+    versions: RiprAgentVersionIdentity,
+    request: RiprAgentRequest,
+    kind: RiprAgentResponseKind,
+    status: RiprAgentSuccessStatus,
+    snapshot_id: serde_json::Value,
+    input_identity: serde_json::Value,
+    root_identity: serde_json::Value,
+    config_identity: serde_json::Value,
+    base_identity: serde_json::Value,
+    freshness: RiprAgentFreshness,
+    run_status: RiprAgentRunStatus,
+    profile: serde_json::Value,
+    budget_identity: serde_json::Value,
+    selected_count: u64,
+    omitted_count: u64,
+    total_count: u64,
+    complete_evidence_identity: serde_json::Value,
+    continuation_identity: serde_json::Value,
+    allowed_edit_surface: RiprAgentAllowedEditSurface,
+    must_not_change: Vec<RiprAgentMustNotChange>,
+    verify_route: serde_json::Value,
+    receipt_route: serde_json::Value,
+    limitations: Vec<String>,
+    non_claims: Vec<String>,
+}
+
+impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
+    type Error = String;
+
+    fn try_from(value: RiprAgentSuccessEnvelopeWire) -> Result<Self, Self::Error> {
+        Ok(Self {
+            versions: value.versions,
+            request: value.request,
+            kind: value.kind,
+            status: value.status,
+            snapshot_id: require_nullable(value.snapshot_id, "snapshot_id")?,
+            input_identity: require_nullable(value.input_identity, "input_identity")?,
+            root_identity: require_nullable(value.root_identity, "root_identity")?,
+            config_identity: require_nullable(value.config_identity, "config_identity")?,
+            base_identity: require_nullable(value.base_identity, "base_identity")?,
+            freshness: value.freshness,
+            run_status: value.run_status,
+            profile: require_nullable(value.profile, "profile")?,
+            budget_identity: require_nullable(value.budget_identity, "budget_identity")?,
+            selected_count: value.selected_count,
+            omitted_count: value.omitted_count,
+            total_count: value.total_count,
+            complete_evidence_identity: require_nullable(
+                value.complete_evidence_identity,
+                "complete_evidence_identity",
+            )?,
+            continuation_identity: require_nullable(
+                value.continuation_identity,
+                "continuation_identity",
+            )?,
+            allowed_edit_surface: value.allowed_edit_surface,
+            must_not_change: value.must_not_change,
+            verify_route: require_nullable(value.verify_route, "verify_route")?,
+            receipt_route: require_nullable(value.receipt_route, "receipt_route")?,
+            limitations: value.limitations,
+            non_claims: value.non_claims,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, try_from = "RiprAgentErrorWire")]
 pub(super) struct RiprAgentError {
     pub(super) kind: RiprAgentErrorKind,
     retryable: bool,
-    recovery_route: Option<RiprAgentRecoveryRoute>,
-    snapshot_id: Option<String>,
+    recovery_route: RiprAgentRequiredNullable<RiprAgentRecoveryRoute>,
+    snapshot_id: RiprAgentRequiredNullable<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RiprAgentErrorWire {
+    kind: RiprAgentErrorKind,
+    retryable: bool,
+    recovery_route: serde_json::Value,
+    snapshot_id: serde_json::Value,
+}
+
+impl TryFrom<RiprAgentErrorWire> for RiprAgentError {
+    type Error = String;
+
+    fn try_from(value: RiprAgentErrorWire) -> Result<Self, Self::Error> {
+        Ok(Self {
+            kind: value.kind,
+            retryable: value.retryable,
+            recovery_route: require_nullable(value.recovery_route, "recovery_route")?,
+            snapshot_id: require_nullable(value.snapshot_id, "snapshot_id")?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -664,8 +830,43 @@ mod tests {
             Err(error) => return Err(format!("unexpected schema-version error: {error}")),
             Ok(_) => return Err("unsupported schema major was accepted".to_string()),
         }
-        if serde_json::from_str::<RiprAgentSchemaVersion>(r#"\"1.0\""#).is_ok() {
+        if serde_json::from_str::<RiprAgentSchemaVersion>(r#""1.0""#).is_ok() {
             return Err("serde accepted an unsupported schema major".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nullable_protocol_fields_must_be_explicit() -> Result<(), String> {
+        let missing_request_field = r#"
+        {
+          "protocol_version": "0.1",
+          "schema_version": "0.1",
+          "request": "ripr/listActionableItems",
+          "mode": "read_only",
+          "profile": null,
+          "continuation_id": null
+        }
+        "#;
+        if let Ok(decoded) = serde_json::from_str::<RiprAgentRequestEnvelope>(missing_request_field)
+        {
+            return Err(format!(
+                "request accepted an omitted nullable snapshot_id: {decoded:?}"
+            ));
+        }
+
+        let missing_success_field =
+            success_fixture().replace("          \"snapshot_id\": \"snapshot:abc\",\n", "");
+        if serde_json::from_str::<RiprAgentSuccessEnvelope>(&missing_success_field).is_ok() {
+            return Err("success accepted an omitted nullable snapshot_id".to_string());
+        }
+
+        let missing_error_field = error_fixture().replace(
+            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:old\"\n",
+            "            \"recovery_route\": \"refresh\"\n",
+        );
+        if serde_json::from_str::<RiprAgentErrorEnvelope>(&missing_error_field).is_ok() {
+            return Err("error accepted an omitted nullable snapshot_id".to_string());
         }
         Ok(())
     }
@@ -676,9 +877,9 @@ mod tests {
             versions: RiprAgentVersionIdentity::current(),
             request: RiprAgentRequest::ListActionableItems,
             mode: RiprAgentRequestMode::ReadOnly,
-            profile: Some(RiprAgentProfile::Actionable),
-            snapshot_id: Some("snapshot:6".to_string()),
-            continuation_id: None,
+            profile: RiprAgentRequiredNullable::Value(RiprAgentProfile::Actionable),
+            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:6".to_string()),
+            continuation_id: RiprAgentRequiredNullable::Null,
         };
         let encoded = serde_json::to_value(request).map_err(|error| error.to_string())?;
         for (field, expected) in [
