@@ -161,6 +161,16 @@ mod tests {
     }
 
     #[test]
+    fn run_handles_short_help_without_workspace_io() -> Result<(), String> {
+        run(&["-h".to_string()])
+    }
+
+    #[test]
+    fn run_accepts_json_status() -> Result<(), String> {
+        run(&["status".to_string(), "--json".to_string()])
+    }
+
+    #[test]
     fn run_rejects_missing_and_unknown_subcommands() -> Result<(), String> {
         let missing =
             run(&[]).map_err(|error| format!("missing subcommand unexpectedly passed: {error}"));
