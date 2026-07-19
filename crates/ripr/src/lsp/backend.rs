@@ -2,7 +2,7 @@ use super::AnalysisStatusNotification;
 use super::actions::code_action_response;
 use super::capabilities::{
     WorkspaceRootResolution, client_supports_diagnostic_refresh, client_supports_pull_diagnostics,
-    initialize_result_for_client, root_from_initialize_params,
+    root_from_initialize_params,
 };
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
@@ -1792,7 +1792,17 @@ impl LanguageServer for Backend {
             self.set_configuration_failure(error);
             self.publish_analysis_status().await;
         }
-        Ok(initialize_result_for_client(supports_pull_diagnostics))
+        // Negotiate position encoding from client capabilities (#1749).
+        let client_encodings = params
+            .capabilities
+            .general
+            .as_ref()
+            .and_then(|general| general.position_encodings.as_deref());
+        let encoding = crate::lsp::position::PositionEncoding::negotiate(client_encodings);
+        Ok(crate::lsp::capabilities::initialize_result_with_encoding(
+            supports_pull_diagnostics,
+            Some(&encoding),
+        ))
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {

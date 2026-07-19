@@ -26,7 +26,17 @@ pub(super) fn initialize_result() -> InitializeResult {
     initialize_result_for_client(true)
 }
 
+#[cfg(test)]
 pub(super) fn initialize_result_for_client(supports_pull_diagnostics: bool) -> InitializeResult {
+    initialize_result_with_encoding(supports_pull_diagnostics, None)
+}
+
+/// Build the InitializeResult with a negotiated position encoding.
+/// When `encoding` is `None`, the server advertises UTF-16 (the default).
+pub(super) fn initialize_result_with_encoding(
+    supports_pull_diagnostics: bool,
+    encoding: Option<&crate::lsp::position::PositionEncoding>,
+) -> InitializeResult {
     InitializeResult {
         capabilities: ServerCapabilities {
             text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
@@ -75,6 +85,7 @@ pub(super) fn initialize_result_for_client(supports_pull_diagnostics: bool) -> I
                 }),
                 ..WorkspaceServerCapabilities::default()
             }),
+            position_encoding: encoding.map(|e| e.to_capability()),
             ..ServerCapabilities::default()
         },
         server_info: Some(ServerInfo {
