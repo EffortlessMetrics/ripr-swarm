@@ -295,8 +295,10 @@ pub fn evaluate_diagnostic_budget(
 /// to the diagnostic payload; a follow-up PR will enrich the selection
 /// key from the classified seam evidence).
 ///
-/// The `canonical_id` is extracted from the diagnostic's `data` field
-/// (`seam_id` or `gap_id`), falling back to a URI+line composite.
+/// The `canonical_id` is extracted from the diagnostic's producer-owned
+/// `data` field. The location/hash fallback is retained for legacy diagnostics
+/// that predate the explicit identity fields, but it is deterministic and is
+/// never used as an actionability signal.
 pub fn build_budget_items_from_diagnostics(
     diagnostics_by_uri: &std::collections::BTreeMap<
         tower_lsp_server::ls_types::Uri,
@@ -363,12 +365,31 @@ fn diagnostic_canonical_id(
 }
 
 fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic) -> bool {
-    diagnostic
-        .data
-        .as_ref()
-        .and_then(|data| data.get("canonical_gap_id"))
-        .and_then(|value| value.as_str())
-        .is_some_and(|value| !value.trim().is_empty())
+    let Some(data) = diagnostic.data.as_ref() else {
+        return false;
+    };
+
+    // Gap diagnostics are emitted only after the producer has validated the
+    // LSP projection route. The budget still needs the producer's semantic
+    // actionability predicate, rather than treating identity as eligibility.
+    if data.get("canonical_gap_id").is_some() {
+        return data.get("gap_state").and_then(|value| value.as_str()) == Some("actionable")
+            && data.get("repairability").and_then(|value| value.as_str()) == Some("repairable");
+    }
+
+    // Classified seams publish their producer-owned headline decision. Preview
+    // findings publish the shared validator's packet decision. These signals
+    // are already settled before this delivery projection runs.
+    if let Some(eligible) = data
+        .get("headline_eligible")
+        .and_then(|value| value.as_bool())
+    {
+        return eligible;
+    }
+    data.get("preview_actionability")
+        .and_then(|value| value.get("repair_packet_ready"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -408,13 +429,17 @@ mod tests {
             data: Some(serde_json::json!({
                 "diagnostic_id": "finding:first",
                 "canonical_gap_id": "gap:first",
+                "gap_state": "baseline_only",
+                "repairability": "no_action",
             })),
             ..Default::default()
         };
         let second = tower_lsp_server::ls_types::Diagnostic {
             data: Some(serde_json::json!({
                 "diagnostic_id": "finding:second",
-                "finding_id": "finding:second",
+                "canonical_gap_id": "gap:second",
+                "gap_state": "actionable",
+                "repairability": "repairable",
             })),
             ..Default::default()
         };
@@ -428,11 +453,47 @@ mod tests {
         if items[0].canonical_id != "finding:first" || items[1].canonical_id != "finding:second" {
             return Err(format!("producer identities were not preserved: {items:?}"));
         }
-        if items[0].eligibility != DiagnosticBudgetEligibility::Actionable {
-            return Err("canonical gap diagnostic was not actionable".to_string());
+        if items[0].eligibility != DiagnosticBudgetEligibility::ProfileFiltered {
+            return Err("non-actionable canonical gap consumed the budget".to_string());
         }
-        if items[1].eligibility != DiagnosticBudgetEligibility::ProfileFiltered {
-            return Err("diagnostic without canonical gap was over-credited".to_string());
+        if items[1].eligibility != DiagnosticBudgetEligibility::Actionable {
+            return Err("actionable canonical gap was profile-filtered".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_bridge_uses_explicit_seam_and_preview_eligibility() -> Result<(), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let seam = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "seam:headline",
+                "seam_id": "seam:headline",
+                "headline_eligible": true,
+            })),
+            ..Default::default()
+        };
+        let preview = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "finding:preview",
+                "finding_id": "finding:preview",
+                "preview_actionability": {"repair_packet_ready": true},
+            })),
+            ..Default::default()
+        };
+        let diagnostics = std::collections::BTreeMap::from([(uri, vec![seam, preview])]);
+
+        let items = build_budget_items_from_diagnostics(&diagnostics)
+            .map_err(|err| format!("build budget items: {err}"))?;
+        if !items
+            .iter()
+            .all(|item| item.eligibility == DiagnosticBudgetEligibility::Actionable)
+        {
+            return Err(format!(
+                "explicit producer eligibility was not preserved: {items:?}"
+            ));
         }
         Ok(())
     }

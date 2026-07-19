@@ -7,7 +7,7 @@ use super::capabilities::{
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
     DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
-    diagnostic_refresh_plan, take_all_uris,
+    diagnostic_refresh_plan, take_all_uris, workspace_diagnostic_result_id,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -2176,14 +2176,18 @@ impl Backend {
 
         // Compute the diagnostic delivery budget result for workspace status.
         let (diagnostic_budget_json, diagnostic_budget_state) = {
+            let complete_evidence_identity = workspace_diagnostic_result_id(&snapshot);
+            let snapshot_profile_identity = snapshot
+                .input_identity_id()
+                .unwrap_or_else(|| complete_evidence_identity.clone());
             match crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(
                 &snapshot.diagnostics_by_uri,
             ) {
                 Ok(items) => match crate::lsp::diagnostic_budget::evaluate_diagnostic_budget(
                     items,
                     &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
-                    "workspace_status",
-                    "workspace_status",
+                    &snapshot_profile_identity,
+                    &complete_evidence_identity,
                 ) {
                     Ok(result) => (
                         diagnostic_budget_result_json(&result),
