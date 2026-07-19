@@ -1407,7 +1407,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         ),
         command_entry(
             "issue-intake --issue <number>",
-            "report_only",
+            "external_state_read",
             "target/ripr/reports/issue-intake-<number>.json",
             false,
             "Fetches a live GitHub issue and emits a typed intake packet.",
