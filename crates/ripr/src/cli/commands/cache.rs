@@ -49,7 +49,7 @@ fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
                 partially_readable = true;
                 continue;
             };
-            let Ok(metadata) = entry.symlink_metadata() else {
+            let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
                 partially_readable = true;
                 continue;
             };
