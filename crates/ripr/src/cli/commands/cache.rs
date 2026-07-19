@@ -166,7 +166,8 @@ mod tests {
     }
 
     #[test]
-    fn run_accepts_json_status() -> Result<(), String> {
+    fn run_status_modes_are_successful() -> Result<(), String> {
+        run(&["status".to_string()])?;
         run(&["status".to_string(), "--json".to_string()])
     }
 
