@@ -9,6 +9,29 @@ import {
 } from './client';
 
 let controller: RiprClientController | undefined;
+let workspaceTrustStart: Promise<void> | undefined;
+
+export async function startAfterWorkspaceTrust(
+  currentController: Pick<RiprClientController, 'start'> | undefined
+): Promise<void> {
+  if (!currentController) {
+    return;
+  }
+  if (workspaceTrustStart) {
+    await workspaceTrustStart;
+    return;
+  }
+
+  const start = currentController.start();
+  workspaceTrustStart = start;
+  try {
+    await start;
+  } finally {
+    if (workspaceTrustStart === start) {
+      workspaceTrustStart = undefined;
+    }
+  }
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('ripr');
@@ -125,6 +148,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.workspace.onDidCloseTextDocument((document) => {
       controller?.markWorkspaceClosed(document);
+    }),
+    vscode.workspace.onDidGrantWorkspaceTrust(async () => {
+      output.appendLine('ripr workspace trust granted; starting a fresh server session.');
+      await startAfterWorkspaceTrust(controller);
     }),
     vscode.workspace.onDidChangeConfiguration(async (event) => {
       if (
