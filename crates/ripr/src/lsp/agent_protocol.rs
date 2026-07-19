@@ -68,14 +68,6 @@ impl RiprAgentProtocolVersion {
         }
         Ok(Self(value.to_string()))
     }
-
-    #[expect(
-        dead_code,
-        reason = "reserved protocol DTO identity is consumed by future handlers"
-    )]
-    fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 impl<'de> Deserialize<'de> for RiprAgentProtocolVersion {
@@ -143,14 +135,6 @@ impl RiprAgentSchemaVersion {
             });
         }
         Ok(Self(value.to_string()))
-    }
-
-    #[expect(
-        dead_code,
-        reason = "reserved schema DTO identity is consumed by future handlers"
-    )]
-    fn as_str(&self) -> &str {
-        &self.0
     }
 }
 
@@ -369,10 +353,6 @@ pub(super) struct RiprAgentCapability {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[expect(
-    dead_code,
-    reason = "reserved request envelope is defined before handlers land"
-)]
 pub(super) struct RiprAgentRequestEnvelope {
     #[serde(flatten)]
     pub(super) versions: RiprAgentVersionIdentity,
@@ -422,10 +402,6 @@ struct RiprAgentServerCapability {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[expect(
-    dead_code,
-    reason = "reserved success envelope is defined before handlers land"
-)]
 pub(super) struct RiprAgentSuccessEnvelope {
     #[serde(flatten)]
     pub(super) versions: RiprAgentVersionIdentity,
@@ -465,10 +441,6 @@ pub(super) struct RiprAgentError {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[expect(
-    dead_code,
-    reason = "reserved error envelope is defined before handlers land"
-)]
 pub(super) struct RiprAgentErrorEnvelope {
     #[serde(flatten)]
     pub(super) versions: RiprAgentVersionIdentity,
@@ -491,7 +463,14 @@ fn compatibility_commands() -> [&'static str; 7] {
     ]
 }
 
+fn reserved_dto_layout() -> usize {
+    std::mem::size_of::<RiprAgentRequestEnvelope>()
+        + std::mem::size_of::<RiprAgentSuccessEnvelope>()
+        + std::mem::size_of::<RiprAgentErrorEnvelope>()
+}
+
 pub(super) fn server_capability() -> LSPAny {
+    let _ = reserved_dto_layout();
     let capability = RiprAgentServerCapability {
         ripr_agent: RiprAgentCapability::v0_1(),
     };
@@ -637,10 +616,10 @@ mod tests {
     #[test]
     fn version_identities_are_explicit_and_independent() -> Result<(), String> {
         let capability = capability_fixture()?;
-        if capability.versions.protocol_version.as_str() != RIPR_AGENT_PROTOCOL_VERSION {
+        if capability.versions.protocol_version.0 != RIPR_AGENT_PROTOCOL_VERSION {
             return Err("protocol version identity must be explicit".to_string());
         }
-        if capability.versions.schema_version.as_str() != RIPR_AGENT_SCHEMA_VERSION {
+        if capability.versions.schema_version.0 != RIPR_AGENT_SCHEMA_VERSION {
             return Err("schema version identity must be explicit".to_string());
         }
         let encoded = serde_json::to_value(&capability)
