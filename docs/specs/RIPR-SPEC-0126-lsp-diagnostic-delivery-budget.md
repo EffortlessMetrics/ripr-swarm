@@ -85,8 +85,10 @@ totals, overflow reasons, budget/evidence identities, and the continuation
 route. It also reports `diagnostic_budget_state` separately:
 
 - `available` means the budget was evaluated for the current snapshot;
-- `unavailable` includes a machine-readable reason such as `no_snapshot` or
-  a serialization/evaluation failure.
+- `unavailable` includes a machine-readable reason: `no_snapshot`,
+  `serialization_failure`, or `evaluation_failure`. Failure states may also
+  carry producer error detail for diagnostics; the reason code is the stable
+  client contract.
 
 When inline detail bytes are not produced by the diagnostic producer, the
 projection must say `inline_detail_measurement: "not_available"`; it must not

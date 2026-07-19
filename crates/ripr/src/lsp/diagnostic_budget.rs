@@ -308,10 +308,10 @@ pub fn build_budget_items_from_diagnostics(
     let mut items = Vec::new();
     for (uri, diagnostics) in diagnostics_by_uri {
         let document = uri.as_str().to_string();
-        for (index, diagnostic) in diagnostics.iter().enumerate() {
+        for diagnostic in diagnostics {
             let payload = serde_json::to_vec(diagnostic)?;
             let payload_bytes = payload.len();
-            let canonical_id = diagnostic_canonical_id(diagnostic, &document, index, &payload);
+            let canonical_id = diagnostic_canonical_id(diagnostic, &document, &payload);
             items.push(DiagnosticBudgetItem {
                 canonical_id,
                 document: document.clone(),
@@ -336,7 +336,6 @@ pub fn build_budget_items_from_diagnostics(
 fn diagnostic_canonical_id(
     diagnostic: &tower_lsp_server::ls_types::Diagnostic,
     document: &str,
-    index: usize,
     payload: &[u8],
 ) -> String {
     if let Some(data) = &diagnostic.data
@@ -361,7 +360,7 @@ fn diagnostic_canonical_id(
     let line = diagnostic.range.start.line;
     let character = diagnostic.range.start.character;
     let payload_hash = Sha256::digest(payload);
-    format!("location:{document}:{line}:{character}:{index}:{payload_hash:x}")
+    format!("location:{document}:{line}:{character}:{payload_hash:x}")
 }
 
 fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic) -> bool {
@@ -372,7 +371,7 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
     // Gap diagnostics are emitted only after the producer has validated the
     // LSP projection route. The budget still needs the producer's semantic
     // actionability predicate, rather than treating identity as eligibility.
-    if data.get("canonical_gap_id").is_some() {
+    if data.get("source").and_then(|value| value.as_str()) == Some("gap_decision_ledger") {
         return data.get("gap_state").and_then(|value| value.as_str()) == Some("actionable")
             && data.get("repairability").and_then(|value| value.as_str()) == Some("repairable");
     }
@@ -428,6 +427,7 @@ mod tests {
         let first = tower_lsp_server::ls_types::Diagnostic {
             data: Some(serde_json::json!({
                 "diagnostic_id": "finding:first",
+                "source": "gap_decision_ledger",
                 "canonical_gap_id": "gap:first",
                 "gap_state": "baseline_only",
                 "repairability": "no_action",
@@ -437,6 +437,7 @@ mod tests {
         let second = tower_lsp_server::ls_types::Diagnostic {
             data: Some(serde_json::json!({
                 "diagnostic_id": "finding:second",
+                "source": "gap_decision_ledger",
                 "canonical_gap_id": "gap:second",
                 "gap_state": "actionable",
                 "repairability": "repairable",
@@ -479,6 +480,7 @@ mod tests {
             data: Some(serde_json::json!({
                 "diagnostic_id": "finding:preview",
                 "finding_id": "finding:preview",
+                "canonical_gap_id": "gap:preview",
                 "preview_actionability": {"repair_packet_ready": true},
             })),
             ..Default::default()
@@ -493,6 +495,40 @@ mod tests {
         {
             return Err(format!(
                 "explicit producer eligibility was not preserved: {items:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_fallback_identity_is_stable_when_diagnostics_are_reordered() -> Result<(), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let first = tower_lsp_server::ls_types::Diagnostic {
+            message: "first legacy diagnostic".to_string(),
+            ..Default::default()
+        };
+        let second = tower_lsp_server::ls_types::Diagnostic {
+            message: "second legacy diagnostic".to_string(),
+            ..Default::default()
+        };
+        let forward =
+            std::collections::BTreeMap::from([(uri.clone(), vec![first.clone(), second.clone()])]);
+        let reversed = std::collections::BTreeMap::from([(uri, vec![second, first])]);
+        let forward_ids = build_budget_items_from_diagnostics(&forward)
+            .map_err(|err| format!("build forward budget items: {err}"))?
+            .into_iter()
+            .map(|item| item.canonical_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        let reversed_ids = build_budget_items_from_diagnostics(&reversed)
+            .map_err(|err| format!("build reversed budget items: {err}"))?
+            .into_iter()
+            .map(|item| item.canonical_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        if forward_ids != reversed_ids {
+            return Err(format!(
+                "legacy fallback identities changed after reordering: forward={forward_ids:?}, reversed={reversed_ids:?}"
             ));
         }
         Ok(())

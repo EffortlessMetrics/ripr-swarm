@@ -2198,18 +2198,12 @@ impl Backend {
                     ),
                     Err(error) => (
                         serde_json::Value::Null,
-                        serde_json::json!({
-                            "status": "unavailable",
-                            "reason": error.to_string(),
-                        }),
+                        diagnostic_budget_unavailable_state("evaluation_failure", error),
                     ),
                 },
                 Err(error) => (
                     serde_json::Value::Null,
-                    serde_json::json!({
-                        "status": "unavailable",
-                        "reason": error.to_string(),
-                    }),
+                    diagnostic_budget_unavailable_state("serialization_failure", error),
                 ),
             }
         };
@@ -2293,6 +2287,17 @@ impl Backend {
             "limits_note": "Static evidence only; advisory, not a gate decision.",
         }))
     }
+}
+
+fn diagnostic_budget_unavailable_state(
+    reason: &'static str,
+    error: impl std::fmt::Display,
+) -> serde_json::Value {
+    serde_json::json!({
+        "status": "unavailable",
+        "reason": reason,
+        "detail": error.to_string(),
+    })
 }
 
 fn diagnostic_budget_result_json(
