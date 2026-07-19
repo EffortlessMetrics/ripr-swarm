@@ -34,6 +34,7 @@ pub(super) enum CliCommand {
     PrEvidence(Vec<String>),
     ImpactedEvidence(Vec<String>),
     RiprPlus(Vec<String>),
+    Rerun(Vec<String>),
 }
 
 impl CliCommand {
@@ -73,6 +74,7 @@ impl CliCommand {
             Some("pr-evidence") => Ok(Self::PrEvidence(command_args)),
             Some("impacted-evidence") => Ok(Self::ImpactedEvidence(command_args)),
             Some("plus") => Ok(Self::RiprPlus(command_args)),
+            Some("rerun") => Ok(Self::Rerun(command_args)),
             Some(command) => Err(unknown_command_error(command)),
         }
     }
@@ -93,6 +95,8 @@ const KNOWN_COMMANDS: &[&str] = &[
     "pr-review",
     "coverage-grip",
     "assistant-loop",
+    "first-pr",
+    "start-here",
     "first-action",
     "reports",
     "calibrate",
@@ -105,6 +109,12 @@ const KNOWN_COMMANDS: &[&str] = &[
     "context",
     "doctor",
     "lsp",
+    "pr-summary",
+    "annotations",
+    "pr-evidence",
+    "impacted-evidence",
+    "plus",
+    "rerun",
 ];
 
 fn unknown_command_error(command: &str) -> String {
@@ -149,7 +159,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::CliCommand;
+    use super::{CliCommand, KNOWN_COMMANDS, closest_command};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -166,6 +176,7 @@ mod tests {
             (Some("init"), CliCommand::Init(Vec::new())),
             (Some("pilot"), CliCommand::Pilot(Vec::new())),
             (Some("outcome"), CliCommand::Outcome(Vec::new())),
+            (Some("rerun"), CliCommand::Rerun(Vec::new())),
             (
                 Some("evidence-health"),
                 CliCommand::EvidenceHealth(Vec::new()),
@@ -242,5 +253,34 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn closest_command_suggests_previously_missing_commands() {
+        // These commands were missing from KNOWN_COMMANDS before #1769; verify
+        // they now produce typo suggestions instead of a bare "unknown" error.
+        assert_eq!(closest_command("firts-pr"), Some("first-pr"));
+        assert_eq!(closest_command("start-hear"), Some("start-here"));
+        assert_eq!(closest_command("pr-sumary"), Some("pr-summary"));
+        assert_eq!(closest_command("annotatons"), Some("annotations"));
+        assert_eq!(closest_command("pr-evdence"), Some("pr-evidence"));
+        assert_eq!(
+            closest_command("impacted-evdence"),
+            Some("impacted-evidence")
+        );
+        assert_eq!(closest_command("pls"), Some("plus"));
+    }
+
+    #[test]
+    fn known_commands_covers_every_parser_spelling() {
+        // Every command spelling accepted by from_parts must appear in
+        // KNOWN_COMMANDS so typo suggestions work. Help/Version are flags,
+        // not subcommands, so they are intentionally excluded.
+        for known in KNOWN_COMMANDS {
+            assert!(
+                CliCommand::from_parts(Some(known), Vec::new()).is_ok(),
+                "KNOWN_COMMANDS entry {known:?} is not accepted by from_parts"
+            );
+        }
     }
 }
