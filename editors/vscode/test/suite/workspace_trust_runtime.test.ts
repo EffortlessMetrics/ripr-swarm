@@ -46,7 +46,7 @@ suite('Workspace Trust Runtime', () => {
       },
       createFileSystemWatcher: () => {
         watcherCalls += 1;
-        return {} as vscode.FileSystemWatcher;
+        return {} as unknown as vscode.FileSystemWatcher;
       },
       readFile: async () => undefined,
       runRipr: async () => {
@@ -61,10 +61,12 @@ suite('Workspace Trust Runtime', () => {
     };
 
     const output = {
-      appendLine: (line: string) => outputLines.push(line)
-    } as vscode.OutputChannel;
+      appendLine: (line: string) => {
+        outputLines.push(line);
+      }
+    } as unknown as vscode.OutputChannel;
     const controller = new RiprClientController(
-      {} as vscode.ExtensionContext,
+      {} as unknown as vscode.ExtensionContext,
       output,
       runtime
     );
