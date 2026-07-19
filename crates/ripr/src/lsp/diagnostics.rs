@@ -27,12 +27,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tower_lsp_server::ls_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
-    Range, Uri,
-};
 #[cfg(test)]
 use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Range,
+    Uri,
+};
 
 pub struct DiagnosticBatch {
     pub uri: Uri,
@@ -1403,7 +1403,7 @@ fn diagnostic_for_finding_with_causal(
 
 fn diagnostic_range_for_finding(finding: &Finding) -> Range {
     let line = finding.probe.location.line.saturating_sub(1) as u32;
-    let column = finding.probe.location.column as u32;
+    let column = finding.probe.location.column;
     crate::lsp::position::expression_span_range(line, column, &finding.probe.expression)
 }
 
