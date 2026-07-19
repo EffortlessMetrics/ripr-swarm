@@ -174,6 +174,15 @@ mod tests {
     }
 
     #[test]
+    fn render_text_names_checks_without_evidence_and_passes() {
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check("config", DoctorStatus::Pass, None);
+        let text = report.render_text();
+        assert!(text.contains("✓ config"));
+        assert!(text.contains("✓ doctor checks passed"));
+    }
+
+    #[test]
     fn render_json_produces_valid_json() -> Result<(), String> {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(

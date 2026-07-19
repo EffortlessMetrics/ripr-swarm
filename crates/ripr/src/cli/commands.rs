@@ -10432,6 +10432,67 @@ language = "rust"
         Ok(())
     }
 
+    #[test]
+    fn doctor_core_report_fails_closed_for_missing_root() -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-missing-root");
+        if root.exists() {
+            return Err(format!("test root unexpectedly exists: {}", root.display()));
+        }
+
+        let report = evaluate_doctor_core(&root);
+        if report.status != crate::cli::doctor_report::DoctorStatus::Fail {
+            return Err(format!("missing root should fail, got {:?}", report.status));
+        }
+        let root_check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "root_directory")
+            .ok_or_else(|| "missing root-directory check".to_string())?;
+        if root_check.status != crate::cli::doctor_report::DoctorStatus::Fail {
+            return Err(format!(
+                "missing root check should fail, got {:?}",
+                root_check.status
+            ));
+        }
+        if !root_check
+            .evidence
+            .as_deref()
+            .is_some_and(|evidence| evidence.contains("does not exist"))
+        {
+            return Err(format!(
+                "missing root evidence was not actionable: {:?}",
+                root_check.evidence
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_json_and_tool_failures_return_errors() -> Result<(), String> {
+        let (status, evidence) = doctor_tool_check("ripr-tool-that-does-not-exist");
+        if status != crate::cli::doctor_report::DoctorStatus::Fail
+            || evidence != "ripr-tool-that-does-not-exist not available"
+        {
+            return Err(format!(
+                "unexpected missing-tool result: {status:?} {evidence}"
+            ));
+        }
+
+        let passing_report = crate::cli::doctor_report::DoctorReport::new(".");
+        doctor_report_result(&passing_report)?;
+
+        let dir = unique_command_test_dir("doctor-json-invalid-config");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
+            .map_err(|err| format!("write invalid config: {err}"))?;
+        if doctor_json(&dir).is_ok() {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("invalid JSON doctor report unexpectedly passed".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
     // --- preview_language_enable_suggestions tests ---
 
     /// When TypeScript files are detected in a directory that has no ripr.toml
