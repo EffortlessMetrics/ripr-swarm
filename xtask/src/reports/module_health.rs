@@ -103,17 +103,7 @@ pub(crate) fn module_health(args: &[String]) -> Result<(), String> {
     // Build JSON report.
     let files_json: Vec<serde_json::Value> = files
         .iter()
-        .map(|f| {
-            json!({
-                "path": f.path,
-                "lines": f.lines,
-                "over_threshold": f.lines >= threshold,
-                "impl_blocks": f.impl_blocks,
-                "distinct_public_prefixes": f.distinct_public_prefixes,
-                "responsibility_clusters": f.responsibility_clusters,
-                "over_responsibility_threshold": f.responsibility_clusters >= RESPONSIBILITY_THRESHOLD,
-            })
-        })
+        .map(|f| file_entry_json(f, threshold))
         .collect();
 
     let report_json = json!({
@@ -401,6 +391,20 @@ fn leading_camel_word(segment: &str) -> String {
 fn relative_path_normalized(path: &Path, root: &Path) -> String {
     let rel: PathBuf = path.strip_prefix(root).unwrap_or(path).to_path_buf();
     rel.to_string_lossy().replace('\\', "/")
+}
+
+/// The per-file JSON object in the report: the line-count signal plus the
+/// responsibility signal and both threshold flags.
+fn file_entry_json(f: &FileEntry, threshold: usize) -> serde_json::Value {
+    json!({
+        "path": f.path,
+        "lines": f.lines,
+        "over_threshold": f.lines >= threshold,
+        "impl_blocks": f.impl_blocks,
+        "distinct_public_prefixes": f.distinct_public_prefixes,
+        "responsibility_clusters": f.responsibility_clusters,
+        "over_responsibility_threshold": f.responsibility_clusters >= RESPONSIBILITY_THRESHOLD,
+    })
 }
 
 fn render_markdown(
@@ -709,6 +713,181 @@ fn private_helper() {}
         assert!(md.contains("Responsibility threshold"));
         assert!(md.contains("smell, not a measurement"));
         assert!(md.contains("Files over responsibility threshold"));
+    }
+
+    #[test]
+    fn file_entry_json_carries_both_signals() {
+        let f = entry("crates/ripr/src/x.rs", 2500, 3, 9, 14);
+        let value = file_entry_json(&f, 2000);
+        assert_eq!(value["path"], "crates/ripr/src/x.rs");
+        assert_eq!(value["lines"], 2500);
+        assert_eq!(value["over_threshold"], true);
+        assert_eq!(value["impl_blocks"], 3);
+        assert_eq!(value["distinct_public_prefixes"], 9);
+        assert_eq!(value["responsibility_clusters"], 14);
+        // 14 >= RESPONSIBILITY_THRESHOLD (12).
+        assert_eq!(value["over_responsibility_threshold"], true);
+
+        // A small, focused file trips neither flag.
+        let small = entry("crates/ripr/src/y.rs", 40, 1, 2, 3);
+        let value = file_entry_json(&small, 2000);
+        assert_eq!(value["over_threshold"], false);
+        assert_eq!(value["over_responsibility_threshold"], false);
+    }
+
+    #[test]
+    fn render_markdown_handles_empty_report() {
+        let empty: Vec<FileEntry> = Vec::new();
+        let none: Vec<&FileEntry> = Vec::new();
+        let md = render_markdown(2000, &empty, 0, &none, 0, &none);
+        assert!(md.contains("No files exceed the 2000-line threshold."));
+        assert!(md.contains("No files exceed the 12-cluster responsibility threshold."));
+        assert!(md.contains("(no files found)"));
+    }
+
+    // Fixture: a small module that mixes many distinct concerns is flagged by
+    // the responsibility signal even though it is nowhere near the line
+    // threshold — the "structurally entangled even if not huge" case #1147
+    // Proposal 1 named.
+    #[test]
+    fn multi_responsibility_module_flags_on_responsibility_not_size() -> Result<(), String> {
+        let root = temp_dir("module-health-multi-responsibility");
+        let src = "\
+pub fn parse_header() {}
+pub fn classify_gap() {}
+pub fn observe_probe() {}
+pub struct ReachSummary;
+pub struct InfectReport;
+pub enum PropagateState {}
+pub trait Discriminator {}
+pub type OracleHandle = ();
+pub fn render_markdown_frag() {}
+pub fn diff_load() {}
+pub fn seam_index() {}
+pub fn sink_match() {}
+impl ReachSummary {}
+impl Discriminator for ReachSummary {}
+";
+        write_source(&root.join("crates/ripr/src/entangled.rs"), src);
+        let mut files = Vec::new();
+        collect_rs_files(&root, &root, &mut files)?;
+        let entry = files
+            .iter()
+            .find(|f| f.path.ends_with("entangled.rs"))
+            .ok_or("entangled.rs was not collected")?;
+        assert!(
+            entry.lines < 2000,
+            "fixture must stay well under the line threshold, got {} lines",
+            entry.lines
+        );
+        assert!(
+            entry.responsibility_clusters >= RESPONSIBILITY_THRESHOLD,
+            "a module mixing many concerns should trip the responsibility signal, got {} clusters",
+            entry.responsibility_clusters
+        );
+        assert!(
+            entry.impl_blocks >= 2,
+            "expected the impl blocks to be counted"
+        );
+        Ok(())
+    }
+
+    // Fixture: a large but single-responsibility module (one concern repeated
+    // across many lines) is flagged by size but NOT by the responsibility
+    // signal — proof the two signals are independent and the responsibility
+    // heuristic does not merely track file length.
+    #[test]
+    fn large_single_responsibility_module_flags_on_size_not_responsibility() -> Result<(), String> {
+        let root = temp_dir("module-health-single-responsibility");
+        let mut src = String::from("//! One concern: token accounting.\n");
+        for n in 0..2100 {
+            src.push_str(&format!("fn token_step_{n}() {{}}\n"));
+        }
+        src.push_str("pub fn token_run() {}\n");
+        write_source(&root.join("crates/ripr/src/tokens.rs"), &src);
+        let mut files = Vec::new();
+        collect_rs_files(&root, &root, &mut files)?;
+        let entry = files
+            .iter()
+            .find(|f| f.path.ends_with("tokens.rs"))
+            .ok_or("tokens.rs was not collected")?;
+        assert!(
+            entry.lines >= 2000,
+            "fixture should exceed the line threshold"
+        );
+        // A single public `token`-prefixed concern; private helpers are ignored.
+        assert!(
+            entry.responsibility_clusters < RESPONSIBILITY_THRESHOLD,
+            "a single-responsibility module must not trip the responsibility signal, got {} clusters",
+            entry.responsibility_clusters
+        );
+        Ok(())
+    }
+
+    // Path/order/root stability: collected paths are root-relative and
+    // forward-slash normalized, and the report's sort is deterministic
+    // regardless of filesystem read order.
+    #[test]
+    fn collected_paths_are_root_relative_and_sort_is_deterministic() -> Result<(), String> {
+        let root = temp_dir("module-health-stability");
+        write_source(&root.join("crates/ripr/src/a.rs"), "pub fn a() {}\n");
+        write_source(&root.join("crates/ripr/src/nested/b.rs"), "pub fn b() {}\n");
+        write_source(&root.join("xtask/src/c.rs"), "pub fn c() {}\n");
+
+        let mut files = Vec::new();
+        collect_rs_files(&root.join("crates/ripr/src"), &root, &mut files)?;
+        collect_rs_files(&root.join("xtask/src"), &root, &mut files)?;
+
+        for f in &files {
+            assert!(!f.path.contains('\\'), "path not normalized: {}", f.path);
+            assert!(
+                !f.path.starts_with('/') && !f.path.contains(':'),
+                "path is not root-relative: {}",
+                f.path
+            );
+        }
+
+        // The command's stable ordering: lines desc, then path asc.
+        let sort = |v: &mut Vec<FileEntry>| {
+            v.sort_by(|a, b| b.lines.cmp(&a.lines).then_with(|| a.path.cmp(&b.path)));
+        };
+        let mut forward = files.clone();
+        let mut reversed = files.clone();
+        reversed.reverse();
+        sort(&mut forward);
+        sort(&mut reversed);
+        assert_eq!(
+            forward, reversed,
+            "sort must be deterministic regardless of input order"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn module_health_help_returns_ok() -> Result<(), String> {
+        module_health(&["--help".to_string()])?;
+        Ok(())
+    }
+
+    /// Write source text to `path`, creating parent dirs. Test-only helper that
+    /// surfaces I/O errors instead of panicking.
+    fn write_source(path: &Path, text: &str) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, text);
+    }
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "{label}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
     }
 
     fn entry(
