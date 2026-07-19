@@ -2379,6 +2379,85 @@ fn overflow_reason_name(
     }
 }
 
+#[cfg(test)]
+mod diagnostic_budget_projection_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_status_budget_json_preserves_all_reason_variants() {
+        use crate::lsp::diagnostic_budget::{
+            DiagnosticBudgetResult, DiagnosticOverflowReason, OmittedDiagnosticItem,
+            OmittedDiagnosticReason, SelectedDiagnosticItem,
+        };
+
+        let result = DiagnosticBudgetResult {
+            schema_version: crate::lsp::diagnostic_budget::DIAGNOSTIC_BUDGET_SCHEMA_VERSION,
+            snapshot_profile_budget_identity: "profile:workspace".to_string(),
+            complete_evidence_identity: "evidence:complete".to_string(),
+            continuation_or_inspect_route: "ripr/inspect".to_string(),
+            selection_basis_version:
+                crate::lsp::diagnostic_budget::DIAGNOSTIC_BUDGET_SELECTION_VERSION,
+            total_canonical_items: 5,
+            eligible_items: 1,
+            selected: vec![SelectedDiagnosticItem {
+                canonical_id: "finding:selected".to_string(),
+                document: "file:///workspace/src/lib.rs".to_string(),
+                payload_bytes: 17,
+                inline_detail_omitted: true,
+            }],
+            omitted: vec![
+                OmittedDiagnosticItem {
+                    canonical_id: "finding:profile".to_string(),
+                    reason: OmittedDiagnosticReason::ProfileFiltered,
+                },
+                OmittedDiagnosticItem {
+                    canonical_id: "finding:document".to_string(),
+                    reason: OmittedDiagnosticReason::DocumentItemLimit,
+                },
+                OmittedDiagnosticItem {
+                    canonical_id: "finding:workspace".to_string(),
+                    reason: OmittedDiagnosticReason::WorkspaceItemLimit,
+                },
+                OmittedDiagnosticItem {
+                    canonical_id: "finding:bytes".to_string(),
+                    reason: OmittedDiagnosticReason::SerializedByteLimit,
+                },
+            ],
+            selected_bytes: 17,
+            complete_bytes: 100,
+            overflowed: true,
+            overflow_reasons: std::collections::BTreeSet::from([
+                DiagnosticOverflowReason::DocumentItemLimit,
+                DiagnosticOverflowReason::WorkspaceItemLimit,
+                DiagnosticOverflowReason::SerializedByteLimit,
+                DiagnosticOverflowReason::InlineDetailLimit,
+            ]),
+        };
+
+        let json = diagnostic_budget_result_json(&result);
+        assert_eq!(json["schema_version"], "lsp-diagnostic-budget-v1");
+        assert_eq!(json["selected"][0]["canonical_id"], "finding:selected");
+        assert_eq!(json["selected"][0]["payload_bytes"], 17);
+        assert_eq!(json["selected"][0]["inline_detail_omitted"], true);
+        assert_eq!(json["omitted"][0]["reason"], "profile_filtered");
+        assert_eq!(json["omitted"][1]["reason"], "document_item_limit");
+        assert_eq!(json["omitted"][2]["reason"], "workspace_item_limit");
+        assert_eq!(json["omitted"][3]["reason"], "serialized_byte_limit");
+        assert_eq!(
+            json["overflow_reasons"],
+            serde_json::json!([
+                "document_item_limit",
+                "workspace_item_limit",
+                "serialized_byte_limit",
+                "inline_detail_limit"
+            ])
+        );
+        assert_eq!(json["selected_bytes"], 17);
+        assert_eq!(json["complete_bytes"], 100);
+        assert_eq!(json["overflowed"], true);
+    }
+}
+
 fn workspace_status_report_paths() -> serde_json::Value {
     serde_json::json!({
         "actionable_gaps": "target/ripr/reports/actionable-gaps.json",
