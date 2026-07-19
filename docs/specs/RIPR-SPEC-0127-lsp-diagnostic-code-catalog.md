@@ -17,7 +17,7 @@ value, but the code contract is not yet a governed interface. The finding,
 seam, and gap diagnostic families each build their `code` string with an
 inline `format!` at the emission site in `crates/ripr/src/lsp/diagnostics.rs`.
 There is no single registry that lists every emitted code, so nothing
-mechanically proves that every emitted code is a known code or that an unknown
+mechanically checks that every emitted code is a known code or that an unknown
 code cannot be emitted.
 
 This is slice A of #1662. It establishes the typed registry and current-code
@@ -99,6 +99,9 @@ produced, so no golden output changes in this slice.
   uniqueness, single-entry resolution, every emitted finding/seam/gap code
   resolving, the gap constructor failing closed for an unknown kind, and
   unknown codes not resolving.
+- `diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind`
+  covers the emission site itself: a gap record whose kind is not a governed
+  code produces no diagnostic, while a registered kind still emits one.
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
   the byte-identical emitted code strings for known kinds.
 
@@ -117,8 +120,8 @@ produced, so no golden output changes in this slice.
 
 ## Claim boundary
 
-This contract proves only that every RIPR LSP diagnostic code is a governed
+This contract establishes only that every RIPR LSP diagnostic code is a governed
 catalog entry, that unknown codes do not resolve, and that an unregistered gap
 kind is not emitted. It does not improve analyzer evidence, decide severity or
-gate policy, project documentation URIs, or prove that any suggested repair is
+gate policy, project documentation URIs, or claim that any suggested repair is
 correct.

@@ -6871,6 +6871,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::every_emitted_gap_code_is_catalogued",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::gap_code_fails_closed_for_unknown_kind",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::unknown_code_does_not_resolve",
+  "crates/ripr/src/lsp/diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind",
 ]
 fixtures = []
 code = [

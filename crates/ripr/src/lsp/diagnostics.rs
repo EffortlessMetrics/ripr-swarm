@@ -1775,6 +1775,27 @@ mod seam_diagnostic_tests {
     }
 
     #[test]
+    fn gap_record_diagnostic_fails_closed_for_unregistered_kind() {
+        // A registered kind on an eligible, anchored record emits a diagnostic.
+        let mut record = gap_record(true);
+        assert!(
+            diagnostic_for_gap_record(Path::new("/repo"), Path::new("ledger.json"), &record)
+                .is_some(),
+            "a registered gap kind should emit a diagnostic"
+        );
+
+        // An unregistered kind (for example from an external ledger) is not a
+        // governed catalog code, so the emission site fails closed and does not
+        // surface an unknown `ripr-gap-*` code.
+        record.kind = "TotallyUnregisteredKind".to_string();
+        assert!(
+            diagnostic_for_gap_record(Path::new("/repo"), Path::new("ledger.json"), &record)
+                .is_none(),
+            "an unregistered gap kind must not emit a diagnostic"
+        );
+    }
+
+    #[test]
     fn gap_record_diagnostic_names_preview_inspection_route() -> Result<(), String> {
         let mut record = gap_record(true);
         record.repairability = "inspect_only".to_string();
