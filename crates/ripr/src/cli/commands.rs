@@ -10493,6 +10493,19 @@ language = "rust"
         Ok(())
     }
 
+    #[test]
+    fn doctor_human_projection_fails_for_missing_root() -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-human-missing-root");
+        if root.exists() {
+            return Err(format!("test root unexpectedly exists: {}", root.display()));
+        }
+        let root_arg = root.to_string_lossy().into_owned();
+        if doctor(&args(&["--root", &root_arg])).is_ok() {
+            return Err("human doctor unexpectedly passed for missing root".to_string());
+        }
+        Ok(())
+    }
+
     // --- preview_language_enable_suggestions tests ---
 
     /// When TypeScript files are detected in a directory that has no ripr.toml

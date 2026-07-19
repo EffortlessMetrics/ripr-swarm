@@ -553,6 +553,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_invalid_config",
   "crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_missing_root",
   "crates/ripr/src/cli/commands.rs::tests::doctor_json_and_tool_failures_return_errors",
+  "crates/ripr/src/cli/commands.rs::tests::doctor_human_projection_fails_for_missing_root",
   "crates/ripr/src/cli/doctor_report.rs::tests::render_text_names_checks_without_evidence_and_passes"
 ]
 fixtures = []

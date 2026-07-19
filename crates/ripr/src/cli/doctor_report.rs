@@ -167,9 +167,11 @@ mod tests {
             DoctorStatus::Fail,
             Some("no Cargo.toml".to_string()),
         );
+        report.add_section("guidance", vec!["run ripr doctor --help".to_string()]);
         let text = report.render_text();
         assert!(text.contains("✓ root exists"));
         assert!(text.contains("! no Cargo.toml"));
+        assert!(text.contains("run ripr doctor --help"));
         assert!(text.contains("! doctor checks failed"));
     }
 
