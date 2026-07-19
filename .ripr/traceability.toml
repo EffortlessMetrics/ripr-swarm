@@ -6843,10 +6843,14 @@ tests = [
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::oversized_inline_detail_stays_selected_with_explicit_omission",
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::profile_filtered_items_never_consume_the_budget",
   "crates/ripr/src/lsp/diagnostic_budget.rs::tests::invalid_budget_is_fail_closed",
+  "crates/ripr/src/lsp/diagnostic_budget.rs::tests::diagnostic_bridge_preserves_identity_and_actionability",
+  "crates/ripr/src/lsp/tests.rs::execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_status",
+  "crates/ripr/src/lsp/tests.rs::execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_counts",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/lsp/diagnostic_budget.rs",
+  "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/lsp.rs",
 ]
 outputs = [

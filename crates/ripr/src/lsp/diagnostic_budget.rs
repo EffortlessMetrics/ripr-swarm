@@ -7,6 +7,8 @@
 
 use std::collections::BTreeSet;
 
+use sha2::{Digest, Sha256};
+
 pub const DIAGNOSTIC_BUDGET_SCHEMA_VERSION: &str = "lsp-diagnostic-budget-v1";
 pub const DIAGNOSTIC_BUDGET_SELECTION_VERSION: &str = "evidence-order-v1";
 pub const DEFAULT_MAX_ITEMS_PER_DOCUMENT: usize = 50;
@@ -300,19 +302,24 @@ pub fn build_budget_items_from_diagnostics(
         tower_lsp_server::ls_types::Uri,
         Vec<tower_lsp_server::ls_types::Diagnostic>,
     >,
-) -> Vec<DiagnosticBudgetItem> {
+) -> Result<Vec<DiagnosticBudgetItem>, serde_json::Error> {
     let mut items = Vec::new();
     for (uri, diagnostics) in diagnostics_by_uri {
         let document = uri.as_str().to_string();
-        for diagnostic in diagnostics {
-            let canonical_id = diagnostic_canonical_id(diagnostic, &document);
-            let payload_bytes = diagnostic_payload_bytes(diagnostic);
+        for (index, diagnostic) in diagnostics.iter().enumerate() {
+            let payload = serde_json::to_vec(diagnostic)?;
+            let payload_bytes = payload.len();
+            let canonical_id = diagnostic_canonical_id(diagnostic, &document, index, &payload);
             items.push(DiagnosticBudgetItem {
                 canonical_id,
                 document: document.clone(),
                 payload_bytes,
                 inline_detail_bytes: 0,
-                eligibility: DiagnosticBudgetEligibility::Actionable,
+                eligibility: if diagnostic_is_actionable(diagnostic) {
+                    DiagnosticBudgetEligibility::Actionable
+                } else {
+                    DiagnosticBudgetEligibility::ProfileFiltered
+                },
                 selection_key: DiagnosticSelectionKey {
                     repair_route_rank: 128,
                     causal_rank: 128,
@@ -321,31 +328,47 @@ pub fn build_budget_items_from_diagnostics(
             });
         }
     }
-    items
+    Ok(items)
 }
 
 fn diagnostic_canonical_id(
     diagnostic: &tower_lsp_server::ls_types::Diagnostic,
     document: &str,
+    index: usize,
+    payload: &[u8],
 ) -> String {
     if let Some(data) = &diagnostic.data
         && let Some(obj) = data.as_object()
     {
-        if let Some(id) = obj.get("seam_id").and_then(|v| v.as_str()) {
-            return id.to_string();
-        }
-        if let Some(id) = obj.get("gap_id").and_then(|v| v.as_str()) {
-            return id.to_string();
+        for key in [
+            "diagnostic_id",
+            "canonical_gap_id",
+            "finding_id",
+            "gap_id",
+            "seam_id",
+        ] {
+            if let Some(id) = obj
+                .get(key)
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+            {
+                return id.to_string();
+            }
         }
     }
     let line = diagnostic.range.start.line;
-    format!("{document}:{line}")
+    let character = diagnostic.range.start.character;
+    let payload_hash = Sha256::digest(payload);
+    format!("location:{document}:{line}:{character}:{index}:{payload_hash:x}")
 }
 
-fn diagnostic_payload_bytes(diagnostic: &tower_lsp_server::ls_types::Diagnostic) -> usize {
-    serde_json::to_string(diagnostic)
-        .map(|text| text.len())
-        .unwrap_or(0)
+fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic) -> bool {
+    diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("canonical_gap_id"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -374,6 +397,44 @@ mod tests {
             causal_rank: causal,
             evidence_rank: evidence,
         }
+    }
+
+    #[test]
+    fn diagnostic_bridge_preserves_identity_and_actionability() -> Result<(), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let first = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "finding:first",
+                "canonical_gap_id": "gap:first",
+            })),
+            ..Default::default()
+        };
+        let second = tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": "finding:second",
+                "finding_id": "finding:second",
+            })),
+            ..Default::default()
+        };
+        let diagnostics = std::collections::BTreeMap::from([(uri, vec![first, second])]);
+
+        let items = build_budget_items_from_diagnostics(&diagnostics)
+            .map_err(|err| format!("build budget items: {err}"))?;
+        if items.len() != 2 {
+            return Err(format!("expected two budget items, got {items:?}"));
+        }
+        if items[0].canonical_id != "finding:first" || items[1].canonical_id != "finding:second" {
+            return Err(format!("producer identities were not preserved: {items:?}"));
+        }
+        if items[0].eligibility != DiagnosticBudgetEligibility::Actionable {
+            return Err("canonical gap diagnostic was not actionable".to_string());
+        }
+        if items[1].eligibility != DiagnosticBudgetEligibility::ProfileFiltered {
+            return Err("diagnostic without canonical gap was over-credited".to_string());
+        }
+        Ok(())
     }
 
     #[test]
