@@ -179,14 +179,15 @@ Run after the receipt command completes.
 
 The receipt status panel reports:
 
-- The `receipt_status`: whether the current gap has an improved, unchanged, or
-  unavailable receipt movement state.
-- The `latest_attempt_outcome`: `improved`, `unchanged`, `regressed`, or
-  `unknown`.
+- The `receipt_status`: `improved`, `unchanged`, or `not_available` for the
+  current gap's receipt movement state.
+- The `latest_attempt_outcome`: `evidence_improved`, `unchanged`, `regressed`,
+  `unknown`, or `not_available`.
 - The `missing_receipt_reason`: why receipt movement is unavailable when it
   cannot be derived.
 
-If `receipt_status` is `improved` and `latest_attempt_outcome` is `improved`,
+If `receipt_status` is `improved`
+and `latest_attempt_outcome` is `evidence_improved`,
 the current receipt evidence reports movement in the expected direction. The
 packet loop is complete for this gap.
 
@@ -273,7 +274,7 @@ Stop iterating when one of the following is true:
 
 | Condition | Action |
 | --- | --- |
-| Receipt outcome `improved`, `receipt_backed: true` | Gap is validated by receipt evidence for this attempt. Record and move to the next gap. |
+| `receipt_status: improved`, `latest_attempt_outcome: evidence_improved` | Gap is validated by receipt evidence for this attempt. Record and move to the next gap. |
 | Route quality advises against this repair kind | Record the outcome, read the guidance, escalate or defer. |
 | Two consecutive `unchanged` or `regressed` outcomes | Do not iterate a third time without re-reading route quality and the packet. |
 | Status reports stale or incomplete evidence | Refresh evidence first (`ripr check --base origin/main`), then re-evaluate. |
