@@ -4147,7 +4147,8 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     }
 
     // Human-readable path (unchanged behavior).
-    let core_report = evaluate_doctor_core(&root);
+    let core_evaluation = evaluate_doctor_core_with_config(&root);
+    let core_report = &core_evaluation.report;
     let mut ok = matches!(
         core_report.status,
         crate::cli::doctor_report::DoctorStatus::Pass
@@ -4155,24 +4156,9 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     println!("ripr doctor");
     println!("- root: {}", root.display());
 
-    if root.is_dir() {
-        println!("✓ root directory exists");
-    } else {
-        println!("! root directory does not exist");
-        ok = false;
-    }
-
-    if root.join("Cargo.toml").exists() {
-        println!(
-            "✓ Cargo.toml found at {}",
-            root.join("Cargo.toml").display()
-        );
-    } else {
-        println!("! no Cargo.toml found at {}", root.display());
-        ok = false;
-    }
-
-    report_config_status(&root, &mut ok);
+    ok &= report_doctor_core_check(core_report, "root_directory");
+    ok &= report_doctor_core_check(core_report, "cargo_toml");
+    report_config_status(&root, core_evaluation.config, &mut ok);
     report_cache_status(&root);
     report_detected_languages(&root);
     suggest_preview_language_enablement(&root);
@@ -4181,14 +4167,7 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     report_known_limitations();
 
     for tool in ["git", "cargo", "rustc"] {
-        let (status, evidence) = doctor_tool_check(tool);
-        match status {
-            crate::cli::doctor_report::DoctorStatus::Pass => println!("✓ {evidence}"),
-            crate::cli::doctor_report::DoctorStatus::Fail => {
-                println!("! {evidence}");
-                ok = false;
-            }
-        }
+        ok &= report_doctor_core_check(core_report, &format!("tool_{tool}"));
     }
 
     print_doctor_start_here_guidance(&root);
@@ -4212,7 +4191,16 @@ fn doctor_json(root: &Path) -> Result<(), String> {
     doctor_report_result(&report)
 }
 
+struct DoctorCoreEvaluation {
+    report: crate::cli::doctor_report::DoctorReport,
+    config: Result<RiprConfig, String>,
+}
+
 fn evaluate_doctor_core(root: &Path) -> crate::cli::doctor_report::DoctorReport {
+    evaluate_doctor_core_with_config(root).report
+}
+
+fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluation {
     use crate::cli::doctor_report::{DoctorReport, DoctorStatus};
 
     let mut report = DoctorReport::new(&root.display().to_string());
@@ -4248,7 +4236,8 @@ fn evaluate_doctor_core(root: &Path) -> crate::cli::doctor_report::DoctorReport 
             Some(format!("no Cargo.toml found at {}", root.display())),
         );
     }
-    match load_for_root(root) {
+    let config = load_for_root(root);
+    match &config {
         Ok(config) => report.add_check(
             "config",
             DoctorStatus::Pass,
@@ -4267,7 +4256,23 @@ fn evaluate_doctor_core(root: &Path) -> crate::cli::doctor_report::DoctorReport 
         let (status, evidence) = doctor_tool_check(tool);
         report.add_check(&format!("tool_{tool}"), status, Some(evidence));
     }
-    report
+    DoctorCoreEvaluation { report, config }
+}
+
+fn report_doctor_core_check(report: &crate::cli::doctor_report::DoctorReport, name: &str) -> bool {
+    let Some(check) = report.checks.iter().find(|check| check.name == name) else {
+        println!("! missing doctor core check: {name}");
+        return false;
+    };
+    let marker = match check.status {
+        crate::cli::doctor_report::DoctorStatus::Pass => "✓",
+        crate::cli::doctor_report::DoctorStatus::Fail => "!",
+    };
+    println!(
+        "{marker} {}",
+        check.evidence.as_deref().unwrap_or(check.name.as_str())
+    );
+    check.status == crate::cli::doctor_report::DoctorStatus::Pass
 }
 
 fn doctor_tool_check(tool: &str) -> (crate::cli::doctor_report::DoctorStatus, String) {
@@ -5016,8 +5021,8 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn report_config_status(root: &Path, ok: &mut bool) {
-    match load_for_root(root) {
+fn report_config_status(root: &Path, config: Result<RiprConfig, String>, ok: &mut bool) {
+    match config {
         Ok(config) => {
             match config.source_path() {
                 Some(path) => {
