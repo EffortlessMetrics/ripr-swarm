@@ -1,77 +1,8 @@
-use crate::analysis::seam_cache::{CACHE_DIR_ENV, cache_base_dir_from_env};
+use crate::analysis::seam_cache::{
+    CACHE_DIR_ENV, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
+};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CacheStatus {
-    state: &'static str,
-    total_size_bytes: u64,
-    entry_count: usize,
-}
-
-fn inspect_cache_dir(cache_dir: &Path) -> CacheStatus {
-    let metadata = match std::fs::symlink_metadata(cache_dir) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return CacheStatus {
-                state: "not_found",
-                total_size_bytes: 0,
-                entry_count: 0,
-            };
-        }
-        Err(_) => {
-            return CacheStatus {
-                state: "unavailable",
-                total_size_bytes: 0,
-                entry_count: 0,
-            };
-        }
-    };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return CacheStatus {
-            state: "unavailable",
-            total_size_bytes: 0,
-            entry_count: 0,
-        };
-    }
-
-    let mut total_size_bytes = 0u64;
-    let mut entry_count = 0usize;
-    let mut partially_readable = false;
-    let mut stack = vec![cache_dir.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            partially_readable = true;
-            continue;
-        };
-        for entry in entries {
-            let Ok(entry) = entry else {
-                partially_readable = true;
-                continue;
-            };
-            let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
-                partially_readable = true;
-                continue;
-            };
-            let file_type = metadata.file_type();
-            if file_type.is_symlink() {
-                continue;
-            }
-            if file_type.is_dir() {
-                stack.push(entry.path());
-            } else if file_type.is_file() {
-                total_size_bytes = total_size_bytes.saturating_add(metadata.len());
-                entry_count = entry_count.saturating_add(1);
-            }
-        }
-    }
-
-    CacheStatus {
-        state: if partially_readable { "partial" } else { "ok" },
-        total_size_bytes,
-        entry_count,
-    }
-}
 
 fn parse_status_args(args: &[String]) -> Result<bool, String> {
     let mut is_json = false;
@@ -89,6 +20,24 @@ fn cache_dir_for_root(
     env_value: Result<String, std::env::VarError>,
 ) -> PathBuf {
     cache_base_dir_from_env(workspace_root, env_value)
+}
+
+fn render_status(cache_dir: &Path, status: &CacheStatus, is_json: bool) -> Result<String, String> {
+    let cache_dir_str = cache_dir.display().to_string();
+    if is_json {
+        serde_json::to_string_pretty(&json!({
+            "cache_dir": cache_dir_str,
+            "status": status.state,
+            "total_size_bytes": status.total_size_bytes,
+            "entry_count": status.entry_count
+        }))
+        .map_err(|error| error.to_string())
+    } else {
+        Ok(format!(
+            "Cache dir: {cache_dir_str}\nStatus: {}\nTotal size: {} bytes\nEntries: {}",
+            status.state, status.total_size_bytes, status.entry_count
+        ))
+    }
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -111,27 +60,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let current_dir =
         std::env::current_dir().map_err(|e| format!("failed to get current dir: {}", e))?;
     let cache_dir = cache_dir_for_root(&current_dir, std::env::var(CACHE_DIR_ENV));
-    let cache_dir_str = cache_dir.display().to_string();
-
     let status = inspect_cache_dir(&cache_dir);
-
-    if is_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "cache_dir": cache_dir_str,
-                "status": status.state,
-                "total_size_bytes": status.total_size_bytes,
-                "entry_count": status.entry_count
-            }))
-            .map_err(|e| e.to_string())?
-        );
-    } else {
-        println!("Cache dir: {}", cache_dir_str);
-        println!("Status: {}", status.state);
-        println!("Total size: {} bytes", status.total_size_bytes);
-        println!("Entries: {}", status.entry_count);
-    }
+    println!("{}", render_status(&cache_dir, &status, is_json)?);
 
     Ok(())
 }
@@ -221,6 +151,51 @@ mod tests {
             return Err(format!(
                 "expected relocated cache root {relocated:?}, got {resolved:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn run_handles_help_without_workspace_io() -> Result<(), String> {
+        run(&["--help".to_string()])
+    }
+
+    #[test]
+    fn run_rejects_missing_and_unknown_subcommands() -> Result<(), String> {
+        let missing =
+            run(&[]).map_err(|error| format!("missing subcommand unexpectedly passed: {error}"));
+        if missing.is_ok() {
+            return Err("missing cache subcommand unexpectedly passed".to_string());
+        }
+        let unknown = run(&["show".to_string()]);
+        if unknown.is_ok() {
+            return Err("unknown cache subcommand unexpectedly passed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn render_status_has_stable_human_and_json_shapes() -> Result<(), String> {
+        let cache_dir = Path::new("target/ripr/cache");
+        let status = CacheStatus {
+            state: "partial",
+            total_size_bytes: 12,
+            entry_count: 2,
+        };
+        let human = render_status(cache_dir, &status, false)?;
+        for expected in ["Status: partial", "Total size: 12 bytes", "Entries: 2"] {
+            if !human.contains(expected) {
+                return Err(format!("human output omitted `{expected}`: {human}"));
+            }
+        }
+        let json = render_status(cache_dir, &status, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        if value.get("status").and_then(serde_json::Value::as_str) != Some("partial") {
+            return Err(format!("JSON output omitted status: {json}"));
+        }
+        if value.get("entry_count").and_then(serde_json::Value::as_u64) != Some(2) {
+            return Err(format!("JSON output omitted entry count: {json}"));
         }
         Ok(())
     }

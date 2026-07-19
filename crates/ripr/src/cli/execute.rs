@@ -184,6 +184,10 @@ mod tests {
             execute(CliCommand::Diff(args(&["--format", "xml"]))),
             Err("unknown diff format \"xml\"".to_string())
         );
+        assert_eq!(
+            execute(CliCommand::Cache(Vec::new())),
+            Err("cache requires subcommand `status`".to_string())
+        );
     }
 
     #[test]
