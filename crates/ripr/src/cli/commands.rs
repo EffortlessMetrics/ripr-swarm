@@ -10506,6 +10506,11 @@ language = "rust"
         Ok(())
     }
 
+    #[test]
+    fn doctor_json_flag_accepts_explicit_root() -> Result<(), String> {
+        doctor(&args(&["--json", "--root", "."]))
+    }
+
     // --- preview_language_enable_suggestions tests ---
 
     /// When TypeScript files are detected in a directory that has no ripr.toml
