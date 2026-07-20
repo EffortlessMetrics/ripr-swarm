@@ -151,7 +151,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.workspace.onDidGrantWorkspaceTrust(async () => {
       output.appendLine('ripr workspace trust granted; starting a fresh server session.');
-      await startAfterWorkspaceTrust(controller);
+      try {
+        await startAfterWorkspaceTrust(controller);
+      } catch (error) {
+        output.appendLine(`ripr server start after workspace trust failed: ${String(error)}`);
+      }
     }),
     vscode.workspace.onDidChangeConfiguration(async (event) => {
       if (
