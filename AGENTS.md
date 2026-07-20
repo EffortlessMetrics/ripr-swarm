@@ -550,7 +550,7 @@ Before spawning a wave:
    normal review/CI/PR/merge flow and clean up every orchestration artifact.
 
 The durable campaign and work-item authority remains the existing issue/spec/
-plan/active-goal graph. Subtasks are ephemeral execution detail inside one work
+plan graph. Subtasks are ephemeral execution detail inside one work
 item; do not create a second committed task hierarchy from subagent threads.
 
 ### Context and result discipline
@@ -615,8 +615,9 @@ Therefore:
 - parallel writers require disjoint path cages **and** disjoint semantic
   resources; different files do not make two tasks independent;
 - treat output schemas and their goldens, fixture corpora, spec-number
-  allocation, the active goal, traceability, policy ledgers, workflows, release
-  assets, and default mutable report/Cargo/npm roots as single-writer resources;
+  allocation, the legacy `.ripr/goals/` records, traceability, policy ledgers,
+  workflows, release assets, and default mutable report/Cargo/npm roots as
+  single-writer resources;
 - never run `git add -A` while a background workflow is live; stage explicit
   paths and inspect all tracked/untracked changes before commit;
 - workers must not run `git checkout`, `git switch`, `git stash`,
