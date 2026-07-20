@@ -196,6 +196,19 @@ fn require_nullable<T: DeserializeOwned>(
     }
 }
 
+fn require_nullable_nonempty_string(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable::<String>(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) if text.is_empty() => {
+            Err(format!("{field}: identity strings must be non-empty"))
+        }
+        RiprAgentRequiredNullable::Value(text) => Ok(RiprAgentRequiredNullable::Value(text)),
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RiprAgentVersionIdentity {
@@ -434,8 +447,11 @@ impl TryFrom<RiprAgentRequestEnvelopeWire> for RiprAgentRequestEnvelope {
             request: value.request,
             mode: value.mode,
             profile: require_nullable(value.profile, "profile")?,
-            snapshot_id: require_nullable(value.snapshot_id, "snapshot_id")?,
-            continuation_id: require_nullable(value.continuation_id, "continuation_id")?,
+            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            continuation_id: require_nullable_nonempty_string(
+                value.continuation_id,
+                "continuation_id",
+            )?,
         })
     }
 }
@@ -546,30 +562,39 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
             request: value.request,
             kind: value.kind,
             status: value.status,
-            snapshot_id: require_nullable(value.snapshot_id, "snapshot_id")?,
-            input_identity: require_nullable(value.input_identity, "input_identity")?,
-            root_identity: require_nullable(value.root_identity, "root_identity")?,
-            config_identity: require_nullable(value.config_identity, "config_identity")?,
-            base_identity: require_nullable(value.base_identity, "base_identity")?,
+            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            input_identity: require_nullable_nonempty_string(
+                value.input_identity,
+                "input_identity",
+            )?,
+            root_identity: require_nullable_nonempty_string(value.root_identity, "root_identity")?,
+            config_identity: require_nullable_nonempty_string(
+                value.config_identity,
+                "config_identity",
+            )?,
+            base_identity: require_nullable_nonempty_string(value.base_identity, "base_identity")?,
             freshness: value.freshness,
             run_status: value.run_status,
             profile: require_nullable(value.profile, "profile")?,
-            budget_identity: require_nullable(value.budget_identity, "budget_identity")?,
+            budget_identity: require_nullable_nonempty_string(
+                value.budget_identity,
+                "budget_identity",
+            )?,
             selected_count: value.selected_count,
             omitted_count: value.omitted_count,
             total_count: value.total_count,
-            complete_evidence_identity: require_nullable(
+            complete_evidence_identity: require_nullable_nonempty_string(
                 value.complete_evidence_identity,
                 "complete_evidence_identity",
             )?,
-            continuation_identity: require_nullable(
+            continuation_identity: require_nullable_nonempty_string(
                 value.continuation_identity,
                 "continuation_identity",
             )?,
             allowed_edit_surface: value.allowed_edit_surface,
             must_not_change: value.must_not_change,
-            verify_route: require_nullable(value.verify_route, "verify_route")?,
-            receipt_route: require_nullable(value.receipt_route, "receipt_route")?,
+            verify_route: require_nullable_nonempty_string(value.verify_route, "verify_route")?,
+            receipt_route: require_nullable_nonempty_string(value.receipt_route, "receipt_route")?,
             limitations: value.limitations,
             non_claims: value.non_claims,
         })
@@ -602,7 +627,7 @@ impl TryFrom<RiprAgentErrorWire> for RiprAgentError {
             kind: value.kind,
             retryable: value.retryable,
             recovery_route: require_nullable(value.recovery_route, "recovery_route")?,
-            snapshot_id: require_nullable(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
         })
     }
 }
@@ -869,6 +894,29 @@ mod tests {
         );
         if serde_json::from_str::<RiprAgentErrorEnvelope>(&missing_error_field).is_ok() {
             return Err("error accepted an omitted nullable snapshot_id".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nullable_identity_strings_reject_empty_values() -> Result<(), String> {
+        let request = RiprAgentRequestEnvelope {
+            versions: RiprAgentVersionIdentity::current(),
+            request: RiprAgentRequest::ListActionableItems,
+            mode: RiprAgentRequestMode::ReadOnly,
+            profile: RiprAgentRequiredNullable::Value(RiprAgentProfile::Actionable),
+            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:6".to_string()),
+            continuation_id: RiprAgentRequiredNullable::Null,
+        };
+        let base = serde_json::to_string_pretty(&request).map_err(|error| error.to_string())?;
+        let empty_snapshot = base.replace("\"snapshot:6\"", "\"\"");
+        if empty_snapshot == base {
+            return Err("test fixture did not inject the empty identity".to_string());
+        }
+        if serde_json::from_str::<RiprAgentRequestEnvelope>(&empty_snapshot).is_ok() {
+            return Err(
+                "request envelope accepted an empty identity string the schema rejects".to_string(),
+            );
         }
         Ok(())
     }

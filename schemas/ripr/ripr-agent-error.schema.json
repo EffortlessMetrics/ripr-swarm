@@ -64,17 +64,7 @@
       "properties": {
         "kind": { "$ref": "#/$defs/error_kind" },
         "retryable": { "type": "boolean" },
-        "recovery_route": { "type": ["string", "null"], "enum": [
-          "refresh",
-          "select_workspace",
-          "fix_configuration",
-          "request_supported_version",
-          "retry",
-          "inspect_limitation",
-          "discard_stale_request",
-          "none",
-          null
-        ] },
+        "recovery_route": { "anyOf": [{ "$ref": "#/$defs/recovery_route" }, { "type": "null" }] },
         "snapshot_id": { "type": ["string", "null"], "minLength": 1 }
       }
     }
