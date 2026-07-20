@@ -185,14 +185,14 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for RiprAgentRequiredNullable<T>
 
 fn require_nullable<T: DeserializeOwned>(
     value: serde_json::Value,
-    _field: &'static str,
+    field: &'static str,
 ) -> Result<RiprAgentRequiredNullable<T>, String> {
     if value.is_null() {
         Ok(RiprAgentRequiredNullable::Null)
     } else {
         serde_json::from_value(value)
             .map(RiprAgentRequiredNullable::Value)
-            .map_err(|error| error.to_string())
+            .map_err(|error| format!("{field}: {error}"))
     }
 }
 
@@ -867,6 +867,36 @@ mod tests {
         );
         if serde_json::from_str::<RiprAgentErrorEnvelope>(&missing_error_field).is_ok() {
             return Err("error accepted an omitted nullable snapshot_id".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn envelopes_reject_unknown_fields_through_flattened_identity() -> Result<(), String> {
+        let request = RiprAgentRequestEnvelope {
+            versions: RiprAgentVersionIdentity::current(),
+            request: RiprAgentRequest::ListActionableItems,
+            mode: RiprAgentRequestMode::ReadOnly,
+            profile: RiprAgentRequiredNullable::Value(RiprAgentProfile::Actionable),
+            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:6".to_string()),
+            continuation_id: RiprAgentRequiredNullable::Null,
+        };
+        let base = serde_json::to_string_pretty(&request).map_err(|error| error.to_string())?;
+        if serde_json::from_str::<RiprAgentRequestEnvelope>(&base).is_err() {
+            return Err("valid request envelope was rejected".to_string());
+        }
+        let with_unknown = base.replace(
+            "\"continuation_id\": null",
+            "\"continuation_id\": null,\n  \"unexpected_field\": true",
+        );
+        if with_unknown == base {
+            return Err("test fixture did not inject the unknown field".to_string());
+        }
+        if serde_json::from_str::<RiprAgentRequestEnvelope>(&with_unknown).is_ok() {
+            return Err(
+                "request envelope accepted an unknown field through the flattened identity"
+                    .to_string(),
+            );
         }
         Ok(())
     }
