@@ -5,12 +5,9 @@
 //! exporter, a Perl runtime, or an LSP protocol session. Production routing
 //! lands only after the fact packet and strict actionability slices are
 //! fixture-backed.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "Perl strict-actionability scaffold is feature-gated and currently exercised by tests before public projection is enabled"
-    )
+#![allow(
+    dead_code,
+    reason = "Perl strict-actionability scaffold is feature-gated and currently exercised by tests before public projection is enabled"
 )]
 
 use crate::analysis::AnalysisOptions;
