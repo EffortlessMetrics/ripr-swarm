@@ -243,6 +243,26 @@ impl Backend {
         let enabled_languages = request.config.repo_config().languages().enabled().to_vec();
         let started = Instant::now();
         self.log_refresh_started(generation).await;
+
+        // Send standard LSP progress signal so stock editors show a
+        // progress indicator during analysis (#1909). If the client
+        // does not support workDoneProgress, the create call fails
+        // silently and analysis proceeds without progress.
+        let progress_token = tower_lsp_server::ls_types::ProgressToken::String(format!(
+            "ripr-analysis-{generation}"
+        ));
+        let mut ongoing_progress = match self
+            .client
+            .create_work_done_progress(progress_token.clone())
+            .await
+        {
+            Ok(()) => {
+                let p = self.client.progress(progress_token, "ripr analysis");
+                Some(p.begin().await)
+            }
+            Err(_) => None,
+        };
+
         let root = request.root.clone();
         let config = request.config.clone();
         let defer_seam_inventory = request.scope.defer_seam_inventory();
@@ -458,6 +478,10 @@ impl Backend {
             suppressed_payload_bytes,
         )
         .await;
+        // Send progress End on success (#1909)
+        if let Some(progress) = ongoing_progress.take() {
+            progress.finish().await;
+        }
         RefreshAttemptOutcome::Published
     }
 
