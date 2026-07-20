@@ -72,6 +72,10 @@ The server advertises the following under `initialize.result.capabilities.experi
 }
 ```
 
+The example is abbreviated: the producer-owned capability also carries
+`analysis_status_notification`, `compatibility_commands`, `error_kinds`, and
+`claim_boundary`, and the capability schema requires the full field set.
+
 `protocol_version` identifies the wire vocabulary and compatibility rules.
 `schema_version` identifies the serialized DTO shape. They are independently
 named so an additive DTO change does not silently become a protocol revision.
@@ -83,11 +87,13 @@ they are not support claims.
 Reserved requests use a closed request vocabulary. Every request carries the
 two explicit versions and a `request` discriminator. The `mode` discriminator
 is `read_only` for inspection and `refresh` for the state-changing analysis
-request. The following fields are optional until a handler requires them:
+request. The following keys are required in every serialized request until a
+handler requires a value; each value may be `null` (explicit absence), and a
+client must not omit the keys:
 
-- `profile`: `actionable` or `full`;
-- `snapshot_id`: an opaque retained-snapshot identity;
-- `continuation_id`: an opaque continuation identity.
+- `profile`: `actionable` or `full`, or `null`;
+- `snapshot_id`: an opaque retained-snapshot identity, or `null`;
+- `continuation_id`: an opaque continuation identity, or `null`.
 
 The request schema rejects unknown request names and unknown fields. Nullable
 snapshot/profile/continuation fields remain explicit in serialized envelopes,
@@ -144,8 +150,9 @@ strings are not protocol authority.
 
 - Unknown protocol major versions fail visibly with
   `unsupported_protocol_version`.
-- Unknown schema versions fail visibly; additive optional fields are only
-  accepted under the documented schema version.
+- Unknown schema versions fail visibly with `unsupported_schema_version`;
+  additive optional fields are only accepted under the documented schema
+  version.
 - A client must inspect `supported_requests` and `supported_profiles`; it must
   not probe command behavior or infer support from the editor name.
 - A reserved request is not supported merely because it appears in
@@ -202,16 +209,19 @@ strings are not protocol authority.
 ## Proof
 
 ```text
-rtk cargo test -p ripr --lib lsp::agent_protocol -- --nocapture
-rtk cargo xtask check-output-contracts
-rtk cargo xtask check-spec-format
-rtk cargo xtask check-spec-numbering
-rtk cargo xtask check-traceability
-rtk cargo xtask check-capabilities
-rtk cargo xtask check-doc-index
-rtk cargo fmt --all -- --check
-rtk git diff --check
+cargo test -p ripr --lib lsp::agent_protocol -- --nocapture
+cargo xtask check-output-contracts
+cargo xtask check-spec-format
+cargo xtask check-spec-numbering
+cargo xtask check-traceability
+cargo xtask check-capabilities
+cargo xtask check-doc-index
+cargo fmt --all -- --check
+git diff --check
 ```
+
+Run under the pinned 1.95.0 toolchain (rustfmt 1.9.0) using the worktree's own
+build artifacts; a stale cross-worktree binary is not proof of this slice.
 
 ## Test Mapping
 

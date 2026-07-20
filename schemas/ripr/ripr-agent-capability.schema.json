@@ -18,7 +18,11 @@
     "continuations",
     "work_done_progress",
     "cancellation",
-    "source_edit_capability"
+    "source_edit_capability",
+    "analysis_status_notification",
+    "compatibility_commands",
+    "error_kinds",
+    "claim_boundary"
   ],
   "properties": {
     "protocol_version": { "const": "0.1" },

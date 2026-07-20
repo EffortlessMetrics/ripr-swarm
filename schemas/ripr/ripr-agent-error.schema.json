@@ -39,6 +39,7 @@
         "item_not_found",
         "route_static_limitation",
         "unsupported_protocol_version",
+        "unsupported_schema_version",
         "unsupported_profile",
         "cancelled",
         "superseded"
