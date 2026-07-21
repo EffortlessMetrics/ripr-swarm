@@ -11,36 +11,58 @@ interface WalkthroughStep {
   completionEvents?: string[];
 }
 
+const EXPECTED_FLOW: Array<{ id: string; media: string; completionEvents: string[] }> = [
+  {
+    id: 'ripr.trustWorkspace',
+    media: 'walkthrough/trust.md',
+    completionEvents: ['onContext:workspaceTrusted']
+  },
+  {
+    id: 'ripr.openRustFile',
+    media: 'walkthrough/open-file.md',
+    completionEvents: ['onContext:resourceLangId == rust']
+  },
+  {
+    id: 'ripr.readDiagnostics',
+    media: 'walkthrough/diagnostics.md',
+    completionEvents: []
+  },
+  {
+    id: 'ripr.tryCodeAction',
+    media: 'walkthrough/code-action.md',
+    completionEvents: ['onCommand:ripr.showStatus']
+  }
+];
+
 suite('Walkthrough Contribution Contract', () => {
   const packageJsonPath = path.resolve(__dirname, '../../package.json');
   const extensionRoot = path.resolve(__dirname, '../..');
 
-  function steps(): WalkthroughStep[] {
-    const manifest = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const walkthroughs = manifest.contributes?.walkthroughs;
+  function manifest(): { id: string; steps: WalkthroughStep[] } {
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const walkthroughs = parsed.contributes?.walkthroughs;
     assert.ok(Array.isArray(walkthroughs) && walkthroughs.length === 1, 'expected exactly one walkthrough');
-    return walkthroughs[0].steps as WalkthroughStep[];
+    return walkthroughs[0];
   }
 
-  test('the get-started walkthrough has four unique steps with existing media files', () => {
-    const seen = new Set<string>();
-    const all = steps();
-    assert.strictEqual(all.length, 4, 'walkthrough step count drifted');
-    for (const step of all) {
-      assert.ok(step.id && !seen.has(step.id), `duplicate or missing step id: ${step.id}`);
-      seen.add(step.id);
-      const media = step.media?.markdown;
-      assert.ok(media, `step ${step.id} is missing markdown media`);
-      assert.ok(
-        fs.existsSync(path.join(extensionRoot, media)),
-        `step ${step.id} media does not exist: ${media}`
-      );
-    }
+  test('the get-started walkthrough pins its ordered flow, media, and completion events', () => {
+    const walkthrough = manifest();
+    assert.strictEqual(walkthrough.id, 'ripr.getStarted');
+    const actual = walkthrough.steps.map((step) => ({
+      id: step.id,
+      media: step.media?.markdown,
+      completionEvents: step.completionEvents ?? []
+    }));
+    assert.deepStrictEqual(actual, EXPECTED_FLOW);
   });
 
-  test('completion events use the supported walkthrough vocabulary', () => {
-    for (const step of steps()) {
-      for (const event of step.completionEvents ?? []) {
+  test('every media file exists and completion events use the supported vocabulary', () => {
+    for (const step of EXPECTED_FLOW) {
+      assert.ok(
+        fs.existsSync(path.join(extensionRoot, step.media)),
+        `walkthrough media does not exist: ${step.media}`
+      );
+      for (const event of step.completionEvents) {
         assert.ok(
           ALLOWED_COMPLETION_EVENT_PREFIXES.some((prefix) => event.startsWith(prefix)),
           `unsupported completion event on step ${step.id}: ${event}`
