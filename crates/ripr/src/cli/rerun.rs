@@ -549,7 +549,79 @@ fn rerun_gap(
                 })
                 .collect::<Vec<_>>();
             if scope_seams.is_empty() {
-                push_scope_unresolved(&mut scope_limitations, &records, &scope, canonical_gap_id);
+                // The anchor line is the weak identity: source inserted or
+                // deleted above the gap shifts it and the anchored line no
+                // longer classifies. Second chance: classify the whole file
+                // and resolve by the ledger's owner name, which does not move
+                // with line edits. Exactly one owner match selects with an
+                // explicit adjustment disclosure; zero or many fail closed.
+                // The owner fallback only applies when the ledger gap is a
+                // well-formed TypeScript canonical id (evidence the gap once
+                // existed as a real finding); a fabricated or foreign id must
+                // still fail closed.
+                let owner_matches = match anchor_owner_for_scope(&records, &scope).filter(|_| {
+                    canonical_gap_id
+                        .strip_prefix("gap:typescript:typescript_preview:")
+                        .is_some_and(|fingerprint| {
+                            !fingerprint.is_empty()
+                                && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        })
+                }) {
+                    Some(owner) => {
+                        targeted_typescript_findings_for_scope(root, config, &scope.file, None)?
+                            .into_iter()
+                            .filter(|finding| {
+                                finding.probe.owner.as_ref().is_some_and(|probe_owner| {
+                                    // The probe owner is a qualified SymbolId
+                                    // (`typescript:<file>::<name>`); the ledger
+                                    // anchor carries the bare owner name.
+                                    probe_owner.0.rsplit("::").next() == Some(owner.as_str())
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                    None => Vec::new(),
+                };
+                // Multiple findings per owner is the common case (each changed
+                // line classifies). Select the closest line to the stale anchor
+                // deterministically and disclose every candidate line; zero
+                // candidates fail closed.
+                let anchor_line = anchor_line_for_scope(&records, &scope);
+                let selected = owner_matches.iter().min_by_key(|finding| {
+                    (
+                        anchor_line
+                            .map(|line| finding.probe.location.line.abs_diff(line as usize))
+                            .unwrap_or(usize::MAX),
+                        finding.probe.location.line,
+                    )
+                });
+                if let Some(finding) = selected {
+                    let candidate_lines = owner_matches
+                        .iter()
+                        .map(|candidate| candidate.probe.location.line.to_string())
+                        .take(8)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    for record_index in record_indexes_for_scope(&records, &scope) {
+                        scope_limitations.push(TargetedRerunScopeLimitation {
+                            kind: "gap_scope_anchor_adjusted",
+                            record_index,
+                            message: format!(
+                                "anchor for canonical gap `{canonical_gap_id}` no longer matches a classified seam; resolved by owner at current line {} (candidates: {candidate_lines})",
+                                finding.probe.location.line
+                            ),
+                        });
+                    }
+                    let seam = typescript_seam_from_finding(finding, canonical_gap_id);
+                    seams.entry(seam.seam_id.clone()).or_insert(seam);
+                } else {
+                    push_scope_unresolved(
+                        &mut scope_limitations,
+                        &records,
+                        &scope,
+                        canonical_gap_id,
+                    );
+                }
                 continue;
             }
             for finding in scope_seams {
@@ -659,6 +731,19 @@ fn is_typescript_scope(scope: &GapRerunScope) -> bool {
         scope.file.extension().and_then(|ext| ext.to_str()),
         Some("ts" | "tsx" | "js" | "jsx")
     )
+}
+
+#[cfg(feature = "lang-typescript")]
+fn anchor_owner_for_scope(records: &[(usize, GapRecord)], scope: &GapRerunScope) -> Option<String> {
+    records.iter().find_map(|(_, record)| {
+        let anchor = record.anchor.as_ref()?;
+        let file = anchor.file.as_deref()?.trim();
+        if Path::new(file) == scope.file {
+            anchor.owner.clone()
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -1800,6 +1885,68 @@ mod tests {
                     report.seams.len()
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_rerun_resolves_shifted_anchor_by_owner_with_disclosure() -> Result<(), String> {
+        let root = unique_temp_root("ts-rerun-shifted")?;
+        // The function moved to line 3 (comment inserted above), but the ledger
+        // anchor still says line 2 — the stale anchor must not silently
+        // mis-select, and must resolve by owner identity with disclosure.
+        write_file(
+            &root.join("src/discount.ts"),
+            "export function other(amount: number) {\n  return amount + 1;\n}\nexport function applyDiscount(amount: number, discount: number) {\n  return amount - discount;\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let findings = crate::analysis::targeted_typescript_findings_for_scope(
+            &root,
+            &config,
+            Path::new("src/discount.ts"),
+            None,
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.rsplit("::").next() == Some("applyDiscount"))
+            })
+            .ok_or_else(|| "expected applyDiscount finding in shifted file".to_string())?;
+        let canonical_gap_id = typescript_canonical_gap_id(&finding.id);
+        let ledger_path = root.join("target/ripr/gaps.json");
+        write_file(
+            &ledger_path,
+            &format!(
+                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/discount.ts","line":2,"owner":"applyDiscount"}},"evidence_ids":["stale-evidence"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                root.display(),
+                canonical_gap_id
+            ),
+        )?;
+        let report = rerun_gap(&root, &config, &canonical_gap_id, &ledger_path)?;
+        let _ = std::fs::remove_dir_all(&root);
+        if report.seams.len() != 1
+            || report.seams[0].canonical_gap_id.as_deref() != Some(canonical_gap_id.as_str())
+        {
+            return Err(format!(
+                "shifted anchor did not resolve by owner: state={} seams={}",
+                report.state,
+                report.seams.len()
+            ));
+        }
+        if !report
+            .scope_limitations
+            .iter()
+            .any(|limitation| limitation.kind == "gap_scope_anchor_adjusted")
+        {
+            return Err(format!(
+                "anchor adjustment was not disclosed: {} scope limitations",
+                report.scope_limitations.len()
+            ));
         }
         Ok(())
     }
