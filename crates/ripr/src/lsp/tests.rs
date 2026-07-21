@@ -53,7 +53,8 @@ use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLensOptions, Diagnostic,
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentDiagnosticParams,
     ExecuteCommandParams, FileChangeType, FileEvent, HoverContents, HoverParams,
     HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, PartialResultParams,
     Position, PositionEncodingKind, PreviousResultId, Range, TextDocumentContentChangeEvent,
@@ -3926,6 +3927,86 @@ fn stale_refresh_does_not_rollback_after_root_authority_transition() -> Result<(
         }
         Ok(())
     })
+}
+
+#[tokio::test]
+async fn did_save_with_unchanged_content_deduplicates_without_refresh() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn same() {}".to_string(),
+            ),
+        })
+        .await;
+    backend.advance_workspace_revision();
+    let baseline = backend.workspace_revision();
+
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn same() {}".to_string()),
+        })
+        .await;
+    if backend.workspace_revision() != baseline {
+        return Err(format!(
+            "unchanged save advanced the revision: {baseline} -> {}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_save_with_changed_content_advances_and_refreshes() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn same() {}".to_string(),
+            ),
+        })
+        .await;
+    backend.advance_workspace_revision();
+    let baseline = backend.workspace_revision();
+
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn changed() {}".to_string()),
+        })
+        .await;
+    if backend.workspace_revision() != baseline + 1 {
+        return Err(format!(
+            "changed save did not advance the revision exactly once: {baseline} -> {}",
+            backend.workspace_revision()
+        ));
+    }
+
+    // A repeated save of the now-recorded content dedups again.
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn changed() {}".to_string()),
+        })
+        .await;
+    if backend.workspace_revision() != baseline + 1 {
+        return Err(format!(
+            "repeated save of recorded content did not deduplicate: {baseline} -> {}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
 }
 
 #[test]
