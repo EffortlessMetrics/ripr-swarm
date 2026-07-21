@@ -1535,12 +1535,11 @@ impl Backend {
             .map(|state| state.text.clone())
     }
 
-    fn saved_content_is_unchanged(
+    fn saved_content_digest_matches(
         &self,
         uri: &tower_lsp_server::ls_types::Uri,
-        text: &str,
+        digest: &str,
     ) -> bool {
-        let digest = saved_content_digest(text);
         self.saved_content_digests
             .lock()
             .ok()
@@ -1548,9 +1547,9 @@ impl Backend {
             .is_some_and(|recorded| recorded == digest)
     }
 
-    fn record_saved_content_digest(&self, uri: &tower_lsp_server::ls_types::Uri, text: &str) {
+    fn record_saved_content_digest(&self, uri: &tower_lsp_server::ls_types::Uri, digest: String) {
         if let Ok(mut digests) = self.saved_content_digests.lock() {
-            digests.insert(uri.clone(), saved_content_digest(text));
+            digests.insert(uri.clone(), digest);
         }
     }
 
@@ -2191,10 +2190,10 @@ impl LanguageServer for Backend {
         // schedules a refresh. The save event is still disclosed.
         let text = params
             .text
-            .clone()
             .or_else(|| self.document_text(&params.text_document.uri));
-        if let Some(text) = &text
-            && self.saved_content_is_unchanged(&params.text_document.uri, text)
+        let digest = text.as_deref().map(saved_content_digest);
+        if let Some(digest) = &digest
+            && self.saved_content_digest_matches(&params.text_document.uri, digest)
         {
             self.client
                 .log_message(
@@ -2204,8 +2203,8 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
-        if let Some(text) = &text {
-            self.record_saved_content_digest(&params.text_document.uri, text);
+        if let Some(digest) = digest {
+            self.record_saved_content_digest(&params.text_document.uri, digest);
         }
         self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).

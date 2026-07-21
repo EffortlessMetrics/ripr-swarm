@@ -4024,6 +4024,102 @@ async fn did_save_with_changed_content_advances_and_refreshes() -> Result<(), St
     Ok(())
 }
 
+#[tokio::test]
+async fn did_save_without_text_falls_back_to_document_store_content() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn stored() {}".to_string(),
+            ),
+        })
+        .await;
+    backend.advance_workspace_revision();
+    let baseline = backend.workspace_revision();
+
+    // Clients without includeText send no content: the digest comes from the
+    // document store. First save records; the repeat dedups.
+    for expected_revision in [baseline + 1, baseline + 1] {
+        backend
+            .did_save(DidSaveTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+                text: None,
+            })
+            .await;
+        if backend.workspace_revision() != expected_revision {
+            return Err(format!(
+                "text-less save path drifted: expected revision {expected_revision}, got {}",
+                backend.workspace_revision()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_close_clears_the_saved_content_digest() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn same() {}".to_string(),
+            ),
+        })
+        .await;
+    backend.advance_workspace_revision();
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn same() {}".to_string()),
+        })
+        .await;
+    let after_record = backend.workspace_revision();
+
+    backend
+        .did_close(DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+        })
+        .await;
+    // did_close advances the revision by design; the digest must be gone.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                2,
+                "fn same() {}".to_string(),
+            ),
+        })
+        .await;
+    let after_reopen = backend.workspace_revision();
+
+    // The same bytes after close+reopen are treated as changed (conservative):
+    // nothing is recorded for the document anymore.
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn same() {}".to_string()),
+        })
+        .await;
+    if backend.workspace_revision() != after_reopen + 1 {
+        return Err(format!(
+            "reopened document kept its digest: record={after_record} reopen={after_reopen} now={}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn document_store_tracks_open_change_and_close() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;
