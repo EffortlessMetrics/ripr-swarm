@@ -67,11 +67,16 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
                 }
             }
         }
-        std::fs::OpenOptions::new()
+        // Write through the create_new handle: reopening the path after
+        // creation would leave a swap window where a planted symlink is
+        // followed (#2101 review, CWE-367).
+        let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&config_path)
-            .and_then(|_| std::fs::write(&config_path, generated_init_config()))
+            .map_err(|err| format!("write {} failed: {err}", config_path.display()))?;
+        use std::io::Write;
+        file.write_all(generated_init_config().as_bytes())
             .map_err(|err| format!("write {} failed: {err}", config_path.display()))?;
         println!("Wrote {}", config_path.display());
     }
