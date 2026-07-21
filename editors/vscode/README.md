@@ -146,8 +146,9 @@ the downloader path is proven.
   Remote" for workspace extensions). Installing it only locally does nothing
   for a remote workspace — the ripr server runs where the workspace lives.
 - **VS Code for the Web** (vscode.dev, github.dev): not supported. The ripr
-  server is a native binary spawned as a local process and the downloader
-  uses Node APIs, none of which exist in a browser host; the extension
+  server is a native binary spawned as a process by the extension host —
+  for Remote-SSH that means on the remote host — and the downloader uses
+  Node APIs, none of which exist in a browser host; the extension
   declares `virtualWorkspaces: false`, so it simply does not activate there.
 
 ## Coexisting with rust-analyzer
