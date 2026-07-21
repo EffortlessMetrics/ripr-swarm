@@ -139,6 +139,17 @@ Rust tooling, run mutation tests, make automatic edits, or analyze unsaved
 buffer overlays by default. Bundled platform-specific VSIXs are planned after
 the downloader path is proven.
 
+## Remote / Web support
+
+- **Remote-SSH / Containers / WSL**: the extension is workspace-kind, so it
+  must be installed **on the remote host** (VS Code prompts "Install in
+  Remote" for workspace extensions). Installing it only locally does nothing
+  for a remote workspace — the ripr server runs where the workspace lives.
+- **VS Code for the Web** (vscode.dev, github.dev): not supported. The ripr
+  server is a native binary spawned as a local process and the downloader
+  uses Node APIs, none of which exist in a browser host; the extension
+  declares `virtualWorkspaces: false`, so it simply does not activate there.
+
 ## Coexisting with rust-analyzer
 
 ripr and rust-analyzer both publish diagnostics for Rust files, and both are
