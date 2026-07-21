@@ -766,10 +766,17 @@ fn anchor_owner_for_scope(records: &[(usize, GapRecord)], scope: &GapRerunScope)
 
 #[cfg(feature = "lang-typescript")]
 fn anchor_line_for_scope(records: &[(usize, GapRecord)], scope: &GapRerunScope) -> Option<u64> {
+    // Owner-aware like anchor_owner_for_scope: with several records for one
+    // file, distances must be measured against THIS scope's anchor line.
     records.iter().find_map(|(_, record)| {
         let anchor = record.anchor.as_ref()?;
         let file = anchor.file.as_deref()?.trim();
-        if Path::new(file) == scope.file {
+        if Path::new(file) == scope.file
+            && scope
+                .owner
+                .as_deref()
+                .is_none_or(|scope_owner| anchor.owner.as_deref() == Some(scope_owner))
+        {
             anchor.line
         } else {
             None
@@ -2017,10 +2024,16 @@ mod tests {
                 report.seams.len()
             ));
         }
+        let expected_owner = beta_finding
+            .probe
+            .owner
+            .as_ref()
+            .map(|owner| owner.0.clone())
+            .ok_or_else(|| "beta finding has no owner identity".to_string())?;
         let selected_owner = &report.seams[0].owner;
-        if !selected_owner.ends_with("beta") {
+        if *selected_owner != expected_owner {
             return Err(format!(
-                "fallback resolved the first record's owner instead of the scope's: {selected_owner}"
+                "fallback resolved a different owner: expected {expected_owner}, got {selected_owner}"
             ));
         }
         Ok(())
