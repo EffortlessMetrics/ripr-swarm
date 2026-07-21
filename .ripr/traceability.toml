@@ -7018,6 +7018,9 @@ metrics = [
   "ripr_agent_protocol_version_discoverable",
   "ripr_agent_reserved_vocabulary_closed",
   "ripr_agent_capability_fail_closed",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0132"
 name = "spec-v2 runtime-promotion boundary"
 spec = "docs/specs/RIPR-SPEC-0132-spec-v2-runtime-promotion.md"
