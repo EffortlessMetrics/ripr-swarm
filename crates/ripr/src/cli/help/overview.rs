@@ -8,6 +8,7 @@ Setup:
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 
 Analysis:
+  ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000]
   ripr check [--base origin/main] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
   ripr diff [--root .] [--base origin/main] [--head HEAD] [--mode draft] [--json]
   ripr explain [--base REV|--diff PATH] <finding-id|file:line>
@@ -30,7 +31,6 @@ Editor & Agent:
   ripr plus (--repo-exposure-summary target/ripr/reports/repo-exposure-summary.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json) [--check]
 
 PR & Review:
-  ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000]
   ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
   ripr first-pr [--root .] [--base origin/main] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
   ripr start-here [same options as first-pr]
@@ -70,8 +70,9 @@ What it does:
 
 Quick start (one command per group):
   ripr doctor                                    # setup
+  ripr pilot --root .                            # zero-config local analysis
   ripr check --diff crates/ripr/examples/sample/example.diff --json
-                                                 # analysis
+                                                 # analysis of one diff
   ripr agent brief --root . --diff change.diff --json
                                                  # agent
   ripr first-pr --root . --base origin/main --head HEAD
