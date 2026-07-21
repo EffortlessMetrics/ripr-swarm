@@ -855,6 +855,11 @@ index 0000000..1111111 100644
              @@ -0,0 +1 @@\n\\
              +sub value { return 1 }\n",
         )?;
+        let parsed = diff::parse_unified_diff(
+            &fs::read_to_string(&diff_file)
+                .map_err(|err| format!("read Perl diff for disclosure assertion failed: {err}"))?,
+        );
+        let direct_advisories = detect_preview_advisories(&[LanguageId::Rust], parsed.iter());
 
         let result = run_diff_pipeline_with_oracle_policy(
             &AnalysisOptions {
@@ -874,7 +879,11 @@ index 0000000..1111111 100644
             .preview_language_advisories
             .iter()
             .find(|advisory| advisory.language == "perl")
-            .ok_or_else(|| "expected a Perl preview advisory".to_string())?;
+            .ok_or_else(|| {
+                format!(
+                    "expected a Perl preview advisory; parsed={parsed:?}, direct={direct_advisories:?}"
+                )
+            })?;
         assert_eq!(advisory.file_count, 1);
         assert!(!advisory.enabled);
         assert_eq!(advisory.sample_paths, vec!["lib/My/App.pm"]);
