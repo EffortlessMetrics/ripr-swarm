@@ -204,7 +204,11 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         scope.uninspected_files_lower_bound, scope.uninspected_changed_lines_lower_bound,
     ));
     for file in &scope.selected_files {
-        out.push_str(&format!("  selected: {file}\n"));
+        // Paths come from the diff text: a crafted filename with control
+        // bytes could forge report lines or emit terminal escape sequences.
+        // The raw path stays on the scope record for identities/JSON; only
+        // the terminal-facing display is escaped (#2142 review).
+        out.push_str(&format!("  selected: {}\n", escape_terminal_display(file)));
     }
     for disclosure in &scope.budget_disclosures {
         out.push_str(&format!("  budget: {disclosure}\n"));
@@ -219,6 +223,23 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         crate::analysis::PartialDiffScope::CONTINUATION_DISCLOSURE,
         scope.partition_identity,
     ));
+}
+
+/// Escape a diff-supplied string for terminal display: control bytes
+/// (including ESC, which opens terminal escape sequences) render as
+/// `\u{XX}` so a crafted diff path cannot forge report lines or inject
+/// terminal control. The raw value is unchanged for identities and JSON
+/// (#2142 review).
+fn escape_terminal_display(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_control() {
+            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 /// Emit an advisory note when every finding is no-path or unknown (zero
@@ -792,6 +813,50 @@ mod tests {
             !super::render_bounded_with_config(&full, &crate::config::RiprConfig::default())
                 .contains("limited_partial_scope")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn human_output_escapes_control_bytes_in_selected_paths() -> Result<(), String> {
+        // A crafted diff filename with control bytes must not reach the
+        // terminal verbatim (#2142 review): the display is escaped while the
+        // raw path stays on the scope record.
+        let output = CheckOutput {
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            partial_scope: Some(crate::analysis::PartialDiffScope {
+                run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+                diff_identity: "sha256:abc".to_string(),
+                file_budget: 2,
+                line_budget: 100,
+                budget_disclosures: Vec::new(),
+                selected_files: vec!["src/evil\u{1b}[2K.rs".to_string()],
+                selected_changed_lines: 1,
+                uninspected_files_lower_bound: 1,
+                uninspected_changed_lines_lower_bound: 1,
+                stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+                partition_identity: "c".repeat(64),
+            }),
+        };
+
+        let rendered =
+            super::render_bounded_with_config(&output, &crate::config::RiprConfig::default());
+        if rendered.contains('\u{1b}') {
+            return Err("raw ESC byte reached the terminal display".to_string());
+        }
+        if !rendered.contains("selected: src/evil\\u{1b}[2K.rs") {
+            return Err(format!("escaped path missing in:\n{rendered}"));
+        }
         Ok(())
     }
 

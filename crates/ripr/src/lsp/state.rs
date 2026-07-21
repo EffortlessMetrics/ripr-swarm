@@ -194,6 +194,10 @@ impl AnalysisHealth {
             Some("seams_deferred") => "seams_deferred",
             Some("cache_limited") => "cache_limited",
             Some("limited") => "limited",
+            // RIPR-PROP-0019 (#1999): a partial partition is a limited run
+            // state, never "full" — falling through here would present a
+            // partial denominator as complete (#2142 review).
+            Some("limited_partial_scope") => "limited_partial_scope",
             Some("stale") => "stale",
             _ => "full",
         }
@@ -525,6 +529,19 @@ pub(super) fn format_duration(duration: Duration) -> String {
 mod tests {
     use super::*;
     use tower_lsp_server::ls_types::{Position, Range};
+
+    #[test]
+    fn analysis_health_run_status_preserves_limited_partial_scope() {
+        // RIPR-PROP-0019 (#1999): a partial partition is a limited run
+        // state; the DTO must not fall through to "full" (#2142 review).
+        let health = AnalysisHealth {
+            snapshot_id: Some("snap-1".to_string()),
+            state: AnalysisAttemptState::Succeeded,
+            snapshot_run_status: Some("limited_partial_scope".to_string()),
+            ..AnalysisHealth::default()
+        };
+        assert_eq!(health.run_status(), "limited_partial_scope");
+    }
 
     #[test]
     fn snapshot_consistency_counts_gap_record_diagnostics() -> Result<(), String> {
