@@ -272,6 +272,59 @@ struct PythonSourceLimitation {
     missing: String,
 }
 
+/// Detect the Python test framework for a workspace root (#2106), using
+/// the marker set the adapter's code-level detection implies:
+///
+/// - pytest: `pytest.ini`, `pyproject.toml`, `conftest.py`, or a pytest
+///   section in `setup.cfg` / `tox.ini`;
+/// - unittest: no config exists by design, so detection uses bounded code
+///   evidence (`import unittest` in a `test_*.py` file at the root or in
+///   `tests/` / `test/`), matching what the adapter detects from source.
+///
+/// Fail-closed: `None` when no marker matches — callers must report
+/// "not detected", never guess.
+pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
+    if root.join("pytest.ini").exists()
+        || root.join("pyproject.toml").exists()
+        || root.join("conftest.py").exists()
+        || ini_section_present(&root.join("setup.cfg"), "[tool:pytest]")
+        || ini_section_present(&root.join("tox.ini"), "[pytest]")
+    {
+        return Some("pytest");
+    }
+    for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten().take(64) {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with("test_") || !name.ends_with(".py") {
+                continue;
+            }
+            // Bounded evidence read: the import line is at the top of the
+            // file, so a small prefix suffices.
+            let Ok(bytes) = std::fs::read(entry.path()) else {
+                continue;
+            };
+            let prefix = &bytes[..bytes.len().min(4096)];
+            if String::from_utf8_lossy(prefix).contains("import unittest") {
+                return Some("unittest");
+            }
+        }
+    }
+    None
+}
+
+/// Whether an INI-style file exists and contains the given section header.
+fn ini_section_present(path: &Path, section: &str) -> bool {
+    std::fs::read_to_string(path)
+        .map(|text| text.lines().any(|line| line.trim() == section))
+        .unwrap_or(false)
+}
+
 fn parse_module_result(path: &Path, source: &str) -> Result<Mod, String> {
     let source_path = path.to_string_lossy();
     let module = parse(source, Mode::Module, source_path.as_ref())
@@ -6386,6 +6439,67 @@ mod python_tests;
 
 #[cfg(test)]
 mod tests {
+
+    fn unique_test_root(label: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("ripr-py-fw-{label}-{}-{stamp}", std::process::id()))
+    }
+
+    #[test]
+    fn detect_python_test_framework_reads_setup_cfg_and_tox_sections() -> Result<(), String> {
+        let root = unique_test_root("setup-cfg");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("setup.cfg"), "[tool:pytest]\naddopts = -q\n")
+            .map_err(|err| format!("write setup.cfg: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_test_root("tox");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("tox.ini"), "[pytest]\naddopts = -q\n")
+            .map_err(|err| format!("write tox.ini: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_python_test_framework_reads_conftest_py() -> Result<(), String> {
+        let root = unique_test_root("conftest");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("conftest.py"), "import pytest\n")
+            .map_err(|err| format!("write conftest.py: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_python_test_framework_detects_unittest_from_code_evidence() -> Result<(), String> {
+        let root = unique_test_root("unittest");
+        let tests_dir = root.join("tests");
+        std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(
+            tests_dir.join("test_pricing.py"),
+            "import unittest\n\nclass TestPricing(unittest.TestCase):\n    pass\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_python_test_framework_is_fail_closed_for_empty_root() -> Result<(), String> {
+        let root = unique_test_root("empty");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
     use super::*;
     use std::path::{Path, PathBuf};
 

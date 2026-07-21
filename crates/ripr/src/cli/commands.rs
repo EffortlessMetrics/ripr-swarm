@@ -4479,30 +4479,48 @@ fn report_detected_test_surfaces(root: &Path) {
                 }
             }
             LanguageId::Python => {
-                if root.join("pytest.ini").exists() || root.join("pyproject.toml").exists() {
-                    lines.push("python: pytest".to_string());
-                } else {
-                    lines.push("python: test framework not detected".to_string());
+                // One shared detector (#2106): the same pytest/unittest
+                // marker set the adapter's code-level detection implies.
+                #[cfg(feature = "lang-python")]
+                let framework = analysis::detect_python_test_framework(root);
+                #[cfg(not(feature = "lang-python"))]
+                let framework: Option<&'static str> =
+                    if root.join("pytest.ini").exists() || root.join("pyproject.toml").exists() {
+                        Some("pytest")
+                    } else {
+                        None
+                    };
+                match framework {
+                    Some(name) => lines.push(format!("python: {name}")),
+                    None => lines.push("python: test framework not detected".to_string()),
                 }
             }
             LanguageId::TypeScript | LanguageId::JavaScript => {
-                // Only report a framework when a clear config marker exists.
+                // One shared detector (#2106): the same package.json /
+                // config-file signals the adapter's package discovery trusts.
                 let lang = id.as_str();
-                if root.join("jest.config.js").exists()
+                #[cfg(feature = "lang-typescript")]
+                let framework = analysis::detect_typescript_test_framework(root);
+                #[cfg(not(feature = "lang-typescript"))]
+                let framework: Option<&'static str> = if root.join("jest.config.js").exists()
                     || root.join("jest.config.ts").exists()
                     || root.join("jest.config.mjs").exists()
                     || root.join("jest.config.cjs").exists()
                 {
-                    lines.push(format!("{lang}: jest"));
+                    Some("jest")
                 } else if root.join("vitest.config.ts").exists()
                     || root.join("vitest.config.js").exists()
                     || root.join("vitest.config.mjs").exists()
                 {
-                    lines.push(format!("{lang}: vitest"));
+                    Some("vitest")
                 } else if root.join("bun.lockb").exists() {
-                    lines.push(format!("{lang}: bun"));
+                    Some("bun")
                 } else {
-                    lines.push(format!("{lang}: test framework not detected"));
+                    None
+                };
+                match framework {
+                    Some(name) => lines.push(format!("{lang}: {name}")),
+                    None => lines.push(format!("{lang}: test framework not detected")),
                 }
             }
             LanguageId::Perl => {
