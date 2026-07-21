@@ -7020,4 +7020,25 @@ metrics = [
   "ripr_agent_protocol_version_discoverable",
   "ripr_agent_reserved_vocabulary_closed",
   "ripr_agent_capability_fail_closed",
+id = "RIPR-SPEC-0132"
+name = "spec-v2 runtime-promotion boundary"
+spec = "docs/specs/RIPR-SPEC-0132-spec-v2-runtime-promotion.md"
+tests = [
+  "xtask::tests::implementation_slices_validate_and_coexist",
+  "xtask::tests::spec_system_profile_is_current_v2_without_goal_root",
+]
+fixtures = []
+code = [
+  ".allow/spec-system/slices/spec-v2-runtime-promotion.v1.toml",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0132-spec-v2-runtime-promotion.md",
+  ".allow/spec-system/slices/spec-v2-runtime-promotion.v1.toml",
+  "docs/specs/README.md",
+  ".allow/artifacts/doc-artifacts.toml",
+  "policy/doc-artifacts.toml",
+]
+metrics = [
+  "spec_v2_requirement_blocks",
+  "spec_v2_slices_total",
 ]
