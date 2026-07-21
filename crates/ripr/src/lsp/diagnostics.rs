@@ -4,7 +4,7 @@ use super::gap_artifacts::{
     validate_workspace_gap_artifact_report,
 };
 use super::state::{AnalysisSnapshot, RefreshMetadata};
-use super::uri::{file_uri_for_path, file_uris_match, path_from_file_uri};
+use super::uri::{file_uri_for_path, path_from_file_uri};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
@@ -490,7 +490,7 @@ fn delivery_selection_identity(snapshot: &AnalysisSnapshot) -> String {
             super::diagnostic_budget::DiagnosticDeliveryOutcome::Applied { result, .. } => {
                 result.snapshot_profile_budget_identity.clone()
             }
-            super::diagnostic_budget::DiagnosticDeliveryOutcome::Unavailable { detail } => {
+            super::diagnostic_budget::DiagnosticDeliveryOutcome::Unavailable { detail, .. } => {
                 format!("delivery-unavailable:{detail}")
             }
         },
@@ -593,14 +593,10 @@ impl DiagnosticResultIdCache {
     }
 
     pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
+        // Exact-key lookup only: the stored selection keys on the stored URI
+        // string; fuzzy URI matching is not part of the authority contract.
         self.document_ids
             .get(uri)
-            .or_else(|| {
-                self.document_ids
-                    .iter()
-                    .find(|(stored_uri, _)| file_uris_match(stored_uri, uri))
-                    .map(|(_, result_id)| result_id)
-            })
             .cloned()
             .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
     }

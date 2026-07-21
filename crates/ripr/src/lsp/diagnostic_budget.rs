@@ -306,8 +306,31 @@ pub(crate) enum DiagnosticDeliveryOutcome {
         selected_ids_by_document: BTreeMap<String, Vec<String>>,
     },
     /// The budget could not be built or evaluated. Delivery falls back to
-    /// unfiltered serving; the detail names why the partial state occurred.
-    Unavailable { detail: String },
+    /// unfiltered serving; the reason class names the failure family and the
+    /// detail carries the human-readable cause. Consumers match on the class,
+    /// never on the detail string.
+    Unavailable {
+        reason: DiagnosticDeliveryUnavailableReason,
+        detail: String,
+    },
+}
+
+/// The failure family of an unavailable delivery selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiagnosticDeliveryUnavailableReason {
+    /// Serializing diagnostics into budget items failed.
+    ItemSerialization,
+    /// The budget evaluation itself rejected its inputs.
+    Evaluation,
+}
+
+impl DiagnosticDeliveryUnavailableReason {
+    pub(crate) fn as_status_reason(self) -> &'static str {
+        match self {
+            Self::ItemSerialization => "serialization_failure",
+            Self::Evaluation => "evaluation_failure",
+        }
+    }
 }
 
 /// The one immutable diagnostic delivery selection shared by push publication
@@ -371,6 +394,7 @@ impl DiagnosticDeliverySelection {
             Ok(items) => items,
             Err(error) => {
                 return DiagnosticDeliveryOutcome::Unavailable {
+                    reason: DiagnosticDeliveryUnavailableReason::ItemSerialization,
                     detail: format!("budget item serialization failed: {error}"),
                 };
             }
@@ -408,6 +432,7 @@ impl DiagnosticDeliverySelection {
                 }
             }
             Err(error) => DiagnosticDeliveryOutcome::Unavailable {
+                reason: DiagnosticDeliveryUnavailableReason::Evaluation,
                 detail: format!("budget evaluation failed: {error}"),
             },
         }

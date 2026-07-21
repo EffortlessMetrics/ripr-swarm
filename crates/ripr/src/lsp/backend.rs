@@ -487,7 +487,7 @@ impl Backend {
                             .await;
                     }
                 }
-                DiagnosticDeliveryOutcome::Unavailable { detail } => {
+                DiagnosticDeliveryOutcome::Unavailable { detail, .. } => {
                     self.client
                         .log_message(
                             MessageType::WARNING,
@@ -2535,16 +2535,9 @@ impl Backend {
                         "inline_detail_measurement": "not_available",
                     }),
                 ),
-                DiagnosticDeliveryOutcome::Unavailable { detail } => (
+                DiagnosticDeliveryOutcome::Unavailable { reason, detail } => (
                     serde_json::Value::Null,
-                    diagnostic_budget_unavailable_state(
-                        if detail.starts_with("budget item serialization failed") {
-                            "serialization_failure"
-                        } else {
-                            "evaluation_failure"
-                        },
-                        detail,
-                    ),
+                    diagnostic_budget_unavailable_state(reason.as_status_reason(), detail),
                 ),
             },
             None => (
@@ -2797,7 +2790,7 @@ fn pull_delivery_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
             }
             None
         }
-        DiagnosticDeliveryOutcome::Unavailable { detail } => Some(format!(
+        DiagnosticDeliveryOutcome::Unavailable { detail, .. } => Some(format!(
             "ripr pull diagnostic delivery budget unavailable ({detail}); served all diagnostics unfiltered: budget enforcement was not applied, delivery completeness is unknown"
         )),
     }
@@ -5048,7 +5041,7 @@ mod push_budget_disclosure_tests {
             "test-snapshot-profile",
             "test-complete-evidence",
         );
-        let DiagnosticDeliveryOutcome::Unavailable { detail } = &selection.outcome else {
+        let DiagnosticDeliveryOutcome::Unavailable { detail, .. } = &selection.outcome else {
             return Err(format!(
                 "expected unavailable budget outcome, got {:?}",
                 selection.outcome
@@ -5201,7 +5194,7 @@ mod delivery_selection_parity_tests {
     ) -> Result<&crate::lsp::diagnostic_budget::DiagnosticBudgetResult, String> {
         match &selection.outcome {
             DiagnosticDeliveryOutcome::Applied { result, .. } => Ok(result),
-            DiagnosticDeliveryOutcome::Unavailable { detail } => Err(format!(
+            DiagnosticDeliveryOutcome::Unavailable { detail, .. } => Err(format!(
                 "expected applied selection, got unavailable: {detail}"
             )),
         }
