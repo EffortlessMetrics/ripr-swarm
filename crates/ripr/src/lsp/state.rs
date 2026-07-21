@@ -197,7 +197,9 @@ impl AnalysisHealth {
             // RIPR-PROP-0019 (#1999): a partial partition is a limited run
             // state, never "full" — falling through here would present a
             // partial denominator as complete (#2142 review).
-            Some("limited_partial_scope") => "limited_partial_scope",
+            Some(crate::analysis::PartialDiffScope::RUN_STATUS) => {
+                crate::analysis::PartialDiffScope::RUN_STATUS
+            }
             Some("stale") => "stale",
             _ => "full",
         }
@@ -537,7 +539,7 @@ mod tests {
         let health = AnalysisHealth {
             snapshot_id: Some("snap-1".to_string()),
             state: AnalysisAttemptState::Succeeded,
-            snapshot_run_status: Some("limited_partial_scope".to_string()),
+            snapshot_run_status: Some(crate::analysis::PartialDiffScope::RUN_STATUS.to_string()),
             ..AnalysisHealth::default()
         };
         assert_eq!(health.run_status(), "limited_partial_scope");
