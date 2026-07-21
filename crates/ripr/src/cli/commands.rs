@@ -4461,9 +4461,18 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
 /// no clear marker is found — the function never claims a framework it cannot
 /// confirm.
 fn report_detected_test_surfaces(root: &Path) {
+    let lines = detected_test_surface_lines(root);
+    if !lines.is_empty() {
+        println!("- Detected test surfaces: {}", lines.join("; "));
+    }
+}
+
+/// Build the detected test-surface lines for doctor (#2106). Split from the
+/// printer so the output contract is directly testable.
+fn detected_test_surface_lines(root: &Path) -> Vec<String> {
     let detected = detect_languages(root);
     if detected.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut lines: Vec<String> = Vec::new();
     for id in &detected {
@@ -4559,9 +4568,7 @@ fn report_detected_test_surfaces(root: &Path) {
             }
         }
     }
-    if !lines.is_empty() {
-        println!("- Detected test surfaces: {}", lines.join("; "));
-    }
+    lines
 }
 
 /// Print static limitation notes for the doctor first-run diagnosis.
@@ -8802,6 +8809,37 @@ language = "rust"
         assert_eq!(owners[0].line, 3);
         assert!(owners[0].owner.ends_with("discounted_total"));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_reports_unittest_and_package_only_ts_frameworks() -> Result<(), String> {
+        // #2106 review: doctor output coverage for frameworks only visible
+        // through the shared detectors.
+        let root = unique_command_test_dir("doctor-unittest");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("test_pricing.py"), "import unittest\n")
+            .map_err(|err| format!("write test file: {err}"))?;
+        let lines = detected_test_surface_lines(&root);
+        assert!(
+            lines.iter().any(|line| line == "python: unittest"),
+            "expected python: unittest in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_command_test_dir("doctor-ava");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"ky","scripts":{"test":"xo && npm run build && ava"}}"#,
+        )
+        .map_err(|err| format!("write package.json: {err}"))?;
+        let lines = detected_test_surface_lines(&root);
+        assert!(
+            lines.iter().any(|line| line == "typescript: ava"),
+            "expected typescript: ava in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 

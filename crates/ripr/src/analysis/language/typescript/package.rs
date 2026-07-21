@@ -391,7 +391,9 @@ pub(crate) fn detect_framework_for_root(root: &Path) -> Option<TsFramework> {
     {
         return Some(TsFramework::Vitest);
     }
-    if root.join("bun.lockb").exists() {
+    // Both bun lockfile names count, matching the adapter's runner
+    // detection: bun.lockb (binary) and bun.lock (text) (#2106 review).
+    if root.join("bun.lockb").exists() || root.join("bun.lock").exists() {
         return Some(TsFramework::Bun);
     }
     None
@@ -744,6 +746,18 @@ mod tests {
         assert_eq!(detect_framework_for_root(&root), Some(TsFramework::Jest));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_framework_for_root_accepts_both_bun_lockfile_names() -> Result<(), String> {
+        for lockfile in ["bun.lockb", "bun.lock"] {
+            let root = unique_test_root(lockfile);
+            std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+            std::fs::write(root.join(lockfile), "").map_err(|err| format!("write lock: {err}"))?;
+            assert_eq!(detect_framework_for_root(&root), Some(TsFramework::Bun));
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
         Ok(())
     }
 

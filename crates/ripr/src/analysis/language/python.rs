@@ -310,12 +310,34 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
                 continue;
             };
             let prefix = &bytes[..bytes.len().min(4096)];
-            if String::from_utf8_lossy(prefix).contains("import unittest") {
+            if String::from_utf8_lossy(prefix)
+                .lines()
+                .any(is_unittest_import_line)
+            {
                 return Some("unittest");
             }
         }
     }
     None
+}
+
+/// Whether a line is a real unittest import statement — `import unittest`,
+/// `import unittest as ...`, or `from unittest import ...` — at a token
+/// boundary. Comment lines and lookalike identifiers (`import unittesting`)
+/// do not count (#2106 review).
+fn is_unittest_import_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    if let Some(rest) = trimmed.strip_prefix("from ") {
+        return rest
+            .strip_prefix("unittest")
+            .is_some_and(|rest| rest.starts_with(" import"));
+    }
+    trimmed
+        .strip_prefix("import ")
+        .is_some_and(|rest| rest == "unittest" || rest.starts_with("unittest "))
 }
 
 /// Whether an INI-style file exists and contains the given section header.
@@ -6473,6 +6495,59 @@ mod tests {
         std::fs::write(root.join("conftest.py"), "import pytest\n")
             .map_err(|err| format!("write conftest.py: {err}"))?;
         assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_python_test_framework_reads_pytest_ini_and_pyproject() -> Result<(), String> {
+        let root = unique_test_root("pytest-ini");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("pytest.ini"), "[pytest]\n")
+            .map_err(|err| format!("write pytest.ini: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_test_root("pyproject");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
+            .map_err(|err| format!("write pyproject.toml: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("pytest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_python_test_framework_recognizes_from_unittest_import() -> Result<(), String> {
+        let root = unique_test_root("from-unittest");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(
+            root.join("test_pricing.py"),
+            "from unittest import TestCase\n\nclass TestPricing(TestCase):\n    pass\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), Some("unittest"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn detect_python_test_framework_rejects_lookalike_and_commented_imports() -> Result<(), String>
+    {
+        // Negative fixtures (#2106 review): a lookalike identifier and a
+        // commented-out import must NOT report unittest.
+        let root = unique_test_root("lookalike");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("test_lookalike.py"), "import unittesting\n")
+            .map_err(|err| format!("write test file: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_test_root("commented");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("test_commented.py"), "# import unittest\n")
+            .map_err(|err| format!("write test file: {err}"))?;
+        assert_eq!(super::detect_python_test_framework(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
