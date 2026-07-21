@@ -290,6 +290,11 @@ struct PartitionCandidate {
     package: String,
     language_tier: usize,
     changed_lines: usize,
+    /// Whether the language adapter for this file is enabled for the run.
+    /// Disabled-language files are never selected, but still count toward the
+    /// uninspected lower bounds so the scope record never hides them
+    /// (#2142 review).
+    enabled: bool,
 }
 
 fn normalize_changed_path(path: &Path) -> String {
@@ -373,6 +378,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn select_partial_diff_partition(
     changed_files: &[ChangedFile],
     budgets: &PartialDiffBudgets,
+    enabled_languages: &[LanguageId],
 ) -> Option<PartialDiffScope> {
     let mut candidates: Vec<PartitionCandidate> = changed_files
         .iter()
@@ -392,6 +398,7 @@ fn select_partial_diff_partition(
                 normalized_path,
                 language_tier,
                 changed_lines,
+                enabled: enabled_languages.contains(&language),
             })
         })
         .collect();
@@ -412,8 +419,18 @@ fn select_partial_diff_partition(
     let mut selected: Vec<&PartitionCandidate> = Vec::new();
     let mut selected_lines = 0usize;
     let mut stop_reason = None;
-    for (index, candidate) in candidates.iter().enumerate() {
-        if index == 0 && candidate.changed_lines > budgets.line_budget {
+    for candidate in &candidates {
+        // A file whose language adapter is not enabled for this run is never
+        // selected: selecting it would advertise an inspected path no adapter
+        // will inspect (#2142 review). It stays counted in the totals, so the
+        // uninspected lower bounds remain honest.
+        if !candidate.enabled {
+            continue;
+        }
+        if selected.is_empty()
+            && stop_reason.is_none()
+            && candidate.changed_lines > budgets.line_budget
+        {
             // First-file exception: analyze that single file anyway so the
             // partition is never empty; always wins over simultaneous-hit.
             selected.push(candidate);
@@ -998,16 +1015,16 @@ fn replace_witnessed_no_path_infection_summary(finding: &mut Finding) {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RustAdapter;
 
-impl LanguageAdapter for RustAdapter {
-    fn accepts_path(&self, path: &Path) -> bool {
-        matches!(route(path), Some(LanguageId::Rust))
-    }
-
-    fn analyze_diff(
+impl RustAdapter {
+    /// Diff analysis with the enabled-language set the pipeline will
+    /// dispatch, so the partial-diff partition (RIPR-PROP-0019) never selects
+    /// a file no enabled adapter will inspect (#2142 review).
+    pub(crate) fn analyze_diff_for_languages(
         &self,
         options: &AnalysisOptions,
         oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
+        enabled_languages: &[LanguageId],
     ) -> Result<LanguageDiffResult, String> {
         enforce_changed_rust_line_limit(changed_files, diff_changed_rust_line_limit()?)?;
         // RIPR-PROP-0019 (#1999): within the hard guards, a diff that exceeds
@@ -1016,7 +1033,8 @@ impl LanguageAdapter for RustAdapter {
         // failing closed with zero findings. A malformed override fails closed
         // as `partial_budget_invalid`.
         let partial_budgets = partial_diff_budgets()?;
-        let partial_scope = select_partial_diff_partition(changed_files, &partial_budgets);
+        let partial_scope =
+            select_partial_diff_partition(changed_files, &partial_budgets, enabled_languages);
         let changed_rust_paths = changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -1120,6 +1138,36 @@ impl LanguageAdapter for RustAdapter {
             partial_scope,
         })
     }
+}
+
+impl LanguageAdapter for RustAdapter {
+    fn accepts_path(&self, path: &Path) -> bool {
+        matches!(route(path), Some(LanguageId::Rust))
+    }
+
+    /// Direct adapter calls (tests, non-pipeline callers) analyze with every
+    /// language selectable; the pipeline uses
+    /// [`RustAdapter::analyze_diff_for_languages`] with the real enabled set
+    /// so the partial partition never selects an uninspected file.
+    fn analyze_diff(
+        &self,
+        options: &AnalysisOptions,
+        oracle_policy: &OraclePolicy,
+        changed_files: &[ChangedFile],
+    ) -> Result<LanguageDiffResult, String> {
+        self.analyze_diff_for_languages(
+            options,
+            oracle_policy,
+            changed_files,
+            &[
+                LanguageId::Rust,
+                LanguageId::TypeScript,
+                LanguageId::JavaScript,
+                LanguageId::Python,
+                LanguageId::Perl,
+            ],
+        )
+    }
 
     fn analyze_repo(
         &self,
@@ -1200,7 +1248,7 @@ mod tests {
     };
     use crate::analysis::diff::{ChangedFile, ChangedLine};
     use crate::analysis::facts::{CallFact, FunctionSummary, LiteralFact, RustIndex, TestSummary};
-    use crate::analysis::language::LanguageAdapter;
+    use crate::analysis::language::{LanguageAdapter, LanguageId};
     use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
     use crate::config::OraclePolicy;
     use crate::domain::{
@@ -1426,6 +1474,16 @@ mod tests {
 
     // --- Partial diff-scope partition tests (RIPR-PROP-0019, #1999) ---
 
+    /// Every language selectable: the default for selection-unit tests that
+    /// do not exercise the enabled-language filter.
+    const ALL_LANGUAGES: &[LanguageId] = &[
+        LanguageId::Rust,
+        LanguageId::TypeScript,
+        LanguageId::JavaScript,
+        LanguageId::Python,
+        LanguageId::Perl,
+    ];
+
     fn budgets(file_budget: usize, line_budget: usize) -> PartialDiffBudgets {
         PartialDiffBudgets {
             file_budget,
@@ -1457,11 +1515,11 @@ mod tests {
         ];
 
         let first = require_partial(
-            select_partial_diff_partition(&forward, &budgets(2, 100)),
+            select_partial_diff_partition(&forward, &budgets(2, 100), ALL_LANGUAGES),
             "forward ordering",
         )?;
         let second = require_partial(
-            select_partial_diff_partition(&reversed, &budgets(2, 100)),
+            select_partial_diff_partition(&reversed, &budgets(2, 100), ALL_LANGUAGES),
             "reversed ordering",
         )?;
 
@@ -1485,7 +1543,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(3, 1_000)),
+            select_partial_diff_partition(&files, &budgets(3, 1_000), ALL_LANGUAGES),
             "tier ordering",
         )?;
 
@@ -1514,7 +1572,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(2, 1_000)),
+            select_partial_diff_partition(&files, &budgets(2, 1_000), ALL_LANGUAGES),
             "file budget stop",
         )?;
 
@@ -1541,7 +1599,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(10, 100)),
+            select_partial_diff_partition(&files, &budgets(10, 100), ALL_LANGUAGES),
             "line budget stop",
         )?;
 
@@ -1565,7 +1623,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(5, 100)),
+            select_partial_diff_partition(&files, &budgets(5, 100), ALL_LANGUAGES),
             "first-file exception",
         )?;
 
@@ -1595,7 +1653,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 100)),
+            select_partial_diff_partition(&files, &budgets(1, 100), ALL_LANGUAGES),
             "simultaneous hit",
         )?;
 
@@ -1617,7 +1675,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 50)),
+            select_partial_diff_partition(&files, &budgets(1, 50), ALL_LANGUAGES),
             "first-file exception precedence",
         )?;
 
@@ -1639,7 +1697,7 @@ mod tests {
         ];
 
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 1_000)),
+            select_partial_diff_partition(&files, &budgets(1, 1_000), ALL_LANGUAGES),
             "context-only exclusion",
         )?;
 
@@ -1652,7 +1710,74 @@ mod tests {
 
         // A diff with only context-only files fits every budget: no partial.
         let context_only = vec![changed_file("src/context.rs", 0, 0)];
-        assert!(select_partial_diff_partition(&context_only, &budgets(1, 1)).is_none());
+        assert!(
+            select_partial_diff_partition(&context_only, &budgets(1, 1), ALL_LANGUAGES).is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_selection_never_selects_disabled_preview_files() -> Result<(), String> {
+        // Enabled set is Rust-only: a preview-only over-budget diff must not
+        // fabricate a limited_partial_scope run advertising inspected paths
+        // no enabled adapter will inspect (#2142 review).
+        let files = vec![
+            changed_file("app/a.ts", 4, 0),
+            changed_file("app/b.ts", 4, 0),
+            changed_file("app/c.ts", 4, 0),
+        ];
+        assert!(
+            select_partial_diff_partition(&files, &budgets(2, 1_000), &[LanguageId::Rust])
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_selection_counts_disabled_preview_files_as_uninspected() -> Result<(), String> {
+        // Rust enabled, TypeScript disabled: the partition selects only Rust
+        // files, but the disabled preview files stay counted in the
+        // uninspected lower bounds so the scope record never hides them.
+        let files = vec![
+            changed_file("src/a.rs", 4, 0),
+            changed_file("src/b.rs", 4, 0),
+            changed_file("src/c.rs", 4, 0),
+            changed_file("app/a.ts", 4, 0),
+            changed_file("app/b.ts", 4, 0),
+            changed_file("app/c.ts", 4, 0),
+        ];
+        let scope = require_partial(
+            select_partial_diff_partition(&files, &budgets(2, 1_000), &[LanguageId::Rust]),
+            "rust-only enabled set",
+        )?;
+        assert_eq!(scope.selected_files.len(), 2);
+        assert!(
+            scope
+                .selected_files
+                .iter()
+                .all(|path| path.ends_with(".rs"))
+        );
+        assert_eq!(scope.uninspected_files_lower_bound, 4);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_simultaneous_hit_on_later_file_reports_file_budget() -> Result<(), String> {
+        // The first file fits and is selected; the second file would cross
+        // BOTH budgets. The simultaneous-hit rule reports file_budget — the
+        // first-file exception does not apply because a file was already
+        // selected (#2142 review).
+        let files = vec![
+            changed_file("src/a.rs", 5, 0),
+            changed_file("src/b.rs", 200, 0),
+        ];
+        let scope = require_partial(
+            select_partial_diff_partition(&files, &budgets(1, 100), ALL_LANGUAGES),
+            "simultaneous hit on second file",
+        )?;
+        assert_eq!(scope.selected_files, vec!["src/a.rs".to_string()]);
+        assert_eq!(scope.stop_reason, PartialDiffStopReason::FileBudget);
+        assert_eq!(scope.selected_changed_lines, 5);
         Ok(())
     }
 
@@ -1662,8 +1787,10 @@ mod tests {
             changed_file("src/a.rs", 10, 5),
             changed_file("src/b.rs", 4, 0),
         ];
-        assert!(select_partial_diff_partition(&files, &budgets(2, 19)).is_none());
-        assert!(select_partial_diff_partition(&files, &budgets(200, 1_000)).is_none());
+        assert!(select_partial_diff_partition(&files, &budgets(2, 19), ALL_LANGUAGES).is_none());
+        assert!(
+            select_partial_diff_partition(&files, &budgets(200, 1_000), ALL_LANGUAGES).is_none()
+        );
     }
 
     #[test]
@@ -1771,11 +1898,11 @@ mod tests {
             changed_file("src/b.rs", 60, 0),
         ];
         let first = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 100)),
+            select_partial_diff_partition(&files, &budgets(1, 100), ALL_LANGUAGES),
             "identity stability (first)",
         )?;
         let second = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 100)),
+            select_partial_diff_partition(&files, &budgets(1, 100), ALL_LANGUAGES),
             "identity stability (second)",
         )?;
 
@@ -1800,12 +1927,12 @@ mod tests {
             changed_file("src/b.rs", 60, 0),
         ];
         let baseline = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 100)),
+            select_partial_diff_partition(&files, &budgets(1, 100), ALL_LANGUAGES),
             "identity discrimination baseline",
         )?;
 
         let other_budget = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 101)),
+            select_partial_diff_partition(&files, &budgets(1, 101), ALL_LANGUAGES),
             "different line budget",
         )?;
         assert_ne!(
@@ -1816,7 +1943,7 @@ mod tests {
         let mut changed = files.clone();
         changed[0].added_lines[0].text = "let value = input + 2;".to_string();
         let other_diff = require_partial(
-            select_partial_diff_partition(&changed, &budgets(1, 100)),
+            select_partial_diff_partition(&changed, &budgets(1, 100), ALL_LANGUAGES),
             "different diff",
         )?;
         assert_ne!(
@@ -1908,7 +2035,7 @@ mod tests {
             changed_file("src/b.rs", 60, 0),
         ];
         let scope = require_partial(
-            select_partial_diff_partition(&files, &budgets(1, 100)),
+            select_partial_diff_partition(&files, &budgets(1, 100), ALL_LANGUAGES),
             "selects helper",
         )?;
 
