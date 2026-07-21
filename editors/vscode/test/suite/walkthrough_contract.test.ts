@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const ALLOWED_COMPLETION_EVENT_PREFIXES = ['onCommand:', 'onContext:', 'onView:', 'onLink:', 'extensionInstalled:'];
+const ALLOWED_COMPLETION_EVENT_PREFIXES = ['onCommand:', 'onSettingChanged:', 'onContext:', 'onView:', 'onLink:', 'extensionInstalled:'];
 
 interface WalkthroughStep {
   id: string;
