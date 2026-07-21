@@ -104,13 +104,17 @@ pub(super) struct RefreshTransaction {
     pub(super) plan: DiagnosticRefreshPlan,
     pub(super) snapshot: AnalysisSnapshot,
     pub(super) previous_diagnostics: BTreeMap<Uri, Vec<Diagnostic>>,
-    /// Documents that entered quarantine when this transaction recorded the
-    /// freshly analyzed saved content (#1970). Their published diagnostics
-    /// must be withdrawn even when the plan considers them unchanged.
-    pub(super) quarantine_entered: Vec<Uri>,
-    /// Documents whose quarantine lifted with this transaction, with each
-    /// exit's disclosed marker so the restore is disclosed symmetrically.
-    pub(super) quarantine_exited: Vec<(Uri, bool)>,
+    /// The analyzed saved-content identity this transaction would record
+    /// for each open document, computed at prepare time from the persisted
+    /// bytes the analysis read (#1970). Applied to the document store only
+    /// by `commit_refresh_snapshot`, so a superseded or failed transaction
+    /// never advances document identities. Publication reads it to decide
+    /// quarantine against the identity this snapshot will carry.
+    pub(super) pending_analyzed: BTreeMap<Uri, Option<String>>,
+    /// Documents that are currently clean but enter quarantine under the
+    /// pending identity. They must be withdrawn during publication even when
+    /// the plan considers their diagnostics unchanged.
+    pub(super) pending_entered: Vec<Uri>,
 }
 
 impl Backend {
@@ -407,8 +411,8 @@ impl Backend {
             plan,
             snapshot,
             previous_diagnostics,
-            quarantine_entered,
-            quarantine_exited,
+            pending_analyzed,
+            pending_entered,
         } = transaction;
         // Bounded report at a real phase boundary: analysis produced a
         // consistent snapshot and diagnostic publication is next.
@@ -521,13 +525,18 @@ impl Backend {
                 // unavailable budget publishes the batch unfiltered (named by
                 // the fallback disclosure); a computed selection is applied
                 // strictly, so zero selected means zero published. A
-                // quarantined (dirty-buffer) document is withdrawn instead
-                // (#1970): its saved-state line identity no longer matches
-                // the client's buffer.
+                // document quarantined under this transaction's pending
+                // analyzed identity is withdrawn instead (#1970): its
+                // saved-state line identity no longer matches the client's
+                // buffer.
                 let diagnostics_to_publish =
                     selection.diagnostics_for_document(batch.uri.as_str(), &batch.diagnostics);
-                self.publish_served_diagnostics(&batch.uri, diagnostics_to_publish)
-                    .await;
+                self.publish_served_diagnostics_for_transaction(
+                    &batch.uri,
+                    diagnostics_to_publish,
+                    &pending_analyzed,
+                )
+                .await;
             }
             for uri in &plan.clear_uris {
                 if !self.refresh_request_is_current(request) {
@@ -539,10 +548,13 @@ impl Backend {
                     .publish_diagnostics(uri.clone(), Vec::new(), None)
                     .await;
             }
-            // Documents that entered quarantine with this transaction are
-            // withdrawn even when the plan considers their diagnostics
-            // unchanged: the analyzed saved content moved under them.
-            for uri in &quarantine_entered {
+            // Documents that enter quarantine under this transaction's
+            // pending identity are withdrawn even when the plan considers
+            // their diagnostics unchanged: the analyzed saved content moved
+            // under them. Their withdrawal is disclosed directly — the
+            // quarantine episode only exists once the snapshot commits, and
+            // the commit marks these URIs as already disclosed.
+            for uri in &pending_entered {
                 if plan
                     .publish_batches
                     .iter()
@@ -559,8 +571,16 @@ impl Backend {
                     .await;
                     return cancellation_outcome(request);
                 }
-                if !snapshot.served_diagnostics_for_uri(uri).is_empty() {
-                    self.disclose_withdrawal_once(uri).await;
+                if !snapshot.served_diagnostics_for_uri(uri).is_empty()
+                    && let Some((path, reason)) =
+                        self.document_quarantine_for_pending(uri, &pending_analyzed)
+                {
+                    self.client
+                        .log_message(
+                            MessageType::WARNING,
+                            quarantine_withdrawal_log_message(&path, reason),
+                        )
+                        .await;
                 }
                 self.client
                     .publish_diagnostics(uri.clone(), Vec::new(), None)
@@ -576,7 +596,9 @@ impl Backend {
             .await;
             return cancellation_outcome(request);
         }
-        if !self.commit_refresh_snapshot(snapshot, &plan) {
+        let Some(quarantine_edges) =
+            self.commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+        else {
             self.rollback_refresh_transaction_if_authority_is_current(
                 request,
                 &previous_diagnostics,
@@ -591,11 +613,11 @@ impl Backend {
             )
             .await;
             return RefreshAttemptOutcome::Failed;
-        }
+        };
         // Disclose lifted quarantines symmetrically (#1970): the fresh
         // publication (push) or the next pull re-serves the document against
         // the newly analyzed saved content.
-        for (uri, was_disclosed) in &quarantine_exited {
+        for (uri, was_disclosed) in &quarantine_edges.exited {
             if *was_disclosed && let Some(path) = self.document_path_for_uri(uri) {
                 self.client
                     .log_message(MessageType::INFO, quarantine_restored_log_message(&path))
@@ -658,9 +680,15 @@ impl Backend {
             );
         }
         let transaction = self.prepare_refresh_transaction(diagnostics)?;
-        let RefreshTransaction { plan, snapshot, .. } = transaction;
-        self.commit_refresh_snapshot(snapshot, &plan)
-            .then_some(plan)
+        let RefreshTransaction {
+            plan,
+            snapshot,
+            pending_analyzed,
+            pending_entered,
+            ..
+        } = transaction;
+        self.commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+            .map(|_| plan)
     }
 
     #[cfg(test)]
@@ -694,35 +722,44 @@ impl Backend {
             snapshot.delivery_selection = Some(compute_delivery_selection(&snapshot));
         }
         let plan = diagnostic_refresh_plan(&last_diagnostics, batches);
-        // Saved-workspace authority (#1970): the analysis behind this
-        // transaction read the persisted bytes, so each open document's
-        // analyzed saved-content identity is its last known saved digest.
-        // Recording this before publication lets the publish loop withdraw
-        // documents whose buffer diverges from the freshly analyzed saved
-        // content and re-serve documents whose quarantine lifted.
-        let (quarantine_entered, quarantine_exited) = self
-            .documents
-            .lock()
-            .map(|mut documents| documents.note_refresh_analyzed(snapshot.input_identity_id()))
-            .unwrap_or_default();
+        // Saved-workspace authority (#1970): compute the analyzed
+        // saved-content identity this transaction will record — from the
+        // persisted bytes the analysis read, not the didSave-tracked digest —
+        // without mutating the document store. The store only advances when
+        // the snapshot commits; publication filters against this pending
+        // identity so a just-saved document is re-served and a document whose
+        // buffer diverges from the freshly analyzed bytes is withdrawn.
+        let Ok(documents) = self.documents.lock() else {
+            return None;
+        };
+        let (pending_analyzed, pending_entered) = documents.pending_analyzed_digests();
+        drop(documents);
         debug_assert!(snapshot.is_consistent());
         Some(RefreshTransaction {
             plan,
             snapshot,
             previous_diagnostics: last_diagnostics.clone(),
-            quarantine_entered,
-            quarantine_exited,
+            pending_analyzed,
+            pending_entered,
         })
     }
 
+    /// Commit a completed snapshot as the analysis authority. Document
+    /// identities advance here and only here (#1970): the pending analyzed
+    /// digests computed at prepare time are applied to the document store
+    /// atomically with the snapshot commit, so a transaction that is
+    /// superseded or fails before this point never leaves document state
+    /// ahead of `latest_analysis`. Returns the quarantine edges the
+    /// committed identities produced so the caller can disclose lifts;
+    /// `None` when the commit could not complete.
     pub(super) fn commit_refresh_snapshot(
         &self,
         mut snapshot: AnalysisSnapshot,
         plan: &DiagnosticRefreshPlan,
-    ) -> bool {
-        if snapshot.input_identity.is_none() {
-            return false;
-        }
+        pending_analyzed: &BTreeMap<Uri, Option<String>>,
+        pending_entered: &[Uri],
+    ) -> Option<super::state::QuarantineEdges> {
+        snapshot.input_identity.as_ref()?;
         // Final authority guard: a committed snapshot always carries its
         // delivery selection (#1973). The refresh-transaction prepare step
         // already computed it on the real path; this fills snapshots that
@@ -730,42 +767,50 @@ impl Backend {
         if snapshot.delivery_selection.is_none() {
             snapshot.delivery_selection = Some(compute_delivery_selection(&snapshot));
         }
+        let input_identity = snapshot.input_identity_id();
         let snapshot = Arc::new(snapshot);
         let diagnostic_result_ids =
             Arc::new(DiagnosticResultIdCache::for_snapshot(Arc::clone(&snapshot)));
         let Ok(mut last_diagnostic_uris) = self.last_diagnostic_uris.lock() else {
-            return false;
+            return None;
         };
         let Ok(mut last_diagnostics) = self.last_diagnostics.lock() else {
-            return false;
+            return None;
         };
         let Ok(mut latest_analysis) = self.latest_analysis.lock() else {
-            return false;
+            return None;
         };
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
-            return false;
+            return None;
         };
+        let Ok(mut documents) = self.documents.lock() else {
+            return None;
+        };
+        // Advance document identities atomically with the snapshot commit.
+        // Entries disclosed during publication keep their disclosed marker
+        // so the new episode does not disclose a second time.
+        let transitions =
+            documents.note_refresh_analyzed(input_identity, pending_analyzed, pending_entered);
         // `last_diagnostics` mirrors the client-visible state: quarantined
         // documents were withdrawn (published empty), so the committed
         // baseline carries an empty set for them (#1970). The next plan then
         // re-publishes the full set when the quarantine lifts instead of
         // diffing against diagnostics the client never saw.
         let mut committed_diagnostics = snapshot.diagnostics_by_uri.clone();
-        if let Ok(documents) = self.documents.lock() {
-            for (uri, diagnostics) in committed_diagnostics.iter_mut() {
-                if documents
-                    .state_for_uri(uri)
-                    .is_some_and(|state| state.is_quarantined())
-                {
-                    diagnostics.clear();
-                }
+        for (uri, diagnostics) in committed_diagnostics.iter_mut() {
+            if documents
+                .state_for_uri(uri)
+                .is_some_and(|state| state.is_quarantined())
+            {
+                diagnostics.clear();
             }
         }
+        drop(documents);
         *last_diagnostics = committed_diagnostics;
         *last_diagnostic_uris = plan.current_uris.clone();
         *latest_analysis = Some(snapshot);
         *stored_result_ids = Some(diagnostic_result_ids);
-        true
+        Some(transitions)
     }
 
     async fn rollback_refresh_transaction(
@@ -1589,24 +1634,26 @@ impl Backend {
         *current_config = config;
     }
 
-    fn open_document(&self, params: DidOpenTextDocumentParams) -> (Uri, QuarantineTransition) {
+    fn open_document(
+        &self,
+        params: DidOpenTextDocumentParams,
+    ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        let transition = self
-            .documents
+        self.documents
             .lock()
-            .map(|mut documents| documents.open(params))
-            .unwrap_or(QuarantineTransition::Unchanged);
-        (uri, transition)
+            .ok()
+            .map(|mut documents| (uri, documents.open(params)))
     }
 
-    fn change_document(&self, params: DidChangeTextDocumentParams) -> (Uri, QuarantineTransition) {
+    fn change_document(
+        &self,
+        params: DidChangeTextDocumentParams,
+    ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        let transition = self
-            .documents
+        self.documents
             .lock()
-            .map(|mut documents| documents.change(params))
-            .unwrap_or(QuarantineTransition::Unchanged);
-        (uri, transition)
+            .ok()
+            .map(|mut documents| (uri, documents.change(params)))
     }
 
     fn save_document(
@@ -1614,11 +1661,11 @@ impl Backend {
         uri: &Uri,
         saved_digest: Option<String>,
         text: Option<String>,
-    ) -> QuarantineTransition {
+    ) -> Option<QuarantineTransition> {
         self.documents
             .lock()
+            .ok()
             .map(|mut documents| documents.save(uri, saved_digest, text))
-            .unwrap_or(QuarantineTransition::Unchanged)
     }
 
     fn close_document(&self, params: DidCloseTextDocumentParams) {
@@ -1645,6 +1692,30 @@ impl Backend {
         let state = documents.state_for_uri(uri)?;
         let quarantine = state.quarantine.as_ref()?;
         Some((state.path.clone(), quarantine.reason))
+    }
+
+    /// The quarantine state of an open document against a refresh
+    /// transaction's pending analyzed identity (#1970): what the state will
+    /// be once this snapshot commits. Publication filters on this so a
+    /// document is withdrawn or re-served against the identity the
+    /// in-flight snapshot carries, while the committed state only advances
+    /// at commit time.
+    fn document_quarantine_for_pending(
+        &self,
+        uri: &Uri,
+        pending_analyzed: &BTreeMap<Uri, Option<String>>,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri(uri)?;
+        let Some(analyzed) = pending_analyzed.get(&state.uri) else {
+            return state
+                .quarantine
+                .as_ref()
+                .map(|quarantine| (state.path.clone(), quarantine.reason));
+        };
+        state
+            .staleness_for_analyzed(analyzed.as_ref())
+            .map(|reason| (state.path.clone(), reason))
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
@@ -1759,16 +1830,42 @@ impl Backend {
         }
     }
 
-    /// Publish one document's selection-filtered diagnostics, honoring the
-    /// dirty-buffer quarantine (#1970): a quarantined document is published
-    /// empty and its withdrawal disclosed instead of receiving saved-state
-    /// line-local diagnostics whose line identity no longer matches the
-    /// client's buffer. Does not touch `last_diagnostics`; the refresh
-    /// transaction commit owns that baseline.
-    async fn publish_served_diagnostics(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
-        if self.document_quarantine(uri).is_some() {
+    /// Publish one document's selection-filtered diagnostics during a
+    /// refresh transaction, honoring the dirty-buffer quarantine against the
+    /// transaction's pending analyzed identity (#1970): a document
+    /// quarantined under the pending identity is published empty and its
+    /// withdrawal disclosed, instead of receiving saved-state line-local
+    /// diagnostics whose line identity no longer matches the client's
+    /// buffer. Does not touch `last_diagnostics`; the refresh transaction
+    /// commit owns that baseline.
+    async fn publish_served_diagnostics_for_transaction(
+        &self,
+        uri: &Uri,
+        diagnostics: Vec<Diagnostic>,
+        pending_analyzed: &BTreeMap<Uri, Option<String>>,
+    ) {
+        if self
+            .document_quarantine_for_pending(uri, pending_analyzed)
+            .is_some()
+        {
             if !diagnostics.is_empty() {
-                self.disclose_withdrawal_once(uri).await;
+                // When the quarantine episode is already registered the
+                // once-per-episode marker applies; a pending-entered episode
+                // is disclosed by the pending_entered publication pass (or
+                // here directly when the batch covers it) and marked at
+                // commit.
+                if self.document_quarantine(uri).is_some() {
+                    self.disclose_withdrawal_once(uri).await;
+                } else if let Some((path, reason)) =
+                    self.document_quarantine_for_pending(uri, pending_analyzed)
+                {
+                    self.client
+                        .log_message(
+                            MessageType::WARNING,
+                            quarantine_withdrawal_log_message(&path, reason),
+                        )
+                        .await;
+                }
             }
             self.client
                 .publish_diagnostics(uri.clone(), Vec::new(), None)
@@ -2413,7 +2510,18 @@ impl LanguageServer for Backend {
         // didSave, whose content is persisted by definition. Opening with a
         // buffer that diverges from the analyzed saved content quarantines
         // the document and withdraws its line-local diagnostics (#1970).
-        let (uri, transition) = self.open_document(params);
+        let Some((uri, transition)) = self.open_document(params) else {
+            // A failed store lock means the document was never registered;
+            // skip every downstream mutation so the store, the workspace
+            // revision, and the committed snapshot cannot diverge.
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    "ripr didOpen dropped: the document store is unavailable; the document was not registered and no refresh was scheduled",
+                )
+                .await;
+            return;
+        };
         self.advance_workspace_revision();
         self.handle_document_quarantine_transition(&uri, transition)
             .await;
@@ -2428,7 +2536,15 @@ impl LanguageServer for Backend {
         // content crosses a quarantine edge (#1970): withdraw or re-serve
         // the document's line-local diagnostics immediately rather than
         // waiting for the next save-triggered refresh.
-        let (uri, transition) = self.change_document(params);
+        let Some((uri, transition)) = self.change_document(params) else {
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    "ripr didChange dropped: the document store is unavailable; the buffer change was not registered",
+                )
+                .await;
+            return;
+        };
         self.handle_document_quarantine_transition(&uri, transition)
             .await;
     }
@@ -2456,8 +2572,18 @@ impl LanguageServer for Backend {
         // state first (#1970): the dedup decision below gates the refresh,
         // never the quarantine lift. A save whose buffer again matches the
         // analyzed saved content re-serves the document even when no
-        // refresh is scheduled.
-        let transition = self.save_document(&uri, digest.clone(), text);
+        // refresh is scheduled. A failed store lock means the save was never
+        // registered; skip every downstream mutation so the store, the
+        // dedup ledger, and the committed snapshot cannot diverge.
+        let Some(transition) = self.save_document(&uri, digest.clone(), text) else {
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
+                )
+                .await;
+            return;
+        };
         if let Some(digest) = &digest
             && self.saved_content_digest_matches(&uri, digest)
         {

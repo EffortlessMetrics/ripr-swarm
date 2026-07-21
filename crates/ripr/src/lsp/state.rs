@@ -511,6 +511,15 @@ pub(super) struct DocumentQuarantine {
     pub(super) withdrawal_disclosed: bool,
 }
 
+/// Quarantine edges produced by applying a committed snapshot's analyzed
+/// identities (#1970): documents that entered quarantine, and documents
+/// that exited it with each exit carrying its disclosed marker.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct QuarantineEdges {
+    pub(super) entered: Vec<Uri>,
+    pub(super) exited: Vec<(Uri, bool)>,
+}
+
 /// Quarantine edge produced by recomputing a document's dirty state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum QuarantineTransition {
@@ -534,8 +543,8 @@ pub(super) struct DocumentState {
     /// recovered buffer content) and updated from the didSave digest (#2129).
     /// `None` when the saved bytes could not be established.
     pub(super) saved_digest: Option<String>,
-    /// SHA-256 of the saved content the latest refresh transaction analyzed
-    /// for this document, recorded at transaction prepare time.
+    /// SHA-256 of the saved content the committed snapshot analyzed for
+    /// this document, recorded only when that snapshot commits (#1970).
     pub(super) analyzed_saved_digest: Option<String>,
     /// Input identity of the snapshot that last analyzed this document.
     pub(super) analyzed_input_identity: Option<String>,
@@ -570,22 +579,34 @@ impl DocumentState {
         self.quarantine.is_some()
     }
 
+    /// The staleness of the current buffer against one candidate analyzed
+    /// saved-content identity: `None` when the buffer matches it (clean),
+    /// otherwise the reason the document must be quarantined. Used both for
+    /// the committed identity and for a refresh transaction's pending
+    /// identity before that transaction commits (#1970).
+    pub(super) fn staleness_for_analyzed(
+        &self,
+        analyzed: Option<&String>,
+    ) -> Option<DocumentStalenessReason> {
+        match analyzed {
+            None => Some(DocumentStalenessReason::NoAnalyzedSavedContent),
+            Some(analyzed) if *analyzed != self.buffer_digest() => {
+                Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+            }
+            Some(_) => None,
+        }
+    }
+
     /// Recompute the quarantine state from the current buffer and the
     /// analyzed/saved content identities. A document is quarantined while
     /// its buffer digest differs from the analyzed saved digest.
     pub(super) fn refresh_quarantine(&mut self) -> QuarantineTransition {
-        let buffer_digest = self.buffer_digest();
-        let mut next = match &self.analyzed_saved_digest {
-            None => Some(DocumentQuarantine {
-                reason: DocumentStalenessReason::NoAnalyzedSavedContent,
+        let mut next = self
+            .staleness_for_analyzed(self.analyzed_saved_digest.as_ref())
+            .map(|reason| DocumentQuarantine {
+                reason,
                 withdrawal_disclosed: false,
-            }),
-            Some(analyzed) if *analyzed != buffer_digest => Some(DocumentQuarantine {
-                reason: DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent,
-                withdrawal_disclosed: false,
-            }),
-            Some(_) => None,
-        };
+            });
         let was_disclosed = self
             .quarantine
             .as_ref()
@@ -670,28 +691,70 @@ impl DocumentStore {
         state.refresh_quarantine()
     }
 
-    /// Record that a refresh transaction analyzed the current saved content
-    /// of every open document. Returns the URIs that entered quarantine
-    /// (buffer diverges from the freshly analyzed saved content) and those
-    /// that exited it, with each exit carrying its disclosed marker.
+    /// Compute the analyzed saved-content identity a refresh transaction
+    /// would record for every open document, without mutating any state
+    /// (#1970). The identity comes from the persisted bytes on disk — the
+    /// same bytes the refresh's analysis read — not from the didSave-tracked
+    /// digest, so a file changed on disk outside didSave (git checkout,
+    /// formatter, external editor) cannot be recorded as analyzed against
+    /// its stale pre-change digest. Falls back to the didSave-tracked digest
+    /// only when the persisted bytes cannot be read. Also returns the URIs
+    /// that are currently clean but would enter quarantine under the pending
+    /// identity, so publication can withdraw them before commit.
+    pub(super) fn pending_analyzed_digests(&self) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
+        let mut digests = BTreeMap::new();
+        let mut entered = Vec::new();
+        for (uri, state) in &self.documents {
+            let analyzed = std::fs::read(&state.path)
+                .ok()
+                .map(|bytes| content_digest(&bytes))
+                .or_else(|| state.saved_digest.clone());
+            if !state.is_quarantined() && state.staleness_for_analyzed(analyzed.as_ref()).is_some()
+            {
+                entered.push(uri.clone());
+            }
+            digests.insert(uri.clone(), analyzed);
+        }
+        (digests, entered)
+    }
+
+    /// Record that the committed refresh snapshot analyzed the given saved
+    /// content of every open document (#1970). Called only from the snapshot
+    /// commit path, so document identities advance exclusively with the
+    /// committed snapshot — a superseded or failed transaction leaves them
+    /// untouched. `analyzed` carries the pending identities computed at
+    /// prepare time from the persisted bytes (see
+    /// `pending_analyzed_digests`); `pre_disclosed` lists URIs whose pending
+    /// withdrawal was already disclosed during publication, so the new
+    /// episode does not disclose a second time.
     pub(super) fn note_refresh_analyzed(
         &mut self,
         input_identity: Option<String>,
-    ) -> (Vec<Uri>, Vec<(Uri, bool)>) {
-        let mut entered = Vec::new();
-        let mut exited = Vec::new();
+        analyzed: &BTreeMap<Uri, Option<String>>,
+        pre_disclosed: &[Uri],
+    ) -> QuarantineEdges {
+        let mut edges = QuarantineEdges::default();
         for (uri, state) in &mut self.documents {
-            state.analyzed_saved_digest = state.saved_digest.clone();
+            if let Some(digest) = analyzed.get(uri) {
+                state.analyzed_saved_digest = digest.clone();
+            }
             state.analyzed_input_identity = input_identity.clone();
             match state.refresh_quarantine() {
-                QuarantineTransition::Entered => entered.push(uri.clone()),
+                QuarantineTransition::Entered => {
+                    if pre_disclosed.iter().any(|disclosed| disclosed == uri)
+                        && let Some(quarantine) = state.quarantine.as_mut()
+                    {
+                        quarantine.withdrawal_disclosed = true;
+                    }
+                    edges.entered.push(uri.clone());
+                }
                 QuarantineTransition::Exited { was_disclosed } => {
-                    exited.push((uri.clone(), was_disclosed));
+                    edges.exited.push((uri.clone(), was_disclosed));
                 }
                 QuarantineTransition::Unchanged => {}
             }
         }
-        (entered, exited)
+        edges
     }
 
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
@@ -872,15 +935,22 @@ mod tests {
         store.documents.insert(dirty_uri.clone(), dirty);
         store.documents.insert(lifted_uri.clone(), lifted);
 
-        let (entered, exited) = store.note_refresh_analyzed(Some("input:42".to_string()));
-        if entered != vec![dirty_uri.clone()] {
+        let analyzed = store
+            .documents
+            .iter()
+            .map(|(uri, state)| (uri.clone(), state.saved_digest.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let edges = store.note_refresh_analyzed(Some("input:42".to_string()), &analyzed, &[]);
+        if edges.entered != vec![dirty_uri.clone()] {
             return Err(format!(
-                "expected only the dirty document to enter quarantine: {entered:?}"
+                "expected only the dirty document to enter quarantine: {:?}",
+                edges.entered
             ));
         }
-        if exited != vec![(lifted_uri.clone(), true)] {
+        if edges.exited != vec![(lifted_uri.clone(), true)] {
             return Err(format!(
-                "expected the lifted document to exit with its disclosed marker: {exited:?}"
+                "expected the lifted document to exit with its disclosed marker: {:?}",
+                edges.exited
             ));
         }
         let Some(dirty_state) = store.state_for_uri(&dirty_uri) else {
@@ -897,6 +967,40 @@ mod tests {
             .is_some_and(|state| state.is_quarantined())
         {
             return Err("lifted document must be clean".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn note_refresh_analyzed_marks_pre_disclosed_entries() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/dirty.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        state.analyzed_saved_digest = None;
+        state.quarantine = None;
+        state.text = "fn dirty() {}".to_string();
+        let analyzed_digest = state.saved_digest.clone();
+        store.documents.insert(uri.clone(), state);
+        let analyzed = BTreeMap::from([(uri.clone(), analyzed_digest)]);
+
+        // The pending withdrawal was disclosed during publication, so the
+        // episode created at commit must not disclose a second time.
+        let edges = store.note_refresh_analyzed(None, &analyzed, std::slice::from_ref(&uri));
+        if edges.entered != vec![uri.clone()] {
+            return Err(format!(
+                "expected the document to enter quarantine: {:?}",
+                edges.entered
+            ));
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if !state
+            .quarantine
+            .as_ref()
+            .is_some_and(|quarantine| quarantine.withdrawal_disclosed)
+        {
+            return Err("pre-disclosed episode must keep the disclosed marker".to_string());
         }
         Ok(())
     }

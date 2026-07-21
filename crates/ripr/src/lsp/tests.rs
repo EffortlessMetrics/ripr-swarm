@@ -6705,8 +6705,19 @@ fn refresh_transaction_does_not_replace_snapshot_before_commit() -> Result<(), S
         .ok_or_else(|| "expected retained baseline snapshot".to_string())?;
     assert_eq!(retained.findings[0].id, baseline_finding.id);
 
-    let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
-    assert!(backend.commit_refresh_snapshot(snapshot, &plan));
+    let super::backend::RefreshTransaction {
+        plan,
+        snapshot,
+        pending_analyzed,
+        pending_entered,
+        ..
+    } = transaction;
+    if backend
+        .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+        .is_none()
+    {
+        return Err("expected snapshot commit".to_string());
+    }
     let committed = backend
         .latest_analysis_snapshot()
         .ok_or_else(|| "expected committed snapshot".to_string())?;
@@ -9201,7 +9212,8 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
         .await;
 
     // Saving the changed content schedules a refresh but cannot lift the
-    // quarantine before the new saved content is analyzed.
+    // quarantine before the new saved content is analyzed. The client
+    // persists the bytes on save, so the fixture mirrors them to disk.
     let baseline = backend.workspace_revision();
     backend
         .did_save(quarantine_save_params(
@@ -9209,6 +9221,8 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
             QUARANTINE_TEXT_A_DIRTY,
         ))
         .await;
+    std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+        .map_err(|err| format!("persist save failed: {err}"))?;
     if backend.workspace_revision() != baseline + 1 {
         return Err("changed save must schedule a refresh".to_string());
     }
@@ -9380,6 +9394,8 @@ async fn repeated_open_change_save_cycles_keep_identities_consistent() -> Result
         }
 
         // Dirty the buffer, save it, and stay quarantined until analysis.
+        // The client persists the bytes on save, so the fixture mirrors
+        // them to disk.
         let dirty_text = format!("fn a_{cycle}_dirty() {{}}\n");
         backend
             .did_change(quarantine_change_params(&fixture.uri_a, 2, &dirty_text))
@@ -9387,6 +9403,8 @@ async fn repeated_open_change_save_cycles_keep_identities_consistent() -> Result
         backend
             .did_save(quarantine_save_params(&fixture.uri_a, &dirty_text))
             .await;
+        std::fs::write(&fixture.path_a, &dirty_text)
+            .map_err(|err| format!("persist cycle {cycle} save failed: {err}"))?;
         let state = backend
             .document_state_for_test(&fixture.uri_a)
             .ok_or_else(|| "expected document state".to_string())?;
@@ -9518,6 +9536,141 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
         != Some("saved_workspace")
     {
         return Err(format!("expected the saved-workspace authority: {entry}"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(), String> {
+    let fixture = quarantine_fixture("superseded-tx")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    // See the other quarantine tests: dropping the loopback socket keeps
+    // in-process client sends from blocking.
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture)?;
+
+    // Save new content; the document is quarantined until the new saved
+    // content is analyzed. The fixture mirrors the persisted bytes.
+    backend
+        .did_save(quarantine_save_params(
+            &fixture.uri_a,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+        .map_err(|err| format!("persist save failed: {err}"))?;
+
+    // A transaction is prepared — pending identities computed — but then
+    // superseded: it never becomes latest_analysis. Document identities
+    // must not advance with it.
+    let transaction = backend
+        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture))
+        .ok_or_else(|| "expected prepared transaction".to_string())?;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if !state.is_quarantined() {
+        return Err("a superseded transaction must not lift the quarantine".to_string());
+    }
+    if state.analyzed_saved_digest.as_deref()
+        != Some(content_digest(QUARANTINE_TEXT_A.as_bytes()).as_str())
+    {
+        return Err("analyzed identity must stay at the committed snapshot's content".to_string());
+    }
+    // Pull still serves the committed (previous) snapshot's authority: the
+    // dirty document is withdrawn against it, the clean one is served.
+    let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
+    let (_, withdrawn_items) = report_kind_and_items(&withdrawn);
+    if withdrawn_items != 0 {
+        return Err(format!(
+            "expected the dirty document to stay withdrawn: {withdrawn}"
+        ));
+    }
+    let served_b = pull_document_json(backend, &fixture.uri_b, None).await?;
+    let (_, served_b_items) = report_kind_and_items(&served_b);
+    if served_b_items == 0 {
+        return Err(format!(
+            "expected the previous snapshot to keep serving the clean document: {served_b}"
+        ));
+    }
+    drop(transaction);
+
+    // When a transaction does commit, identities advance with it.
+    commit_quarantine_snapshot(backend, &fixture)?;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state.is_quarantined() {
+        return Err("quarantine must lift once a transaction commits".to_string());
+    }
+    if state.analyzed_saved_digest.as_deref()
+        != Some(content_digest(QUARANTINE_TEXT_A_DIRTY.as_bytes()).as_str())
+    {
+        return Err("analyzed identity must advance with the commit".to_string());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> Result<(), String> {
+    let fixture = quarantine_fixture("external-disk-change")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture)?;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state.is_quarantined() {
+        return Err("buffer matching the analyzed saved content must be clean".to_string());
+    }
+
+    // An external tool (git checkout, formatter, another editor) rewrites
+    // the file: no didChange and no didSave arrive, so the didSave-tracked
+    // saved digest stays stale. The refresh analyzes the new persisted
+    // bytes, and the analyzed identity must come from those bytes — the
+    // old-content buffer must not be marked clean against them.
+    std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+        .map_err(|err| format!("external rewrite failed: {err}"))?;
+    commit_quarantine_snapshot(backend, &fixture)?;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if !state.is_quarantined() {
+        return Err(
+            "a buffer older than the externally analyzed bytes must be quarantined".to_string(),
+        );
+    }
+    let Some(quarantine) = &state.quarantine else {
+        return Err("expected a quarantine marker".to_string());
+    };
+    if quarantine.reason.as_str() != "buffer_diverges_from_analyzed_saved_content" {
+        return Err(format!(
+            "wrong staleness reason: {}",
+            quarantine.reason.as_str()
+        ));
+    }
+    if state.analyzed_saved_digest.as_deref()
+        != Some(content_digest(QUARANTINE_TEXT_A_DIRTY.as_bytes()).as_str())
+    {
+        return Err("analyzed identity must come from the persisted bytes".to_string());
+    }
+    let withdrawn = pull_document_json(backend, &fixture.uri_a, None).await?;
+    let (_, items) = report_kind_and_items(&withdrawn);
+    if items != 0 {
+        return Err(format!(
+            "expected the stale buffer's diagnostics to be withdrawn: {withdrawn}"
+        ));
     }
     Ok(())
 }
