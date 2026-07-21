@@ -18,14 +18,14 @@ map is:
 | `ripr check --format json` | `schema_version` | `0.2` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
-| `ripr doctor --format json` | `schema_version` | `0.1` |
+| `ripr doctor --json` | `schema_version` | `0.1` |
 | `ripr agent packet` | `schema_version` | `0.3` |
 | `ripr agent receipt` | `schema_version` | `0.3` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.7` |
-| `cargo xtask cache-status` | `schema_version` | `0.1` |
+| `ripr cache status --json` | `schema_version` | `0.1` |
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
