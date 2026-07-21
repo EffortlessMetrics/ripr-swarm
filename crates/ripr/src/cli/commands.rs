@@ -7659,10 +7659,27 @@ language = "rust"
             let _ = std::fs::remove_file(residue);
         }
         let bare_result = pr_comments(&args(&[]));
-        for residue in [
-            "target/ripr/review/comment-publish-plan.json",
-            "target/ripr/review/comment-publish-plan.md",
-        ] {
+        let json_path = "target/ripr/review/comment-publish-plan.json";
+        let md_path = "target/ripr/review/comment-publish-plan.md";
+        let json_text = std::fs::read_to_string(json_path);
+        assert!(json_text.is_ok(), "bare dispatch must write {json_path}");
+        let json_text = json_text.unwrap_or_default();
+        let plan = serde_json::from_str::<serde_json::Value>(&json_text);
+        assert!(
+            plan.is_ok(),
+            "plan output must be valid JSON: {}",
+            plan.err().map(|err| err.to_string()).unwrap_or_default()
+        );
+        let plan = plan.unwrap_or_default();
+        assert!(
+            plan.get("schema_version").is_some() || plan.get("mode").is_some(),
+            "plan output lost its contract shape: {json_text}"
+        );
+        assert!(
+            std::path::Path::new(md_path).is_file(),
+            "bare dispatch must write the markdown plan"
+        );
+        for residue in [json_path, md_path] {
             let _ = std::fs::remove_file(residue);
         }
         assert!(
