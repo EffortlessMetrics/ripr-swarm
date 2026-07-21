@@ -76,7 +76,12 @@ fn run_pipeline_for_diff_text(
     // partial_budget_invalid), not a per-language advisory gap.
     if languages.contains(&LanguageId::Rust) {
         cancellation::checkpoint()?;
-        let result = RustAdapter.analyze_diff(options, oracle_policy, &changed_files)?;
+        let result = RustAdapter.analyze_diff_for_languages(
+            options,
+            oracle_policy,
+            &changed_files,
+            languages,
+        )?;
         cancellation::checkpoint()?;
         partial_scope = result.partial_scope.clone();
         findings.extend(result.findings);
