@@ -170,21 +170,17 @@ impl Backend {
         // rapid saves collapse into one analysis run. Explicit refresh and
         // config reload bypass the debounce (#1908).
         //
-        // The collapse itself is handled by the refresh scheduler's generation
-        // counter: each call to refresh_diagnostics eventually calls
-        // refresh_scheduler.request(), which bumps next_generation. When two
-        // saves arrive within the debounce window, both wait 200ms, then both
-        // request the same latest generation; the scheduler deduplicates them
-        // into a single analysis run. The sleep here just delays the request
-        // so the second save's generation bump happens before either call
-        // reaches the scheduler.
+        // The collapse itself is handled by the refresh scheduler: the sleep
+        // delays each interactive request so a burst of saves arrives at the
+        // scheduler together, and the scheduler's generation/dedup logic
+        // collapses equivalent pending requests into one analysis run.
         //
         // The earlier version of this block used a tokio::select! arm on
         // refresh_idle.notified() to "cancel" when a superseding notification
-        // arrived. That arm was dead code for the described race: notify_waiters
-        // is only called when an in-flight analysis finishes (backend.rs:256,
-        // :1160, :1930), not when a new save arrives. The dedup never depended
-        // on it. Removed in the post-merge review of #2041.
+        // arrived. That arm was dead code for the described race: refresh_idle
+        // is signalled on analysis completion and root-authority transitions,
+        // not when a new save arrives, so the dedup never depended on it.
+        // Removed in the post-merge review of #2041.
         let is_interactive = matches!(
             reason,
             RefreshReason::DidOpen | RefreshReason::DidSave | RefreshReason::DidClose
