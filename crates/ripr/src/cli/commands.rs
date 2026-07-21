@@ -6199,11 +6199,38 @@ mod tests {
     }
 
     #[test]
+    fn pr_review_bare_dispatches_to_front_panel() {
+        // Bare `ripr pr-review` is the `front-panel` alias (#2013).
+        assert_eq!(
+            pr_review(&args(&[])),
+            Err("pr-review front-panel requires at least one explicit artifact input".to_string())
+        );
+        assert_eq!(
+            pr_review(&args(&["bogus"])),
+            Err("unknown pr-review subcommand \"bogus\"; expected `front-panel`".to_string())
+        );
+    }
+
+    #[test]
     fn gate_rejects_bad_surface_and_unknown_args() {
         // Bare `ripr gate` is the `evaluate` alias (#2013): it dispatches
-        // instead of erroring on a missing subcommand.
+        // instead of erroring on a missing subcommand. The full path writes
+        // the default report files, so they are cleaned on both sides.
+        for residue in [
+            "target/ripr/reports/gate-decision.json",
+            "target/ripr/reports/gate-decision.md",
+        ] {
+            let _ = std::fs::remove_file(residue);
+        }
+        let bare_result = gate(&args(&[]));
+        for residue in [
+            "target/ripr/reports/gate-decision.json",
+            "target/ripr/reports/gate-decision.md",
+        ] {
+            let _ = std::fs::remove_file(residue);
+        }
         assert_eq!(
-            gate(&args(&[])),
+            bare_result,
             Err(
                 "ripr gate decision is config_error; see target/ripr/reports/gate-decision.json"
                     .to_string()
@@ -7623,9 +7650,23 @@ language = "rust"
 
     #[test]
     fn pr_comments_plan_rejects_bad_subcommands_and_options() {
-        // Bare `ripr pr-comments` is the `plan` alias (#2013).
+        // Bare `ripr pr-comments` is the `plan` alias (#2013). The dispatch
+        // writes the default plan files, so they are cleaned on both sides.
+        for residue in [
+            "target/ripr/review/comment-publish-plan.json",
+            "target/ripr/review/comment-publish-plan.md",
+        ] {
+            let _ = std::fs::remove_file(residue);
+        }
+        let bare_result = pr_comments(&args(&[]));
+        for residue in [
+            "target/ripr/review/comment-publish-plan.json",
+            "target/ripr/review/comment-publish-plan.md",
+        ] {
+            let _ = std::fs::remove_file(residue);
+        }
         assert!(
-            pr_comments(&args(&[])).is_ok(),
+            bare_result.is_ok(),
             "bare pr-comments must dispatch to plan with defaults"
         );
         assert_eq!(
