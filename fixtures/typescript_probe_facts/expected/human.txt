@@ -4,7 +4,7 @@ root: fixtures/typescript_probe_facts/input
 
 Summary: 10 probe(s), 0 exposed, 10 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: rust: 0, typescript: 7.
+Changed file(s) by language: javascript: 2, rust: 0, typescript: 5.
 
 Start here:
   State: preview_limited

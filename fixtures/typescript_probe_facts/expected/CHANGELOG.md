@@ -275,3 +275,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+#2103 review: TypeScript adapter changed-file counts now split javascript (.js/.jsx) from typescript; counts conserved
+
+Command:
+`cargo xtask goldens bless typescript_probe_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -132,7 +132,14 @@ fn run_pipeline_for_diff_text(
             Ok(result) => {
                 cancellation::checkpoint()?;
                 findings.extend(result.findings);
-                changed_files_by_language.push((*language, result.changed_files));
+                if result.changed_files_by_language.is_empty() {
+                    changed_files_by_language.push((*language, result.changed_files));
+                } else {
+                    // An adapter covering several output languages (the
+                    // TypeScript adapter handles .js/.jsx as javascript)
+                    // reports its own split (#2103 review).
+                    changed_files_by_language.extend(result.changed_files_by_language);
+                }
             }
             Err(reason) => language_runs.push(LanguageRun {
                 language: language.as_str().to_string(),
