@@ -1,6 +1,7 @@
 use super::evidence::ClassifiedProbeEvidence;
 use crate::analysis::classify::{
-    ProbeContext, ensure_unknown_stop_reason, missing_evidence, recommended_next_step, stop_reasons,
+    ProbeContext, ensure_unknown_stop_reason, missing_evidence, recommended_next_step_for_owner,
+    stop_reasons,
 };
 use crate::domain::*;
 
@@ -20,7 +21,8 @@ pub(in crate::analysis) fn build_finding(
     let test_summaries = context.related_test_summaries();
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
-    let recommended_next_step = recommended_next_step(context.probe, &class);
+    let recommended_next_step =
+        recommended_next_step_for_owner(context.probe, &class, context.owner_is_assertion_helper);
     let confidence = evidence.confidence(&class);
 
     Finding {

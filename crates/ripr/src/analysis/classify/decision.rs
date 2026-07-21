@@ -214,6 +214,38 @@ pub(in crate::analysis) fn recommended_next_step(
     }
 }
 
+pub(in crate::analysis) fn recommended_next_step_for_owner(
+    probe: &Probe,
+    class: &ExposureClass,
+    owner_is_assertion_helper: bool,
+) -> Option<String> {
+    if owner_is_assertion_helper && !matches!(class, ExposureClass::Exposed) {
+        return Some(assertion_helper_guidance(class).to_string());
+    }
+    recommended_next_step(probe, class)
+}
+
+fn assertion_helper_guidance(class: &ExposureClass) -> &'static str {
+    match class {
+        ExposureClass::NoStaticPath => {
+            "The changed owner appears to be an assertion helper. Review its callers and assertion semantics; adding another test around the helper is not itself a discriminator. Confirm the helper's checks with targeted mutation testing."
+        }
+        ExposureClass::ReachableUnrevealed => {
+            "The changed owner appears to be an assertion helper. Review whether its existing checks observe the intended invariant; adding another assertion around the helper may be circular."
+        }
+        ExposureClass::WeaklyExposed => {
+            "The changed owner appears to be an assertion helper. Review whether its existing checks distinguish the intended invariant; do not add a duplicate assertion solely from this static advisory."
+        }
+        ExposureClass::InfectionUnknown => {
+            "The changed owner appears to be an assertion helper. Review the assertion input and failure path; ripr cannot infer the helper's oracle semantics from this static path."
+        }
+        ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => {
+            "The changed owner appears to be an assertion helper. Review the helper's assertion semantics, then use targeted mutation testing or deeper analysis for the unresolved path."
+        }
+        ExposureClass::Exposed => "No additional static next step is suggested for this finding.",
+    }
+}
+
 fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
     match family {
         ProbeFamily::Predicate => {
@@ -342,6 +374,20 @@ mod tests {
                 "Replace broad assertions with exact equality or a property that constrains the changed returned value."
             )
         );
+    }
+
+    #[test]
+    fn assertion_helper_guidance_does_not_recommend_a_circular_test() {
+        let guidance = recommended_next_step_for_owner(
+            &probe(ProbeFamily::ReturnValue, "value + 1"),
+            &ExposureClass::NoStaticPath,
+            true,
+        )
+        .unwrap_or_default();
+
+        assert!(guidance.contains("assertion helper"));
+        assert!(guidance.contains("not itself a discriminator"));
+        assert!(!guidance.contains("add a co-located test"));
     }
 
     // RIPR-SPEC-0109 control (a): genuine all-Yes/Medium exposure must not be

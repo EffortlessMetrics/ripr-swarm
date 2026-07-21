@@ -4,6 +4,7 @@ use crate::domain::{Probe, RelationReason};
 pub(in crate::analysis) struct ProbeContext<'a> {
     pub probe: &'a Probe,
     pub owner_fn: Option<&'a FunctionSummary>,
+    pub owner_is_assertion_helper: bool,
     /// Related tests paired with their relation reason so `reveal_evidence`
     /// can tag each emitted `RelatedTest` with `relation_reason` /
     /// `relation_confidence`.
@@ -14,11 +15,13 @@ impl<'a> ProbeContext<'a> {
     pub(in crate::analysis) fn new(
         probe: &'a Probe,
         owner_fn: Option<&'a FunctionSummary>,
+        owner_is_assertion_helper: bool,
         related_tests: Vec<(&'a TestSummary, RelationReason)>,
     ) -> Self {
         Self {
             probe,
             owner_fn,
+            owner_is_assertion_helper,
             related_tests,
         }
     }
@@ -51,10 +54,11 @@ mod tests {
             required_oracles: Vec::new(),
         };
 
-        let context = ProbeContext::new(&probe, None, Vec::new());
+        let context = ProbeContext::new(&probe, None, false, Vec::new());
 
         assert_eq!(context.probe.id.0, "probe:test");
         assert!(context.owner_fn.is_none());
+        assert!(!context.owner_is_assertion_helper);
         assert!(context.related_tests.is_empty());
     }
 }

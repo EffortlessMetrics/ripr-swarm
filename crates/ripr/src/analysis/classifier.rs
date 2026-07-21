@@ -4,7 +4,7 @@ mod owner;
 
 use self::evidence::ClassifiedProbeEvidence;
 use self::finding::build_finding;
-use self::owner::resolve_owner_function;
+use self::owner::{owner_is_assertion_helper, resolve_owner_function};
 use super::classify::{ProbeContext, find_related_tests};
 use super::probes::parser_expression_for_probe;
 use super::rust_index::RustIndex;
@@ -13,7 +13,12 @@ use crate::domain::*;
 pub fn classify_probe(probe: &Probe, index: &RustIndex) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
     let related_tests = find_related_tests(probe, owner_fn, index);
-    let context = ProbeContext::new(probe, owner_fn, related_tests);
+    let context = ProbeContext::new(
+        probe,
+        owner_fn,
+        owner_is_assertion_helper(owner_fn, index),
+        related_tests,
+    );
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -1321,6 +1326,36 @@ mod tests {
             recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown).as_deref(),
             Some("Escalate to real mutation testing or deep static analysis for this probe.")
         );
+    }
+
+    #[test]
+    fn changed_assertion_owner_gets_oracle_guidance_for_no_static_path() {
+        let mut owner = function("src/lib.rs", "assert_workspace_source_paths_are_stable");
+        owner.body = "assert!(!span.file.contains('\\\\'));".to_string();
+        let probe = Probe {
+            id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("span.file.contains('\\\\')".to_string()),
+            expression: "span.file.contains('\\\\')".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let finding = classify_probe(
+            &probe,
+            &RustIndex {
+                functions: vec![owner],
+                ..RustIndex::default()
+            },
+        );
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        let guidance = finding.recommended_next_step.unwrap_or_default();
+        assert!(guidance.contains("assertion helper"));
+        assert!(guidance.contains("not itself a discriminator"));
     }
 
     #[test]
