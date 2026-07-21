@@ -70,7 +70,7 @@ export async function resolveServer(
     downloadFailure = `No prebuilt ripr server target is known for ${process.platform}/${process.arch}.`;
   }
 
-  // On Windows, cp.spawn with shell: false does no PATHEXT resolution, so
+  // On Windows, spawning with shell: false does no PATHEXT resolution, so
   // ripr.bat/ripr.cmd shims (Scoop, Chocolatey, manual PATH) fail to start
   // even though `ripr` works in a terminal (#2079). The command is the
   // constant string 'ripr --version' — no user input reaches the shell.
