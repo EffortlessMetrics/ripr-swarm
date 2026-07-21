@@ -348,10 +348,10 @@ add co-located tests that observe the changed behavior.\n",
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     for advisory in &output.preview_language_advisories {
         let language = capitalize_first(&advisory.language);
-        let file_label = if advisory.file_count == 1 {
+        let file_label = if advisory.language == "perl" && advisory.file_count == 1 {
             format!("{language} file")
         } else {
-            format!("{language} files")
+            format!("{language}(s)")
         };
         if advisory.enabled {
             out.push_str(&format!(
@@ -1571,7 +1571,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("2 Typescript files analyzed under preview support"),
+            rendered.contains("2 Typescript(s) analyzed under preview support"),
             "expected preview disclosure in output; got:\n{rendered}"
         );
         assert!(
@@ -1610,7 +1610,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("3 Python files analyzed under preview support"),
+            rendered.contains("3 Python(s) analyzed under preview support"),
             "expected python preview disclosure; got:\n{rendered}"
         );
         assert!(
@@ -1676,14 +1676,14 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("7 Typescript files analyzed under preview support"),
+            rendered.contains("7 Typescript(s) analyzed under preview support"),
             "expected file_count=7 in disclosure; got:\n{rendered}"
         );
     }
 
     #[test]
-    fn render_emits_not_enabled_disclosure_for_typescript_files_when_adapter_disabled() {
-        // The #1111 default case: TypeScript files in the diff but the adapter
+    fn render_emits_singular_perl_disclosure_when_adapter_disabled() {
+        // The #2104 case: one Perl file in the diff but the adapter
         // is NOT enabled. The empty result must be broken by a disclosure that
         // says the files were not analyzed.
         let output = CheckOutput {
@@ -1695,9 +1695,9 @@ mod tests {
             summary: Summary::default(),
             findings: vec![],
             preview_language_advisories: vec![PreviewLanguageAdvisory {
-                language: "typescript".to_string(),
+                language: "perl".to_string(),
                 file_count: 1,
-                sample_paths: vec!["src/utils.ts".to_string()],
+                sample_paths: vec!["lib/Pricing.pm".to_string()],
                 enabled: false,
             }],
             language_runs: Vec::new(),
@@ -1710,7 +1710,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("this diff contains 1 Typescript file"),
+            rendered.contains("this diff contains 1 Perl file"),
             "expected not-enabled disclosure; got:\n{rendered}"
         );
         assert!(
@@ -1727,7 +1727,7 @@ mod tests {
         );
         // Must include the copy-paste TOML block.
         assert!(
-            rendered.contains("[languages]\nenabled = [\"rust\", \"typescript\"]"),
+            rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
             "expected copy-paste TOML block; got:\n{rendered}"
         );
         // Must NOT use the enabled wording.
@@ -1740,8 +1740,8 @@ mod tests {
     #[test]
     fn render_not_enabled_disclosure_includes_language_specific_toml_block() {
         // Verify the copy-paste block uses the actual language name, not a
-        // hardcoded string. This covers the Python path; TypeScript is covered
-        // by render_emits_not_enabled_disclosure_for_typescript_files_when_adapter_disabled.
+        // hardcoded string. This covers the Python path; Perl is covered by
+        // render_emits_singular_perl_disclosure_when_adapter_disabled.
         let output = CheckOutput {
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
