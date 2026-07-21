@@ -316,10 +316,10 @@ cargo xtask check-pr
 git diff --check
 ```
 
-Closeout validation:
+Closeout validation (the retired `check-campaign` and `goals` commands were
+deleted in #2056 and are not listed):
 
 ```bash
-# Retired in #2056: check-campaign, goals
 cargo xtask check-doc-index
 cargo xtask markdown-links
 cargo xtask check-static-language

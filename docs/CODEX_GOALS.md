@@ -197,9 +197,10 @@ The active campaign manifest is:
 .ripr/goals/active.toml
 ```
 
-It is the machine-readable pointer for campaign state. It names the active
+It was the machine-readable pointer for campaign state. It named the active
 campaign, end state, work items, dependencies, stackability, and required
-commands.
+commands. The file was deleted in #2056 along with the rest of `.ripr/goals/`;
+this section survives as history.
 
 The `xtask` goals commands described below were **deleted in #2056** and no
 longer exist (`goals status|next|report`, `check-goals`, `check-campaign`,
