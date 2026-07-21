@@ -41,6 +41,7 @@ mod discovery;
 mod oracle;
 mod owners;
 mod package;
+pub(crate) use package::detect_framework_for_root;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -248,6 +249,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         Ok(LanguageDiffResult {
             findings,
             changed_files: changed_count,
+            partial_scope: None,
         })
     }
 

@@ -4461,9 +4461,18 @@ fn preview_language_enable_suggestions(root: &Path) -> Vec<String> {
 /// no clear marker is found — the function never claims a framework it cannot
 /// confirm.
 fn report_detected_test_surfaces(root: &Path) {
+    let lines = detected_test_surface_lines(root);
+    if !lines.is_empty() {
+        println!("- Detected test surfaces: {}", lines.join("; "));
+    }
+}
+
+/// Build the detected test-surface lines for doctor (#2106). Split from the
+/// printer so the output contract is directly testable.
+fn detected_test_surface_lines(root: &Path) -> Vec<String> {
     let detected = detect_languages(root);
     if detected.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut lines: Vec<String> = Vec::new();
     for id in &detected {
@@ -4479,30 +4488,48 @@ fn report_detected_test_surfaces(root: &Path) {
                 }
             }
             LanguageId::Python => {
-                if root.join("pytest.ini").exists() || root.join("pyproject.toml").exists() {
-                    lines.push("python: pytest".to_string());
-                } else {
-                    lines.push("python: test framework not detected".to_string());
+                // One shared detector (#2106): the same pytest/unittest
+                // marker set the adapter's code-level detection implies.
+                #[cfg(feature = "lang-python")]
+                let framework = analysis::detect_python_test_framework(root);
+                #[cfg(not(feature = "lang-python"))]
+                let framework: Option<&'static str> =
+                    if root.join("pytest.ini").exists() || root.join("pyproject.toml").exists() {
+                        Some("pytest")
+                    } else {
+                        None
+                    };
+                match framework {
+                    Some(name) => lines.push(format!("python: {name}")),
+                    None => lines.push("python: test framework not detected".to_string()),
                 }
             }
             LanguageId::TypeScript | LanguageId::JavaScript => {
-                // Only report a framework when a clear config marker exists.
+                // One shared detector (#2106): the same package.json /
+                // config-file signals the adapter's package discovery trusts.
                 let lang = id.as_str();
-                if root.join("jest.config.js").exists()
+                #[cfg(feature = "lang-typescript")]
+                let framework = analysis::detect_typescript_test_framework(root);
+                #[cfg(not(feature = "lang-typescript"))]
+                let framework: Option<&'static str> = if root.join("jest.config.js").exists()
                     || root.join("jest.config.ts").exists()
                     || root.join("jest.config.mjs").exists()
                     || root.join("jest.config.cjs").exists()
                 {
-                    lines.push(format!("{lang}: jest"));
+                    Some("jest")
                 } else if root.join("vitest.config.ts").exists()
                     || root.join("vitest.config.js").exists()
                     || root.join("vitest.config.mjs").exists()
                 {
-                    lines.push(format!("{lang}: vitest"));
+                    Some("vitest")
                 } else if root.join("bun.lockb").exists() {
-                    lines.push(format!("{lang}: bun"));
+                    Some("bun")
                 } else {
-                    lines.push(format!("{lang}: test framework not detected"));
+                    None
+                };
+                match framework {
+                    Some(name) => lines.push(format!("{lang}: {name}")),
+                    None => lines.push(format!("{lang}: test framework not detected")),
                 }
             }
             LanguageId::Perl => {
@@ -4541,9 +4568,7 @@ fn report_detected_test_surfaces(root: &Path) {
             }
         }
     }
-    if !lines.is_empty() {
-        println!("- Detected test surfaces: {}", lines.join("; "));
-    }
+    lines
 }
 
 /// Print static limitation notes for the doctor first-run diagnosis.
@@ -5078,7 +5103,9 @@ mod tests {
     use super::*;
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
-    use crate::cli::commands_agent_support::normalize_agent_brief_path;
+    use crate::cli::commands_agent_support::{
+        normalize_agent_brief_path, resolve_agent_brief_working_set,
+    };
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -8788,6 +8815,37 @@ language = "rust"
     }
 
     #[test]
+    fn doctor_reports_unittest_and_package_only_ts_frameworks() -> Result<(), String> {
+        // #2106 review: doctor output coverage for frameworks only visible
+        // through the shared detectors.
+        let root = unique_command_test_dir("doctor-unittest");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("test_pricing.py"), "import unittest\n")
+            .map_err(|err| format!("write test file: {err}"))?;
+        let lines = detected_test_surface_lines(&root);
+        assert!(
+            lines.iter().any(|line| line == "python: unittest"),
+            "expected python: unittest in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_command_test_dir("doctor-ava");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"ky","scripts":{"test":"xo && npm run build && ava"}}"#,
+        )
+        .map_err(|err| format!("write package.json: {err}"))?;
+        let lines = detected_test_surface_lines(&root);
+        assert!(
+            lines.iter().any(|line| line == "typescript: ava"),
+            "expected typescript: ava in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn agent_brief_owner_lines_are_best_effort_for_missing_files() -> Result<(), String> {
         let root = unique_command_test_dir("agent-brief-owner-missing");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
@@ -8815,6 +8873,77 @@ language = "rust"
             PathBuf::from("src/lib.rs")
         );
 
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn agent_brief_files_reject_parent_dir_escape() -> Result<(), String> {
+        let root = unique_command_test_dir("agent-brief-files-escape");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+
+        let result = resolve_agent_brief_working_set(
+            &root,
+            &AgentBriefWorkingSet::Files(vec![PathBuf::from("../../secret")]),
+        );
+
+        let Err(message) = result else {
+            return Err("expected a confinement error, got Ok".to_string());
+        };
+        assert!(
+            message.contains("must stay under root"),
+            "unexpected error: {message}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn agent_brief_files_reject_absolute_path_outside_root() -> Result<(), String> {
+        let root = unique_command_test_dir("agent-brief-files-abs");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let outside = unique_command_test_dir("agent-brief-files-outside");
+
+        let result = resolve_agent_brief_working_set(
+            &root,
+            &AgentBriefWorkingSet::Files(vec![outside.join("secret.rs")]),
+        );
+
+        let Err(message) = result else {
+            return Err("expected a confinement error, got Ok".to_string());
+        };
+        assert!(
+            message.contains("must stay under root"),
+            "unexpected error: {message}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn agent_brief_files_accept_relative_and_absolute_under_root() -> Result<(), String> {
+        let root = unique_repo_relative_test_dir("agent-brief-files-ok");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|err| format!("create src dir: {err}"))?;
+        let absolute_under_root = std::env::current_dir()
+            .map_err(|err| format!("read current dir: {err}"))?
+            .join(&root)
+            .join("src/lib.rs");
+
+        let resolved = resolve_agent_brief_working_set(
+            &root,
+            &AgentBriefWorkingSet::Files(vec![PathBuf::from("src/lib.rs"), absolute_under_root]),
+        );
+
+        let Ok(resolved) = resolved else {
+            return Err(format!("expected confinement to accept, got {resolved:?}"));
+        };
+        // Output contract: both spellings resolve to the same confined
+        // repo-relative path — not merely any non-empty path (#2100 review).
+        assert_eq!(
+            resolved.files,
+            vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/lib.rs")]
+        );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }
@@ -10383,6 +10512,36 @@ language = "rust"
         ]));
         assert!(matches!(result, Err(message) if message.contains("already exists")));
         assert!(!dir.join(CONFIG_FILE_NAME).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn init_force_replaces_symlink_without_clobbering_target() -> Result<(), String> {
+        // #2101: a pre-placed ripr.toml symlink plus --force must not
+        // clobber the symlink target; the link itself is replaced by a
+        // regular config file.
+        let dir = unique_command_test_dir("init-force-symlink");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let target = dir.join("target.txt");
+        std::fs::write(&target, "do not clobber\n")
+            .map_err(|err| format!("write target: {err}"))?;
+        let config = dir.join(CONFIG_FILE_NAME);
+        std::os::unix::fs::symlink(&target, &config)
+            .map_err(|err| format!("plant symlink: {err}"))?;
+
+        init(&args(&["--root", &dir.display().to_string(), "--force"]))?;
+
+        let target_text =
+            std::fs::read_to_string(&target).map_err(|err| format!("read target: {err}"))?;
+        assert_eq!(target_text, "do not clobber\n");
+        let metadata =
+            std::fs::symlink_metadata(&config).map_err(|err| format!("stat config: {err}"))?;
+        assert!(metadata.file_type().is_file());
+        let config_text =
+            std::fs::read_to_string(&config).map_err(|err| format!("read config: {err}"))?;
+        assert!(config_text.contains("[analysis]"));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
