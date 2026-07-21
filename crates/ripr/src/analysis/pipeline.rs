@@ -272,8 +272,8 @@ const PREVIEW_LANGUAGE_ORDER: &[LanguageId] = &[
 /// grouped by language. For each preview language with at least one file, one
 /// advisory is emitted. Perl is disclosed even when its optional adapter is
 /// not compiled in, because routing Perl files is required for the honesty
-/// guard. `enabled` is `true` when the language is present in `enabled`
-/// (the active `[languages]` list), `false` otherwise — so a TypeScript change
+/// guard. `enabled` is `true` only when the language is present in `enabled`
+/// (the active `[languages]` list) and its adapter is available;
 /// analyzed under the default Rust-only config still breaks the silent
 /// empty-result honesty gap (RIPR-SPEC-0082, #1111).
 ///
