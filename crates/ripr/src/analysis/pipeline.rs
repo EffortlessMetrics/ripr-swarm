@@ -195,7 +195,7 @@ fn detect_repo_preview_advisories(
     let discovered = super::workspace::discover_preview_language_files(root);
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in PREVIEW_LANGUAGE_ORDER {
-        if !language.is_available() {
+        if !language.is_available() && language != LanguageId::Perl {
             continue;
         }
         let files: Vec<String> = discovered
@@ -223,22 +223,25 @@ const PREVIEW_LANGUAGE_ORDER: &[LanguageId] = &[
     LanguageId::TypeScript,
     LanguageId::JavaScript,
     LanguageId::Python,
+    LanguageId::Perl,
 ];
 
 /// Build preview-language advisories by routing a stream of paths, regardless
 /// of whether the adapter is enabled.
 ///
 /// Each path is routed via `analysis::language::route`. Files that route to a
-/// compiled preview language (TypeScript/JavaScript or Python) are grouped by
-/// language. For each preview language with at least one file, one advisory is
-/// emitted. `enabled` is `true` when the language is present in `enabled`
+/// compiled preview language (TypeScript/JavaScript, Python, or Perl) are
+/// grouped by language. For each preview language with at least one file, one
+/// advisory is emitted. Perl is disclosed even when its optional adapter is
+/// not compiled in, because routing Perl files is required for the honesty
+/// guard. `enabled` is `true` when the language is present in `enabled`
 /// (the active `[languages]` list), `false` otherwise — so a TypeScript change
 /// analyzed under the default Rust-only config still breaks the silent
 /// empty-result honesty gap (RIPR-SPEC-0082, #1111).
 ///
-/// Only compiled-in preview adapters are reported (`LanguageId::is_available`);
-/// a preview language whose feature is not built is skipped, since the binary
-/// could not analyze it under any config.
+/// TypeScript/JavaScript/Python remain restricted to compiled-in adapters;
+/// Perl is the exception because its file presence must remain visible even
+/// when the optional adapter is unavailable.
 fn detect_preview_advisories<'a, I>(
     enabled: &[LanguageId],
     paths: I,
@@ -251,7 +254,9 @@ where
         let Some(language) = super::language::route(&changed.path) else {
             continue;
         };
-        if !is_preview_language(language) || !language.is_available() {
+        if !is_preview_language(language)
+            || (!language.is_available() && language != LanguageId::Perl)
+        {
             continue;
         }
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
@@ -834,6 +839,44 @@ index 0000000..1111111 100644
                 "expected enabled=false when TypeScript is NOT in the enabled list".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_pipeline_emits_not_enabled_advisory_for_perl_without_adapter() -> Result<(), String> {
+        let root = temp_root("spec-0082-perl-not-enabled")?;
+        let diff_file = root.join("perl.diff");
+        write(
+            &diff_file,
+            "diff --git a/lib/My/App.pm b/lib/My/App.pm\n\\
+             --- /dev/null\n\\
+             +++ b/lib/My/App.pm\n\\
+             @@ -0,0 +1 @@\n\\
+             +sub value { return 1 }\n",
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let advisory = result
+            .preview_language_advisories
+            .iter()
+            .find(|advisory| advisory.language == "perl")
+            .ok_or_else(|| "expected a Perl preview advisory".to_string())?;
+        assert_eq!(advisory.file_count, 1);
+        assert!(!advisory.enabled);
+        assert_eq!(advisory.sample_paths, vec!["lib/My/App.pm"]);
         Ok(())
     }
 
