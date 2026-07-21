@@ -164,10 +164,6 @@ kind = "method_call"
 container = "collect_panic_findings_finds_exact_locations"
 callee = "unwrap"
 
-callee = "unwrap"
-
-callee = "unwrap"
-
 [[allow]]
 id = "panic-0015"
 path = "xtask/src/main.rs"
