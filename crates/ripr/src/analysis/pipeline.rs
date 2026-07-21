@@ -250,7 +250,7 @@ fn detect_repo_preview_advisories(
             language: language.as_str().to_string(),
             file_count,
             sample_paths,
-            enabled: enabled.contains(language),
+            enabled: enabled.contains(language) && language.is_available(),
         });
     }
     advisories
@@ -318,7 +318,7 @@ where
                 language: language.as_str().to_string(),
                 file_count: *file_count,
                 sample_paths: sample_paths.clone(),
-                enabled: enabled.contains(language),
+                enabled: enabled.contains(language) && language.is_available(),
             });
         }
     }
@@ -917,6 +917,44 @@ index 0000000..1111111 100644
         assert_eq!(advisory.file_count, 1);
         assert!(!advisory.enabled);
         assert_eq!(advisory.sample_paths, vec!["lib/My/App.pm"]);
+        Ok(())
+    }
+
+    #[cfg(not(feature = "lang-perl"))]
+    #[test]
+    fn diff_pipeline_keeps_configured_unavailable_perl_disabled() -> Result<(), String> {
+        let root = temp_root("spec-0082-perl-configured-unavailable")?;
+        let diff_file = root.join("perl.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/lib/My/App.pm b/lib/My/App.pm
+--- /dev/null
++++ b/lib/My/App.pm
+@@ -0,0 +1 @@
++sub value { return 1 }
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Perl],
+        )?;
+
+        let advisory = result
+            .preview_language_advisories
+            .iter()
+            .find(|advisory| advisory.language == "perl")
+            .ok_or_else(|| "expected a Perl preview advisory".to_string())?;
+        assert!(!advisory.enabled);
         Ok(())
     }
 
