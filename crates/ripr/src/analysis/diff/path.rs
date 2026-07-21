@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     let marker = raw.strip_prefix("+++ ")?;
@@ -7,7 +7,31 @@ pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
         return None;
     }
     let path = path.strip_prefix("b/").unwrap_or(&path);
-    Some(PathBuf::from(path))
+    confine_to_relative_path(path)
+}
+
+/// Lexically confine a parsed diff path to the workspace: keep only `Normal`
+/// components and reject the whole path when it contains a parent-directory,
+/// root, or prefix component. A crafted diff such as
+/// `+++ b/../../../etc/passwd` would otherwise reach `root.join(path)`
+/// unconfined and produce a `SourceLocation` that escapes the workspace
+/// (#2099). Rejection returns `None`, which the parser treats like
+/// `/dev/null`: the file is never registered, so no probe, output record, or
+/// snapshot lookup can reference the escaping path.
+fn confine_to_relative_path(path: &str) -> Option<PathBuf> {
+    let mut confined = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => confined.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    if confined.as_os_str().is_empty() {
+        None
+    } else {
+        Some(confined)
+    }
 }
 
 pub(super) fn parse_old_path_marker(raw: &str) -> bool {

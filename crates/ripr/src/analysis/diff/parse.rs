@@ -1004,6 +1004,40 @@ deleted file mode 100644
         assert_eq!(file.removed_lines.len(), 0);
     }
 
+    #[test]
+    fn rejects_new_path_marker_with_parent_dir_traversal() {
+        assert_eq!(parse_new_path_marker("+++ b/../../../etc/passwd"), None);
+    }
+
+    #[test]
+    fn rejects_new_path_marker_with_embedded_parent_dir() {
+        assert_eq!(parse_new_path_marker("+++ b/src/../../../etc/passwd"), None);
+    }
+
+    #[test]
+    fn rejects_new_path_marker_with_absolute_path() {
+        assert_eq!(parse_new_path_marker("+++ b//etc/passwd"), None);
+        assert_eq!(parse_new_path_marker("+++ /etc/passwd"), None);
+    }
+
+    #[test]
+    fn normalizes_new_path_marker_with_cur_dir_components() {
+        assert_eq!(
+            parse_new_path_marker("+++ b/./src/lib.rs"),
+            Some(PathBuf::from("src/lib.rs"))
+        );
+    }
+
+    #[test]
+    fn diff_with_traversal_path_registers_no_file() {
+        // A crafted diff whose `+++` marker escapes the workspace must not
+        // register a ChangedFile at all: rejection is treated like
+        // `/dev/null`, so no SourceLocation can escape the root (#2099).
+        let diff = "diff --git a/../../../etc/passwd b/../../../etc/passwd\n--- a/../../../etc/passwd\n+++ b/../../../etc/passwd\n@@ -1,1 +1,1 @@\n-root\n+root\n";
+        let files = parse_unified_diff(diff);
+        assert!(files.is_empty());
+    }
+
     fn next_u64(seed: &mut u64) -> u64 {
         *seed = seed
             .wrapping_mul(6364136223846793005)
