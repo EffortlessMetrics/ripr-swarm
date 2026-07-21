@@ -895,12 +895,14 @@ export class RiprClientController {
   }
 
   private warnWithOutput(message: string): void {
-    void this.runtime
-      .showWarningMessage(message, SHOW_OUTPUT_ACTION)
+    void Promise.resolve(this.runtime.showWarningMessage(message, SHOW_OUTPUT_ACTION))
       .then((choice) => {
         if (choice === SHOW_OUTPUT_ACTION) {
           this.showOutput();
         }
+      })
+      .catch((error) => {
+        this.output.appendLine(`ripr warning notification failed: ${String(error)}`);
       });
   }
 
