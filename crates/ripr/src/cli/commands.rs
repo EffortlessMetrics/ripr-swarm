@@ -4018,12 +4018,15 @@ fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, String> {
         };
         let dir =
             std::env::temp_dir().join(format!("ripr-diff-{}-{stamp}{suffix}", std::process::id()));
-        let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = std::fs::DirBuilder::new();
             builder.mode(0o700);
-        }
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
         match builder.create(&dir) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
