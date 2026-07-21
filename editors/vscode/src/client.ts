@@ -21,6 +21,8 @@ const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }> = [
   { language: 'python', scheme: 'file' }
 ];
 
+const SHOW_OUTPUT_ACTION = 'Show Output';
+
 const RIPR_FILE_LANGUAGES = new Set(RIPR_DOCUMENT_SELECTORS.map((selector) => selector.language));
 const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typescript' | 'python'>([
   ['.rs', 'rust'],
