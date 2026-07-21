@@ -102,6 +102,10 @@ Budget validity and stop precedence are defined, never implicit:
   selected file only, so an empty partition is impossible.
 - If both budgets are reached by the same file, the stop reason is the file
   budget (`file_budget`), with the line count recorded alongside it.
+- Precedence: the first-file line-overshoot exception wins over the
+  simultaneous-hit rule. When the first selected file exceeds the line budget,
+  the stop reason is always `line_budget_exceeded_on_first_file`, regardless
+  of the file-budget state — the two rules can never both apply.
 
 ### 4. Representation of selected and uninspected scope
 
