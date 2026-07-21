@@ -69,15 +69,12 @@ What it does:
   through meaningful oracles. It does not run mutants.
 
 Quick start (one command per group):
-  ripr doctor                                    # setup
-  ripr pilot --root .                            # analysis (zero-config)
-  ripr agent brief --root . --diff change.diff --json
-                                                 # agent
-  ripr first-pr --root . --base origin/main --head HEAD
-                                                 # PR & review
-  ripr gate evaluate --pr-guidance target/ripr/review/comments.json
-                                                 # policy & gate
-  ripr reports index                             # reports
+  ripr doctor                                             # setup
+  ripr pilot --root .                                     # analysis (zero-config)
+  ripr agent brief --root . --diff change.diff --json     # agent
+  ripr first-pr --root . --base origin/main --head HEAD   # PR & review
+  ripr gate evaluate --pr-guidance <comments.json>        # policy & gate
+  ripr reports index                                      # reports
 
 Start-here path:
   - `ripr doctor` checks whether the local workspace and config can produce evidence.
