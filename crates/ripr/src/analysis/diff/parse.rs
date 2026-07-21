@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::model::{ChangedFile, ChangedLine};
-use super::path::{parse_new_path_marker, parse_old_path_marker};
+use super::path::{is_new_path_marker, parse_new_path_marker, parse_old_path_marker};
 
 pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
     let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
@@ -43,7 +43,7 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
             && parse_old_path_marker(raw)
             && lines
                 .get(i + 1)
-                .is_some_and(|next| parse_new_path_marker(next).is_some())
+                .is_some_and(|next| is_new_path_marker(next))
         {
             // This `--- ` line opens a new file section: close the current hunk
             // and fall through to the normal path-marker handler below.
@@ -86,7 +86,8 @@ fn parse_start(segment: &str) -> Option<usize> {
 
 mod parser_state {
     use super::{
-        ChangedFile, ChangedLine, parse_hunk_header, parse_new_path_marker, parse_old_path_marker,
+        ChangedFile, ChangedLine, is_new_path_marker, parse_hunk_header, parse_new_path_marker,
+        parse_old_path_marker,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -129,6 +130,16 @@ mod parser_state {
             }
 
             let Some(path) = parse_new_path_marker(raw) else {
+                // A syntactically valid `+++` marker whose path was rejected
+                // by confinement (or `/dev/null`): consume the marker and
+                // clear the current file so the following hunk lines cannot
+                // be mis-attributed to the previous file. consume_hunk_line
+                // ignores hunk lines while current_path is None (#2099).
+                if is_new_path_marker(raw) {
+                    self.current_path = None;
+                    self.saw_old_path_marker = false;
+                    return true;
+                }
                 return false;
             };
             if self.current_path.is_none() || self.saw_old_path_marker {
@@ -1036,6 +1047,24 @@ deleted file mode 100644
         let diff = "diff --git a/../../../etc/passwd b/../../../etc/passwd\n--- a/../../../etc/passwd\n+++ b/../../../etc/passwd\n@@ -1,1 +1,1 @@\n-root\n+root\n";
         let files = parse_unified_diff(diff);
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn plain_diff_rejected_traversal_marker_does_not_corrupt_previous_file() {
+        // Plain unified diff (no `diff --git` separators): the RANK-2
+        // boundary detector must treat a confinement-rejected `+++` marker as
+        // a file-section boundary, and the parser must clear the current
+        // file — otherwise the crafted marker, hunk header, and payload lines
+        // are consumed as changes to the previous in-workspace file (#2099
+        // review).
+        let diff = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n--- a/../../../etc/passwd\n+++ b/../../../etc/passwd\n@@ -1,1 +1,1 @@\n-root\n+root\n";
+        let files = parse_unified_diff(diff);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, PathBuf::from("src/a.rs"));
+        assert_eq!(files[0].added_lines.len(), 1);
+        assert_eq!(files[0].added_lines[0].text, "new");
+        assert_eq!(files[0].removed_lines.len(), 1);
+        assert_eq!(files[0].removed_lines[0].text, "old");
     }
 
     fn next_u64(seed: &mut u64) -> u64 {

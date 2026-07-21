@@ -10,6 +10,20 @@ pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     confine_to_relative_path(path)
 }
 
+/// Whether `raw` is syntactically a `+++ <path>` new-path marker, regardless
+/// of whether the path survives confinement. Boundary detection must treat a
+/// confinement-rejected (or `/dev/null`) marker as a file-section boundary:
+/// otherwise, in a plain diff with no `diff --git` separators, the rejected
+/// marker line and its hunk are consumed as payload of the previous file,
+/// mis-attributing attacker-controlled lines to an in-workspace path
+/// (#2099 review).
+pub(super) fn is_new_path_marker(raw: &str) -> bool {
+    let Some(marker) = raw.strip_prefix("+++ ") else {
+        return false;
+    };
+    parse_diff_path_token(marker).is_some()
+}
+
 /// Lexically confine a parsed diff path to the workspace: keep only `Normal`
 /// components and reject the whole path when it contains a parent-directory,
 /// root, or prefix component. A crafted diff such as
