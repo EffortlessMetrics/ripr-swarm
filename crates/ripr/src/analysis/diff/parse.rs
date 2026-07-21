@@ -1067,6 +1067,23 @@ deleted file mode 100644
         assert_eq!(files[0].removed_lines[0].text, "old");
     }
 
+    #[test]
+    fn hunk_payload_resembling_markers_with_spaces_stays_payload() {
+        // A removed line whose text is `-- token` followed by an added line
+        // whose text is `++ token with spaces` must not be misread as a
+        // file-section boundary: an unquoted marker path with whitespace is
+        // implausible, so the hunk stays open and both lines attach to the
+        // current file (#2099 review).
+        let diff = "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,3 +1,3 @@\n ctx\n--- token\n+++ token with spaces\n ctx2\n";
+        let files = parse_unified_diff(diff);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, PathBuf::from("src/a.rs"));
+        assert_eq!(files[0].removed_lines.len(), 1);
+        assert_eq!(files[0].removed_lines[0].text, "-- token");
+        assert_eq!(files[0].added_lines.len(), 1);
+        assert_eq!(files[0].added_lines[0].text, "++ token with spaces");
+    }
+
     fn next_u64(seed: &mut u64) -> u64 {
         *seed = seed
             .wrapping_mul(6364136223846793005)

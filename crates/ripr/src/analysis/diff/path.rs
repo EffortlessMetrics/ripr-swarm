@@ -21,7 +21,18 @@ pub(super) fn is_new_path_marker(raw: &str) -> bool {
     let Some(marker) = raw.strip_prefix("+++ ") else {
         return false;
     };
-    parse_diff_path_token(marker).is_some()
+    let trimmed = marker.trim_end_matches('\r');
+    let quoted = trimmed.starts_with('"');
+    match parse_diff_path_token(marker) {
+        // An unquoted path containing whitespace is implausible as a diff
+        // path (git C-quotes such paths): without this gate, hunk payload
+        // lines like `--- token` / `+++ token with spaces` could be misread
+        // as a file-section boundary. Mirrors the plausibility contract of
+        // parse_old_path_marker. Quoted paths may legitimately contain
+        // spaces.
+        Some(path) => quoted || is_plausible_unquoted_diff_path(&path),
+        None => false,
+    }
 }
 
 /// Lexically confine a parsed diff path to the workspace: keep only `Normal`
