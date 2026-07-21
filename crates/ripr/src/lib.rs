@@ -87,7 +87,7 @@ pub use app::{CheckInput, CheckOutput, check_workspace, collect_context, explain
 /// consumer never needs the `#[doc(hidden)]` modules to annotate,
 /// pattern-match, or re-render a result.
 pub use app::{Mode, OutputFormat};
-pub use domain::Summary;
 /// Domain model types exposed as part of the stable public contract.
 pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};
+pub use domain::{LanguageFileCount, Summary};
 pub use output::suppressions::CheckSuppressionOutcome;
