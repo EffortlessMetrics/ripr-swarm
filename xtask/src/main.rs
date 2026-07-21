@@ -72517,7 +72517,7 @@ fn proposal_from_finding(
             "new finding".to_string(),
             None,
             None,
-            "TODO: review why this panic-family call is allowed".to_string(),
+            "Review why this panic-family call is allowed before adoption".to_string(),
             None,
         ),
     };
@@ -72721,14 +72721,18 @@ fn render_no_panic_allowlist_proposals_toml(proposals: &[NoPanicAllowlistProposa
             }
         }
         body.push_str("[[allow]]\n");
+        if proposal.owner.is_none() {
+            body.push_str(
+                "# Required before adoption: replace the empty id with a stable allowlist id.\n",
+            );
+        }
         body.push_str(&format!(
             "id = \"{}\"\n",
-            no_panic_toml_string(
-                proposal
-                    .owner
-                    .as_deref()
-                    .map_or("TODO-review-id", |_| proposal.id.as_str())
-            )
+            no_panic_toml_string(if proposal.owner.is_some() {
+                &proposal.id
+            } else {
+                ""
+            })
         ));
         body.push_str(&format!(
             "path = \"{}\"\n",
@@ -72747,17 +72751,27 @@ fn render_no_panic_allowlist_proposals_toml(proposals: &[NoPanicAllowlistProposa
                     .unwrap_or("review_required")
             )
         ));
+        if proposal.owner.is_none() {
+            body.push_str(
+                "# Required before adoption: replace the empty owner with a real owner.\n",
+            );
+        }
         body.push_str(&format!(
             "owner = \"{}\"\n",
-            no_panic_toml_string(proposal.owner.as_deref().unwrap_or("TODO-owner"))
+            no_panic_toml_string(proposal.owner.as_deref().unwrap_or(""))
         ));
         body.push_str(&format!(
             "explanation = \"{}\"\n",
             no_panic_toml_string(&proposal.explanation)
         ));
+        if proposal.expires.is_none() {
+            body.push_str(
+                "# Required before adoption: replace the empty expiry with a review date.\n",
+            );
+        }
         body.push_str(&format!(
             "expires = \"{}\"\n\n",
-            no_panic_toml_string(proposal.expires.as_deref().unwrap_or("TODO-expiry"))
+            no_panic_toml_string(proposal.expires.as_deref().unwrap_or(""))
         ));
         body.push_str(&render_no_panic_selector_toml(proposal));
         body.push('\n');
@@ -82260,9 +82274,27 @@ column = 5
         let toml = render_no_panic_allowlist_proposals_toml(&proposals);
         if !toml.contains("receiver_fingerprint = \"left()\"")
             || !toml.contains("status = \"proposal\"")
+            || !toml.contains("id = \"\"")
+            || !toml.contains("owner = \"\"")
+            || !toml.contains("expires = \"\"")
+            || toml.contains("TODO-")
+            || toml.contains("TODO:")
         {
             return Err(format!("unexpected TOML proposal: {toml}"));
         }
+        with_temp_cwd("no_panic_proposal_requires_review_fields", |root| {
+            let allowlist_path = root.join("allowlist.toml");
+            write(&allowlist_path, &toml);
+            let allowlist_path = allowlist_path.to_str().ok_or("non-UTF-8 proposal path")?;
+            let error = parse_no_panic_allowlist_toml_v2(allowlist_path)
+                .expect_err("review-only proposal must not parse as a governed allowlist");
+            if !error.contains("missing required field: id") {
+                return Err(format!(
+                    "expected missing-id rejection for review-only proposal, got {error}"
+                ));
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
