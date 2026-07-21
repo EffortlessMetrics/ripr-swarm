@@ -4653,6 +4653,10 @@ fn init_lsp_test_scope_repo(root: &Path) -> Result<(), String> {
     run_lsp_test_scope_git(root, &["init"])?;
     run_lsp_test_scope_git(root, &["config", "user.email", "ripr@example.invalid"])?;
     run_lsp_test_scope_git(root, &["config", "user.name", "RIPR Test"])?;
+    // Do not inherit commit.gpgSign from the host environment: a
+    // signing-enabled host would fail the fixture commits before the
+    // scoping assertions ever run (#2158 review).
+    run_lsp_test_scope_git(root, &["config", "commit.gpgSign", "false"])?;
     run_lsp_test_scope_git(root, &["add", "."])?;
     run_lsp_test_scope_git(root, &["commit", "-m", "base"])
 }
