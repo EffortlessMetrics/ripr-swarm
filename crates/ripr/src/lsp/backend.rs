@@ -5206,6 +5206,8 @@ mod work_done_progress_guard_tests {
             Ok(())
         })
     }
+}
+
 fn saved_content_digest(text: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(text.as_bytes()))

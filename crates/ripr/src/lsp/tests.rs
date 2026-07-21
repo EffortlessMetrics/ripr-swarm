@@ -54,13 +54,13 @@ use tower_lsp_server::ls_types::{
     CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeLensOptions, Diagnostic,
     DiagnosticSeverity, DidChangeConfigurationParams, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentDiagnosticParams,
-    ExecuteCommandParams, FileChangeType, FileEvent, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, PartialResultParams,
-    Position, PositionEncodingKind, PreviousResultId, Range, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, VersionedTextDocumentIdentifier,
-    WindowClientCapabilities, WorkspaceDiagnosticParams, WorkspaceFolder,
+    DocumentDiagnosticParams, ExecuteCommandParams, FileChangeType, FileEvent, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, MarkedString, NumberOrString,
+    PartialResultParams, Position, PositionEncodingKind, PreviousResultId, Range,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkspaceDiagnosticParams,
+    WorkspaceFolder,
 };
 use tower_lsp_server::{LspService, Server};
 
