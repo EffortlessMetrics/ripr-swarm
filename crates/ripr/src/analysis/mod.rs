@@ -77,7 +77,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
     match line {
         Some(line) if line > 0 => {
             let line_usize = usize::try_from(line)
-                .map_err(|_| format!("TypeScript rerun scope line {line} is too large"))?;
+                .map_err(|err| format!("TypeScript rerun scope line {line} is too large: {err}"))?;
             let text = source
                 .lines()
                 .nth(line_usize.saturating_sub(1))

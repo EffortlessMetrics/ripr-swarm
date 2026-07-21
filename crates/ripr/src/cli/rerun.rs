@@ -709,6 +709,55 @@ fn typescript_seam_from_finding(
             .map(|owner| owner.0.clone())
             .unwrap_or_else(|| "typescript:<unknown>".to_string()),
         static_class: finding.class.as_str().to_string(),
+        // Preview-language reruns are advisory before/after comparisons, never
+        // repair-ready: fail closed into StaticLimitation with the adapter's
+        // own evidence split rather than fabricating readiness.
+        repair_route_readiness: crate::analysis::repair_route::RepairRouteReadiness {
+            state: crate::analysis::repair_route::RepairRouteState::StaticLimitation,
+            seam_id: finding.id.clone(),
+            canonical_gap_id: Some(canonical_gap_id.to_string()),
+            required_evidence: finding
+                .evidence
+                .iter()
+                .chain(finding.missing.iter())
+                .cloned()
+                .collect(),
+            present_evidence: finding.evidence.clone(),
+            missing_evidence: finding.missing.clone(),
+            target_selection: crate::analysis::repair_route::RepairTargetSelection::Missing,
+            test_target: None,
+            proposed_oracle: None,
+            current_oracle: None,
+            authority_boundary: crate::analysis::repair_route::REPAIR_ROUTE_AUTHORITY_BOUNDARY,
+        },
+        related_tests: finding
+            .related_tests
+            .iter()
+            .map(|test| TargetedRerunRelatedTest {
+                test_name: test.name.clone(),
+                file: display_path(&test.file),
+                line: test.line,
+                oracle_kind: test.oracle_kind.as_str().to_string(),
+                oracle_strength: test.oracle_strength.as_str().to_string(),
+                evidence_summary: test.oracle.clone().unwrap_or_default(),
+                relation_reason: test
+                    .relation_reason
+                    .map(|reason| reason.as_str().to_string())
+                    .unwrap_or_default(),
+                relation_confidence: test
+                    .relation_confidence
+                    .map(|confidence| confidence.as_str().to_string())
+                    .unwrap_or_default(),
+            })
+            .collect(),
+        missing_discriminators: finding
+            .missing
+            .iter()
+            .map(|value| TargetedRerunMissingDiscriminator {
+                value: value.clone(),
+                reason: value.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -1599,8 +1648,8 @@ mod tests {
         TargetedRerunRelatedTest, TargetedRerunReport, TargetedRerunSeam, TargetedRerunSelector,
         cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
         graph_provenance_unavailable_fields, input_fingerprint_changes, parity_mismatch_fields,
-        parse_options, render_human, rerun_gap, resolve_gap_records, route_from_gap_records, same_root,
-        scopes_from_gap_records, seam_from, seam_matches_resolved_scope,
+        parse_options, render_human, rerun_gap, resolve_gap_records, route_from_gap_records,
+        same_root, scopes_from_gap_records, seam_from, seam_matches_resolved_scope,
     };
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::classify_seam;
@@ -1611,15 +1660,15 @@ mod tests {
     };
     use crate::analysis::seam_cache::FileFactCacheStats;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+    #[cfg(feature = "lang-typescript")]
+    use crate::analysis::targeted_typescript_findings_for_scope;
     use crate::analysis::test_grip_evidence::{
         RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
     };
+    use crate::config::RiprConfig;
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
     };
-    #[cfg(feature = "lang-typescript")]
-    use crate::analysis::targeted_typescript_findings_for_scope;
-    use crate::config::RiprConfig;
     use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
     #[cfg(feature = "lang-typescript")]
     use crate::output::typescript_packet_projection::typescript_canonical_gap_id;
@@ -1689,7 +1738,7 @@ mod tests {
         )?;
 
         let report = rerun_gap(&root, &config, &canonical_gap_id, &ledger_path)?;
-        std::fs::remove_dir_all(&root).ok();
+        let _ = std::fs::remove_dir_all(&root);
         if report.state != "current_state_only"
             || report.seams.len() != 1
             || report.seams[0].canonical_gap_id.as_deref() != Some(canonical_gap_id.as_str())
