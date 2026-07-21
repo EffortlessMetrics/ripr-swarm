@@ -2507,15 +2507,33 @@ fn imported_module_matches_owner(import: &PythonImport, owner: &PythonOwner) -> 
 /// and a resolved `from .handler import validate` all match an owner in
 /// `src/handler.py`). A plain `import X` has an empty `source_module` and so
 /// never matches — fail closed.
+/// The dotted module path of the owner file itself: `src/handler.py` →
+/// `src.handler`, `src/pkg/__init__.py` → `src.pkg`. Identity comparisons must
+/// use this full path — a bare file stem is the token-coincidence family
+/// (`src/tests/test_handler.py` importing `.handler` resolves to
+/// `src.tests.handler`, a different module with the same stem).
+fn owner_module_path(file: &Path) -> String {
+    let normalized = normalized_path(file);
+    let mut parts = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if let Some(last) = parts.last_mut() {
+        if let Some(stem) = last.strip_suffix(".py") {
+            *last = stem;
+        }
+        if *last == "__init__" {
+            parts.pop();
+        }
+    }
+    parts.join(".")
+}
+
 fn import_source_module_matches_owner(import: &PythonImport, owner: &PythonOwner) -> bool {
     if import.source_module.is_empty() {
         return false;
     }
-    owner
-        .file
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| import.source_module.rsplit('.').next() == Some(stem))
+    import.source_module == owner_module_path(&owner.file)
 }
 
 /// Free-function module-identity evidence: a strong observing test imports the
@@ -7675,6 +7693,63 @@ def test_build_user_smoke():
         if finding.class == ExposureClass::Exposed {
             return Err(format!(
                 "an over-traversing relative import was wrongly credited: {:?}",
+                finding.class
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn relative_import_of_same_stem_helper_in_sibling_package_stays_fail_closed()
+    -> Result<(), String> {
+        // The P1 review case: `src/tests/test_handler.py` importing
+        // `from .handler import normalize` resolves to `src.tests.handler` — a
+        // DIFFERENT module with the same stem as the owner's `src.handler`.
+        // Stem-only matching would wrongly credit identity here.
+        let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new("src/tests/test_handler.py"),
+            "from .handler import normalize\n\n\ndef test_handler_same_stem_helper():\n    assert normalize(\" ok \") == \"ok\"\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/handler.py"),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside normalize should classify".to_string());
+        };
+        if finding.class == ExposureClass::Exposed {
+            return Err(format!(
+                "a same-stem helper in a sibling package was wrongly credited: {:?}",
+                finding.class
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn vendored_same_stem_module_does_not_match_owner_identity() -> Result<(), String> {
+        // `from src.vendor.handler import normalize` names a same-stem module in
+        // a different package — full-path identity must reject it.
+        let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new("src/tests/test_handler.py"),
+            "from src.vendor.handler import normalize\n\n\ndef test_handler_vendored():\n    assert normalize(\" ok \") == \"ok\"\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/handler.py"),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside normalize should classify".to_string());
+        };
+        if finding.class == ExposureClass::Exposed {
+            return Err(format!(
+                "a vendored same-stem module was wrongly credited: {:?}",
                 finding.class
             ));
         }
