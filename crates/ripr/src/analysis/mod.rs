@@ -106,7 +106,12 @@ pub(crate) fn targeted_typescript_findings_for_scope(
                 new_side_line: line_usize,
             });
         }
-        _ => {
+        Some(line) => {
+            return Err(format!(
+                "TypeScript rerun scope line must be 1-based; got {line}"
+            ));
+        }
+        None => {
             for (index, text) in source.lines().enumerate() {
                 let line = index + 1;
                 added_lines.push(ChangedLine {

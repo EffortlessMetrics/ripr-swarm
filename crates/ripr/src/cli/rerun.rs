@@ -1755,6 +1755,53 @@ mod tests {
 
     #[cfg(feature = "lang-typescript")]
     #[test]
+    fn typescript_rerun_covers_every_accepted_extension() -> Result<(), String> {
+        for extension in ["ts", "tsx", "js", "jsx"] {
+            let root = unique_temp_root(&format!("ts-rerun-ext-{extension}"))?;
+            let source = format!("src/discount.{extension}");
+            write_file(
+                &root.join(&source),
+                "export function applyDiscount(amount: number, discount: number) {\n  return amount - discount;\n}\n",
+            )?;
+            let config = RiprConfig::default();
+            let findings = crate::analysis::targeted_typescript_findings_for_scope(
+                &root,
+                &config,
+                Path::new(&source),
+                Some(2),
+            )?;
+            let finding = findings
+                .first()
+                .ok_or_else(|| format!("expected TypeScript finding for .{extension} scope"))?;
+            let canonical_gap_id = typescript_canonical_gap_id(&finding.id);
+            let ledger_path = root.join("target/ripr/gaps.json");
+            write_file(
+                &ledger_path,
+                &format!(
+                    r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"{}","line":2,"owner":"applyDiscount"}},"evidence_ids":["{}"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                    root.display(),
+                    canonical_gap_id,
+                    source,
+                    finding.id
+                ),
+            )?;
+            let report = rerun_gap(&root, &config, &canonical_gap_id, &ledger_path)?;
+            let _ = std::fs::remove_dir_all(&root);
+            if report.seams.len() != 1
+                || report.seams[0].canonical_gap_id.as_deref() != Some(canonical_gap_id.as_str())
+            {
+                return Err(format!(
+                    "TypeScript rerun did not select the anchored seam for .{extension}: state={} seams={}",
+                    report.state,
+                    report.seams.len()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
     fn typescript_rerun_scope_rejects_root_escaping_anchors() -> Result<(), String> {
         let root = unique_temp_root("ts-rerun-escape")?;
         let config = RiprConfig::default();
