@@ -208,7 +208,7 @@ flow metrics.
 
 - Implementing the runtime-promotion validator in RIPR.
 - Compiling the complete requirement-seam-evidence-test graph.
-- Running RIPR, cargo tests, mutation tests, or external proof commands.
+- Executing runtime proof for this document-only change (running RIPR, cargo tests, mutation tests, or external proof commands). The structural gates required by Required Evidence (format, numbering, index, ledger, traceability, and slice validation) still run and are listed under Proof.
 - Migrating existing RIPR specifications or traceability rows.
 - Enabling hooks, CI enforcement, branch protection, or support promotion.
 - Automatically accepting the requirement outside normal review and merge.

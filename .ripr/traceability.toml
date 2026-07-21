@@ -4366,7 +4366,6 @@ metrics = [
 id = "RIPR-SPEC-0058"
 name = "RIPR swarm external agent handoff"
 spec = "docs/specs/RIPR-SPEC-0058-ripr-swarm-external-agent-handoff.md"
-tests = []
 tests = [
   "xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context",
   "xtask::tests::ripr_swarm_attempt_requires_packet_and_dry_run",
@@ -4893,7 +4892,6 @@ metrics = [
 id = "RIPR-SPEC-0067"
 name = "PR gate use case"
 spec = "docs/specs/RIPR-SPEC-0067-pr-gate-use-case.md"
-tests = []
 tests = [
   "crates/ripr/src/output/gate/repair_route.rs::tests::complete_route_projects_existing_identity_and_exact_inspection_command",
   "crates/ripr/src/output/gate/repair_route.rs::tests::incomplete_route_names_missing_fields_without_fabricating_fallbacks",
