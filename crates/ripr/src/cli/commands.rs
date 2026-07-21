@@ -453,8 +453,11 @@ pub(super) fn gate(args: &[String]) -> Result<(), String> {
         help::print_gate_help();
         return Ok(());
     }
-    let Some((subcommand, rest)) = args.split_first() else {
-        return Err("gate requires subcommand `evaluate`".to_string());
+    // The sole subcommand is implied when the command runs bare:
+    // `ripr <cmd>` behaves like `ripr <cmd> "evaluate"` (#2013).
+    let (subcommand, rest) = match args.split_first() {
+        Some((subcommand, rest)) => (subcommand.as_str(), rest),
+        None => ("evaluate", &[][..]),
     };
     if subcommand != "evaluate" {
         return Err(format!(
@@ -504,8 +507,11 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
         help::print_zero_help();
         return Ok(());
     }
-    let Some((subcommand, rest)) = args.split_first() else {
-        return Err("zero requires subcommand `status`".to_string());
+    // The sole subcommand is implied when the command runs bare:
+    // `ripr <cmd>` behaves like `ripr <cmd> "status"` (#2013).
+    let (subcommand, rest) = match args.split_first() {
+        Some((subcommand, rest)) => (subcommand.as_str(), rest),
+        None => ("status", &[][..]),
     };
     if subcommand != "status" {
         return Err(format!(
@@ -545,8 +551,11 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
         help::print_pr_ledger_help();
         return Ok(());
     }
-    let Some((subcommand, rest)) = args.split_first() else {
-        return Err("pr-ledger requires subcommand `record`".to_string());
+    // The sole subcommand is implied when the command runs bare:
+    // `ripr <cmd>` behaves like `ripr <cmd> "record"` (#2013).
+    let (subcommand, rest) = match args.split_first() {
+        Some((subcommand, rest)) => (subcommand.as_str(), rest),
+        None => ("record", &[][..]),
     };
     if subcommand != "record" {
         return Err(format!(
@@ -561,8 +570,11 @@ pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
         help::print_pr_comments_help();
         return Ok(());
     }
-    let Some((subcommand, rest)) = args.split_first() else {
-        return Err("pr-comments requires subcommand `plan`".to_string());
+    // The sole subcommand is implied when the command runs bare:
+    // `ripr <cmd>` behaves like `ripr <cmd> "plan"` (#2013).
+    let (subcommand, rest) = match args.split_first() {
+        Some((subcommand, rest)) => (subcommand.as_str(), rest),
+        None => ("plan", &[][..]),
     };
     if subcommand != "plan" {
         return Err(format!(
@@ -577,8 +589,11 @@ pub(super) fn pr_review(args: &[String]) -> Result<(), String> {
         help::print_pr_review_help();
         return Ok(());
     }
-    let Some((subcommand, rest)) = args.split_first() else {
-        return Err("pr-review requires subcommand `front-panel`".to_string());
+    // The sole subcommand is implied when the command runs bare:
+    // `ripr <cmd>` behaves like `ripr <cmd> "front-panel"` (#2013).
+    let (subcommand, rest) = match args.split_first() {
+        Some((subcommand, rest)) => (subcommand.as_str(), rest),
+        None => ("front-panel", &[][..]),
     };
     if subcommand != "front-panel" {
         return Err(format!(
@@ -593,8 +608,11 @@ pub(super) fn coverage_grip(args: &[String]) -> Result<(), String> {
         help::print_coverage_grip_help();
         return Ok(());
     }
-    let Some((subcommand, rest)) = args.split_first() else {
-        return Err("coverage-grip requires subcommand `frontier`".to_string());
+    // The sole subcommand is implied when the command runs bare:
+    // `ripr <cmd>` behaves like `ripr <cmd> "frontier"` (#2013).
+    let (subcommand, rest) = match args.split_first() {
+        Some((subcommand, rest)) => (subcommand.as_str(), rest),
+        None => ("frontier", &[][..]),
     };
     if subcommand != "frontier" {
         return Err(format!(
@@ -6182,9 +6200,14 @@ mod tests {
 
     #[test]
     fn gate_rejects_bad_surface_and_unknown_args() {
+        // Bare `ripr gate` is the `evaluate` alias (#2013): it dispatches
+        // instead of erroring on a missing subcommand.
         assert_eq!(
             gate(&args(&[])),
-            Err("gate requires subcommand `evaluate`".to_string())
+            Err(
+                "ripr gate decision is config_error; see target/ripr/reports/gate-decision.json"
+                    .to_string()
+            )
         );
         assert_eq!(
             gate(&args(&["inspect"])),
@@ -6494,9 +6517,10 @@ mod tests {
 
     #[test]
     fn ripr_zero_status_requires_inputs_and_rejects_unknown_args() {
+        // Bare `ripr zero` is the `status` alias (#2013).
         assert_eq!(
             zero(&args(&[])),
-            Err("zero requires subcommand `status`".to_string())
+            Err("zero status requires --delta <path>".to_string())
         );
         assert_eq!(
             zero(&args(&["unknown"])),
@@ -7480,9 +7504,13 @@ language = "rust"
 
     #[test]
     fn pr_evidence_ledger_requires_identity_and_evidence() {
+        // Bare `ripr pr-ledger` is the `record` alias (#2013).
         assert_eq!(
             pr_ledger(&args(&[])),
-            Err("pr-ledger requires subcommand `record`".to_string())
+            Err(
+                "pr-ledger record requires at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger"
+                    .to_string()
+            )
         );
         assert_eq!(
             pr_ledger(&args(&["unknown"])),
@@ -7595,9 +7623,10 @@ language = "rust"
 
     #[test]
     fn pr_comments_plan_rejects_bad_subcommands_and_options() {
-        assert_eq!(
-            pr_comments(&args(&[])),
-            Err("pr-comments requires subcommand `plan`".to_string())
+        // Bare `ripr pr-comments` is the `plan` alias (#2013).
+        assert!(
+            pr_comments(&args(&[])).is_ok(),
+            "bare pr-comments must dispatch to plan with defaults"
         );
         assert_eq!(
             pr_comments(&args(&["publish"])),
@@ -7974,9 +8003,13 @@ language = "rust"
 
     #[test]
     fn coverage_grip_frontier_requires_movement_input() {
+        // Bare `ripr coverage-grip` is the `frontier` alias (#2013).
         assert_eq!(
             coverage_grip(&args(&[])),
-            Err("coverage-grip requires subcommand `frontier`".to_string())
+            Err(
+                "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
+                    .to_string()
+            )
         );
         assert_eq!(
             coverage_grip(&args(&["unknown"])),
