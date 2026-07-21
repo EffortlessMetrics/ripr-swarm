@@ -30,7 +30,7 @@
 //!   the spec; `exit_without_shutdown_still_exits_zero` pins the actual
 //!   behavior so the divergence is explicit, not accidental.
 //!
-//! Every spawned server is killed and reaped by `LspSession::drop`, so a
+//! Every spawned server is terminated and reaped by `LspSession::drop`, so a
 //! failing test cannot orphan a process that would hold a file lock on the
 //! binary and break later builds.
 
@@ -288,7 +288,7 @@ impl LspSession {
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         return Err(format!(
-                            "ripr lsp did not exit within {timeout:?} (killed by Drop)"
+                            "ripr lsp did not exit within {timeout:?} (terminated by Drop)"
                         ));
                     }
                     std::thread::sleep(Duration::from_millis(25));
