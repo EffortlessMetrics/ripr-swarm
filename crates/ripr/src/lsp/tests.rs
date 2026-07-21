@@ -8945,6 +8945,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
+        partial_scope: None,
     };
     WorkspaceDiagnostics {
         snapshot,
