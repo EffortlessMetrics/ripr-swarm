@@ -8882,7 +8882,12 @@ language = "rust"
         let Ok(resolved) = resolved else {
             return Err(format!("expected confinement to accept, got {resolved:?}"));
         };
-        let _ = resolved;
+        // Output contract: both spellings resolve to the same confined
+        // repo-relative path — not merely any non-empty path (#2100 review).
+        assert_eq!(
+            resolved.files,
+            vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/lib.rs")]
+        );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }
