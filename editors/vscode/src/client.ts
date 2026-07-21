@@ -433,6 +433,21 @@ export class RiprClientController {
   }
 
   /**
+   * Apply the configured `ripr.trace.server` level to the running client
+   * without a restart (#2082): trace changes must not drop published
+   * diagnostics or force a full re-analysis. No-op when no client runs —
+   * the next start() applies the configured level anyway.
+   */
+  setTraceFromConfig(): void {
+    if (!this.client) {
+      return;
+    }
+    const config = this.runtime.getConfig();
+    this.client.setTrace(traceFromConfig(config.traceServer));
+    this.output.appendLine(`ripr server trace set to '${config.traceServer}' without a restart.`);
+  }
+
+  /**
    * Whether the language client is currently bound and (nominally) running.
    * Used by listeners (e.g. onDidChangeWorkspaceFolders) to decide whether a
    * transition should trigger a fresh start, or whether the server is already
