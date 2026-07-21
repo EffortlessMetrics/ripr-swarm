@@ -3996,14 +3996,59 @@ fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join("ripr-diff");
     std::fs::create_dir_all(&dir)
         .map_err(|err| format!("create temporary diff dir {} failed: {err}", dir.display()))?;
+    // Restrict the shared temp subdirectory so other local users cannot
+    // pre-create a symlink at the predictable diff path (#2102). On a
+    // pre-existing attacker-owned directory this fails closed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|err| {
+            format!(
+                "restrict temporary diff dir {} failed: {err}",
+                dir.display()
+            )
+        })?;
+    }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    let path = dir.join(format!("diff-{}-{stamp}.patch", std::process::id()));
-    std::fs::write(&path, diff_text)
-        .map_err(|err| format!("write temporary diff file {} failed: {err}", path.display()))?;
-    Ok(path)
+    // create_new fails if the path already exists, including symlinks, so a
+    // pre-planted symlink at the predictable path cannot win a TOCTOU
+    // overwrite (same race class as #1948). Retry with a suffix in the
+    // unlikely case two writes in one process land on the same nanosecond.
+    for attempt in 0..16u32 {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        let path = dir.join(format!("diff-{}-{stamp}{suffix}.patch", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(diff_text.as_bytes()).map_err(|err| {
+                    format!("write temporary diff file {} failed: {err}", path.display())
+                })?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(format!(
+                    "create temporary diff file {} failed: {err}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "create temporary diff file in {} failed: all name candidates exist",
+        dir.display()
+    ))
 }
 
 fn diff_receipt_path(base: &str, head: &str) -> String {
@@ -5136,6 +5181,31 @@ mod tests {
                 .map_err(|err| format!("failed to copy sample file {relative}: {err}"))?;
         }
         Ok(dest)
+    }
+
+    #[test]
+    fn write_temporary_diff_file_writes_content_in_restricted_dir() -> Result<(), String> {
+        let diff_text =
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n";
+        let path = write_temporary_diff_file(diff_text)?;
+
+        let content = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        assert_eq!(content, diff_text);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let parent = path
+                .parent()
+                .ok_or_else(|| "temporary diff path has no parent".to_string())?;
+            let mode = std::fs::metadata(parent)
+                .map_err(|err| err.to_string())?
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+        std::fs::remove_file(&path).map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     #[test]
