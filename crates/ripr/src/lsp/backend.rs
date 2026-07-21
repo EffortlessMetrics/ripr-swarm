@@ -419,11 +419,12 @@ impl Backend {
             return cancellation_outcome(request);
         }
         if !self.pull_diagnostics_enabled() {
-            // Apply the diagnostic delivery budget to the push path (#1911).
-            // Build budget items from all publish batches, evaluate the budget,
-            // and filter each batch's diagnostics to only include selected IDs.
-            // On any budget error, fall back to publishing everything (empty
-            // selected set = no filtering applied).
+            // Apply the diagnostic delivery budget to the push path (#1911)
+            // and disclose its outcome (#1969). The full budget result is
+            // retained: when the budget trims diagnostics, the client is told
+            // the publication is partial (bounded omission summary); when the
+            // budget itself fails, the unfiltered fallback is named as a
+            // partial state instead of passing silently.
             let mut batches_by_uri: std::collections::BTreeMap<
                 tower_lsp_server::ls_types::Uri,
                 Vec<tower_lsp_server::ls_types::Diagnostic>,
@@ -431,20 +432,36 @@ impl Backend {
             for batch in &plan.publish_batches {
                 batches_by_uri.insert(batch.uri.clone(), batch.diagnostics.clone());
             }
-            let budget_selected_ids: std::collections::BTreeSet<String> =
-                crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(&batches_by_uri)
-                    .ok()
-                    .and_then(|items| {
-                        crate::lsp::diagnostic_budget::evaluate_diagnostic_budget(
-                            items,
-                            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
-                            "push_delivery",
-                            "push_delivery",
+            let budget = crate::lsp::diagnostic_budget::DiagnosticBudget::default();
+            let push_budget = evaluate_push_delivery_budget(&batches_by_uri, &budget);
+            let budget_selected_ids: std::collections::BTreeSet<String> = match &push_budget {
+                PushDeliveryBudgetOutcome::Applied { result, .. } => {
+                    result.selected_ids().map(str::to_string).collect()
+                }
+                PushDeliveryBudgetOutcome::Unavailable { .. } => std::collections::BTreeSet::new(),
+            };
+            match &push_budget {
+                PushDeliveryBudgetOutcome::Applied {
+                    result,
+                    document_by_canonical_id,
+                } => {
+                    if let Some(disclosure) =
+                        push_budget_omission_disclosure(result, &budget, document_by_canonical_id)
+                    {
+                        self.client
+                            .log_message(MessageType::WARNING, disclosure)
+                            .await;
+                    }
+                }
+                PushDeliveryBudgetOutcome::Unavailable { detail } => {
+                    self.client
+                        .log_message(
+                            MessageType::WARNING,
+                            push_budget_unavailable_log_message(detail),
                         )
-                        .ok()
-                    })
-                    .map(|result| result.selected_ids().map(|s| s.to_string()).collect())
-                    .unwrap_or_default();
+                        .await;
+                }
+            }
 
             for batch in &plan.publish_batches {
                 if !self.refresh_request_is_current(request) {
@@ -456,24 +473,11 @@ impl Backend {
                     .await;
                     return cancellation_outcome(request);
                 }
-                let diagnostics_to_publish = if budget_selected_ids.is_empty() {
-                    // Budget not computed or empty — publish everything
-                    batch.diagnostics.clone()
-                } else {
-                    let document = batch.uri.as_str().to_string();
-                    batch
-                        .diagnostics
-                        .iter()
-                        .filter(|diagnostic| {
-                            let payload = serde_json::to_vec(diagnostic).unwrap_or_default();
-                            let id = crate::lsp::diagnostic_budget::diagnostic_canonical_id(
-                                diagnostic, &document, &payload,
-                            );
-                            budget_selected_ids.contains(id.as_str())
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>()
-                };
+                let diagnostics_to_publish = push_diagnostics_for_batch(
+                    &batch.diagnostics,
+                    batch.uri.as_str(),
+                    &budget_selected_ids,
+                );
                 self.client
                     .publish_diagnostics(batch.uri.clone(), diagnostics_to_publish, None)
                     .await;
@@ -2469,6 +2473,162 @@ fn overflow_reason_name(
     }
 }
 
+/// Bound on omitted canonical identities embedded in the push-delivery
+/// omission disclosure. The full omission list stays available through the
+/// continuation route and the workspace-status budget projection.
+const PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS: usize = 20;
+
+/// Outcome of evaluating the diagnostic delivery budget for one push
+/// publication round. The full
+/// [`crate::lsp::diagnostic_budget::DiagnosticBudgetResult`] is retained so
+/// the omission evidence the budget already computes is disclosed rather than
+/// dropped (#1969).
+#[derive(Debug)]
+enum PushDeliveryBudgetOutcome {
+    Applied {
+        result: Box<crate::lsp::diagnostic_budget::DiagnosticBudgetResult>,
+        /// Canonical identity to publishing document, recovered from the
+        /// budget items so per-document omitted counts can be disclosed
+        /// without changing the shared budget result shape.
+        document_by_canonical_id: std::collections::BTreeMap<String, String>,
+    },
+    /// The budget could not be built or evaluated. Publication falls back to
+    /// unfiltered delivery; the detail names why the partial state occurred.
+    Unavailable { detail: String },
+}
+
+fn evaluate_push_delivery_budget(
+    batches_by_uri: &std::collections::BTreeMap<
+        tower_lsp_server::ls_types::Uri,
+        Vec<tower_lsp_server::ls_types::Diagnostic>,
+    >,
+    budget: &crate::lsp::diagnostic_budget::DiagnosticBudget,
+) -> PushDeliveryBudgetOutcome {
+    let items =
+        match crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(batches_by_uri) {
+            Ok(items) => items,
+            Err(error) => {
+                return PushDeliveryBudgetOutcome::Unavailable {
+                    detail: format!("budget item serialization failed: {error}"),
+                };
+            }
+        };
+    let document_by_canonical_id = items
+        .iter()
+        .map(|item| (item.canonical_id.clone(), item.document.clone()))
+        .collect();
+    match crate::lsp::diagnostic_budget::evaluate_diagnostic_budget(
+        items,
+        budget,
+        "push_delivery",
+        "push_delivery",
+    ) {
+        Ok(result) => PushDeliveryBudgetOutcome::Applied {
+            result: Box::new(result),
+            document_by_canonical_id,
+        },
+        Err(error) => PushDeliveryBudgetOutcome::Unavailable {
+            detail: format!("budget evaluation failed: {error}"),
+        },
+    }
+}
+
+/// Diagnostics to publish for one batch under the budget selection. An empty
+/// selected set keeps the #1911 fallback semantics: publish everything.
+fn push_diagnostics_for_batch(
+    diagnostics: &[tower_lsp_server::ls_types::Diagnostic],
+    document: &str,
+    budget_selected_ids: &std::collections::BTreeSet<String>,
+) -> Vec<tower_lsp_server::ls_types::Diagnostic> {
+    if budget_selected_ids.is_empty() {
+        // Budget not computed or selected nothing — publish everything.
+        return diagnostics.to_vec();
+    }
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            let payload = serde_json::to_vec(diagnostic).unwrap_or_default();
+            let id = crate::lsp::diagnostic_budget::diagnostic_canonical_id(
+                diagnostic, document, &payload,
+            );
+            budget_selected_ids.contains(id.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
+/// Bounded machine-readable omission disclosure for one push publication
+/// round. Returns `None` when the budget did not overflow — profile filtering
+/// alone does not make a publication partial — so non-overflowed publications
+/// stay silent. Field names mirror `diagnostic_budget_result_json` so the log
+/// payload and the workspace-status budget projection agree.
+fn push_budget_omission_disclosure(
+    result: &crate::lsp::diagnostic_budget::DiagnosticBudgetResult,
+    budget: &crate::lsp::diagnostic_budget::DiagnosticBudget,
+    document_by_canonical_id: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    if !result.overflowed {
+        return None;
+    }
+    let mut omitted_by_document: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for item in &result.omitted {
+        if let Some(document) = document_by_canonical_id.get(&item.canonical_id) {
+            *omitted_by_document.entry(document.clone()).or_insert(0) += 1;
+        }
+    }
+    let omitted_items = result
+        .omitted
+        .iter()
+        .take(PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS)
+        .map(|item| {
+            serde_json::json!({
+                "canonical_id": item.canonical_id,
+                "reason": omitted_diagnostic_reason_name(item.reason),
+            })
+        })
+        .collect::<Vec<_>>();
+    let overflow_reasons = result
+        .overflow_reasons
+        .iter()
+        .map(|reason| overflow_reason_name(*reason))
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({
+        "kind": "push_delivery_budget_omission",
+        "schema_version": result.schema_version,
+        "budget": {
+            "max_items_per_document": budget.max_items_per_document,
+            "max_items_per_workspace_response": budget.max_items_per_workspace_response,
+            "max_serialized_bytes": budget.max_serialized_bytes,
+            "max_inline_detail_bytes": budget.max_inline_detail_bytes,
+        },
+        "total_canonical_items": result.total_canonical_items,
+        "eligible_items": result.eligible_items,
+        "complete_bytes": result.complete_bytes,
+        "selected_count": result.selected.len(),
+        "selected_bytes": result.selected_bytes,
+        "omitted_count": result.omitted.len(),
+        "overflow_reasons": overflow_reasons,
+        "omitted_by_document": omitted_by_document,
+        "omitted_items": omitted_items,
+        "omitted_items_total": result.omitted.len(),
+        "omitted_items_truncated": result.omitted.len() > PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS,
+        "continuation_or_inspect_route": result.continuation_or_inspect_route,
+    });
+    Some(format!(
+        "ripr push diagnostic delivery budget overflowed; publication is partial: {payload}"
+    ))
+}
+
+/// Disclosure for the budget-error fallback: every diagnostic is published
+/// unfiltered, so no delivery limit was enforced — a partial state that must
+/// be named rather than presented as a normal complete publication.
+fn push_budget_unavailable_log_message(detail: &str) -> String {
+    format!(
+        "ripr push diagnostic delivery budget unavailable ({detail}); published all diagnostics unfiltered: budget enforcement was not applied, delivery completeness is unknown"
+    )
+}
+
 #[cfg(test)]
 mod diagnostic_budget_projection_tests {
     use super::*;
@@ -4320,5 +4480,220 @@ mod gap_record_context_tests {
             formatted.ends_with(": analysis crashed"),
             "missing message suffix in {formatted}"
         );
+    }
+}
+
+#[cfg(test)]
+mod push_budget_disclosure_tests {
+    use super::*;
+
+    fn push_test_uri() -> Result<tower_lsp_server::ls_types::Uri, String> {
+        "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))
+    }
+
+    fn headline_diagnostic(id: &str, eligible: bool) -> tower_lsp_server::ls_types::Diagnostic {
+        tower_lsp_server::ls_types::Diagnostic {
+            message: format!("diagnostic {id}"),
+            data: Some(serde_json::json!({
+                "diagnostic_id": id,
+                "headline_eligible": eligible,
+            })),
+            ..Default::default()
+        }
+    }
+
+    fn single_document_batches(
+        diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
+    ) -> Result<
+        std::collections::BTreeMap<
+            tower_lsp_server::ls_types::Uri,
+            Vec<tower_lsp_server::ls_types::Diagnostic>,
+        >,
+        String,
+    > {
+        Ok(std::collections::BTreeMap::from([(
+            push_test_uri()?,
+            diagnostics,
+        )]))
+    }
+
+    fn disclosure_payload(message: &str) -> Result<serde_json::Value, String> {
+        let json_start = message
+            .find('{')
+            .ok_or_else(|| format!("disclosure is missing a JSON payload: {message}"))?;
+        serde_json::from_str(&message[json_start..])
+            .map_err(|err| format!("parse disclosure payload failed: {err}"))
+    }
+
+    #[test]
+    fn overflowed_push_publication_discloses_bounded_omission_summary() -> Result<(), String> {
+        let diagnostics = (0..25)
+            .map(|index| headline_diagnostic(&format!("diag:{index:02}"), true))
+            .collect::<Vec<_>>();
+        let batches = single_document_batches(diagnostics.clone())?;
+        let budget = crate::lsp::diagnostic_budget::DiagnosticBudget {
+            max_items_per_document: 3,
+            max_items_per_workspace_response: 100,
+            max_serialized_bytes: 1 << 20,
+            max_inline_detail_bytes: 4096,
+        };
+
+        let outcome = evaluate_push_delivery_budget(&batches, &budget);
+        let PushDeliveryBudgetOutcome::Applied {
+            result,
+            document_by_canonical_id,
+        } = &outcome
+        else {
+            return Err(format!("expected applied budget outcome, got {outcome:?}"));
+        };
+        assert!(result.overflowed, "budget must report overflow");
+
+        let disclosure = push_budget_omission_disclosure(result, &budget, document_by_canonical_id)
+            .ok_or_else(|| "overflowed publication must emit an omission disclosure".to_string())?;
+        assert!(
+            disclosure.starts_with(
+                "ripr push diagnostic delivery budget overflowed; publication is partial: "
+            ),
+            "disclosure must name the partial publication state: {disclosure}"
+        );
+        let payload = disclosure_payload(&disclosure)?;
+        assert_eq!(payload["kind"], "push_delivery_budget_omission");
+        assert_eq!(payload["total_canonical_items"], 25);
+        assert_eq!(payload["eligible_items"], 25);
+        assert_eq!(payload["selected_count"], 3);
+        assert_eq!(payload["omitted_count"], 22);
+        assert_eq!(
+            payload["overflow_reasons"],
+            serde_json::json!(["document_item_limit"])
+        );
+        assert_eq!(payload["budget"]["max_items_per_document"], 3);
+        assert_eq!(payload["budget"]["max_items_per_workspace_response"], 100);
+        assert_eq!(
+            payload["omitted_by_document"]["file:///workspace/src/lib.rs"], 22,
+            "per-document omitted count must cover every omitted identity: {payload}"
+        );
+        assert!(
+            payload["complete_bytes"].as_u64().unwrap_or(0) > 0,
+            "complete byte evidence must be present: {payload}"
+        );
+        let omitted_items = payload["omitted_items"]
+            .as_array()
+            .ok_or_else(|| format!("omitted_items must be an array: {payload}"))?;
+        assert_eq!(
+            omitted_items.len(),
+            PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS,
+            "omitted identities must be capped at the disclosure bound: {payload}"
+        );
+        assert_eq!(payload["omitted_items_total"], 22);
+        assert_eq!(payload["omitted_items_truncated"], true);
+        assert_eq!(omitted_items[0]["canonical_id"], "diag:03");
+        assert_eq!(omitted_items[0]["reason"], "document_item_limit");
+
+        // Selection behavior is unchanged: only budget-selected diagnostics
+        // are published for the batch.
+        let selected_ids = result
+            .selected_ids()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        let published =
+            push_diagnostics_for_batch(&diagnostics, "file:///workspace/src/lib.rs", &selected_ids);
+        assert_eq!(published.len(), 3);
+        assert_eq!(selected_ids.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn non_overflowed_push_publication_emits_no_omission_disclosure() -> Result<(), String> {
+        let batches = single_document_batches(vec![
+            headline_diagnostic("diag:actionable", true),
+            headline_diagnostic("diag:other", true),
+            headline_diagnostic("diag:advisory", false),
+        ])?;
+        let outcome = evaluate_push_delivery_budget(
+            &batches,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+        );
+        let PushDeliveryBudgetOutcome::Applied {
+            result,
+            document_by_canonical_id,
+        } = &outcome
+        else {
+            return Err(format!("expected applied budget outcome, got {outcome:?}"));
+        };
+        assert!(
+            !result.overflowed,
+            "profile filtering alone must not count as overflow"
+        );
+        assert_eq!(
+            result.omitted.len(),
+            1,
+            "the profile-filtered diagnostic is still recorded as omitted"
+        );
+        assert!(
+            push_budget_omission_disclosure(
+                result,
+                &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+                document_by_canonical_id,
+            )
+            .is_none(),
+            "non-overflowed publication must stay silent"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn budget_error_fallback_publishes_everything_and_names_the_partial_state() -> Result<(), String>
+    {
+        let diagnostics = vec![
+            headline_diagnostic("diag:first", true),
+            headline_diagnostic("diag:second", true),
+        ];
+        let batches = single_document_batches(diagnostics.clone())?;
+        let invalid_budget = crate::lsp::diagnostic_budget::DiagnosticBudget {
+            max_items_per_document: 0,
+            ..crate::lsp::diagnostic_budget::DiagnosticBudget::default()
+        };
+
+        let outcome = evaluate_push_delivery_budget(&batches, &invalid_budget);
+        let PushDeliveryBudgetOutcome::Unavailable { detail } = &outcome else {
+            return Err(format!(
+                "expected unavailable budget outcome, got {outcome:?}"
+            ));
+        };
+        assert!(
+            detail.contains("max_items_per_document"),
+            "fallback detail must name the failing limit: {detail}"
+        );
+
+        // The fallback keeps the #1911 semantics: an empty selected set
+        // publishes every diagnostic unfiltered.
+        let budget_selected_ids = std::collections::BTreeSet::new();
+        let published = push_diagnostics_for_batch(
+            &diagnostics,
+            "file:///workspace/src/lib.rs",
+            &budget_selected_ids,
+        );
+        assert_eq!(
+            published.len(),
+            diagnostics.len(),
+            "fallback must publish everything unfiltered"
+        );
+
+        let message = push_budget_unavailable_log_message(detail);
+        assert!(
+            message.contains("push diagnostic delivery budget unavailable"),
+            "fallback disclosure must name the unavailable budget: {message}"
+        );
+        assert!(
+            message.contains("unfiltered"),
+            "fallback disclosure must state delivery was unfiltered: {message}"
+        );
+        assert!(
+            message.contains("budget enforcement was not applied"),
+            "fallback disclosure must name the partial state explicitly: {message}"
+        );
+        Ok(())
     }
 }
