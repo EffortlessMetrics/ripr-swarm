@@ -19,8 +19,10 @@ Support-tier impact:
 
 Policy impact:
 
-- No limit or workflow change. The two existing analysis-cost guards keep
-  their current values, env overrides, and fail-closed behavior.
+- The two existing analysis-cost guards keep their current values, env
+  overrides, and fail-closed behavior. The new partial-selection budget is an
+  analysis-input budget (not a policy surface); no workflow, hook, or
+  branch-protection change.
 
 ## Problem
 
@@ -50,10 +52,15 @@ not a unit: package order only decides which files are selected first.
 Selection order is fully deterministic and content-independent:
 
 1. files carrying changed lines in the supported language (Rust), then
-   preview-language files, then context-only files;
+   preview-language files carrying changed lines;
 2. within a tier, package path ascending (lexicographic);
 3. within a package, file path ascending;
 4. ties impossible after (3).
+
+Context-only files (no changed lines) are **not selected and not budgeted**:
+they play their existing read-only context role and never consume the partial
+budget, so the partition and the uninspected accounting cover changed-line
+files only.
 
 The order does not depend on diff ordering, filesystem enumeration order, mtimes,
 sizes, or hashes of file content, so repeated runs over the same diff select the
@@ -76,6 +83,19 @@ Three distinct limits, never conflated:
 - **Delivery limits** (existing): the LSP diagnostic delivery budget and
   output format bounds. These stay orthogonal; a partial result uses the same
   delivery path with its existing limits.
+
+Budget validity and stop precedence are defined, never implicit:
+
+- A zero or negative partial-budget override is invalid and fails closed with
+  a named `partial_budget_invalid` error; it never silently means unlimited
+  or zero-files.
+- A partial budget may not exceed its corresponding hard guard; a larger
+  override is clamped to the guard value and the clamp is disclosed.
+- If the first selected file alone exceeds the line budget, that single file
+  is analyzed anyway and the result is `limited_partial_scope` with stop
+  reason `line_budget_exceeded_on_first_file` — never an empty partition.
+- If both budgets are reached by the same file, the stop reason is the file
+  budget (`file_budget`), with the line count recorded alongside it.
 
 ### 4. Representation of selected and uninspected scope
 
@@ -114,20 +134,29 @@ contract's first revision and must not be invented in implementation.
 
 ### 7. Run-comparable identity
 
-A partial run is comparable to another partial run via a partition identity:
+A partial run is comparable to another partial run via a partition identity,
+built from a canonical serialization (never a generic map serialization, whose
+key order is not guaranteed):
 
 ```text
-partition_identity = sha256 over:
-  diff identity (base+head or diff-file content identity, per existing rules)
-  selection algorithm version ("partial-diff-v1")
-  file budget, line budget
-  sorted selected file paths
+canonical form, one field per line, LF-separated, UTF-8:
+  "selection_version="  "partial-diff-v1"
+  "language_tier_version="  "lang-tier-v1"
+  "diff_identity="      <existing diff identity string, exactly as the
+                         full-scope run computes it>
+  "file_budget="        <decimal>
+  "line_budget="        <decimal>
+  "selected="           <normalized forward-slash relative path> for every
+                         selected file, sorted ascending, one per line
+
+partition_identity = lowercase hex sha256 of the canonical form
 ```
 
 Two runs with the same partition identity selected the same scope; a run with
-a different budget, diff, or selection version has a different identity and
-may not be diffed, baselined, or compared against it. The selection algorithm
-version is a constant bumped only by a contract revision.
+a different budget, diff, or selection or language-tier version has a
+different identity and may not be diffed, baselined, or compared against it.
+`partial-diff-v1` bumps only on a contract revision of the selection
+algorithm; `lang-tier-v1` bumps if language tiers are added or reordered.
 
 ## Safety posture (normative shape)
 
