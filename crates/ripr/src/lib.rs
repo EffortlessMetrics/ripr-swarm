@@ -79,7 +79,11 @@ pub mod lsp;
 #[doc(hidden)]
 pub mod output;
 
-pub use analysis::{LanguageRun, PreviewLanguageAdvisory};
+pub use analysis::LanguageRun;
+pub use analysis::LanguageRunStatus;
+pub use analysis::PartialDiffScope;
+pub use analysis::PartialDiffStopReason;
+pub use analysis::PreviewLanguageAdvisory;
 /// Analyze a workspace diff using the default RIPR static pipeline.
 pub use app::{CheckInput, CheckOutput, check_workspace, collect_context, explain_finding};
 /// Field types of the public entrypoint types (#2112): every public field
@@ -91,3 +95,4 @@ pub use app::{Mode, OutputFormat};
 pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};
 pub use domain::{LanguageFileCount, Summary};
 pub use output::suppressions::CheckSuppressionOutcome;
+pub use output::suppressions::SuppressedCheckFinding;
