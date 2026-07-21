@@ -1636,14 +1636,21 @@ export class RiprClientController {
   private async showMissingServerMessage(summary: string, detail: string): Promise<void> {
     this.output.appendLine(summary);
     this.output.appendLine(detail);
+    // Name the actual failure (HTTP/checksum/manifest) in the popup body —
+    // the hard-coded generic message alone sent users down Retry loops and
+    // install paths that could not fix it (#2078).
     const selection = await this.runtime.showErrorMessage(
-      'ripr server is not available. Enable automatic download, install with `cargo install ripr`, or set `ripr.server.path`.',
+      `ripr server is not available: ${summary} Enable automatic download, install with \`cargo install ripr\`, or set \`ripr.server.path\` (\`ripr.server.downloadBaseUrl\` for a mirror).`,
       'Open Settings',
+      'Copy Diagnostic',
       'Copy Install Command',
       'Retry'
     );
     if (selection === 'Open Settings') {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'ripr.server');
+    } else if (selection === 'Copy Diagnostic') {
+      await this.runtime.writeClipboard(`ripr server is not available\n${summary}\n${detail}`);
+      this.runtime.showInformationMessage('Copied the ripr server diagnostic to the clipboard.');
     } else if (selection === 'Copy Install Command') {
       await this.runtime.writeClipboard('cargo install ripr');
     } else if (selection === 'Retry') {
