@@ -189,7 +189,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  await controller.start();
+  await startServerOnce(controller);
 }
 
 export async function deactivate(): Promise<void> {
