@@ -444,12 +444,24 @@ impl Backend {
                 PushDeliveryBudgetOutcome::Applied {
                     result,
                     document_by_canonical_id,
+                    ..
                 } => {
                     if let Some(disclosure) =
                         push_budget_omission_disclosure(result, &budget, document_by_canonical_id)
                     {
                         self.client
                             .log_message(MessageType::WARNING, disclosure)
+                            .await;
+                    }
+                    if result.selected.is_empty() && result.total_canonical_items > 0 {
+                        // The publish-everything fallback rule fires when the
+                        // selection collapses; name it instead of silently
+                        // presenting an unenforced delivery as budgeted.
+                        self.client
+                            .log_message(
+                                MessageType::WARNING,
+                                push_budget_zero_selection_log_message(result),
+                            )
                             .await;
                     }
                 }
@@ -473,10 +485,17 @@ impl Backend {
                     .await;
                     return cancellation_outcome(request);
                 }
+                let ordered_ids = match &push_budget {
+                    PushDeliveryBudgetOutcome::Applied {
+                        ids_by_document, ..
+                    } => ids_by_document.get(batch.uri.as_str()).map(Vec::as_slice),
+                    PushDeliveryBudgetOutcome::Unavailable { .. } => None,
+                };
                 let diagnostics_to_publish = push_diagnostics_for_batch(
                     &batch.diagnostics,
                     batch.uri.as_str(),
                     &budget_selected_ids,
+                    ordered_ids,
                 );
                 self.client
                     .publish_diagnostics(batch.uri.clone(), diagnostics_to_publish, None)
@@ -2491,6 +2510,10 @@ enum PushDeliveryBudgetOutcome {
         /// budget items so per-document omitted counts can be disclosed
         /// without changing the shared budget result shape.
         document_by_canonical_id: std::collections::BTreeMap<String, String>,
+        /// Publishing document to ordered canonical identities, in the same
+        /// order the budget builder walked the batches, so the publish filter
+        /// does not re-serialize every diagnostic.
+        ids_by_document: std::collections::BTreeMap<String, Vec<String>>,
     },
     /// The budget could not be built or evaluated. Publication falls back to
     /// unfiltered delivery; the detail names why the partial state occurred.
@@ -2517,6 +2540,14 @@ fn evaluate_push_delivery_budget(
         .iter()
         .map(|item| (item.canonical_id.clone(), item.document.clone()))
         .collect();
+    let mut ids_by_document: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for item in &items {
+        ids_by_document
+            .entry(item.document.clone())
+            .or_default()
+            .push(item.canonical_id.clone());
+    }
     match crate::lsp::diagnostic_budget::evaluate_diagnostic_budget(
         items,
         budget,
@@ -2526,6 +2557,7 @@ fn evaluate_push_delivery_budget(
         Ok(result) => PushDeliveryBudgetOutcome::Applied {
             result: Box::new(result),
             document_by_canonical_id,
+            ids_by_document,
         },
         Err(error) => PushDeliveryBudgetOutcome::Unavailable {
             detail: format!("budget evaluation failed: {error}"),
@@ -2539,10 +2571,23 @@ fn push_diagnostics_for_batch(
     diagnostics: &[tower_lsp_server::ls_types::Diagnostic],
     document: &str,
     budget_selected_ids: &std::collections::BTreeSet<String>,
+    ordered_ids: Option<&[String]>,
 ) -> Vec<tower_lsp_server::ls_types::Diagnostic> {
     if budget_selected_ids.is_empty() {
         // Budget not computed or selected nothing — publish everything.
         return diagnostics.to_vec();
+    }
+    if let Some(ordered_ids) = ordered_ids {
+        // Ids were computed by the budget builder in this exact order; reuse
+        // them instead of serializing every diagnostic again.
+        if ordered_ids.len() == diagnostics.len() {
+            return diagnostics
+                .iter()
+                .zip(ordered_ids.iter())
+                .filter(|(_, id)| budget_selected_ids.contains(id.as_str()))
+                .map(|(diagnostic, _)| diagnostic.clone())
+                .collect();
+        }
     }
     diagnostics
         .iter()
@@ -2623,6 +2668,15 @@ fn push_budget_omission_disclosure(
 /// Disclosure for the budget-error fallback: every diagnostic is published
 /// unfiltered, so no delivery limit was enforced — a partial state that must
 /// be named rather than presented as a normal complete publication.
+fn push_budget_zero_selection_log_message(
+    result: &crate::lsp::diagnostic_budget::DiagnosticBudgetResult,
+) -> String {
+    format!(
+        "ripr push diagnostic delivery budget selected zero of {} items; published all diagnostics unfiltered per the fallback rule: budget enforcement did not reduce delivery, completeness is unknown",
+        result.total_canonical_items
+    )
+}
+
 fn push_budget_unavailable_log_message(detail: &str) -> String {
     format!(
         "ripr push diagnostic delivery budget unavailable ({detail}); published all diagnostics unfiltered: budget enforcement was not applied, delivery completeness is unknown"
@@ -4544,6 +4598,7 @@ mod push_budget_disclosure_tests {
         let PushDeliveryBudgetOutcome::Applied {
             result,
             document_by_canonical_id,
+            ..
         } = &outcome
         else {
             return Err(format!("expected applied budget outcome, got {outcome:?}"));
@@ -4597,10 +4652,64 @@ mod push_budget_disclosure_tests {
             .selected_ids()
             .map(str::to_string)
             .collect::<std::collections::BTreeSet<_>>();
-        let published =
-            push_diagnostics_for_batch(&diagnostics, "file:///workspace/src/lib.rs", &selected_ids);
+        let published = push_diagnostics_for_batch(
+            &diagnostics,
+            "file:///workspace/src/lib.rs",
+            &selected_ids,
+            None,
+        );
         assert_eq!(published.len(), 3);
         assert_eq!(selected_ids.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn zero_selection_publishes_everything_and_names_the_fallback() -> Result<(), String> {
+        let batches = single_document_batches(vec![
+            headline_diagnostic("diag:advisory-a", false),
+            headline_diagnostic("diag:advisory-b", false),
+        ])?;
+        let outcome = evaluate_push_delivery_budget(
+            &batches,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+        );
+        let PushDeliveryBudgetOutcome::Applied { result, .. } = &outcome else {
+            return Err(format!("expected applied budget outcome, got {outcome:?}"));
+        };
+        if !result.selected.is_empty() || result.total_canonical_items != 2 {
+            return Err(format!(
+                "expected collapsed selection over two items, got {result:?}"
+            ));
+        }
+        let selected_ids = result
+            .selected_ids()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        let published = push_diagnostics_for_batch(
+            batches.values().next().ok_or("missing batch")?,
+            "file:///workspace/src/lib.rs",
+            &selected_ids,
+            None,
+        );
+        if published.len() != 2 {
+            return Err(format!(
+                "zero-selection fallback must publish the full batch, got {}",
+                published.len()
+            ));
+        }
+        let message = push_budget_zero_selection_log_message(result);
+        for expected in [
+            "selected zero of 2 items",
+            "unfiltered per the fallback rule",
+            "budget enforcement did not reduce delivery",
+            "completeness is unknown",
+        ] {
+            if !message.contains(expected) {
+                return Err(format!(
+                    "zero-selection message missing `{expected}`: {message}"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -4618,6 +4727,7 @@ mod push_budget_disclosure_tests {
         let PushDeliveryBudgetOutcome::Applied {
             result,
             document_by_canonical_id,
+            ..
         } = &outcome
         else {
             return Err(format!("expected applied budget outcome, got {outcome:?}"));
@@ -4674,6 +4784,7 @@ mod push_budget_disclosure_tests {
             &diagnostics,
             "file:///workspace/src/lib.rs",
             &budget_selected_ids,
+            None,
         );
         assert_eq!(
             published.len(),
