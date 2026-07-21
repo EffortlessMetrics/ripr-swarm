@@ -1636,6 +1636,11 @@ impl Drop for RefreshCancellationGuard<'_> {
                     progress.end_queued(AnalysisProgressEnd::Cancelled).await;
                 });
             }
+            // Invariant: guard drops outside a current tokio runtime (sync
+            // teardown) skip the best-effort end entirely. That is accepted
+            // rather than hidden: the tracker's registry never emits a second
+            // end, and a skipped end only leaves the client without a terminal
+            // for a generation that never produced diagnostics.
             self.idle.notify_waiters();
         }
     }

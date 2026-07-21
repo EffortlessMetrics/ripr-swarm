@@ -165,6 +165,11 @@ impl ProgressSink for Client {
 struct TokenRecord {
     token: String,
     phase: AnalysisProgressPhase,
+    /// True once the `$/progress` begin notification has actually been sent.
+    /// A token ended while `started == false` is removed silently: per the LSP
+    /// spec no progress notifications may precede a begin, and none may follow
+    /// a failed create.
+    started: bool,
 }
 
 fn progress_token(generation: u64) -> String {
@@ -231,18 +236,32 @@ impl AnalysisProgressTracker {
             return;
         }
         {
-            let Ok(tokens) = self.tokens.lock() else {
+            // Register BEFORE the sink awaits so a concurrent end() always
+            // finds the generation and terminates it cleanly instead of
+            // leaking a begin without an end.
+            let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
             if tokens.contains_key(&request.generation) {
                 return;
             }
+            tokens.insert(
+                request.generation,
+                TokenRecord {
+                    token: progress_token(request.generation),
+                    phase,
+                    started: false,
+                },
+            );
         }
         let Some(sink) = self.sink() else {
             return;
         };
         let token = progress_token(request.generation);
         if let Err(error) = sink.create(token.clone()).await {
+            if let Ok(mut tokens) = self.tokens.lock() {
+                tokens.remove(&request.generation);
+            }
             self.client
                 .log_message(
                     MessageType::WARNING,
@@ -262,8 +281,10 @@ impl AnalysisProgressTracker {
             },
         )
         .await;
-        if let Ok(mut tokens) = self.tokens.lock() {
-            tokens.insert(request.generation, TokenRecord { token, phase });
+        if let Ok(mut tokens) = self.tokens.lock()
+            && let Some(record) = tokens.get_mut(&request.generation)
+        {
+            record.started = true;
         }
     }
 
@@ -277,7 +298,7 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if record.phase != AnalysisProgressPhase::Queued {
+            if !record.started || record.phase != AnalysisProgressPhase::Queued {
                 return;
             }
             record.phase = AnalysisProgressPhase::Analyzing;
@@ -305,7 +326,7 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get(&generation) else {
                 return;
             };
-            if record.phase != AnalysisProgressPhase::Analyzing {
+            if !record.started || record.phase != AnalysisProgressPhase::Analyzing {
                 return;
             }
             record.token.clone()
@@ -326,15 +347,20 @@ impl AnalysisProgressTracker {
     /// before the end notification, so later ends for the same generation
     /// are no-ops.
     pub(super) async fn end(&self, generation: u64, end: AnalysisProgressEnd) {
-        let token = {
+        let record = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
-            tokens.remove(&generation).map(|record| record.token)
+            tokens.remove(&generation)
         };
-        let Some(token) = token else {
+        let Some(record) = record else {
             return;
         };
+        if !record.started {
+            // Removed cleanly without a notification: no begin was ever sent.
+            return;
+        }
+        let token = record.token;
         let Some(sink) = self.sink() else {
             return;
         };
@@ -364,6 +390,7 @@ impl AnalysisProgressTracker {
             queued
                 .into_iter()
                 .filter_map(|generation| tokens.remove(&generation))
+                .filter(|record| record.started)
                 .map(|record| record.token)
                 .collect::<Vec<_>>()
         };
@@ -390,6 +417,7 @@ impl AnalysisProgressTracker {
             };
             std::mem::take(&mut *tokens)
                 .into_values()
+                .filter(|record| record.started)
                 .map(|record| record.token)
                 .collect::<Vec<_>>()
         };
@@ -656,6 +684,75 @@ mod tests {
             }
             if tracker.is_supported() {
                 return Err("tracker must stay unsupported without the client capability".into());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn end_before_begin_notification_removes_token_silently() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, sink) = tracker_with_recorder();
+            // Simulate the mid-create window: a registered but unstarted token.
+            {
+                let Ok(mut tokens) = tracker.tokens.lock() else {
+                    return Err("tracker lock poisoned".to_string());
+                };
+                tokens.insert(
+                    7,
+                    TokenRecord {
+                        token: progress_token(7),
+                        phase: AnalysisProgressPhase::Queued,
+                        started: false,
+                    },
+                );
+            }
+            tracker.end(7, AnalysisProgressEnd::Cancelled).await;
+            if !sink.events().is_empty() {
+                return Err(format!(
+                    "an unstarted token emitted progress traffic: {:?}",
+                    sink.events()
+                ));
+            }
+            let Ok(tokens) = tracker.tokens.lock() else {
+                return Err("tracker lock poisoned".to_string());
+            };
+            if tokens.contains_key(&7) {
+                return Err("unstarted token was not removed by end".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn create_failure_drops_placeholder_and_allows_retry() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, sink) = tracker_with_recorder();
+            sink.set_fail_create(true);
+            let request = test_request(9);
+            tracker.begin(&request, AnalysisProgressPhase::Analyzing).await;
+            {
+                let Ok(tokens) = tracker.tokens.lock() else {
+                    return Err("tracker lock poisoned".to_string());
+                };
+                if tokens.contains_key(&9) {
+                    return Err(
+                        "failed create left a placeholder token that would leak or block retry"
+                            .to_string(),
+                    );
+                }
+            }
+            sink.set_fail_create(false);
+            tracker.begin(&request, AnalysisProgressPhase::Analyzing).await;
+            let events = sink.events();
+            let begins = events
+                .iter()
+                .filter(|event| matches!(event, ProgressEvent::Begin { token, .. } if token == &progress_token(9)))
+                .count();
+            if begins != 1 {
+                return Err(format!(
+                    "retry after create failure did not begin exactly once: {events:?}"
+                ));
             }
             Ok(())
         })
