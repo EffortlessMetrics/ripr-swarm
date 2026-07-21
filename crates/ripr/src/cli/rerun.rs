@@ -1759,10 +1759,14 @@ mod tests {
         for extension in ["ts", "tsx", "js", "jsx"] {
             let root = unique_temp_root(&format!("ts-rerun-ext-{extension}"))?;
             let source = format!("src/discount.{extension}");
-            write_file(
-                &root.join(&source),
-                "export function applyDiscount(amount: number, discount: number) {\n  return amount - discount;\n}\n",
-            )?;
+            // Type annotations only in TypeScript-family fixtures; .js/.jsx
+            // fixtures must be plain ECMAScript or the control is unfaithful.
+            let body = if extension.starts_with("ts") {
+                "export function applyDiscount(amount: number, discount: number) {\n  return amount - discount;\n}\n"
+            } else {
+                "export function applyDiscount(amount, discount) {\n  return amount - discount;\n}\n"
+            };
+            write_file(&root.join(&source), body)?;
             let config = RiprConfig::default();
             let findings = crate::analysis::targeted_typescript_findings_for_scope(
                 &root,
