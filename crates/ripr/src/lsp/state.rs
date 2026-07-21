@@ -271,6 +271,13 @@ pub(super) struct AnalysisSnapshot {
     /// Invoking `ripr.refreshDiagnostics` produces a new snapshot with
     /// `seams_deferred = false` and the full seam inventory.
     pub(super) seams_deferred: bool,
+    /// Partial diff-scope run state (RIPR-PROP-0019, #1999). `Some` only when
+    /// the diff exceeded the partial-selection budget and the run analyzed a
+    /// deterministic bounded partition (`limited_partial_scope`). The run
+    /// status surfaces in workspace status and downgrades/suppresses
+    /// diagnostics like the other limited-family states; the result is never
+    /// a gate, baseline, badge, or RIPR Zero input.
+    pub(super) partial_scope: Option<crate::analysis::PartialDiffScope>,
 }
 
 impl AnalysisSnapshot {
@@ -538,6 +545,7 @@ mod tests {
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,
+            partial_scope: None,
         };
 
         if !snapshot.is_consistent() {
@@ -565,6 +573,7 @@ mod tests {
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,
+            partial_scope: None,
         };
 
         if snapshot.is_consistent() {
