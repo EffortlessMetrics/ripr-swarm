@@ -195,7 +195,7 @@ fn detect_repo_preview_advisories(
     let discovered = super::workspace::discover_preview_language_files(root);
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
     for language in PREVIEW_LANGUAGE_ORDER {
-        if !language.is_available() && language != LanguageId::Perl {
+        if !language.is_available() && *language != LanguageId::Perl {
             continue;
         }
         let files: Vec<String> = discovered
