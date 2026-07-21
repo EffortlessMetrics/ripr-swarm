@@ -11,9 +11,7 @@
     {
       "language": "perl",
       "file_count": 1,
-      "sample_paths": [
-        "lib/Pricing.pm"
-      ],
+      "sample_paths": ["lib/Pricing.pm"],
       "enabled": false,
       "analyzed": false,
       "category": "preview_language_advisory",
