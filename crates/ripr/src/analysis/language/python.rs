@@ -7626,6 +7626,62 @@ def test_build_user_smoke():
     }
 
     #[test]
+    fn free_function_relative_import_from_sibling_module_stays_fail_closed() -> Result<(), String> {
+        // Boundary: `from .other import normalize` resolves to `src.other`, not
+        // the owner's `src.handler` module — identity must NOT be credited from
+        // the bare-name token coincidence.
+        let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new("src/test_handler.py"),
+            "from .other import normalize\n\n\ndef test_handler_normalize_sibling():\n    assert normalize(\" ok \") == \"ok\"\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/handler.py"),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside normalize should classify".to_string());
+        };
+        if finding.class == ExposureClass::Exposed {
+            return Err(format!(
+                "a relative import from a different module was wrongly credited: {:?}",
+                finding.class
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn relative_import_escaping_the_package_fails_closed() -> Result<(), String> {
+        // `from ...handler import normalize` from a shallow file traverses above
+        // the package root: the resolver must fail closed to an empty module
+        // rather than fabricate an identity.
+        let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new("src/test_handler.py"),
+            "from ...handler import normalize\n\n\ndef test_handler_normalize_overtraverse():\n    assert normalize(\" ok \") == \"ok\"\n",
+        );
+        let Some(finding) = classify_change(
+            Path::new("src/handler.py"),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        ) else {
+            return Err("changed return inside normalize should classify".to_string());
+        };
+        if finding.class == ExposureClass::Exposed {
+            return Err(format!(
+                "an over-traversing relative import was wrongly credited: {:?}",
+                finding.class
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn free_function_aliased_import_from_owner_module_credits_exposed() -> Result<(), String> {
         // Positive control: aliased same-module import (`as norm`) keeps identity.
         let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
