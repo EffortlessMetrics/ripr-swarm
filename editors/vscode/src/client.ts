@@ -738,7 +738,13 @@ export class RiprClientController {
 
     const command = validatedAgentLoopCommand(target);
     if (!command) {
-      this.runtime.showInformationMessage('No ripr agent loop command is available for this diagnostic.');
+      // Invoked from the palette without a diagnostic target: say what to
+      // do instead of appearing to no-op (#2083).
+      this.runtime.showInformationMessage(
+        target
+          ? 'No ripr agent loop command is available for this diagnostic.'
+          : 'ripr agent loop commands run from a ripr diagnostic: open a file with ripr diagnostics, use Quick Fix (Ctrl+.) on one, and pick the agent command from there.'
+      );
       return;
     }
     try {
