@@ -12,8 +12,6 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending
-
 Reason:
 RIPR-SPEC-0082 Perl preview-language disclosure: emit the detected Perl file as an explicit advisory without claiming analysis.
 

@@ -327,16 +327,21 @@ add co-located tests that observe the changed behavior.\n",
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     for advisory in &output.preview_language_advisories {
         let language = capitalize_first(&advisory.language);
+        let file_label = if advisory.file_count == 1 {
+            format!("{language} file")
+        } else {
+            format!("{language} files")
+        };
         if advisory.enabled {
             out.push_str(&format!(
-                "\nNote: {} {}(s) analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
-                advisory.file_count, language,
+                "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
+                advisory.file_count, file_label,
             ));
         } else {
             let language_lowercase = advisory.language.to_lowercase();
             out.push_str(&format!(
-                "\nNote: this diff contains {} {}(s). The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
-                advisory.file_count, language, language,
+                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
+                advisory.file_count, file_label, language,
             ));
         }
     }
@@ -1469,7 +1474,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("2 Typescript(s) analyzed under preview support"),
+            rendered.contains("2 Typescript files analyzed under preview support"),
             "expected preview disclosure in output; got:\n{rendered}"
         );
         assert!(
@@ -1508,7 +1513,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("3 Python(s) analyzed under preview support"),
+            rendered.contains("3 Python files analyzed under preview support"),
             "expected python preview disclosure; got:\n{rendered}"
         );
         assert!(
@@ -1574,7 +1579,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("7 Typescript(s) analyzed under preview support"),
+            rendered.contains("7 Typescript files analyzed under preview support"),
             "expected file_count=7 in disclosure; got:\n{rendered}"
         );
     }
@@ -1608,7 +1613,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("this diff contains 1 Typescript(s)"),
+            rendered.contains("this diff contains 1 Typescript file"),
             "expected not-enabled disclosure; got:\n{rendered}"
         );
         assert!(
