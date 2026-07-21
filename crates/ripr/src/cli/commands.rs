@@ -4908,7 +4908,7 @@ fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>)
         "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
     } else if managed {
         // Managed mode configured but producer missing.
-        "install perllsp on PATH (or set [perl].executable) and enable perl in ripr.toml [languages], then: ripr check --base origin/main --head HEAD".to_string()
+        "install perllsp on PATH (or set [perl].executable) and add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
     } else {
         // Explicit packet mode (or producer absent): supply --perl-facts.
         "ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string()
