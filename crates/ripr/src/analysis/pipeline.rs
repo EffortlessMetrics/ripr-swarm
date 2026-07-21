@@ -842,6 +842,7 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    #[cfg(not(feature = "lang-perl"))]
     #[test]
     fn diff_pipeline_emits_not_enabled_advisory_for_perl_without_adapter() -> Result<(), String> {
         let root = temp_root("spec-0082-perl-not-enabled")?;
