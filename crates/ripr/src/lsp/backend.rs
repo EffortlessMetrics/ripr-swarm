@@ -196,6 +196,13 @@ impl Backend {
             if !post_authority.allows_analysis() {
                 return;
             }
+            // A root transition during the window invalidates the pre-debounce
+            // root even when the new root also allows analysis: the
+            // transition's own refresh covers the new root, so this stale
+            // request must not run against the old one.
+            if post_authority.effective_root.as_ref() != Some(&root) {
+                return;
+            }
         }
         let workspace_revision = self.workspace_revision();
         let authority_epoch = self.workspace_root_epoch.load(Ordering::SeqCst);
