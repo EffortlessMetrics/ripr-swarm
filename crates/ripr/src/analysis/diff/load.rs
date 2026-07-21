@@ -172,13 +172,20 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
         // error is no longer silent (#2074): name the probe failure so a
         // broken git install is not mistaken for a clean tree.
         WorkingTreeProbe::Error(reason) => {
-            eprintln!(
-                "ripr: working-tree change probe failed ({reason}); treating the tree as \
-                 unchanged — the uncommitted-changes disclosure may be incomplete"
-            );
+            eprintln!("{}", working_tree_probe_error_warning(&reason));
             false
         }
     }
+}
+
+/// The stderr warning for a failed working-tree probe (#2074). Pure so the
+/// exact phrasings ("git could not be run", "git status exited with") are
+/// unit-testable without capturing stderr.
+fn working_tree_probe_error_warning(reason: &str) -> String {
+    format!(
+        "ripr: working-tree change probe failed ({reason}); treating the tree as \
+         unchanged — the uncommitted-changes disclosure may be incomplete"
+    )
 }
 
 /// Outcome of the working-tree change probe (#2074): a clean tree is
@@ -458,6 +465,18 @@ mod tests {
     }
 
     #[test]
+    fn working_tree_probe_error_warning_names_both_failure_arms() {
+        // #2074 review: the contracted phrasings are unit-testable without
+        // capturing stderr.
+        let spawn_err = working_tree_probe_error_warning("git could not be run: not a directory");
+        assert!(spawn_err.contains("git could not be run"));
+        assert!(spawn_err.contains("disclosure may be incomplete"));
+        let exit_err =
+            working_tree_probe_error_warning("git status exited with exit code: 128: fatal");
+        assert!(exit_err.contains("git status exited with"));
+    }
+
+    #[test]
     fn working_tree_probe_distinguishes_error_from_clean() -> std::io::Result<()> {
         // A file (not a directory) as the probe root fails deterministically
         // on every host: spawn errors with "not a directory" (#2074). A plain
@@ -467,7 +486,13 @@ mod tests {
         fs::write(&file, "not a directory\n")?;
 
         match working_tree_probe(&file) {
-            WorkingTreeProbe::Error(_) => {}
+            WorkingTreeProbe::Error(reason) => {
+                // The spawn-failure arm carries the contracted phrasing.
+                assert!(
+                    reason.contains("git could not be run"),
+                    "unexpected probe error: {reason}"
+                );
+            }
             other => {
                 return Err(std::io::Error::other(format!(
                     "expected probe error for a file-as-root, got {other:?}"
