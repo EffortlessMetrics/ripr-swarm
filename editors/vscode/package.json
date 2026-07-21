@@ -336,7 +336,7 @@
               "markdown": "walkthrough/open-file.md"
             },
             "completionEvents": [
-              "onFileOpen:rust"
+              "onContext:resourceLangId == rust"
             ]
           },
           {
