@@ -6,7 +6,7 @@ use super::language::PythonAdapter;
 use super::language::TypeScriptAdapter;
 use super::language::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter,
+    RustAdapter, route,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -25,6 +25,38 @@ fn is_preview_language(language: LanguageId) -> bool {
         language,
         LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl
     )
+}
+
+/// Whether the enabled language list contains the adapter that owns a routed
+/// path. JavaScript paths route through the TypeScript-family adapter, so the
+/// explicit JavaScript opt-in is an alias for the routed TypeScript id here.
+fn routed_language_is_enabled(routed: LanguageId, enabled: &[LanguageId]) -> bool {
+    match routed {
+        LanguageId::TypeScript => {
+            enabled.contains(&LanguageId::TypeScript) || enabled.contains(&LanguageId::JavaScript)
+        }
+        _ => enabled.contains(&routed),
+    }
+}
+
+/// Restrict the Rust-first partition input to adapters enabled for this run.
+///
+/// The full diff remains available for preview advisories and, when a partial
+/// scope exists, for the later preview dispatch. Only the partition input is
+/// narrowed: otherwise disabled preview-language files could be selected into
+/// `PartialDiffScope.selected_files` without any enabled adapter analyzing
+/// them, fabricating the analyzed denominator.
+fn changed_files_for_enabled_languages(
+    changed_files: &[diff::ChangedFile],
+    enabled: &[LanguageId],
+) -> Vec<diff::ChangedFile> {
+    changed_files
+        .iter()
+        .filter(|file| {
+            route(&file.path).is_some_and(|language| routed_language_is_enabled(language, enabled))
+        })
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn run_diff_pipeline_with_oracle_policy(
@@ -76,7 +108,9 @@ fn run_pipeline_for_diff_text(
     // partial_budget_invalid), not a per-language advisory gap.
     if languages.contains(&LanguageId::Rust) {
         cancellation::checkpoint()?;
-        let result = RustAdapter.analyze_diff(options, oracle_policy, &changed_files)?;
+        let partition_changed_files =
+            changed_files_for_enabled_languages(&changed_files, languages);
+        let result = RustAdapter.analyze_diff(options, oracle_policy, &partition_changed_files)?;
         cancellation::checkpoint()?;
         partial_scope = result.partial_scope.clone();
         findings.extend(result.findings);
@@ -543,6 +577,60 @@ mod tests {
         );
         // Rust failure on an invalid root propagates as a top-level Err.
         result.expect_err("expected Rust adapter failure to propagate");
+    }
+
+    #[test]
+    fn partial_partition_input_excludes_disabled_preview_files() {
+        let changed_files = vec![
+            diff::ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![diff::ChangedLine {
+                    line: 1,
+                    text: "pub fn value() -> u32 { 1 }".to_string(),
+                    new_side_line: 1,
+                }],
+                removed_lines: Vec::new(),
+            },
+            diff::ChangedFile {
+                path: PathBuf::from("web/app.ts"),
+                added_lines: vec![diff::ChangedLine {
+                    line: 1,
+                    text: "export const value = 1;".to_string(),
+                    new_side_line: 1,
+                }],
+                removed_lines: Vec::new(),
+            },
+        ];
+
+        let partition_input =
+            changed_files_for_enabled_languages(&changed_files, &[LanguageId::Rust]);
+
+        assert_eq!(
+            partition_input
+                .iter()
+                .map(|file| file.path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec!["src/lib.rs"],
+            "Rust-only partial scopes must not advertise disabled preview files"
+        );
+    }
+
+    #[test]
+    fn javascript_opt_in_enables_the_typescript_family_partition() {
+        let changed_files = vec![diff::ChangedFile {
+            path: PathBuf::from("web/app.js"),
+            added_lines: vec![diff::ChangedLine {
+                line: 1,
+                text: "export const value = 1;".to_string(),
+                new_side_line: 1,
+            }],
+            removed_lines: Vec::new(),
+        }];
+
+        let partition_input =
+            changed_files_for_enabled_languages(&changed_files, &[LanguageId::JavaScript]);
+
+        assert_eq!(partition_input.len(), 1);
     }
 
     /// Non-abort contract (Campaign 31 PR 10, #1403): a single language's
