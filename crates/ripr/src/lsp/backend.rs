@@ -4698,6 +4698,11 @@ mod push_budget_disclosure_tests {
             .to_string();
         let diagnostics = batches.values_mut().next().ok_or("missing batch")?.clone();
         let ordered_ids = ids_by_document.get(document.as_str()).map(Vec::as_slice);
+        if ordered_ids.map(<[String]>::len) != Some(diagnostics.len()) {
+            return Err(format!(
+                "ids_by_document must cover the document in batch order: {ordered_ids:?}"
+            ));
+        }
         let reused =
             push_diagnostics_for_batch(&diagnostics, &document, &selected_ids, ordered_ids);
         let reserialized = push_diagnostics_for_batch(&diagnostics, &document, &selected_ids, None);
