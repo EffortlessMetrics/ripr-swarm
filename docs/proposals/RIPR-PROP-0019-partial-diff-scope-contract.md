@@ -86,14 +86,20 @@ Three distinct limits, never conflated:
 
 Budget validity and stop precedence are defined, never implicit:
 
-- A zero or negative partial-budget override is invalid and fails closed with
-  a named `partial_budget_invalid` error; it never silently means unlimited
-  or zero-files.
+- An empty, non-numeric, or overflowing budget override value is a parse
+  failure and fails closed with a named `partial_budget_invalid` error,
+  following the same env-parse contract as the existing guards; it never
+  silently means unlimited or defaults to a hidden fallback.
+- A zero or negative parsed value is likewise `partial_budget_invalid`.
 - A partial budget may not exceed its corresponding hard guard; a larger
   override is clamped to the guard value and the clamp is disclosed.
 - If the first selected file alone exceeds the line budget, that single file
   is analyzed anyway and the result is `limited_partial_scope` with stop
   reason `line_budget_exceeded_on_first_file` — never an empty partition.
+- A later whole file that would exceed the remaining line budget is
+  **excluded** (never included with overshoot); selection stops there with
+  stop reason `line_budget`. The overshoot exception applies to the first
+  selected file only, so an empty partition is impossible.
 - If both budgets are reached by the same file, the stop reason is the file
   budget (`file_budget`), with the line count recorded alongside it.
 
