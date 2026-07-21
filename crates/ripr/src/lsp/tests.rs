@@ -3947,15 +3947,30 @@ async fn did_save_with_unchanged_content_deduplicates_without_refresh() -> Resul
     backend.advance_workspace_revision();
     let baseline = backend.workspace_revision();
 
+    // First save after open: nothing recorded yet, so it always counts as
+    // changed (conservative) and records the digest.
     backend
         .did_save(DidSaveTextDocumentParams {
             text_document: TextDocumentIdentifier { uri: uri.clone() },
             text: Some("fn same() {}".to_string()),
         })
         .await;
-    if backend.workspace_revision() != baseline {
+    if backend.workspace_revision() != baseline + 1 {
         return Err(format!(
-            "unchanged save advanced the revision: {baseline} -> {}",
+            "first save did not advance the revision: {baseline} -> {}",
+            backend.workspace_revision()
+        ));
+    }
+    // A repeated save of the same bytes now dedups.
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text: Some("fn same() {}".to_string()),
+        })
+        .await;
+    if backend.workspace_revision() != baseline + 1 {
+        return Err(format!(
+            "unchanged repeated save advanced the revision: {baseline} -> {}",
             backend.workspace_revision()
         ));
     }

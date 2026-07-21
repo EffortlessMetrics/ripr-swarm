@@ -2157,7 +2157,10 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.record_saved_content_digest(&params.text_document.uri, &params.text_document.text);
+        // No digest seeding here: didOpen may carry unsaved or recovered
+        // buffer text rather than persisted bytes, and deduping a later save
+        // against that would skip a real persistence change. The digest is
+        // only recorded from didSave, whose content is persisted by definition.
         self.open_document(params);
         self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
