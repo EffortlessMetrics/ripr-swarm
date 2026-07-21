@@ -66,6 +66,18 @@ pub(crate) fn targeted_typescript_findings_for_scope(
     use diff::{ChangedFile, ChangedLine};
     use language::{LanguageAdapter, TypeScriptAdapter};
 
+    // Ledger-supplied anchors are untrusted input: reject absolute paths and
+    // parent traversal so a crafted rerun scope cannot read outside `root`.
+    if file.is_absolute()
+        || file
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "TypeScript rerun scope {} escapes the workspace root",
+            file.display()
+        ));
+    }
     let absolute = root.join(file);
     let source = std::fs::read_to_string(&absolute).map_err(|err| {
         format!(

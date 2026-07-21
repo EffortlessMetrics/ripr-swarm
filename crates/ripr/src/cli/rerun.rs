@@ -1712,7 +1712,7 @@ mod tests {
         )?;
         write_file(
             &root.join("tests/discount.test.ts"),
-            "import { applyDiscount } from '../src/discount';\n\ntest('applies discount', () => {\n  expect(applyDiscount(10000, 100)).toBe(9990);\n});\n",
+            "import { applyDiscount } from '../src/discount';\n\ntest('applies discount', () => {\n  expect(applyDiscount(10000, 100)).toBe(9900);\n});\n",
         )?;
 
         let config = RiprConfig::default();
@@ -1746,6 +1746,69 @@ mod tests {
         {
             return Err(format!(
                 "TypeScript rerun did not select the anchored current seam: state={} seams={}",
+                report.state,
+                report.seams.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_rerun_scope_rejects_root_escaping_anchors() -> Result<(), String> {
+        let root = unique_temp_root("ts-rerun-escape")?;
+        let config = RiprConfig::default();
+        for escaping in [
+            Path::new("../outside.ts"),
+            Path::new("src/../../outside.ts"),
+            Path::new("/etc/hostname"),
+        ] {
+            match crate::analysis::targeted_typescript_findings_for_scope(
+                &root,
+                &config,
+                escaping,
+                Some(1),
+            ) {
+                Err(message) if message.contains("escapes the workspace root") => {}
+                other => {
+                    let _ = std::fs::remove_dir_all(&root);
+                    return Err(format!(
+                        "escaping anchor {} was not rejected: {other:?}",
+                        escaping.display()
+                    ));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_rerun_without_current_seam_fails_closed() -> Result<(), String> {
+        let root = unique_temp_root("ts-rerun-no-match")?;
+        write_file(
+            &root.join("src/other.ts"),
+            "export function other(amount: number) {\n  return amount + 1;\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let ledger_path = root.join("target/ripr/gaps.json");
+        write_file(
+            &ledger_path,
+            &format!(
+                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"gap:typescript:missing","language":"typescript","anchor":{{"file":"src/other.ts","line":1,"owner":"other"}},"evidence_ids":["missing"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                root.display()
+            ),
+        )?;
+        let report = rerun_gap(&root, &config, "gap:typescript:missing", &ledger_path)?;
+        let _ = std::fs::remove_dir_all(&root);
+        if !report
+            .scope_limitations
+            .iter()
+            .any(|limitation| limitation.kind == "gap_scope_unresolved")
+        {
+            return Err(format!(
+                "unmatched TypeScript rerun fabricated a current seam: state={} seams={}",
                 report.state,
                 report.seams.len()
             ));
