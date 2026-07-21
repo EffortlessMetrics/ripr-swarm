@@ -79,7 +79,15 @@ pub mod lsp;
 #[doc(hidden)]
 pub mod output;
 
+pub use analysis::{LanguageRun, PreviewLanguageAdvisory};
 /// Analyze a workspace diff using the default RIPR static pipeline.
 pub use app::{CheckInput, CheckOutput, check_workspace, collect_context, explain_finding};
+/// Field types of the public entrypoint types (#2112): every public field
+/// on `CheckInput` / `CheckOutput` is nameable from the crate root, so a
+/// consumer never needs the `#[doc(hidden)]` modules to annotate,
+/// pattern-match, or re-render a result.
+pub use app::{Mode, OutputFormat};
+pub use domain::Summary;
 /// Domain model types exposed as part of the stable public contract.
 pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};
+pub use output::suppressions::CheckSuppressionOutcome;
