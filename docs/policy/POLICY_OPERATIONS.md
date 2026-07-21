@@ -319,8 +319,7 @@ git diff --check
 Closeout validation:
 
 ```bash
-cargo xtask check-campaign
-cargo xtask goals next
+# Retired in #2056: check-campaign, goals
 cargo xtask check-doc-index
 cargo xtask markdown-links
 cargo xtask check-static-language
