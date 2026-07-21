@@ -4664,6 +4664,54 @@ mod push_budget_disclosure_tests {
     }
 
     #[test]
+    fn publish_filter_reuses_budget_ids_without_reserializing() -> Result<(), String> {
+        let mut batches = single_document_batches(vec![
+            headline_diagnostic("diag:actionable-a", true),
+            headline_diagnostic("diag:actionable-b", true),
+            headline_diagnostic("diag:actionable-c", true),
+        ])?;
+        let budget = crate::lsp::diagnostic_budget::DiagnosticBudget {
+            max_items_per_document: 2,
+            ..crate::lsp::diagnostic_budget::DiagnosticBudget::default()
+        };
+        let outcome = evaluate_push_delivery_budget(&batches, &budget);
+        let PushDeliveryBudgetOutcome::Applied {
+            result,
+            ids_by_document,
+            ..
+        } = &outcome
+        else {
+            return Err(format!("expected applied budget outcome, got {outcome:?}"));
+        };
+        let selected_ids = result
+            .selected_ids()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        if selected_ids.len() != 2 {
+            return Err(format!("expected two selected ids, got {selected_ids:?}"));
+        }
+        let document = batches
+            .keys()
+            .next()
+            .ok_or("missing document")?
+            .as_str()
+            .to_string();
+        let diagnostics = batches.values_mut().next().ok_or("missing batch")?.clone();
+        let ordered_ids = ids_by_document.get(document.as_str()).map(Vec::as_slice);
+        let reused =
+            push_diagnostics_for_batch(&diagnostics, &document, &selected_ids, ordered_ids);
+        let reserialized = push_diagnostics_for_batch(&diagnostics, &document, &selected_ids, None);
+        if reused != reserialized || reused.len() != 2 {
+            return Err(format!(
+                "reuse path diverged from reserialization: reused={} reserialized={}",
+                reused.len(),
+                reserialized.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn zero_selection_publishes_everything_and_names_the_fallback() -> Result<(), String> {
         let batches = single_document_batches(vec![
             headline_diagnostic("diag:advisory-a", false),
