@@ -4903,7 +4903,9 @@ fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>)
         // Managed mode + producer present: ripr invokes the exporter
         // itself. There is no --languages flag (#2105): perl is enabled
         // through config, and check then runs the enabled set.
-        "enable perl in ripr.toml ([languages] enabled = [\"rust\",\"perl\"]), then: ripr check --base origin/main --head HEAD".to_string()
+        // Name the additive edit, not a replacement list, so a user with
+        // TypeScript/Python already enabled keeps them (#2105 review).
+        "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check --base origin/main --head HEAD".to_string()
     } else if managed {
         // Managed mode configured but producer missing.
         "install perllsp on PATH (or set [perl].executable) and enable perl in ripr.toml [languages], then: ripr check --base origin/main --head HEAD".to_string()
