@@ -350,7 +350,7 @@
           {
             "id": "ripr.tryCodeAction",
             "title": "Try a ripr code action",
-            "description": "Copy the missing discriminator or repair packet from the lightbulb.\n[ripr actions](walkthrough/code-action.md)",
+            "description": "Copy the missing test assertion (the check that would catch a wrong behavior) or the repair packet from the lightbulb.\n[ripr actions](walkthrough/code-action.md)",
             "media": {
               "markdown": "walkthrough/code-action.md"
             },
