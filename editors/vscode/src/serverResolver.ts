@@ -70,7 +70,11 @@ export async function resolveServer(
     downloadFailure = `No prebuilt ripr server target is known for ${process.platform}/${process.arch}.`;
   }
 
-  const pathResult = await probeCandidate('ripr', 'path', 'ripr on PATH');
+  // On Windows, cp.spawn with shell: false does no PATHEXT resolution, so
+  // ripr.bat/ripr.cmd shims (Scoop, Chocolatey, manual PATH) fail to start
+  // even though `ripr` works in a terminal (#2079). The command is the
+  // constant string 'ripr --version' — no user input reaches the shell.
+  const pathResult = await probeCandidate('ripr', 'path', 'ripr on PATH', process.platform === 'win32');
   if (isResolved(pathResult)) {
     if (downloadFailure) {
       output.appendLine(`Using PATH fallback after managed server resolution failed: ${downloadFailure}`);
@@ -121,9 +125,9 @@ async function probeExistingCandidate(
   return probeCandidate(command, source, detail);
 }
 
-function probeCandidate(command: string, source: ServerSource, detail: string): Promise<ResolvedServer | ResolveFailure> {
+function probeCandidate(command: string, source: ServerSource, detail: string, useShell = false): Promise<ResolvedServer | ResolveFailure> {
   return new Promise((resolve) => {
-    const child = cp.spawn(command, ['--version'], { shell: false });
+    const child = cp.spawn(command, ['--version'], { shell: useShell });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timer = setTimeout(() => {
