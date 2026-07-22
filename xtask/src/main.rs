@@ -5990,23 +5990,15 @@ enum FixtureCheckFormat {
 /// link check; the absolute path keeps a long `../` from resolving to a
 /// stale binary in the enclosing checkout.
 fn ripr_fixture_binary() -> Result<String, String> {
-    // Honor CARGO_TARGET_DIR (#2176 review): the routed CI jobs set it, so
-    // `cargo build` writes there — a hardcoded target/debug would resolve a
-    // missing or stale binary.
-    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
-    let binary = fixture_binary_path(Path::new(&target_dir));
+    // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
+    // routed CI jobs set it, so `cargo build` writes there.
+    let binary = ripr_debug_binary();
     if !binary.exists() {
         run("cargo", &["build", "-p", "ripr"])?;
     }
     std::path::absolute(&binary)
         .map(|path| path.to_string_lossy().to_string())
         .map_err(|err| format!("resolve {} failed: {err}", binary.display()))
-}
-
-fn fixture_binary_path(target_dir: &Path) -> PathBuf {
-    target_dir
-        .join("debug")
-        .join(format!("ripr{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn run_fixture_check(
@@ -42914,11 +42906,15 @@ fn repo_exposure_latency_timeout_ms() -> u64 {
 }
 
 fn ripr_debug_binary() -> PathBuf {
+    ripr_debug_binary_in(std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
+}
+
+fn ripr_debug_binary_in(target_dir: Option<PathBuf>) -> PathBuf {
     let binary_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("target"));
-    target_dir.join("debug").join(binary_name)
+    target_dir
+        .unwrap_or_else(|| PathBuf::from("target"))
+        .join("debug")
+        .join(binary_name)
 }
 
 fn repo_exposure_latency_run(
@@ -81480,7 +81476,6 @@ TypeScript repair packet (advisory)
     // ============================================================================
 
     #[test]
-    #[test]
     fn validate_panic_allow_entry_v2_rejects_unfilled_todo_placeholders() -> Result<(), String> {
         // #2090: a pasted --propose entry with TODO-* markers must fail the
         // gate, not pass as reviewed policy.
@@ -81535,12 +81530,17 @@ TypeScript repair packet (advisory)
     }
 
     #[test]
-    fn fixture_binary_path_joins_debug_binary_under_the_target_dir() {
+    fn ripr_debug_binary_honors_cargo_target_dir() {
         // #2176 review: with CARGO_TARGET_DIR set (as routed CI does), the
         // binary must resolve under it, never a hardcoded target/debug.
-        let path = super::fixture_binary_path(Path::new("/mnt/ci-scratch/target/run-1"));
+        let path = super::ripr_debug_binary_in(Some(PathBuf::from("/mnt/ci-scratch/target/run-1")));
         let text = path.to_string_lossy().replace('\\', "/");
         assert!(text.starts_with("/mnt/ci-scratch/target/run-1/debug/ripr"));
+        let default = super::ripr_debug_binary_in(None);
+        assert!(
+            default
+                .ends_with(format!("target/debug/ripr{}", std::env::consts::EXE_SUFFIX).as_str())
+        );
     }
 
     #[test]
