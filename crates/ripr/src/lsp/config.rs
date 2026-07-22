@@ -368,7 +368,20 @@ pub(super) fn validated_pulled_options(values: &[Value]) -> Result<Option<Value>
     Ok(Some(Value::Object(supported_session_options(object))))
 }
 
+/// Pulled settings arrive outside the initialization-options ingress bound
+/// (#2034), so each value is bounded here: a transport-sized string must
+/// fail validation instead of being stored and re-rendered (#2211 review).
+const MAX_PULLED_VALUE_BYTES: usize = 4096;
+
 fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
+    if value
+        .as_str()
+        .is_some_and(|text| text.len() > MAX_PULLED_VALUE_BYTES)
+    {
+        return Err(format!(
+            "workspace/configuration value for `{key}` exceeds the {MAX_PULLED_VALUE_BYTES}-byte pulled-value bound"
+        ));
+    }
     let valid = match key {
         "baseRef" => value.as_str().is_some(),
         "checkMode" => value
@@ -654,6 +667,16 @@ include_unchanged_tests = false
             if validated_pulled_options(&values).is_ok() {
                 return Err(format!("wrong item count must fail closed: {values:?}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validated_pulled_options_rejects_oversized_string_value() -> Result<(), String> {
+        let oversized = "x".repeat(MAX_PULLED_VALUE_BYTES + 1);
+        let values = vec![json!({ "baseRef": oversized })];
+        if validated_pulled_options(&values).is_ok() {
+            return Err("an oversized pulled string must fail closed".to_string());
         }
         Ok(())
     }

@@ -72,7 +72,11 @@ The response is validated before anything is applied:
   overrides);
 - an object item fails the whole pull (fail-closed) when a supported key has
   the wrong JSON type or an unknown enum literal; unsupported keys are
-  outside the governed section and ignored.
+  outside the governed section and ignored;
+- each string value is bounded (4096 bytes): pulled settings arrive outside
+  the initialization-options ingress bound (RIPR-SPEC transport bounds,
+  #2034), so an oversized value fails the pull instead of being stored and
+  re-rendered.
 
 ### Precedence (amends RIPR-SPEC-0007, scoped)
 
@@ -104,7 +108,11 @@ still updated so precedence and source disclosure stay correct.
 Until the first pull resolves, the analysis status payload discloses the
 pull state as `pending`; with no single selected workspace root the pull is
 `deferred` (analysis is already blocked there, and the pull is retried when
-a single root is selected). A failed or malformed pull discloses a typed
+a single root is selected). Pulled settings are scoped to the root URI they
+were pulled for: a switch of the selected root invalidates them, bumps the
+pull epoch so an in-flight response for the old root is dropped, and
+schedules exactly one re-pull scoped to the new root. A failed or malformed
+pull discloses a typed
 state (`config_pull_failed` / `config_pull_invalid`, mirroring the
 `AnalysisFailure { kind, message }` pattern) with a recovery route, while
 the last-known-good pulled layer is retained as stale. Defaults never
@@ -219,6 +227,11 @@ and no workspace/configuration request is ever sent.
   state, no analysis launched, coalesced re-pull on
   `workspace/didChangeConfiguration`, typed malformed-pull disclosure with
   retained last-known-good.
+- `crates/ripr/src/lsp/tests.rs::framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release`
+  — the deferred pull is scheduled only after the root-transition guard is
+  released: an ambiguous-root start defers the pull, selecting a single root
+  runs it with the new root's `scopeUri`, and a settings-changing apply must
+  reach the refresh path without deadlocking on the transition guard.
 
 ## Implementation Mapping
 
