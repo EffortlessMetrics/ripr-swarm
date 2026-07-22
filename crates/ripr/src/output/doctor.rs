@@ -312,6 +312,9 @@ fn doctor_tool_check_with_timeout(tool: &str, timeout: Duration) -> (DoctorStatu
         Err(DoctorToolRunError::TimedOut) => {
             (DoctorStatus::Fail, doctor_timeout_evidence(tool, timeout))
         }
+        // A transient launch failure (resource exhaustion under load) is not
+        // the same evidence as the tool being absent (#2242): name it
+        // distinctly instead of collapsing it into "not available".
         Err(DoctorToolRunError::Spawn(std::io::ErrorKind::NotFound)) => {
             (DoctorStatus::Fail, format!("{tool} not available"))
         }
@@ -623,8 +626,20 @@ mod tests {
 
             let start = std::time::Instant::now();
             let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-            let (status, evidence) =
-                doctor_tool_check_with_timeout(shim_text, std::time::Duration::from_millis(250));
+            // #2242: a transient spawn failure under full-suite load
+            // (resource exhaustion) is named `could not be launched` — retry
+            // only that transient class, never a real timeout result.
+            let mut launch_attempt = 0usize;
+            let (status, evidence) = loop {
+                launch_attempt += 1;
+                let outcome = doctor_tool_check_with_timeout(
+                    shim_text,
+                    std::time::Duration::from_millis(250),
+                );
+                if launch_attempt >= 3 || !outcome.1.contains("could not be launched") {
+                    break outcome;
+                }
+            };
             let elapsed = start.elapsed();
 
             std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
