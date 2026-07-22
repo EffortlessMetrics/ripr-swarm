@@ -111,9 +111,9 @@ fn digest_from_a_different_spec_fails_the_binding() -> Result<(), String> {
         outcome,
         Err(VerificationExecutionResultValidationError::CommandSpecDigestMismatch { .. })
     ) {
-        return Err(
-            "result bound to a different command spec was accepted: {outcome:?}".to_string(),
-        );
+        return Err(format!(
+            "result bound to a different command spec was accepted: {outcome:?}"
+        ));
     }
     Ok(())
 }

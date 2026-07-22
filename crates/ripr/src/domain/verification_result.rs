@@ -362,11 +362,13 @@ mod tests {
     const ROOT: &str = "root:fixture";
     const ZERO_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    /// Digest of the fixture [`command_spec`] as computed by the consuming
-    /// layer; the pin lives with the digest tests in
-    /// `tests/verification_result.rs`.
-    const SPEC_DIGEST: &str =
-        "sha256:7594ebd8d5ea61336f33c236c213c87467b752befec1b582d7cc99ce42f8a5ab";
+    /// Arbitrary well-formed digest used as the expected value in comparison
+    /// tests. Domain validation only compares stored vs expected digests; the
+    /// serialized-byte pin for a real [`CommandSpec`] lives in
+    /// `tests/verification_result.rs`, so a CommandSpec serialization change
+    /// does not touch these tests.
+    const EXPECTED_DIGEST: &str =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 
     fn command_spec() -> CommandSpec {
         CommandSpec {
@@ -400,7 +402,7 @@ mod tests {
             root_identity: ROOT.to_string(),
             head_before: HEAD_BEFORE.to_string(),
             head_after: HEAD_AFTER.to_string(),
-            command_spec_sha256: SPEC_DIGEST.to_string(),
+            command_spec_sha256: EXPECTED_DIGEST.to_string(),
             process_disposition: VerificationProcessDispositionV1::Completed,
             exit_status: Some(0),
             stdout_sha256: ZERO_DIGEST.to_string(),
@@ -413,7 +415,7 @@ mod tests {
     fn valid_result_validates_against_exact_context() -> Result<(), String> {
         let spec = command_spec();
         result()
-            .validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER)
+            .validate_against(&spec, EXPECTED_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER)
             .map_err(|error| error.to_string())
     }
 
@@ -423,7 +425,7 @@ mod tests {
         let mut wrong_root = result();
         wrong_root.root_identity = "root:other".to_string();
         if !matches!(
-            wrong_root.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            wrong_root.validate_against(&spec, EXPECTED_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::RootIdentityMismatch { .. })
         ) {
             return Err("wrong repository root was accepted".to_string());
@@ -432,7 +434,7 @@ mod tests {
         let mut wrong_digest = result();
         wrong_digest.command_spec_sha256 = ZERO_DIGEST.to_string();
         if !matches!(
-            wrong_digest.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            wrong_digest.validate_against(&spec, EXPECTED_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::CommandSpecDigestMismatch { .. })
         ) {
             return Err("fabricated command-spec digest was accepted".to_string());
@@ -442,7 +444,13 @@ mod tests {
         receipt_spec.role = CommandRole::Receipt;
         receipt_spec.authority_boundary = CommandAuthorityBoundary::ReceiptRouteOnly;
         if !matches!(
-            result().validate_against(&receipt_spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            result().validate_against(
+                &receipt_spec,
+                EXPECTED_DIGEST,
+                ROOT,
+                HEAD_BEFORE,
+                HEAD_AFTER
+            ),
             Err(VerificationExecutionResultValidationError::NonVerificationCommandRole { .. })
         ) {
             return Err("receipt command was accepted as verification evidence".to_string());
@@ -456,7 +464,7 @@ mod tests {
         let mut malformed = result();
         malformed.head_before = format!("{}A", "a".repeat(39));
         if !matches!(
-            malformed.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            malformed.validate_against(&spec, EXPECTED_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::InvalidHead { .. })
         ) {
             return Err("malformed HEAD was accepted".to_string());
@@ -465,7 +473,13 @@ mod tests {
         let mut malformed_output = result();
         malformed_output.stdout_sha256 = "sha256:UPPER".to_string();
         if !matches!(
-            malformed_output.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            malformed_output.validate_against(
+                &spec,
+                EXPECTED_DIGEST,
+                ROOT,
+                HEAD_BEFORE,
+                HEAD_AFTER
+            ),
             Err(VerificationExecutionResultValidationError::InvalidSha256 { .. })
         ) {
             return Err("malformed output commitment was accepted".to_string());
@@ -486,7 +500,7 @@ mod tests {
         let mut missing_status = result();
         missing_status.exit_status = None;
         if !matches!(
-            missing_status.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            missing_status.validate_against(&spec, EXPECTED_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::MissingExitStatus)
         ) {
             return Err("completed result without exit status was accepted".to_string());
@@ -495,7 +509,13 @@ mod tests {
         let mut timed_out_status = result();
         timed_out_status.process_disposition = VerificationProcessDispositionV1::TimedOut;
         if !matches!(
-            timed_out_status.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            timed_out_status.validate_against(
+                &spec,
+                EXPECTED_DIGEST,
+                ROOT,
+                HEAD_BEFORE,
+                HEAD_AFTER
+            ),
             Err(VerificationExecutionResultValidationError::UnexpectedExitStatus)
         ) {
             return Err("timed-out result with exit status was accepted".to_string());
@@ -506,7 +526,7 @@ mod tests {
         if !matches!(
             changed_head.validate_against(
                 &spec,
-                SPEC_DIGEST,
+                EXPECTED_DIGEST,
                 ROOT,
                 HEAD_BEFORE,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -519,7 +539,7 @@ mod tests {
         let mut unavailable = result();
         unavailable.currentness = VerificationCurrentnessV1::Unavailable;
         if !matches!(
-            unavailable.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            unavailable.validate_against(&spec, EXPECTED_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::CurrentnessUnavailable)
         ) {
             return Err("unavailable currentness was accepted as validated".to_string());
