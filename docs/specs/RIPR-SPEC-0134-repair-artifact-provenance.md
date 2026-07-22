@@ -23,6 +23,7 @@ Support-tier impact:
 - No support-tier promotion. This contract makes static artifact currentness
   and integrity explicit; it does not claim runtime verification, correctness,
   mutation results, or merge authority.
+- Claim boundaries remain governed by the [support tiers](../status/SUPPORT_TIERS.md).
 
 ## Problem
 
