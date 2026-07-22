@@ -4791,6 +4791,225 @@ fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<()
 }
 
 #[test]
+fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release()
+-> Result<(), String> {
+    // Regression pin for the deferred-pull deadlock (#2031 review): the pull
+    // must be scheduled AFTER `workspace_root_transition` is released, because
+    // a pull that changes effective settings reaches `refresh_diagnostics` →
+    // `run_refresh_request`, which re-locks that guard on the publication
+    // path. The analysis must succeed for the lock to be reached, so the
+    // selected root uses the known-good fixture recipe (baseRef HEAD,
+    // checkMode instant). Pre-fix this exchange deadlocks and the timeout
+    // below fails the test; post-fix it completes.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let repo_root = std::fs::canonicalize(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input"),
+        )
+        .map_err(|err| format!("failed to canonicalize fixture root: {err}"))?;
+        let fixture_uri = file_uri_for_path(&repo_root)?;
+        let other = unique_lsp_test_root("framed-config-pull-deferred")?;
+        let other_uri = file_uri_for_path(other.path())?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let mut client_read = client_read;
+
+        // Ambiguous start: two workspace folders, so no single root is
+        // selected and the initialized pull defers without any client
+        // request.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "workspaceFolders": [
+                        {"uri": fixture_uri.as_str(), "name": "fixture"},
+                        {"uri": other_uri.as_str(), "name": "other"}
+                    ],
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant"
+                    },
+                    "capabilities": {
+                        "workspace": {"configuration": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        assert!(initialize.get("error").is_none());
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {}
+            }),
+        )
+        .await?;
+
+        let exchange = async {
+            // Drive a root transition to a single selected root. The server
+            // queries the client for the current folders.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeWorkspaceFolders",
+                    "params": {"event": {"added": [], "removed": []}}
+                }),
+            )
+            .await?;
+            let folders_request =
+                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": folders_request["id"].clone(),
+                    "result": [{"uri": fixture_uri.as_str(), "name": "fixture"}]
+                }),
+            )
+            .await?;
+
+            // The deferred pull must now run, scoped to the selected root.
+            let pull_request =
+                read_lsp_request(&mut client_read, "workspace/configuration").await?;
+            assert_eq!(
+                pull_request["params"]["items"],
+                serde_json::json!([{"scopeUri": fixture_uri.as_str(), "section": "ripr"}])
+            );
+            // Change effective settings so the apply path reaches
+            // refresh_diagnostics; analysis on this root succeeds, so the
+            // publication path re-locks the root transition guard.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": pull_request["id"].clone(),
+                    "result": [{"includeUnchangedTests": false}]
+                }),
+            )
+            .await?;
+
+            // Probe responsiveness: a deadlocked server never answers.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                        "arguments": []
+                    }
+                }),
+            )
+            .await?;
+            let status = read_lsp_response(&mut client_read, 2).await?;
+            assert!(status.get("error").is_none());
+            let authority = &status["result"]["analysis_status"]["input_authority"];
+            assert_eq!(authority["configuration_mode"], "pull");
+            assert_eq!(authority["configuration_pull"]["state"], "applied");
+            assert_eq!(
+                authority["session_value_sources"]["include_unchanged_tests"],
+                "pulled"
+            );
+            assert_eq!(
+                authority["session_value_sources"]["base_ref"],
+                "initialization"
+            );
+
+            // Discriminating probe: the status request above could still be
+            // answered by a concurrent handler while the transition task is
+            // deadlocked (request concurrency is 4 and the pull state is set
+            // before the refresh). An explicit refresh awaits the full
+            // analysis inline and its publication path must acquire the root
+            // transition guard, so it only completes when the deferred pull
+            // ran after the guard was released.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": REFRESH_COMMAND,
+                        "arguments": []
+                    }
+                }),
+            )
+            .await?;
+            let refresh = read_lsp_response(&mut client_read, 3).await?;
+            assert!(refresh.get("error").is_none());
+            assert_eq!(refresh["result"], serde_json::Value::Null);
+
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "shutdown",
+                    "params": null
+                }),
+            )
+            .await?;
+            let shutdown = read_lsp_response(&mut client_read, 4).await?;
+            assert!(shutdown.get("error").is_none());
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "exit",
+                    "params": null
+                }),
+            )
+            .await?;
+            client_write
+                .shutdown()
+                .await
+                .map_err(|err| format!("failed to close test client: {err}"))?;
+            Ok::<(), String>(())
+        };
+        match tokio::time::timeout(Duration::from_secs(10), exchange).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(error),
+            Err(_) => {
+                return Err(
+                    "deferred configuration pull deadlocked: it was scheduled while the workspace root transition guard was held, and its refresh path re-locks that guard"
+                        .to_string(),
+                );
+            }
+        }
+        match tokio::time::timeout(Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn backend_starts_with_default_lsp_analysis_config() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();

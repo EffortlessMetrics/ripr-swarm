@@ -1436,6 +1436,25 @@ impl Backend {
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
+        let schedule_deferred_pull = self.apply_workspace_root_authority_locked(authority).await;
+        if schedule_deferred_pull {
+            // Scheduled after the transition guard is released: a deferred
+            // configuration pull (#2031) becomes runnable once a single
+            // workspace root is selected, and its apply path can reach the
+            // refresh path, which re-locks `workspace_root_transition`
+            // (`run_refresh_request`). Scheduling inline while holding the
+            // guard would deadlock.
+            // Indirection via Box::pin: root transitions are reachable from
+            // the refresh path that a pull can schedule, so the direct call
+            // would be a recursive async fn.
+            Box::pin(self.schedule_configuration_pull()).await;
+        }
+    }
+
+    async fn apply_workspace_root_authority_locked(
+        &self,
+        authority: WorkspaceRootAuthority,
+    ) -> bool {
         let _transition = self.workspace_root_transition.lock().await;
         let authority_epoch = self.workspace_root_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let previous = self.workspace_root_authority();
@@ -1457,7 +1476,7 @@ impl Backend {
         }
 
         if self.workspace_root_epoch.load(Ordering::SeqCst) != authority_epoch {
-            return;
+            return false;
         }
 
         let final_authority = if changed
@@ -1480,16 +1499,11 @@ impl Backend {
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
         // A deferred configuration pull (#2031) becomes runnable once a
-        // single workspace root is selected.
-        if self.configuration_mode() == ConfigurationMode::Pull
+        // single workspace root is selected. The wrapper schedules it after
+        // the transition guard is released.
+        self.configuration_mode() == ConfigurationMode::Pull
             && matches!(self.config_pull_state(), ConfigPullState::Deferred)
             && self.workspace_root_authority().allows_analysis()
-        {
-            // Indirection via Box::pin: root transitions are reachable from
-            // the refresh path that a pull can schedule, so the direct call
-            // would be a recursive async fn.
-            Box::pin(self.schedule_configuration_pull()).await;
-        }
     }
 
     fn set_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
