@@ -73601,7 +73601,9 @@ fn validate_panic_allow_entry_v2(
             && value.starts_with("TODO")
         {
             return Err(format!(
-                "{path}:{line_number} {field} contains an unfilled proposal placeholder                  ({value}); replace every TODO-* field from the --propose output with                  reviewed content before committing"
+                "{path}:{line_number} {field} contains an unfilled proposal placeholder \
+                 ({value}); replace every TODO-* field from the --propose output with \
+                 reviewed content before committing"
             ));
         }
     }
