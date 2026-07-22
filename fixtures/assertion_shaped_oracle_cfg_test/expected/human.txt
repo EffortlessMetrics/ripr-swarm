@@ -12,7 +12,7 @@ Start here:
   Changed behavior: normalized.len() > path.len()
   Missing discriminator: Missing discriminator value: normalized.len() == path.len()
   Related test: src/lib.rs:23 normalized_paths_have_native_separators
-  Next step: The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it), so exact-equality advice for code under test may not ap…
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence:
     - reach yes: Related tests appear to reach assert_normalized_paths_have_no_separators: normalized_paths_have_native_separators
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing

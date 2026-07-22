@@ -14602,7 +14602,7 @@ fn cross_language_oracle_graph_validates_bun_ffi_negative_offset_profile() {
             line: Some(1),
             kind: "typescript_assertion_missing".to_string(),
             source_id: "#950".to_string(),
-            sample: "no external assertion is proven for the panic boundary".to_string(),
+            sample: "no external assertion is demonstrated for the panic boundary".to_string(),
         },
     ];
 
@@ -28807,7 +28807,7 @@ fn lane1_static_limitation_backlog_specializes_same_file_affinity_unlock_conditi
 
     assert!(unlock.contains("bounded production call graph"));
     assert!(unlock.contains("keep the limitation non-actionable"));
-    assert!(unlock.contains("direct or helper owner call is proven"));
+    assert!(unlock.contains("direct or helper owner call is demonstrated"));
 
     let generic_unlock = crate::static_limitation_unlock_condition(
         "activation_owner_call_absent_affinity_only",
