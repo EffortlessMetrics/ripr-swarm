@@ -5,7 +5,7 @@
 //! validate a result against the producer-owned command spec and the exact
 //! repository identities they observed around the run.
 
-use super::CommandSpec;
+use super::{CommandAuthorityBoundary, CommandRole, CommandSpec};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
@@ -82,6 +82,10 @@ pub enum VerificationExecutionResultValidationError {
         expected: String,
         actual: String,
     },
+    NonVerificationCommandRole {
+        role: CommandRole,
+        authority_boundary: CommandAuthorityBoundary,
+    },
     MissingExitStatus,
     UnexpectedExitStatus,
     CurrentnessUnavailable,
@@ -134,6 +138,13 @@ impl fmt::Display for VerificationExecutionResultValidationError {
             Self::CommandSpecDigestMismatch { expected, actual } => write!(
                 formatter,
                 "verification result command spec digest mismatch: expected {expected}, got {actual}"
+            ),
+            Self::NonVerificationCommandRole {
+                role,
+                authority_boundary,
+            } => write!(
+                formatter,
+                "verification result requires a verify command with verification_route_only, got role {role:?} and authority {authority_boundary:?}"
             ),
             Self::MissingExitStatus => {
                 write!(
@@ -217,6 +228,16 @@ impl VerificationExecutionResultV1 {
         command_spec.validate().map_err(|error| {
             VerificationExecutionResultValidationError::CommandSpecInvalid(error.to_string())
         })?;
+        if command_spec.role != CommandRole::Verify
+            || command_spec.authority_boundary != CommandAuthorityBoundary::VerificationRouteOnly
+        {
+            return Err(
+                VerificationExecutionResultValidationError::NonVerificationCommandRole {
+                    role: command_spec.role,
+                    authority_boundary: command_spec.authority_boundary,
+                },
+            );
+        }
         let expected_digest = command_spec_sha256(command_spec)?;
         if self.command_spec_sha256 != expected_digest {
             return Err(
@@ -294,7 +315,11 @@ fn validate_head(
     field: &'static str,
     value: &str,
 ) -> Result<(), VerificationExecutionResultValidationError> {
-    if value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
         Ok(())
     } else {
         Err(VerificationExecutionResultValidationError::InvalidHead {
@@ -416,6 +441,16 @@ mod tests {
         ) {
             return Err("fabricated command-spec digest was accepted".to_string());
         }
+
+        let mut receipt_spec = command_spec();
+        receipt_spec.role = CommandRole::Receipt;
+        receipt_spec.authority_boundary = CommandAuthorityBoundary::ReceiptRouteOnly;
+        if !matches!(
+            result(&spec)?.validate_against(&receipt_spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            Err(VerificationExecutionResultValidationError::NonVerificationCommandRole { .. })
+        ) {
+            return Err("receipt command was accepted as verification evidence".to_string());
+        }
         Ok(())
     }
 
@@ -423,7 +458,7 @@ mod tests {
     fn malformed_commitments_and_heads_fail_closed() -> Result<(), String> {
         let spec = command_spec();
         let mut malformed = result(&spec)?;
-        malformed.head_before = "abc".to_string();
+        malformed.head_before = format!("{}A", "a".repeat(39));
         if !matches!(
             malformed.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::InvalidHead { .. })
@@ -484,6 +519,15 @@ mod tests {
             Err(VerificationExecutionResultValidationError::CurrentnessUnavailable)
         ) {
             return Err("unavailable currentness was accepted as validated".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn command_spec_digest_is_pinned_to_serialized_field_order() -> Result<(), String> {
+        let digest = command_spec_sha256(&command_spec()).map_err(|error| error.to_string())?;
+        if digest != "sha256:7594ebd8d5ea61336f33c236c213c87467b752befec1b582d7cc99ce42f8a5ab" {
+            return Err(format!("unexpected command-spec digest: {digest}"));
         }
         Ok(())
     }

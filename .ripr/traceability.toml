@@ -6430,6 +6430,7 @@ tests = [
   "crates/ripr/src/domain/verification_result.rs::tests::wrong_root_and_command_digest_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::malformed_commitments_and_heads_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::impossible_process_and_currentness_states_fail_closed",
+  "crates/ripr/src/domain/verification_result.rs::tests::command_spec_digest_is_pinned_to_serialized_field_order",
 ]
 fixtures = [
   "fixtures/assurance_vocabulary",

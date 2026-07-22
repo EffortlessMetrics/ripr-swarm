@@ -153,6 +153,7 @@ negative controls for:
 - improved static movement with a failed command;
 - unavailable verification;
 - cancellation or timeout;
+- a typed timeout result carrying its command and provenance commitments;
 - malformed or unsupported `CommandSpecV1`;
 - wrong repository root;
 - fabricated result input; and

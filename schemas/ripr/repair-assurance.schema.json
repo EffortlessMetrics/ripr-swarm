@@ -95,7 +95,7 @@
           },
           "then": {
             "properties": {
-              "command_spec": { "$ref": "#/$defs/command_spec" },
+              "command_spec": { "$ref": "#/$defs/verification_command_spec" },
               "result": { "type": "null" }
             }
           }
@@ -110,7 +110,7 @@
           },
           "then": {
             "properties": {
-              "command_spec": { "$ref": "#/$defs/command_spec" },
+              "command_spec": { "$ref": "#/$defs/verification_command_spec" },
               "result": { "$ref": "#/$defs/execution_result" }
             }
           }
@@ -121,8 +121,7 @@
               "state": {
                 "enum": [
                   "verification_not_run",
-                  "verification_unavailable",
-                  "verification_cancelled_or_timed_out"
+                  "verification_unavailable"
                 ]
               }
             }
@@ -132,6 +131,41 @@
               "command_spec": { "type": "null" },
               "result": { "type": "null" }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": { "const": "verification_cancelled_or_timed_out" }
+            }
+          },
+          "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "command_spec": { "type": "null" },
+                  "result": { "type": "null" }
+                }
+              },
+              {
+                "required": ["command_spec", "result"],
+                "properties": {
+                  "command_spec": { "$ref": "#/$defs/verification_command_spec" },
+                  "result": {
+                    "allOf": [
+                      { "$ref": "#/$defs/execution_result" },
+                      {
+                        "properties": {
+                          "process_disposition": {
+                            "enum": ["cancelled", "timed_out", "output_limit_exceeded"]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
           }
         }
       ]
@@ -220,6 +254,19 @@
         },
         "human_display": { "type": "string", "minLength": 1, "maxLength": 512 }
       }
+    },
+    "verification_command_spec": {
+      "allOf": [
+        { "$ref": "#/$defs/command_spec" },
+        {
+          "type": "object",
+          "required": ["role", "authority_boundary"],
+          "properties": {
+            "role": { "const": "verify" },
+            "authority_boundary": { "const": "verification_route_only" }
+          }
+        }
+      ]
     },
     "execution_result": {
       "type": "object",

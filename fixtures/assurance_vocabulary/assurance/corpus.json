@@ -67,7 +67,7 @@
         "kind": "repair_assurance",
         "implementation_state": "design_only",
         "static_movement": {"state":"static_movement_evaluated","result":"unchanged","canonical_gap_id":"gap:boundary","seam_id":"seam:boundary","root_identity":"root:fixture","before_artifact_identity":"artifact:before","after_artifact_identity":"artifact:after","currentness":"current"},
-        "verification": {"state":"verification_cancelled_or_timed_out","command_spec":null,"result":null},
+        "verification": {"state":"verification_cancelled_or_timed_out","command_spec":{"schema_version":"1","command_id":"ripr:fixture:verification","role":"verify","execution_mode":"direct","program":"cargo","args":["test","boundary"],"working_directory":".","env_set":[],"env_passthrough":[],"environment":"clean","stdin":"null","timeout_ms":60000,"cancellation":"allowed","network":"forbidden","expected_result_parser":"exit_code","expected_exit_codes":[0],"expected_writes":[],"cost_class":"compile_or_test","platforms":["windows"],"human_display":"cargo test boundary","authority_boundary":"verification_route_only"},"result":{"schema_version":"1","root_identity":"root:fixture","head_before":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","head_after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","command_spec_sha256":"sha256:c04b2bc3fd13df0e7d1b5cd5cad9c2427d3d49864dbfb832b8f388d0f4555c6e","process_disposition":"timed_out","exit_status":null,"stdout_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","stderr_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","currentness":"current"}},
         "receipt_state": "receipt_rejected",
         "runtime_mutation": null,
         "non_claims": ["verification_incomplete","no_runtime_mutation_confirmation"]
@@ -99,7 +99,7 @@
       "id": "fabricated_result",
       "description": "A hand-authored result with a wrong producer-bound command identity is rejected.",
       "invalid": true,
-      "expected_failure": "command_spec_identity_mismatch",
+      "expected_failure": "command_spec_digest_mismatch",
       "record": {
         "schema_version": "1",
         "kind": "repair_assurance",
