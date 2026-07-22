@@ -291,14 +291,14 @@ fn run_doctor_tool(
     command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = command.spawn().map_err(|_| DoctorToolRunError::Spawn)?;
+    let mut child = command.spawn().map_err(|_err| DoctorToolRunError::Spawn)?;
     let started = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {
                 return child
                     .wait_with_output()
-                    .map_err(|_| DoctorToolRunError::Wait);
+                    .map_err(|_err| DoctorToolRunError::Wait);
             }
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
@@ -472,6 +472,46 @@ mod tests {
     /// Deterministic missing-tool assertion: probing a guaranteed-absent
     /// absolute path must fail closed with actionable evidence, independent
     /// of what happens to be (or not be) on the host's PATH.
+    #[cfg(unix)]
+    #[test]
+    fn doctor_tool_check_times_out_a_hanging_tool() -> Result<(), String> {
+        // #2183 review: a shim that blocks forever must not hang doctor;
+        // the probe terminates it at the deadline and names the timeout.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-doctor-timeout-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let shim = dir.join("ripr-hanging-probe-tool");
+        std::fs::write(&shim, "#!/bin/sh\nsleep 60\n")
+            .map_err(|err| format!("write shim: {err}"))?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| format!("chmod shim: {err}"))?;
+        }
+
+        let start = std::time::Instant::now();
+        let (status, evidence) = doctor_tool_check(shim.to_str().ok_or("shim path is not utf-8")?);
+        let elapsed = start.elapsed();
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        assert_eq!(status, DoctorStatus::Fail);
+        assert!(
+            evidence.contains("timed out"),
+            "expected a named timeout, got: {evidence}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(30),
+            "the 60s shim was not terminated: {elapsed:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn doctor_tool_check_fails_closed_for_guaranteed_missing_tool() {
         let missing = std::env::temp_dir().join(format!(
