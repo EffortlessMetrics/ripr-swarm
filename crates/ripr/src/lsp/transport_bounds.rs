@@ -121,9 +121,20 @@ impl SessionTrip {
     }
 
     fn register_waker(&self, waker: &Waker) {
-        if let Ok(mut wakers) = self.inner.wakers.lock()
-            && !wakers.iter().any(|registered| registered.will_wake(waker))
-        {
+        let Ok(mut wakers) = self.inner.wakers.lock() else {
+            return;
+        };
+        // A trip that landed between the reader's `is_tripped` check and
+        // this registration must not strand the new waker (#2185 review):
+        // `trip` stores the flag before draining, so checking under the same
+        // lock makes the two orderings safe — either the flag is already set
+        // (wake now) or the pending trip will drain us next.
+        if self.is_tripped() {
+            drop(wakers);
+            waker.wake_by_ref();
+            return;
+        }
+        if !wakers.iter().any(|registered| registered.will_wake(waker)) {
             wakers.push(waker.clone());
         }
     }
@@ -460,6 +471,48 @@ mod tests {
         let mut out = Vec::new();
         reader.read_to_end(&mut out).await?;
         Ok(out)
+    }
+
+    struct CountWake(std::sync::atomic::AtomicUsize);
+
+    impl std::task::Wake for CountWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn counting_waker() -> (Arc<CountWake>, Waker) {
+        let counter = Arc::new(CountWake(std::sync::atomic::AtomicUsize::new(0)));
+        let waker = std::task::Waker::from(Arc::clone(&counter));
+        (counter, waker)
+    }
+
+    #[test]
+    fn waker_registered_after_a_trip_is_woken_immediately() {
+        // #2185 review: a reader that registers after trip() drained the
+        // queue must not hang.
+        let session = SessionTrip::default();
+        session.trip();
+        let (counter, waker) = counting_waker();
+        session.register_waker(&waker);
+        assert_eq!(
+            counter.0.load(Ordering::SeqCst),
+            1,
+            "a waker registered after the trip must wake immediately"
+        );
+    }
+
+    #[test]
+    fn waker_registered_before_a_trip_is_woken_by_it() {
+        let session = SessionTrip::default();
+        let (counter, waker) = counting_waker();
+        session.register_waker(&waker);
+        assert_eq!(counter.0.load(Ordering::SeqCst), 0);
+        session.trip();
+        assert_eq!(counter.0.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
