@@ -316,6 +316,74 @@
         "title": "ripr: Show Route Quality"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ripr.copyTopRepairPacket",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@1"
+        },
+        {
+          "command": "ripr.copyTopVerifyCommand",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@2"
+        },
+        {
+          "command": "ripr.copyTopReceiptCommand",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@3"
+        },
+        {
+          "command": "ripr.showTopLimitation",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@4"
+        },
+        {
+          "command": "ripr.showStatus",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@5"
+        },
+        {
+          "command": "ripr.showReceiptStatus",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@6"
+        },
+        {
+          "command": "ripr.showRouteQuality",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr@7"
+        },
+        {
+          "command": "ripr.copySuggestedAssertion",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr.targeted-test@1"
+        },
+        {
+          "command": "ripr.copyTargetedTestBrief",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr.targeted-test@2"
+        },
+        {
+          "command": "ripr.openRelatedTest",
+          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
+          "group": "ripr.targeted-test@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "ripr.showStatus",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ripr.copyTopRepairPacket",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "editorTextFocus"
+      }
+    ],
     "walkthroughs": [
       {
         "id": "ripr.getStarted",
