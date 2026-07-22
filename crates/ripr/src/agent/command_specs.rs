@@ -99,13 +99,13 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
                     }
                     let out_path = words.get(redirect + 1)?.as_str();
                     (
-                        words.get(3..redirect)?.to_vec(),
+                        words.get(1..redirect)?.to_vec(),
                         CommandExecutionMode::ShellRequired,
                         vec![out_path.to_string()],
                     )
                 }
                 None => (
-                    words.get(3..)?.to_vec(),
+                    words.get(1..)?.to_vec(),
                     CommandExecutionMode::Direct,
                     Vec::new(),
                 ),
@@ -123,7 +123,7 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
             ))
         }
         Some("receipt") => {
-            let args = words.get(3..)?.to_vec();
+            let args = words.get(1..)?.to_vec();
             if args.is_empty() {
                 return None;
             }
@@ -202,6 +202,9 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
         match (quote, character) {
             (_, '\\') => escaped = true,
             (Some(active), value) if value == active => quote = None,
+            (Some(_), ';' | '&' | '|' | '<' | '>' | '`' | '$') => {
+                return None;
+            }
             (Some(_), value) => current.push(value),
             (None, '\'' | '"') => quote = Some(character),
             (None, value) if value.is_whitespace() => {
@@ -282,12 +285,34 @@ mod tests {
         {
             return Err("compound shell command crossed the typed route boundary".to_string());
         }
+        if agent_command_spec_from_display(
+            "ripr agent verify --root . --before before.json --after after.json --json || whoami",
+        )
+        .is_some()
+        {
+            return Err(
+                "alternate compound shell command crossed the typed route boundary".to_string(),
+            );
+        }
+        if agent_command_spec_from_display(
+            "ripr agent verify --root . --before before.json --after after.json --json \">\" verify.json",
+        )
+        .is_some()
+        {
+            return Err("quoted redirection operator crossed the typed route boundary".to_string());
+        }
         let verify = agent_command_spec_from_display(
             "ripr agent verify --root . --before before.json --after after.json --json > verify.json",
         )
         .ok_or_else(|| "canonical verify route was not recoverable".to_string())?;
         if verify.execution_mode != CommandExecutionMode::ShellRequired {
             return Err("recovered verify redirect was not shell_required".to_string());
+        }
+        if verify.args.get(0..2) != Some(["agent".to_string(), "verify".to_string()].as_slice()) {
+            return Err(format!(
+                "recovered verify argv omitted route words: {:?}",
+                verify.args
+            ));
         }
         verify.validate().map_err(|err| err.to_string())
     }

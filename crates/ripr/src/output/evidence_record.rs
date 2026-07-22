@@ -585,14 +585,10 @@ fn canonical_item_for(
             }),
         verify_command: recommendation.verify_command.clone(),
         receipt_command: canonical_receipt_command_for(entry, gap_state),
-        verify_command_spec: recommendation.verify_command.as_ref().map(|_| {
-            crate::agent::command_specs::agent_verify_command_spec(
-                ".",
-                "target/ripr/pilot/repo-exposure.json",
-                "target/ripr/pilot/after.repo-exposure.json",
-                None,
-            )
-        }),
+        verify_command_spec: recommendation
+            .verify_command
+            .as_deref()
+            .and_then(crate::agent::command_specs::agent_command_spec_from_display),
         receipt_command_spec: (gap_state == "actionable").then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
                 ".",
