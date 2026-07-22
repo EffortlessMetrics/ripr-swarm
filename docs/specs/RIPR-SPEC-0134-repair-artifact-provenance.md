@@ -81,7 +81,7 @@ artifact and the verifier rejects it as unsuitable evidence.
 - Producer output tests cover identity and streaming output.
 - CLI smoke tests cover a valid bound pair, a historical comparable pair,
   dirty-worktree disclosure, tampered bytes, incomparable input identities,
-  unsupported schema, and plausible uncommitted JSON.
+  unsupported schema, malformed typed seam, and plausible uncommitted JSON.
 - The editor repair-loop fixture consumes bound artifacts and records explicit
   currentness.
 

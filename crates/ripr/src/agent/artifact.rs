@@ -142,12 +142,11 @@ pub(crate) fn validate_repo_exposure_artifact(
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
         format!("agent verify {label} artifact is not a canonical repo-exposure artifact: {err}")
     })?;
-    let _ = document.seams.len();
     let RepoExposureDocument {
         schema_version,
         scope,
         artifact: identity,
-        seams: _,
+        seams,
     } = document;
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
         return Err(format!(
@@ -159,6 +158,17 @@ pub(crate) fn validate_repo_exposure_artifact(
         return Err(format!(
             "agent verify {label} artifact has unsupported scope `{}`",
             scope
+        ));
+    }
+    if seams.iter().any(|seam| {
+        seam.seam_id.trim().is_empty()
+            || seam.kind.trim().is_empty()
+            || seam.file.trim().is_empty()
+            || seam.line == 0
+            || seam.grip_class.trim().is_empty()
+    }) {
+        return Err(format!(
+            "agent verify {label} artifact contains an invalid canonical seam"
         ));
     }
     if identity.kind != "repo_exposure"
@@ -252,7 +262,16 @@ struct RepoExposureDocument {
     schema_version: String,
     scope: String,
     artifact: ArtifactIdentity,
-    seams: Vec<Value>,
+    seams: Vec<RepoExposureSeam>,
+}
+
+#[derive(serde::Deserialize)]
+struct RepoExposureSeam {
+    seam_id: String,
+    kind: String,
+    file: String,
+    line: u64,
+    grip_class: String,
 }
 
 #[derive(serde::Deserialize)]

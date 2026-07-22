@@ -1946,6 +1946,39 @@ fn agent_verify_rejects_unsupported_repo_exposure_schema() -> Result<(), Box<dyn
 }
 
 #[test]
+fn agent_verify_rejects_malformed_typed_seam() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-seam-schema");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
+    write_bound_repo_exposure_fixture(&root, &before, seam)?;
+    write_bound_repo_exposure_fixture(&root, &after, seam)?;
+    let altered =
+        std::fs::read_to_string(&before)?.replace("\"line\":42", "\"line\":\"not-a-line\"");
+    std::fs::write(&before, altered)?;
+
+    let before_path = before.display().to_string();
+    let after_path = after.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before_path,
+        "--after",
+        &after_path,
+        "--json",
+    ]);
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn agent_receipt_writes_one_seam_handoff_json() -> Result<(), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace("agent-receipt");
     std::fs::create_dir_all(&root)?;

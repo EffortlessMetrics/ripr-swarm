@@ -6413,6 +6413,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_verify_accepts_historical_comparable_pair_with_disclosure",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_discloses_current_head_with_dirty_worktree",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_unsupported_repo_exposure_schema",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_malformed_typed_seam",
   "crates/ripr/tests/cli_smoke.rs::editor_agent_loop_fixture_outputs_match_expected",
 ]
 fixtures = [
