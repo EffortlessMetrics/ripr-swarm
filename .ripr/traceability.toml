@@ -6440,6 +6440,7 @@ code = [
   "crates/ripr/src/agent/command_specs.rs",
   "crates/ripr/src/domain/command_spec.rs",
   "crates/ripr/src/domain/verification_result.rs",
+  "crates/ripr/src/command_spec_digest.rs",
   "crates/ripr/src/lsp/gap_artifacts.rs",
   "crates/ripr/src/lsp/actions.rs",
   "crates/ripr/src/output/first_useful_action/model.rs",
