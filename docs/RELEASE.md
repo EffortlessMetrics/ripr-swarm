@@ -200,11 +200,12 @@ target/ripr/install-smoke-cratesio/bin/ripr agent receipt --root . --verify-json
 ```
 
 Tag the release — in a checkout of the **source** repository
-(`EffortlessMetrics/ripr`), never in ripr-swarm (#2025):**
+(`EffortlessMetrics/ripr`), never in ripr-swarm (#2025):
 
 ```bash
-# Run inside an EffortlessMetrics/ripr checkout; `origin` must be that repo.
-git remote get-url origin   # expect github.com/EffortlessMetrics/ripr(.git)?
+# Run inside an EffortlessMetrics/ripr checkout; fetch AND push URLs must be that repo.
+git remote get-url origin        # expect github.com/EffortlessMetrics/ripr(.git)?
+git remote get-url --push origin # pushurl must also resolve to EffortlessMetrics/ripr (#2193 review)
 git tag v0.8.0
 git push origin v0.8.0
 ```
