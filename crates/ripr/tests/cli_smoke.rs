@@ -2411,6 +2411,58 @@ fn agent_receipt_rejects_tampered_verify_json() -> Result<(), Box<dyn std::error
 }
 
 #[test]
+fn agent_receipt_rejects_rerendered_verify_json() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-rerendered");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+    let verify = root.join("agent-verify.json");
+    let verify_output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before.display().to_string(),
+        "--after",
+        &after.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&verify_output);
+    // Same semantic values as canonical output, but re-rendered with compact
+    // spacing: parses to an equal Value while differing byte-for-byte.
+    let verify_value: serde_json::Value = serde_json::from_slice(&verify_output.stdout)?;
+    std::fs::write(&verify, serde_json::to_vec(&verify_value)?)?;
+
+    let output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+    ]);
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not canonical output"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn check_badge_json_output_has_native_badge_shape() {
     let root = workspace_root().display().to_string();
     let diff = sample_diff().display().to_string();

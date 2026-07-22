@@ -70,18 +70,23 @@ pub(crate) fn validate_agent_receipt_verify_json(
         Some(artifact_currentness),
     )
     .map_err(|err| receipt_verify_input_error("canonical_render", err))?;
-    let canonical: serde_json::Value = serde_json::from_str(&canonical).map_err(|err| {
-        receipt_verify_input_error(
-            "canonical_render",
-            format!("canonical agent verify JSON is not valid JSON: {err}"),
-        )
-    })?;
-    if verify != canonical {
+    // Fail-closed on bytes, not on parsed values: the supplied document must be
+    // the exact canonical rendering (up to trailing newlines), so hand-authored
+    // JSON with identical values but different key order or spacing is rejected.
+    let supplied = verify_json.trim_end_matches('\n');
+    let canonical_body = canonical.trim_end_matches('\n');
+    if supplied != canonical_body {
         return Err(receipt_verify_input_error(
             "not_canonical",
             "agent receipt verify JSON is not canonical output from ripr agent verify; rerun agent verify from the bound artifacts",
         ));
     }
+    let verify: serde_json::Value = serde_json::from_str(canonical_body).map_err(|err| {
+        receipt_verify_input_error(
+            "canonical_render",
+            format!("canonical agent verify JSON is not valid JSON: {err}"),
+        )
+    })?;
 
     Ok(ValidatedAgentReceiptVerify {
         input_paths,
