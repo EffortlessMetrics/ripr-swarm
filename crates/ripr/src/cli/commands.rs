@@ -5379,15 +5379,17 @@ mod tests {
                 "Check RIPR advisory artifacts",
                 "Add RIPR advisory summary",
                 "Upload RIPR report artifacts",
+                // Upload infra is not analysis authority (#2009 review): a
+                // CodeQL flake must not fail a gate the analysis passed.
+                "Upload RIPR diff findings",
+                "Upload RIPR repo seams",
             ],
-            // Gate-critical producers (#2009): advisory by default but
-            // blocking when the operator opted into a blocking gate.
+            // Gate-critical analysis producers (#2009): advisory by default
+            // but blocking when the operator opted into a blocking gate.
             gate_conditional_steps: &[
                 "Run RIPR PR guidance report",
                 "Render RIPR diff SARIF",
                 "Render RIPR repo seam SARIF",
-                "Upload RIPR diff findings",
-                "Upload RIPR repo seams",
             ],
             optional_sarif_steps: &[
                 "Render RIPR diff SARIF",

@@ -2151,7 +2151,10 @@ jobs:
 
       - name: Upload RIPR diff findings
         if: always() && env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request' && hashFiles('target/ripr/reports/ripr-findings.sarif') != ''
-        continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
+        # Upload infra is not analysis authority (#2009 review): a CodeQL
+        # flake must not fail a gate the analysis passed. Renders (the
+        # analysis) stay gate-conditional; uploads stay advisory.
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: target/ripr/reports/ripr-findings.sarif
@@ -2159,7 +2162,7 @@ jobs:
 
       - name: Upload RIPR repo seams
         if: always() && env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif') != ''
-        continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: target/ripr/reports/ripr-seams.sarif
