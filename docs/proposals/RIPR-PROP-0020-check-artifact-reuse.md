@@ -74,12 +74,17 @@ is a non-goal here.
 
 ### 2. New serde envelope, full-fidelity findings
 
-New `CheckArtifactV1` envelope with `schema_version`, written with atomic
-temp-file-then-rename, mirroring the seam-cache envelope discipline
-(`analysis/seam_cache.rs:289-329`, `:623+`). It serializes the complete
-`Finding` set (serde derives on the domain probe types or a faithful parallel
-DTO), including the uncapped related-tests list and the probe owner. The
-existing `check --json` render is unchanged.
+New `CheckArtifactV1` envelope with `schema_version`, written atomically:
+the temporary file is created in the destination directory (same
+filesystem, so `rename` is atomic), flushed and fsynced before the rename,
+and unlinked on any failure; a repeated `--write-artifact` to the same path
+replaces it via rename (last writer wins), and concurrent writers use
+uniquely named temp files so one writer's failure cannot tear another's
+artifact. This mirrors the seam-cache envelope discipline
+(`analysis/seam_cache.rs:289-329`, `:623+`). The envelope serializes the
+complete `Finding` set (serde derives on the domain probe types or a
+faithful parallel DTO), including the uncapped related-tests list and the
+probe owner. The existing `check --json` render is unchanged.
 
 `--from` load follows the receipt read path precedent
 (`app/receipt.rs:137-170`): parse, validate structure and `schema_version`,
@@ -90,20 +95,36 @@ fail closed with a named error on any deviation.
 The artifact embeds an input identity computed at check time:
 
 - diff-bytes hash (or requested/resolved base + head + worktree hash when no
-  `--diff` file is used);
+  `--diff` file is used), plus the diff *source* (`--diff` path, or the
+  base/head pair) so the consumer can re-resolve it;
 - root, mode, diagnostic profile, enabled languages;
-- analysis-relevant config hash (fields that change findings, not
-  render-only knobs);
+- an analysis-config identity with a **closed, versioned contract**: an
+  explicit allowlist of the config fields that change findings, canonically
+  serialized (field name, normalized value, defaults materialized), hashed,
+  and stamped with its own `config_identity_version`. Any PR that adds a
+  finding-affecting config field must extend the allowlist and bump
+  `config_identity_version` in the same PR; a test enumerates the config
+  type's fields against the allowlist so an omitted field fails CI instead
+  of silently validating stale artifacts. Render-only knobs (severity
+  display, output format, `--max-related-tests`) are excluded by the same
+  allowlist discipline;
 - analyzer version and artifact schema version.
 
-`explain --from` / `context --from` recompute the identity from the current
-invocation and compare. On any mismatch the command fails with a typed error
+`explain --from` / `context --from` do **not** require re-supplying scope
+flags: the artifact's recorded diff source is re-resolved and re-hashed
+(a recorded `--diff` path is re-read; a recorded base/head pair is
+re-resolved through git), and the current root, mode, profile, languages,
+config identity, and analyzer version are recomputed from the invocation's
+working directory and config files. The user may pass scope flags
+(`--diff`, `--base`, `--root`) alongside `--from` to assert them
+explicitly; they are then verified against the artifact instead of derived
+from it. On any mismatch — or when the recorded diff source no longer
+exists or cannot be re-resolved — the command fails with a typed error
 naming the mismatched identity fields. There is no silent fallback to
 recompute and no "close enough" matching: explaining from a stale artifact
 would explain the wrong behavior, which is exactly the failure this flow
-exists to avoid. Render-time config (severity display, output format,
-`--max-related-tests`) is not part of the identity and is honored fresh at
-render time from the current invocation.
+exists to avoid. Render-time config is not part of the identity and is
+honored fresh at render time from the current invocation.
 
 ### 4. Selection and rendering are unchanged
 
@@ -128,8 +149,10 @@ recomputed one given the same render options.
 1. `ripr check --diff X --write-artifact a.json` writes a schema-versioned
    artifact containing the full finding set and the identity block.
 2. `ripr explain --from a.json probe:<id>` and `ripr context --from a.json
-   --at probe:<id>` produce output identical to the recomputed flow without
-   re-running the pipeline (observable: no diff load, no RustIndex build).
+   --at probe:<id>` — with no scope flags, deriving and re-verifying the
+   recorded diff source — produce output identical to the recomputed flow
+   without re-running the pipeline (observable: no diff load, no RustIndex
+   build).
 3. Identity mismatch (different diff, mode, languages, or analysis-relevant
    config) fails closed with a typed error naming the mismatched fields.
 4. A malformed, truncated, or wrong-version artifact fails closed at load.
