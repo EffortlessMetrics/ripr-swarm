@@ -1,4 +1,4 @@
-use crate::domain::{LanguageId, LanguageStatus, StaticLimitKind};
+use crate::domain::{CommandSpec, LanguageId, LanguageStatus, StaticLimitKind};
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT;
 use serde_json::Value;
@@ -25,6 +25,8 @@ pub(super) struct ValidatedGapArtifact {
     pub(super) related_paths: Vec<String>,
     pub(super) verify_commands: Vec<String>,
     pub(super) receipt_commands: Vec<String>,
+    pub(super) verify_command_specs: Vec<CommandSpec>,
+    pub(super) receipt_command_specs: Vec<CommandSpec>,
     pub(super) static_limit_kinds: Vec<String>,
     pub(super) has_text_static_limit: bool,
 }
@@ -103,6 +105,11 @@ impl ValidatedGapArtifact {
             .iter()
             .chain(self.receipt_commands.iter())
             .all(|command| !command.trim().is_empty());
+        let typed_command_specs_are_valid = self
+            .verify_command_specs
+            .iter()
+            .chain(self.receipt_command_specs.iter())
+            .all(|command| command.validate().is_ok());
         let static_limits_are_structured_or_text = self
             .static_limit_kinds
             .iter()
@@ -117,6 +124,7 @@ impl ValidatedGapArtifact {
             && gap_state_is_present_or_deferred
             && path_payloads_are_present
             && command_payloads_are_present
+            && typed_command_specs_are_valid
             && static_limits_are_structured_or_text
     }
 
@@ -281,6 +289,8 @@ fn validate_first_useful_action(
         related_paths,
         verify_commands,
         receipt_commands,
+        verify_command_specs: Vec::new(),
+        receipt_command_specs: Vec::new(),
         static_limit_kinds: Vec::new(),
         has_text_static_limit: false,
     })
@@ -371,6 +381,8 @@ fn validate_gap_decision_ledger(
         related_paths,
         verify_commands,
         receipt_commands,
+        verify_command_specs: Vec::new(),
+        receipt_command_specs: Vec::new(),
         static_limit_kinds: Vec::new(),
         has_text_static_limit: false,
     })
@@ -540,6 +552,8 @@ fn validate_actionable_gaps(
         related_paths,
         verify_commands,
         receipt_commands,
+        verify_command_specs: Vec::new(),
+        receipt_command_specs: Vec::new(),
         static_limit_kinds: Vec::new(),
         has_text_static_limit: false,
     })
@@ -928,6 +942,8 @@ fn validate_evidence_record(
         related_paths,
         verify_commands,
         receipt_commands: Vec::new(),
+        verify_command_specs: Vec::new(),
+        receipt_command_specs: Vec::new(),
         static_limit_kinds: Vec::new(),
         has_text_static_limit: false,
     })
@@ -958,6 +974,8 @@ fn validate_agent_receipt(
         related_paths,
         verify_commands: Vec::new(),
         receipt_commands: Vec::new(),
+        verify_command_specs: Vec::new(),
+        receipt_command_specs: Vec::new(),
         static_limit_kinds: Vec::new(),
         has_text_static_limit: false,
     })
