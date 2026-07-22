@@ -512,14 +512,12 @@ mod tests {
         assert_eq!(commit, expected, "expected HEAD's exact commit");
 
         // A workspace with no resolvable default base fails closed with the
-        // named error instead of fabricating a commit identity.
+        // named error instead of fabricating a commit identity. A repo whose
+        // only branch is neither main nor master has no candidate in the
+        // loader's default-base search order.
         let bare = std::env::temp_dir().join("ripr-resolve-default-base-commit-empty");
         let _ = fs::remove_dir_all(&bare);
-        fs::create_dir_all(&bare)?;
-        Command::new("git")
-            .arg("init")
-            .current_dir(&bare)
-            .output()?;
+        init_git_repo(&bare, "trunk")?;
         let err = resolve_default_base_commit(&bare)
             .expect_err("expected a named error when no default base resolves");
         assert!(
