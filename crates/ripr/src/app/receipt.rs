@@ -281,10 +281,14 @@ fn bounded_receipt_file_stem(canonical_gap_id: &str) -> String {
 }
 
 fn complete_percent_encoded_prefix_len(encoded: &str, limit: usize) -> usize {
-    let prefix = &encoded[..limit];
+    let mut prefix_limit = limit.min(encoded.len());
+    while prefix_limit > 0 && !encoded.is_char_boundary(prefix_limit) {
+        prefix_limit -= 1;
+    }
+    let prefix = &encoded[..prefix_limit];
     match prefix.rfind('%') {
-        Some(percent) if percent + 3 > limit => percent,
-        _ => limit,
+        Some(percent) if percent + 3 > prefix_limit => percent,
+        _ => prefix_limit,
     }
 }
 
@@ -1164,8 +1168,10 @@ mod tests {
     fn bounded_receipt_file_stem_caps_the_complete_default_path() {
         let at_limit = "1".repeat(MAX_RECEIPT_FILENAME_STEM_LEN);
         let beyond_limit = format!("{at_limit}0");
+        let distinct_beyond_limit = format!("{at_limit}1");
         let at_limit_path = receipt_default_path(&at_limit);
         let beyond_limit_path = receipt_default_path(&beyond_limit);
+        let distinct_beyond_limit_path = receipt_default_path(&distinct_beyond_limit);
 
         assert_eq!(
             at_limit_path.to_string_lossy().len(),
@@ -1176,12 +1182,35 @@ mod tests {
             MAX_RECEIPT_DEFAULT_PATH_LEN
         );
         assert_ne!(at_limit_path, beyond_limit_path);
+        assert_ne!(beyond_limit_path, distinct_beyond_limit_path);
         assert!(
             beyond_limit_path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.contains('~'))
         );
+    }
+
+    #[test]
+    fn bounded_receipt_file_stem_preserves_short_and_percent_boundaries() {
+        let short = "gap:rust:pricing:aabbccdd";
+        assert_eq!(bounded_receipt_file_stem(short), receipt_file_stem(short));
+
+        let prefix = "1".repeat(MAX_RECEIPT_FILENAME_STEM_LEN - 1 - RECEIPT_FILENAME_HASH_HEX_LEN);
+        let percent_boundary = format!("{prefix}:{}", "tail".repeat(100));
+        let bounded = bounded_receipt_file_stem(&percent_boundary);
+        assert_eq!(bounded.as_bytes().get(prefix.len()), Some(&b'~'));
+    }
+
+    #[test]
+    fn bounded_receipt_file_stem_handles_multibyte_prefix_boundaries() {
+        let value = format!(
+            "{}é{}",
+            "1".repeat(MAX_RECEIPT_FILENAME_STEM_LEN - RECEIPT_FILENAME_HASH_HEX_LEN - 2),
+            "1".repeat(100)
+        );
+        let path = receipt_default_path(&value);
+        assert!(path.to_string_lossy().len() <= MAX_RECEIPT_DEFAULT_PATH_LEN);
     }
 
     // ── written_at format ─────────────────────────────────────────────────────

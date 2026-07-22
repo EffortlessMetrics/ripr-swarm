@@ -276,7 +276,7 @@ Options:
                         target/ripr/receipts/<canonical_gap_id>.json with
                         filename-unsafe characters (`:`, etc.) percent-encoded
                         so the default path is portable across platforms. The
-                        complete relative default path is capped at 260 characters;
+                        complete relative default path is capped at 260 bytes;
                         long IDs use a bounded prefix and digest.
   --json                Print JSON output to stdout (also written to --out path).
 
@@ -299,7 +299,7 @@ Options:
   --gap ID          Resolve path from canonical location
                     target/ripr/receipts/<canonical_gap_id>.json with
                     filename-unsafe characters (`:`, etc.) percent-encoded. The
-                    complete relative default path is capped at 260 characters;
+                    complete relative default path is capped at 260 bytes;
                     long IDs use the same bounded prefix and digest.
   --ledger PATH     Path to a gap-decision-ledger JSON file.  When provided,
                     cross-references the receipt's canonical_gap_id against the

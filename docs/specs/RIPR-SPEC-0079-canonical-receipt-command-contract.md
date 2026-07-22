@@ -119,7 +119,7 @@ deterministic, and applied on every platform, so a colon-delimited gap id
 such as `gap:rust:pricing:aabbccdd` resolves to
 `target/ripr/receipts/gap%3Arust%3Apricing%3Aaabbccdd.json` everywhere.
 The complete relative default path, including `target/ripr/receipts/` and the
-`.json` extension, is capped at 260 characters. If the encoded stem exceeds
+`.json` extension, is capped at 260 bytes. If the encoded stem exceeds
 the derived filename budget, the path uses a bounded encoded prefix plus `~`
 and the lowercase SHA-256 digest of the full canonical ID.
 The canonical gap id inside the receipt JSON is unchanged; only its
@@ -358,6 +358,8 @@ Unit tests (app layer) — `crates/ripr/src/app/receipt.rs`:
 - `receipt_out_path_uses_explicit_path_when_provided`
 - `receipt_out_path_defaults_to_canonical_location`
 - `bounded_receipt_file_stem_caps_the_complete_default_path`
+- `bounded_receipt_file_stem_preserves_short_and_percent_boundaries`
+- `bounded_receipt_file_stem_handles_multibyte_prefix_boundaries`
 
 Integration smoke tests — `crates/ripr/tests/cli_smoke.rs`:
 
