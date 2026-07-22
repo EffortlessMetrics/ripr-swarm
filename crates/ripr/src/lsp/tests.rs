@@ -4508,6 +4508,289 @@ fn session_configuration_change_preserves_invalid_repository_config_health() -> 
 }
 
 #[test]
+fn initialization_only_mode_discloses_transport_and_value_sources() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("config-mode-initialization-only")?;
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend
+            .initialize(initialize_params(
+                None,
+                Some(file_uri_for_path(root.path())?),
+            ))
+            .await
+            .map_err(|err| format!("initialize failed: {err}"))?;
+
+        let status = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected workspace status".to_string())?;
+        let authority = &status["analysis_status"]["input_authority"];
+        assert_eq!(authority["configuration_mode"], "initialization_only");
+        assert_eq!(authority["configuration_pull"]["state"], "not_applicable");
+        assert_eq!(
+            authority["configuration_pull"]["failure"],
+            serde_json::Value::Null
+        );
+        assert_eq!(authority["session_value_sources"]["check_mode"], "default");
+        assert_eq!(authority["session_value_sources"]["base_ref"], "default");
+        Ok(())
+    })
+}
+
+#[test]
+fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("config-mode-pull-pending")?;
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
+        params.capabilities.workspace =
+            Some(tower_lsp_server::ls_types::WorkspaceClientCapabilities {
+                configuration: Some(true),
+                ..tower_lsp_server::ls_types::WorkspaceClientCapabilities::default()
+            });
+        backend
+            .initialize(params)
+            .await
+            .map_err(|err| format!("initialize failed: {err}"))?;
+
+        let status = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected workspace status".to_string())?;
+        let authority = &status["analysis_status"]["input_authority"];
+        assert_eq!(authority["configuration_mode"], "pull");
+        // Startup-window honesty: no pull has resolved, so the status
+        // discloses `pending` instead of presenting defaults as accepted
+        // requested settings.
+        assert_eq!(authority["configuration_pull"]["state"], "pending");
+        Ok(())
+    })
+}
+
+#[test]
+fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-config-pull")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let mut client_read = client_read;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "origin/init",
+                        "checkMode": "fast"
+                    },
+                    "capabilities": {
+                        "workspace": {"configuration": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        assert!(initialize.get("error").is_none());
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {}
+            }),
+        )
+        .await?;
+
+        // The server must pull the bounded `ripr` section scoped to the
+        // selected root URI from `initialized`.
+        let pull_request = read_lsp_request(&mut client_read, "workspace/configuration").await?;
+        assert_eq!(
+            pull_request["params"]["items"],
+            serde_json::json!([{"scopeUri": root_uri.as_str(), "section": "ripr"}])
+        );
+        // Answer with the same checkMode the initialization options supplied:
+        // semantically unchanged effective settings must not reschedule
+        // analysis.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": pull_request["id"].clone(),
+                "result": [{"checkMode": "fast"}]
+            }),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                    "arguments": []
+                }
+            }),
+        )
+        .await?;
+        let status = read_lsp_response(&mut client_read, 2).await?;
+        assert!(status.get("error").is_none());
+        let authority = &status["result"]["analysis_status"]["input_authority"];
+        assert_eq!(authority["configuration_mode"], "pull");
+        assert_eq!(authority["configuration_pull"]["state"], "applied");
+        assert_eq!(authority["configuration_pull"]["epoch"], 0);
+        assert_eq!(authority["session_value_sources"]["check_mode"], "pulled");
+        assert_eq!(
+            authority["session_value_sources"]["base_ref"],
+            "initialization"
+        );
+        assert_eq!(
+            authority["session_value_sources"]["seam_diagnostics"],
+            "default"
+        );
+        // The pull never launched analysis.
+        assert_eq!(
+            status["result"]["analysis_status"]["snapshot_id"],
+            serde_json::Value::Null
+        );
+
+        // `workspace/didChangeConfiguration` in pull mode invalidates the
+        // pulled layer and schedules one coalesced re-pull; a malformed
+        // response is disclosed as a typed state while the last-known-good
+        // pulled layer is retained.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeConfiguration",
+                "params": {"settings": {}}
+            }),
+        )
+        .await?;
+        let repull_request = read_lsp_request(&mut client_read, "workspace/configuration").await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": repull_request["id"].clone(),
+                "result": [{"checkMode": 42}]
+            }),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                    "arguments": []
+                }
+            }),
+        )
+        .await?;
+        let status = read_lsp_response(&mut client_read, 3).await?;
+        assert!(status.get("error").is_none());
+        let authority = &status["result"]["analysis_status"]["input_authority"];
+        assert_eq!(authority["configuration_pull"]["state"], "failed");
+        assert_eq!(
+            authority["configuration_pull"]["failure"]["kind"],
+            "config_pull_invalid"
+        );
+        assert_eq!(
+            authority["configuration_pull"]["recovery_route"],
+            "retry_via_did_change_configuration"
+        );
+        assert_eq!(authority["configuration_pull"]["epoch"], 1);
+        // Last-known-good pulled settings stay disclosed as the value source.
+        assert_eq!(authority["session_value_sources"]["check_mode"], "pulled");
+        assert_eq!(
+            status["result"]["analysis_status"]["snapshot_id"],
+            serde_json::Value::Null
+        );
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "shutdown",
+                "params": null
+            }),
+        )
+        .await?;
+        let shutdown = read_lsp_response(&mut client_read, 4).await?;
+        assert!(shutdown.get("error").is_none());
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "exit",
+                "params": null
+            }),
+        )
+        .await?;
+        client_write
+            .shutdown()
+            .await
+            .map_err(|err| format!("failed to close test client: {err}"))?;
+        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn backend_starts_with_default_lsp_analysis_config() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
@@ -5105,6 +5388,21 @@ where
             return Ok((message, notifications));
         }
         notifications.push(message);
+    }
+}
+
+/// Read until a server-originated request with the given method arrives,
+/// skipping notifications. Used by configuration-pull tests where the fake
+/// client must answer `workspace/configuration` (#2031).
+async fn read_lsp_request<R>(reader: &mut R, method: &str) -> Result<serde_json::Value, String>
+where
+    R: AsyncRead + Unpin,
+{
+    loop {
+        let message = read_lsp_message(reader).await?;
+        if message.get("method").and_then(serde_json::Value::as_str) == Some(method) {
+            return Ok(message);
+        }
     }
 }
 
