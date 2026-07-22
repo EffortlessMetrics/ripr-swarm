@@ -39,7 +39,7 @@ pub enum VerificationCurrentnessV1 {
 /// A bounded observation from one explicitly executed, producer-owned command.
 ///
 /// A completed process is not proof that a static gap closed, that tests are
-/// adequate, or that runtime mutation was confirmed. The result only binds
+/// sufficient, or that runtime mutation was confirmed. The result only binds
 /// the process observation to its command specification and repository state.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct VerificationExecutionResultV1 {
