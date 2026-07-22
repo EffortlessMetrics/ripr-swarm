@@ -726,16 +726,9 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p target/ripr/reports
-          configured_languages="$(
-            ripr doctor --root . 2>/dev/null \
-              | sed -n 's/^- Enabled languages: //p' \
-              | tail -n 1 \
-              || true
-          )"
           preview_languages="$(
-            printf '%s\n' "$configured_languages" \
-              | tr ',' '\n' \
-              | sed 's/^ *//; s/ *$//' \
+            ripr doctor --root . --json 2>/dev/null \
+              | jq -r '.languages[]?' 2>/dev/null \
               | sed -n '/^typescript$/p; /^python$/p' \
               | sort -u \
               | tr '\n' ' ' \
@@ -1207,9 +1200,8 @@ jobs:
             fi
             echo
             configured_languages="$(
-              ripr doctor --root . 2>/dev/null \
-                | sed -n 's/^- Enabled languages: //p' \
-                | tail -n 1 \
+              ripr doctor --root . --json 2>/dev/null \
+                | jq -r '.languages | join(",")' 2>/dev/null \
                 || true
             )"
             if [ -z "$configured_languages" ]; then

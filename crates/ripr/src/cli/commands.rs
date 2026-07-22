@@ -9538,9 +9538,12 @@ language = "rust"
         let workflow = generated_github_actions_workflow();
         let summary = workflow_step(&workflow, "Add RIPR advisory summary");
 
-        assert!(summary.contains("ripr doctor --root ."));
+        // The generated workflow consumes the typed doctor JSON surface
+        // (#2072), not the human "Enabled languages:" line.
+        assert!(summary.contains("ripr doctor --root . --json"));
+        assert!(summary.contains("jq -r '.languages | join(\",\")'"));
         assert!(summary.contains("sed -n '/^typescript$/p; /^python$/p'"));
-        assert!(summary.contains("| tail -n 1 \\"));
+        assert!(!summary.contains("sed -n 's/^- Enabled languages: //p'"));
         assert!(summary.contains("|| true"));
         assert!(summary.contains("target/ripr/reports/repo-exposure.json"));
         assert!(summary.contains("target/ripr/pilot/repo-exposure.json"));
