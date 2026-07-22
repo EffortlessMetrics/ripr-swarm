@@ -22,6 +22,17 @@ use std::time::{Duration, Instant};
 /// the report) iterate this list, so there is exactly one place that names
 /// the probed tools.
 pub(crate) const DOCTOR_TOOLS: [&str; 3] = ["git", "cargo", "rustc"];
+
+/// How long a tool probe may run before it is terminated (#2183 review): a
+/// broken or malicious shim must not hang `ripr doctor` forever.
+///
+/// Residual, documented (#2183 review): the deadline terminates the spawned
+/// process itself, not a whole process tree. A shim that *detaches*
+/// (double-fork/setsid) work can leave that work running after the probe
+/// returns. Process-group termination needs either `unsafe` (forbidden in
+/// this crate) or a new dependency, and doctor returns bounded regardless —
+/// so the bounded-probe contract is honored while the detached-descendant
+/// case is accepted here rather than hidden.
 const DOCTOR_TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The top-level doctor status.
