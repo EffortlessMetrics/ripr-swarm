@@ -22,6 +22,8 @@ Support-tier impact:
   producing `check` run computed; reuse changes wall time, not evidence.
   The artifact is a local, disposable derivative and must never feed a
   support-tier row, gate, badge, or proof route.
+- Claim boundaries remain governed by the canonical ledger in
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
