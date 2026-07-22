@@ -1466,14 +1466,20 @@ impl Backend {
         let changed = previous.state != authority.state
             || previous.effective_root != authority.effective_root
             || previous.candidate_roots != authority.candidate_roots;
-        // Any change of the effective root affects root-scoped pulled
+        // Any change away from a selected root affects root-scoped pulled
         // settings: bump the pull epoch so an in-flight response scoped to
         // the old root is dropped. A re-pull is scheduled below whenever the
         // transition lands on an analysis-capable root — including
         // A -> unavailable -> B, where the intermediate transition has no
-        // root but the retained layer is still A-scoped (#2211 review).
+        // root but the retained layer is still A-scoped; the epoch bump at
+        // the A -> unavailable step already dropped A's in-flight responses
+        // (#2211 review). Initial selection (None -> Some) does not bump:
+        // nothing was ever scoped to a prior root.
         let root_changed = previous.effective_root != authority.effective_root;
-        if root_changed && self.configuration_mode() == ConfigurationMode::Pull {
+        if previous.effective_root.is_some()
+            && root_changed
+            && self.configuration_mode() == ConfigurationMode::Pull
+        {
             self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
         }
         if changed {
