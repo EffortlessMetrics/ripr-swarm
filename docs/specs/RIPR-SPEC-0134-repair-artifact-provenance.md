@@ -89,7 +89,8 @@ rejected before receipt issuance.
 - CLI smoke tests cover a valid bound pair, a historical comparable pair,
   dirty-worktree disclosure, tampered bytes, incomparable input identities,
   unsupported schema, malformed typed seam, plausible uncommitted JSON,
-  fabricated verify JSON, and altered verify movement.
+  fabricated verify JSON, altered verify movement, incomparable base revision,
+  and incomparable analysis inputs.
 - The editor repair-loop fixture consumes bound artifacts and records explicit
   currentness.
 
@@ -111,15 +112,15 @@ an unsupported schema fails before movement calculation.
   duplicate-field rejection.
 - `crates/ripr/tests/cli_smoke.rs` tests valid, tampered, fabricated, and
   editor-loop cases, plus receipt rejection of fabricated and altered verify
-  output.
+  output, incomparable base revisions, and incomparable analysis inputs.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/agent/artifact.rs` owns identity and commitment validation.
 - `crates/ripr/src/output/repo_exposure.rs` emits the bounded two-pass artifact.
 - `crates/ripr/src/cli/commands.rs` validates both inputs before movement.
-- `crates/ripr/src/cli/commands.rs` recomputes agent-verify output before receipt
-  issuance.
+- `crates/ripr/src/app/agent_receipt.rs` validates inputs and recomputes
+  agent-verify output before receipt issuance.
 - `crates/ripr/src/output/outcome/render_json.rs` discloses currentness.
 
 ## Metrics
