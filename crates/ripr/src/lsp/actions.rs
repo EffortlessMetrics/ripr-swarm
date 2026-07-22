@@ -1632,7 +1632,10 @@ fn absolute_related_test_path(snapshot: &AnalysisSnapshot, related: &RelatedTest
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::command_specs::{agent_receipt_command_spec, agent_verify_command_spec};
     use crate::app::Mode;
+    use crate::domain::{LanguageId, LanguageStatus};
+    use crate::lsp::gap_artifacts::{GapArtifactIdentity, GapArtifactKind};
     use crate::lsp::state::RefreshMetadata;
     use std::collections::BTreeMap;
     use tower_lsp_server::ls_types::{
@@ -1698,6 +1701,70 @@ mod tests {
     }
 
     #[test]
+    fn gap_repair_packet_projects_only_validated_command_specs() -> Result<(), String> {
+        let (params, diagnostic) = gap_action_request()?;
+        let snapshot = python_snapshot();
+        let artifact = action_artifact();
+        let valid_target = gap_repair_packet_target(&params, &snapshot, &diagnostic, &artifact)
+            .ok_or_else(|| "valid gap repair target was omitted".to_string())?;
+        if !valid_target
+            .get("command_specs")
+            .is_some_and(|value| value["verify"]["command_id"] == "ripr:agent:verify")
+        {
+            return Err(format!(
+                "valid command specs were not projected: {valid_target}"
+            ));
+        }
+
+        let mut multiple = artifact.clone();
+        let verify_spec = multiple
+            .verify_command_specs
+            .first()
+            .cloned()
+            .ok_or_else(|| "artifact omitted verify command spec".to_string())?;
+        let receipt_spec = multiple
+            .receipt_command_specs
+            .first()
+            .cloned()
+            .ok_or_else(|| "artifact omitted receipt command spec".to_string())?;
+        multiple.verify_command_specs.push(verify_spec);
+        multiple.receipt_command_specs.push(receipt_spec);
+        let multiple_target = gap_repair_packet_target(&params, &snapshot, &diagnostic, &multiple)
+            .ok_or_else(|| "multi-route gap repair target was omitted".to_string())?;
+        if !multiple_target
+            .get("command_specs")
+            .is_some_and(|value| value["verify"].is_array() && value["receipt"].is_array())
+        {
+            return Err(format!(
+                "multi-route specs were not arrays: {multiple_target}"
+            ));
+        }
+
+        let mut empty = artifact.clone();
+        empty.verify_command_specs.clear();
+        empty.receipt_command_specs.clear();
+        assert_command_specs_omitted(&params, &snapshot, &diagnostic, &empty)?;
+
+        let mut invalid = artifact.clone();
+        invalid
+            .verify_command_specs
+            .first_mut()
+            .ok_or_else(|| "artifact omitted verify command spec".to_string())?
+            .program
+            .clear();
+        assert_command_specs_omitted(&params, &snapshot, &diagnostic, &invalid)?;
+
+        let mut mismatched = artifact;
+        mismatched
+            .receipt_command_specs
+            .first_mut()
+            .ok_or_else(|| "artifact omitted receipt command spec".to_string())?
+            .role = crate::domain::CommandRole::Verify;
+        assert_command_specs_omitted(&params, &snapshot, &diagnostic, &mismatched)?;
+        Ok(())
+    }
+
+    #[test]
     fn python_pytest_name_helpers_cover_node_ids_and_fallbacks() {
         assert_eq!(
             pytest_node_id_test_name("pytest tests/test_pricing.py::TestPricing::test_boundary"),
@@ -1747,6 +1814,93 @@ mod tests {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
+    }
+
+    fn gap_action_request() -> Result<(CodeActionParams, Diagnostic), String> {
+        let diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 11,
+                    character: 0,
+                },
+                end: Position {
+                    line: 11,
+                    character: 120,
+                },
+            },
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: None,
+            code_description: None,
+            source: Some("ripr".to_string()),
+            message: "ripr gap: MissingBoundaryAssertion".to_string(),
+            related_information: None,
+            tags: None,
+            data: Some(serde_json::json!({
+                "source": "gap_decision_ledger",
+                "gap_id": "gap:py:pricing",
+                "canonical_gap_id": "gap:py:pricing",
+                "language": "python",
+                "gap_state": "actionable",
+                "repairability": "repairable",
+                "repair_route": {
+                    "route_kind": "existing_test_strengthening",
+                    "target_file": "tests/test_pricing.py",
+                    "related_test": "tests/test_pricing.py::test_discount_boundary"
+                },
+                "verification_commands": ["ripr agent verify --root . --json"],
+                "receipt_command": "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json"
+            })),
+        };
+        Ok((code_action_params(vec![diagnostic.clone()])?, diagnostic))
+    }
+
+    fn action_artifact() -> ValidatedGapArtifact {
+        ValidatedGapArtifact {
+            kind: GapArtifactKind::GapDecisionLedger,
+            root: Some(".".to_string()),
+            identities: vec![GapArtifactIdentity {
+                canonical_gap_id: Some("gap:py:pricing".to_string()),
+                seam_id: Some("seam-a".to_string()),
+                finding_id: None,
+            }],
+            language: Some(LanguageId::Python),
+            language_status: Some(LanguageStatus::Preview),
+            gap_state: Some("actionable".to_string()),
+            related_paths: vec!["tests/test_pricing.py".to_string()],
+            verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+            receipt_commands: vec![
+                "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json"
+                    .to_string(),
+            ],
+            verify_command_specs: vec![agent_verify_command_spec(
+                ".",
+                "before.json",
+                "after.json",
+                None,
+            )],
+            receipt_command_specs: vec![agent_receipt_command_spec(
+                ".",
+                "verify.json",
+                "seam-a",
+                Some("receipt.json"),
+            )],
+            static_limit_kinds: Vec::new(),
+            has_text_static_limit: false,
+        }
+    }
+
+    fn assert_command_specs_omitted(
+        params: &CodeActionParams,
+        snapshot: &AnalysisSnapshot,
+        diagnostic: &Diagnostic,
+        artifact: &ValidatedGapArtifact,
+    ) -> Result<(), String> {
+        let target = gap_repair_packet_target(params, snapshot, diagnostic, artifact)
+            .ok_or_else(|| "gap repair target was omitted before projection".to_string())?;
+        if target.get("command_specs").is_some() {
+            return Err(format!("invalid command specs were projected: {target}"));
+        }
+        Ok(())
     }
 
     fn gap_diagnostic() -> Diagnostic {
