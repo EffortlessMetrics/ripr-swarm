@@ -8,14 +8,14 @@ pub fn assert_workspace_source_paths_are_stable(fragments: &[Fragment]) {
         let missing = if fragment.crate_root.is_none() { 1 } else { 0 };
         assert_eq!(missing, 0, "crate `{}` lost its source root", fragment.crate_name);
         assert_eq!(
-            fragment.crate_root.as_deref(),
-            Some(expected.as_str()),
+            fragment.crate_root.as_deref().unwrap_or(""),
+            expected,
             "crate `{}` reported an unexpected source root",
             fragment.crate_name,
         );
         for span in &fragment.spans {
             assert!(
-                !span.file.contains('/'),
+                !span.file.contains('\\'),
                 "span path `{}` keeps a native separator",
                 span.file,
             );

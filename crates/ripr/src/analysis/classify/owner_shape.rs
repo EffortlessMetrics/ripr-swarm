@@ -17,8 +17,17 @@
 //! Fail-closed on purpose: any unrecognized statement, and any non-test caller
 //! (even a bare-name token coincidence), disqualifies the owner. Under-emit is
 //! preferred over over-emit.
+//!
+//! Caller test-ness reuses the shared production-function predicate
+//! (`!is_test && !is_test_file(file)`, as in
+//! `test_grip_evidence::related_tests::context`): a caller located under
+//! `tests/` counts as a test caller even when it is a plain helper fn without
+//! `#[test]`. A plain helper inside a `#[cfg(test)]` module in a `src/` file
+//! is NOT visible to this predicate (the index marks test-ness by attribute
+//! only), so such a caller still blocks the reframe — the fail-closed
+//! direction.
 
-use super::super::rust_index::{FunctionSummary, RustIndex};
+use super::super::rust_index::{FunctionSummary, RustIndex, is_test_file};
 
 /// Assert-family macros in scope for RIPR-SPEC-0133. `assert_matches!` and
 /// snapshot macros are deliberately excluded: a body using them leaves an
@@ -39,13 +48,16 @@ pub(in crate::analysis) fn is_assertion_shaped_owner(
     body_is_assertion_dominated(&owner.body) && !has_non_test_caller(owner, index)
 }
 
-/// A non-test caller is any non-test function in the index (other than the
-/// owner itself) whose call facts mention the owner's bare name. Bare-name
-/// matching can collide with a different same-named function, but a collision
-/// only *blocks* the oracle reframe — the fail-closed direction.
+/// A non-test caller is any function in the index (other than the owner
+/// itself) that the shared production-function predicate counts as production
+/// (`!is_test && !is_test_file(file)`) and whose call facts mention the
+/// owner's bare name. Bare-name matching can collide with a different
+/// same-named function, but a collision only *blocks* the oracle reframe —
+/// the fail-closed direction.
 fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
     index.functions.iter().any(|function| {
         !function.is_test
+            && !is_test_file(&function.file)
             && function.id != owner.id
             && function.calls.iter().any(|call| call.name == owner.name)
     })
@@ -55,12 +67,15 @@ fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
 /// that are neither declarations (`let`), control flow, structure, nor
 /// assert-family calls.
 ///
-/// Statements are accumulated line-by-line until a line ends with `;` or `{`
-/// (or closes a block). There is no paren-depth tracking: a multi-line
+/// Statements are accumulated line-by-line until a line ends with `;`, `{`, or
+/// `}` (or closes a block). There is no paren-depth tracking: a multi-line
 /// statement simply keeps accumulating, and the joined text is classified as a
 /// whole, so char literals like `'('` cannot skew the scan. A statement the
 /// scanner cannot recognize counts as `Other` and blocks the detection —
-/// fail-closed.
+/// fail-closed. A single-line compound statement (a block that opens and
+/// closes on the same line, e.g. `if cond { side_effect(); }`) is classified
+/// by its inner fragments so a non-assert call cannot hide inside a control
+/// header.
 fn body_is_assertion_dominated(body: &str) -> bool {
     let mut assert_statements = 0usize;
     let mut other_statements = 0usize;
@@ -77,8 +92,10 @@ fn body_is_assertion_dominated(body: &str) -> bool {
         }
         statement.push_str(trimmed);
 
-        let completes =
-            trimmed.ends_with(';') || trimmed.ends_with('{') || trimmed.starts_with('}');
+        let completes = trimmed.ends_with(';')
+            || trimmed.ends_with('{')
+            || trimmed.ends_with('}')
+            || trimmed.starts_with('}');
         if completes {
             record_statement(&statement, &mut assert_statements, &mut other_statements);
             statement.clear();
@@ -106,6 +123,9 @@ enum StatementKind {
 }
 
 fn classify_statement(statement: &str) -> StatementKind {
+    if let Some(kind) = classify_compound_statement(statement) {
+        return kind;
+    }
     if contains_assert_family_call(statement) {
         return StatementKind::Assert;
     }
@@ -128,7 +148,7 @@ fn classify_statement(statement: &str) -> StatementKind {
         || rest.starts_with("let ")
         || rest.starts_with('}')
         || rest.starts_with('#')
-        || ["for ", "if ", "else", "match ", "while ", "loop"]
+        || CONTROL_PREFIXES
             .iter()
             .any(|prefix| rest.starts_with(prefix));
     if ignorable {
@@ -136,6 +156,48 @@ fn classify_statement(statement: &str) -> StatementKind {
     } else {
         StatementKind::Other
     }
+}
+
+const CONTROL_PREFIXES: [&str; 7] = ["for ", "if ", "else", "match ", "while ", "loop", "}"];
+
+/// Classify a single-line compound statement (block opens and closes within
+/// the accumulated statement, e.g. `if cond { side_effect(); }`) by its inner
+/// fragments. Returns `None` for statements that are not single-line
+/// compounds. Inner fragments must all be empty, declarations, control
+/// keywords, or assert-family calls; anything else is `Other` — a side effect
+/// must not hide inside a control header. Fail-closed: match arms like
+/// `_ => {}` are not control-headed and fall through to the caller, which
+/// counts them as `Other`.
+fn classify_compound_statement(statement: &str) -> Option<StatementKind> {
+    let control_headed = CONTROL_PREFIXES
+        .iter()
+        .any(|prefix| statement.starts_with(prefix));
+    if !control_headed || !statement.contains('{') || !statement.ends_with('}') {
+        return None;
+    }
+    let open = statement.find('{')? + 1;
+    let close = statement.rfind('}')?;
+    if open >= close {
+        return Some(StatementKind::Ignorable);
+    }
+    let inner = &statement[open..close];
+    let mut saw_assert = false;
+    for fragment in inner.split([';', '{', '}']) {
+        let fragment = fragment.trim();
+        if fragment.is_empty() || fragment == "else" || fragment.starts_with("let ") {
+            continue;
+        }
+        if contains_assert_family_call(fragment) {
+            saw_assert = true;
+            continue;
+        }
+        return Some(StatementKind::Other);
+    }
+    Some(if saw_assert {
+        StatementKind::Assert
+    } else {
+        StatementKind::Ignorable
+    })
 }
 
 fn contains_assert_family_call(text: &str) -> bool {
@@ -421,6 +483,110 @@ mod tests {
         assert!(
             is_assertion_shaped_owner(&owner, &index),
             "expect-based setup plus asserts stays assertion-shaped"
+        );
+        Ok(())
+    }
+
+    // Review finding (PR #2170): a single-line `if cond { side_effect(); }`
+    // must not merge with the following line (which would classify the merge
+    // as Assert) and must not hide the side effect inside the control header.
+    #[test]
+    fn single_line_if_with_side_effect_blocks_dominance() -> Result<(), String> {
+        let owner = function(
+            "src/lib.rs",
+            "helper",
+            "fn helper(value: i32) {\n    if value > 0 { side_effect(); }\n    assert!(value > 1);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "a side effect inside a single-line if must block the reframe"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn single_line_if_wrapping_only_asserts_stays_assertion_shaped() -> Result<(), String> {
+        let owner = function(
+            "src/lib.rs",
+            "assert_positive",
+            "fn assert_positive(value: i32) {\n    if value == 0 { assert_ne!(value, 0); }\n    assert!(value > 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            is_assertion_shaped_owner(&owner, &index),
+            "a single-line if wrapping only asserts is still an oracle"
+        );
+        Ok(())
+    }
+
+    // Review finding (PR #2170): a caller located under `tests/` counts as a
+    // test caller even when it is a plain helper fn without #[test]; a plain
+    // helper in `src/` remains a production caller and blocks the reframe.
+    #[test]
+    fn plain_helper_caller_in_test_file_does_not_block_reframe() -> Result<(), String> {
+        let owner = function(
+            "src/lib.rs",
+            "assert_invariants",
+            "fn assert_invariants(value: i32) {\n    assert!(value >= 0);\n    assert_eq!(value % 2, 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let test_helper_caller = function(
+            "tests/helpers.rs",
+            "check_defaults",
+            "fn check_defaults() {\n    assert_invariants(2);\n}\n",
+            false,
+            vec!["assert_invariants"],
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone(), test_helper_caller],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            is_assertion_shaped_owner(&owner, &index),
+            "a plain helper under tests/ is a test caller"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn plain_helper_caller_in_src_blocks_reframe() -> Result<(), String> {
+        let owner = function(
+            "src/lib.rs",
+            "assert_invariants",
+            "fn assert_invariants(value: i32) {\n    assert!(value >= 0);\n    assert_eq!(value % 2, 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let src_helper_caller = function(
+            "src/util.rs",
+            "check_defaults",
+            "fn check_defaults() {\n    assert_invariants(2);\n}\n",
+            false,
+            vec!["assert_invariants"],
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone(), src_helper_caller],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "a plain helper in src/ is a production caller"
         );
         Ok(())
     }
