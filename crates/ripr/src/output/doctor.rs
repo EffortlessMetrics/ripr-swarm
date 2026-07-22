@@ -570,7 +570,7 @@ mod tests {
                     .create_new(true)
                     .open(&shim)
                     .map_err(|err| format!("create shim: {err}"))?;
-                file.write_all(b"#!/bin/sh\nexec sleep 60\n")
+                file.write_all(b"#!/bin/sh\nexec /usr/bin/sleep 60\n")
                     .map_err(|err| format!("write shim: {err}"))?;
                 file.set_permissions(std::fs::Permissions::from_mode(0o755))
                     .map_err(|err| format!("chmod shim: {err}"))?;
