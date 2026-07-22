@@ -590,7 +590,12 @@ mod tests {
                     .create_new(true)
                     .open(&shim)
                     .map_err(|err| format!("create shim: {err}"))?;
-                file.write_all(b"#!/bin/sh\nexec /usr/bin/sleep 60\n")
+                let sleep = ["/usr/bin/sleep", "/bin/sleep"]
+                    .into_iter()
+                    .find(|candidate| std::path::Path::new(candidate).is_file())
+                    .ok_or("no portable Unix sleep utility found")?;
+                let script = format!("#!/bin/sh\nexec {sleep} 60\n");
+                file.write_all(script.as_bytes())
                     .map_err(|err| format!("write shim: {err}"))?;
                 file.set_permissions(std::fs::Permissions::from_mode(0o755))
                     .map_err(|err| format!("chmod shim: {err}"))?;
