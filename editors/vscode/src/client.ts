@@ -478,6 +478,12 @@ export class RiprClientController {
     }
     const picked = state.roots.find((root) => sameWorkspaceRoot(root, this.selectedWorkspaceRoot!));
     if (!picked) {
+      // Do not silently drop a stale pick (#2180 review): name why the
+      // session selection is not being applied.
+      this.output.appendLine(
+        `ripr previously selected workspace root '${this.selectedWorkspaceRoot}' is no longer in the workspace; run ripr: Select Workspace Root again.`
+      );
+      this.selectedWorkspaceRoot = undefined;
       return state;
     }
     return {
