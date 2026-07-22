@@ -146,6 +146,31 @@ fn write_bound_repo_exposure_fixture(
     Ok(())
 }
 
+fn write_fabricated_agent_verify_json(
+    path: &Path,
+    before: &Path,
+    after: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let before_display = before.display().to_string().replace('\\', "/");
+    let after_display = after.display().to_string().replace('\\', "/");
+    std::fs::write(
+        path,
+        format!(
+            r#"{{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
+  "inputs": {{"before": "{}", "after": "{}"}},
+  "summary": {{"improved": 1, "changed": 0, "regressed": 0, "unchanged": 0, "new": 0, "resolved": 0}},
+  "changed_seams": [{{"seam_id":"seam-a","seam_kind":"predicate_boundary","file":"src/pricing.rs","line":42,"before":"weakly_gripped","after":"strongly_gripped","change":"improved","evidence_delta":[]}}],
+  "unchanged_seams": [], "new_gaps": [], "resolved_gaps": []
+}}"#,
+            before_display, after_display
+        ),
+    )?;
+    Ok(())
+}
+
 fn init_git_fixture_repo(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(root.join("marker.txt"), "fixture\n")?;
     run_git(root, &["init"])?;
@@ -2230,23 +2255,7 @@ fn agent_receipt_rejects_fabricated_verify_json() -> Result<(), Box<dyn std::err
         r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
     )?;
     let verify = root.join("fabricated-agent-verify.json");
-    let before_display = before.display().to_string().replace('\\', "/");
-    let after_display = after.display().to_string().replace('\\', "/");
-    std::fs::write(
-        &verify,
-        format!(
-            r#"{{
-  "schema_version": "0.1",
-  "tool": "ripr",
-  "status": "advisory",
-  "inputs": {{"before": "{}", "after": "{}"}},
-  "summary": {{"improved": 1, "changed": 0, "regressed": 0, "unchanged": 0, "new": 0, "resolved": 0}},
-            "changed_seams": [{{"seam_id":"seam-a","seam_kind":"predicate_boundary","file":"src/pricing.rs","line":42,"before":"weakly_gripped","after":"strongly_gripped","change":"improved","evidence_delta":[]}}],
-  "unchanged_seams": [], "new_gaps": [], "resolved_gaps": []
-}}"#,
-            before_display, after_display
-        ),
-    )?;
+    write_fabricated_agent_verify_json(&verify, &before, &after)?;
 
     let output = run_ripr(&[
         "agent",
@@ -2262,6 +2271,90 @@ fn agent_receipt_rejects_fabricated_verify_json() -> Result<(), Box<dyn std::err
     assert_failure(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("not canonical output"), "stderr: {stderr}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_receipt_rejects_incomparable_base_revision() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-base-mismatch");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+    let altered = std::fs::read_to_string(&after)?.replace(
+        "\"base_revision\": null",
+        "\"base_revision\": \"base:other\"",
+    );
+    std::fs::write(&after, recommit_repo_exposure_json(altered))?;
+    let verify = root.join("fabricated-agent-verify.json");
+    write_fabricated_agent_verify_json(&verify, &before, &after)?;
+
+    let output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+    ]);
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("[incomparable_base_revision]"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_receipt_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-input-mismatch");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+    let altered = std::fs::read_to_string(&after)?.replace(
+        "\"input_identity\": \"input:fixture\"",
+        "\"input_identity\": \"input:other\"",
+    );
+    std::fs::write(&after, recommit_repo_exposure_json(altered))?;
+    let verify = root.join("fabricated-agent-verify.json");
+    write_fabricated_agent_verify_json(&verify, &before, &after)?;
+
+    let output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+    ]);
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("[incomparable_analysis_inputs]"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
