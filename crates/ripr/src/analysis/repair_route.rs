@@ -1,14 +1,21 @@
-//! Producer-owned repair-route readiness.
+//! Producer-owned repair-route readiness and repair-packet eligibility.
 //!
 //! This module decides whether the analyzer facts are sufficient to localize
 //! one safe test-only repair. Output projections consume this result; they do
 //! not infer test identity, effect sinks, or missing observations themselves.
+//!
+//! `repair_packet_eligibility` is the single authority for the
+//! safe-for-repair-packet flip (`repair_packet_ready`). Consumers must route
+//! through it (or its derived `is_safe_for_repair_packet`) instead of
+//! hand-conjoining readiness, class, and cross-language predicates; the
+//! actionability flip is fail-closed and every ineligible state carries a
+//! typed reason.
 
 use super::seam_classification::ClassifiedSeam;
 use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::analysis::canonical_gap::canonical_gap_identity;
-use crate::domain::{OracleKind, OracleStrength, StageState};
+use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
 use std::path::PathBuf;
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
@@ -96,6 +103,85 @@ impl RepairRouteReadiness {
 
 pub(crate) fn repair_projection_ready(entry: &ClassifiedSeam) -> bool {
     repair_route_readiness(entry).is_repair_ready()
+}
+
+/// Typed reason a seam is not eligible for a repair packet. The flip is
+/// fail-closed: any state not explicitly mapped to eligible is ineligible,
+/// and the first failing gate (in the fixed order below) is the reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RepairPacketIneligibility {
+    /// Governance (`Intentional`/`Suppressed`), already-gripped, and
+    /// non-headline classes are not targeted-test repair targets.
+    ClassNotHeadlineEligible,
+    /// A binding/FFI or external-language surface leaves the oracle path
+    /// unresolved from Rust static evidence.
+    CrossLanguageOracleVisibilityUnresolved,
+    /// A binding/FFI or external-language surface leaves the safe repair
+    /// test target unresolved.
+    CrossLanguageTestTargetUnresolved,
+    /// Producer-owned route readiness did not reach `Ready` with a
+    /// selected target.
+    RouteNotReady,
+}
+
+/// Producer-owned repair-packet eligibility: the single authority for the
+/// safe-for-repair-packet flip. Computed once from analyzer facts so no
+/// output surface hand-conjoins readiness, class, and cross-language
+/// predicates.
+#[derive(Clone, Debug)]
+pub(crate) struct RepairPacketEligibility {
+    /// The underlying producer-owned route readiness.
+    pub(crate) readiness: RepairRouteReadiness,
+    /// First failing gate when the seam is not eligible; `None` only when
+    /// every producer fact needed for a safe targeted-test repair packet
+    /// is present.
+    pub(crate) ineligibility: Option<RepairPacketIneligibility>,
+}
+
+impl RepairPacketEligibility {
+    /// Fail-closed flip: true only when no ineligibility gate fired.
+    pub(crate) fn eligible(&self) -> bool {
+        self.ineligibility.is_none()
+    }
+}
+
+pub(crate) fn repair_packet_eligibility(entry: &ClassifiedSeam) -> RepairPacketEligibility {
+    let readiness = repair_route_readiness(entry);
+    let oracle_unresolved = cross_language_oracle_visibility_unresolved(entry);
+    let target_unresolved = cross_language_test_target_unresolved(entry);
+    let ineligibility = if !entry.class.is_headline_eligible() {
+        Some(RepairPacketIneligibility::ClassNotHeadlineEligible)
+    } else if oracle_unresolved {
+        Some(RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved)
+    } else if target_unresolved {
+        Some(RepairPacketIneligibility::CrossLanguageTestTargetUnresolved)
+    } else if !readiness.is_repair_ready() {
+        Some(RepairPacketIneligibility::RouteNotReady)
+    } else {
+        None
+    };
+    RepairPacketEligibility {
+        readiness,
+        ineligibility,
+    }
+}
+
+pub(crate) fn is_safe_for_repair_packet(entry: &ClassifiedSeam) -> bool {
+    repair_packet_eligibility(entry).eligible()
+}
+
+/// Whether the seam appears in the agent packet queue at all. This is the
+/// queue-inclusion decision, not the repair flip: queued seams that are not
+/// repair-packet eligible render as `inspect_static_limitation` packets.
+///
+/// Headline-eligible classes are the natural agent targets. `Opaque` is
+/// also queued as `inspect_static_limitation`. `Intentional` and
+/// `Suppressed` are governance classes; the agent should not be told to
+/// repair them.
+pub(crate) fn repair_packet_queue_visible(entry: &ClassifiedSeam) -> bool {
+    (entry.class.is_headline_eligible() || matches!(entry.class, SeamGripClass::Opaque))
+        && !cross_language_oracle_visibility_unresolved(entry)
+        && !cross_language_test_target_unresolved(entry)
 }
 
 pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadiness {
@@ -531,10 +617,548 @@ fn oracle_for_seam(kind: SeamKind) -> OracleKind {
     }
 }
 
+/// Whether a binding/FFI or external-language surface leaves the oracle
+/// path unresolved from Rust static evidence. Pure producer fact over the
+/// classified seam; moved up from `output::evidence_record` so the
+/// repair-packet eligibility authority owns it.
+pub(crate) fn cross_language_oracle_visibility_unresolved(entry: &ClassifiedSeam) -> bool {
+    if !entry.class.is_headline_eligible() && !matches!(entry.class, SeamGripClass::Opaque) {
+        return false;
+    }
+
+    if has_external_language_related_test(entry) {
+        return true;
+    }
+
+    cross_language_surface_hint(entry) && !has_rust_related_test(entry)
+}
+
+/// Whether a binding/FFI or external-language surface leaves the safe
+/// repair test target unresolved. Pure producer fact over the classified
+/// seam; moved up from `output::evidence_record` so the repair-packet
+/// eligibility authority owns it.
+pub(crate) fn cross_language_test_target_unresolved(entry: &ClassifiedSeam) -> bool {
+    if !entry.class.is_headline_eligible() && !matches!(entry.class, SeamGripClass::Opaque) {
+        return false;
+    }
+
+    (has_external_language_related_test(entry) || cross_language_surface_hint(entry))
+        && !has_rust_side_target_context(entry)
+}
+
+fn has_rust_related_test(entry: &ClassifiedSeam) -> bool {
+    entry
+        .evidence
+        .related_tests
+        .iter()
+        .any(related_test_is_rust)
+}
+
+fn has_rust_side_target_context(entry: &ClassifiedSeam) -> bool {
+    entry.evidence.related_tests.iter().any(|test| {
+        related_test_is_rust(test)
+            && matches!(
+                test.relation_reason,
+                RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+            )
+    })
+}
+
+fn related_test_is_rust(test: &RelatedTestGrip) -> bool {
+    test.file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+}
+
+fn has_external_language_related_test(entry: &ClassifiedSeam) -> bool {
+    entry.evidence.related_tests.iter().any(|test| {
+        test.file
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(is_external_language_extension)
+    })
+}
+
+fn is_external_language_extension(extension: &str) -> bool {
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "ts" | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "py"
+            | "rb"
+            | "java"
+            | "c"
+            | "cc"
+            | "cpp"
+            | "cxx"
+            | "swift"
+            | "kt"
+            | "kts"
+    )
+}
+
+fn cross_language_surface_hint(entry: &ClassifiedSeam) -> bool {
+    // Stable slash separators, identical to `output::path::display_path`;
+    // inlined here so `analysis` does not depend on `output`.
+    let file = entry
+        .seam
+        .file()
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let owner = entry.seam.owner().to_ascii_lowercase();
+    let expression = entry.seam.expression().to_ascii_lowercase();
+
+    path_has_cross_language_segment(&file)
+        || text_has_cross_language_marker(&owner)
+        || text_has_cross_language_marker(&expression)
+}
+
+fn path_has_cross_language_segment(file: &str) -> bool {
+    let normalized = file.replace('\\', "/");
+    normalized.split('/').any(|segment| {
+        matches!(
+            segment,
+            "ffi"
+                | "binding"
+                | "bindings"
+                | "napi"
+                | "neon"
+                | "wasm"
+                | "wasm_bindgen"
+                | "pyo3"
+                | "python"
+                | "jni"
+                | "uniffi"
+                | "cxx"
+                | "node"
+                | "jsc"
+                | "javascriptcore"
+        )
+    })
+}
+
+fn text_has_cross_language_marker(text: &str) -> bool {
+    const TOKEN_MARKERS: &[&str] = &[
+        "from_js",
+        "to_js",
+        "jsvalue",
+        "js_value",
+        "napi",
+        "wasm_bindgen",
+        "extern_c",
+        "no_mangle",
+        "export_name",
+        "ffi",
+        "pyo3",
+        "node_api",
+        "jni",
+        "uniffi",
+    ];
+    let has_token_marker = text
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .filter(|token| !token.is_empty())
+        .any(|token| {
+            TOKEN_MARKERS.iter().any(|marker| {
+                token == *marker
+                    || token.starts_with(marker)
+                        && token.as_bytes().get(marker.len()) == Some(&b'_')
+            })
+        });
+
+    has_token_marker
+        || text.contains("jsc::")
+        || text.contains("javascriptcore")
+        || text.contains("extern \"c\"")
+        || text.contains("cxx::bridge")
+        || text.starts_with("python::")
+        || text.contains("::python::")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::discriminator_fact_matches;
-    use crate::analysis::seams::RequiredDiscriminator;
+    use super::{
+        ClassifiedSeam, RepairPacketIneligibility, cross_language_oracle_visibility_unresolved,
+        discriminator_fact_matches, is_safe_for_repair_packet, repair_packet_eligibility,
+        repair_packet_queue_visible, repair_projection_ready,
+    };
+    use crate::analysis::seams::{
+        ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+    };
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, TestGripEvidence, TestTargetEvidence,
+    };
+    use crate::domain::{
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, RelationReason,
+        StageEvidence, StageState,
+    };
+    use std::path::{Path, PathBuf};
+
+    fn stage(state: StageState) -> StageEvidence {
+        StageEvidence::new(state, Confidence::Medium, "test stage")
+    }
+
+    fn boundary_seam() -> RepoSeam {
+        RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+    }
+
+    fn rust_related_test(relation_reason: RelationReason) -> RelatedTestGrip {
+        RelatedTestGrip {
+            test_name: "below_threshold_has_no_discount".to_string(),
+            file: PathBuf::from("tests/pricing.rs"),
+            line: 12,
+            test_target: Some(TestTargetEvidence::fixture(
+                "below_threshold_has_no_discount",
+                Path::new("tests/pricing.rs"),
+                12,
+            )),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "exact value assertion".to_string(),
+            relation_reason,
+            relation_confidence: RelationConfidence::High,
+        }
+    }
+
+    fn external_related_test() -> RelatedTestGrip {
+        RelatedTestGrip {
+            test_name: "fetch blob resizes".to_string(),
+            file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
+            line: 9,
+            test_target: Some(TestTargetEvidence::fixture(
+                "fetch blob resizes",
+                Path::new("test/js/web/fetch/blob.test.ts"),
+                9,
+            )),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "external observer assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        }
+    }
+
+    fn classified_with(
+        seam: RepoSeam,
+        class: SeamGripClass,
+        related_tests: Vec<RelatedTestGrip>,
+    ) -> ClassifiedSeam {
+        let seam_id = seam.id().clone();
+        ClassifiedSeam {
+            seam,
+            evidence: TestGripEvidence {
+                seam_id,
+                related_tests,
+                reach: stage(StageState::Yes),
+                activate: stage(StageState::Yes),
+                propagate: stage(StageState::Yes),
+                observe: stage(StageState::Yes),
+                discriminate: stage(StageState::Yes),
+                observed_values: Vec::new(),
+                missing_discriminators: vec![MissingDiscriminatorFact {
+                    value: "discount_threshold (equality boundary)".to_string(),
+                    reason: "observed values do not include the equality-boundary case".to_string(),
+                    flow_sink: None,
+                }],
+            },
+            class,
+        }
+    }
+
+    #[test]
+    fn repair_ready_headline_seam_is_safe_for_repair_packet() -> Result<(), String> {
+        let entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::WeaklyGripped,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+
+        let eligibility = repair_packet_eligibility(&entry);
+        assert!(eligibility.eligible());
+        assert_eq!(eligibility.ineligibility, None);
+        assert!(is_safe_for_repair_packet(&entry));
+        assert!(repair_projection_ready(&entry));
+        assert!(repair_packet_queue_visible(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn headline_seam_without_route_readiness_is_fail_closed() -> Result<(), String> {
+        let entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+
+        let eligibility = repair_packet_eligibility(&entry);
+        assert!(!eligibility.eligible());
+        assert_eq!(
+            eligibility.ineligibility,
+            Some(RepairPacketIneligibility::RouteNotReady)
+        );
+        assert!(!is_safe_for_repair_packet(&entry));
+        assert!(repair_packet_queue_visible(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn non_headline_classes_are_fail_closed_with_typed_reason() -> Result<(), String> {
+        for class in [
+            SeamGripClass::StronglyGripped,
+            SeamGripClass::Intentional,
+            SeamGripClass::Suppressed,
+            SeamGripClass::Opaque,
+        ] {
+            let entry = classified_with(
+                boundary_seam(),
+                class,
+                vec![rust_related_test(RelationReason::DirectOwnerCall)],
+            );
+            let eligibility = repair_packet_eligibility(&entry);
+            assert!(!eligibility.eligible());
+            assert_eq!(
+                eligibility.ineligibility,
+                Some(RepairPacketIneligibility::ClassNotHeadlineEligible)
+            );
+        }
+
+        // Queue visibility still matches the historical packet inclusion
+        // rule: `Opaque` is queued, governance and gripped classes are not.
+        let opaque = classified_with(boundary_seam(), SeamGripClass::Opaque, Vec::new());
+        assert!(repair_packet_queue_visible(&opaque));
+        let gripped = classified_with(boundary_seam(), SeamGripClass::StronglyGripped, Vec::new());
+        assert!(!repair_packet_queue_visible(&gripped));
+        let intentional = classified_with(boundary_seam(), SeamGripClass::Intentional, Vec::new());
+        assert!(!repair_packet_queue_visible(&intentional));
+        Ok(())
+    }
+
+    #[test]
+    fn external_language_oracle_surface_is_fail_closed_even_when_route_ready() -> Result<(), String>
+    {
+        let entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::WeaklyGripped,
+            vec![external_related_test()],
+        );
+
+        let eligibility = repair_packet_eligibility(&entry);
+        // Plain route readiness alone would have flipped this packet; the
+        // authority must stay fail-closed on the cross-language surface.
+        assert!(eligibility.readiness.is_repair_ready());
+        assert!(!eligibility.eligible());
+        assert_eq!(
+            eligibility.ineligibility,
+            Some(RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved)
+        );
+        assert!(!is_safe_for_repair_packet(&entry));
+        assert!(!repair_packet_queue_visible(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn external_language_test_extensions_cover_bridge_language_families() -> Result<(), String> {
+        for extension in [
+            "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "cc", "cpp", "cxx",
+            "swift", "kt", "kts",
+        ] {
+            let mut related_test = external_related_test();
+            related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
+            let entry = classified_with(
+                boundary_seam(),
+                SeamGripClass::WeaklyGripped,
+                vec![related_test],
+            );
+
+            assert!(
+                cross_language_oracle_visibility_unresolved(&entry),
+                "expected .{extension} related test to remain visible to the external-language gate"
+            );
+        }
+
+        for extension in ["rs", "txt"] {
+            let mut related_test = external_related_test();
+            related_test.file = PathBuf::from(format!("tests/bridge.{extension}"));
+            let entry = classified_with(
+                boundary_seam(),
+                SeamGripClass::WeaklyGripped,
+                vec![related_test],
+            );
+
+            assert!(
+                !cross_language_oracle_visibility_unresolved(&entry),
+                "did not expect .{extension} related test to trigger the external-language gate"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn generic_binding_and_python_words_do_not_hide_a_plain_rust_route() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/metrics.rs",
+            "metrics::python_binding_count",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "python_binding_count >= binding_total",
+            RequiredDiscriminator::BoundaryValue {
+                description: "python_binding_count >= binding_total".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+
+        assert!(!cross_language_oracle_visibility_unresolved(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn unqualified_python_identifier_does_not_hide_a_plain_rust_route() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/metrics.rs",
+            "metrics::python",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "value >= threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "value >= threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+
+        assert!(!cross_language_oracle_visibility_unresolved(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn snake_case_bridge_markers_keep_same_test_file_routes_fail_closed() -> Result<(), String> {
+        for owner in [
+            "metrics::ffi_read",
+            "metrics::pyo3_parse",
+            "metrics::napi_call",
+            "metrics::jni_handle",
+            "metrics::uniffi_parse",
+            "metrics::wasm_bindgen_bridge",
+        ] {
+            let seam = RepoSeam::new(
+                "src/metrics.rs",
+                owner,
+                SeamKind::PredicateBoundary,
+                42,
+                88,
+                "value >= discount_threshold",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "value >= discount_threshold".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            );
+            let entry = classified_with(
+                seam,
+                SeamGripClass::WeaklyGripped,
+                vec![rust_related_test(RelationReason::SameTestFile)],
+            );
+
+            let eligibility = repair_packet_eligibility(&entry);
+            assert!(eligibility.readiness.is_repair_ready());
+            assert_eq!(
+                eligibility.ineligibility,
+                Some(RepairPacketIneligibility::CrossLanguageTestTargetUnresolved),
+                "expected {owner} to retain the fail-closed target limitation"
+            );
+            assert!(!eligibility.eligible());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn specialized_cross_language_markers_still_block_without_external_tests() -> Result<(), String>
+    {
+        let seam = RepoSeam::new(
+            "src/metrics.rs",
+            "metrics::from_js_boundary",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "from_js_boundary >= threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "from_js_boundary >= threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+
+        assert!(cross_language_oracle_visibility_unresolved(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn exact_python_namespace_marker_still_blocks_without_external_tests() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/metrics.rs",
+            "python::parse_record",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "record.value >= threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "record.value >= threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+
+        assert!(cross_language_oracle_visibility_unresolved(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn cross_language_hint_without_rust_target_context_blocks_the_flip() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/ffi/bindings.rs",
+            "ffi::bindings::discounted_total",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        // A Rust related test resolves oracle visibility, but without a
+        // direct-owner/helper relation there is no Rust-side target context.
+        let entry = classified_with(
+            seam,
+            SeamGripClass::WeaklyGripped,
+            vec![rust_related_test(RelationReason::SameTestFile)],
+        );
+
+        let eligibility = repair_packet_eligibility(&entry);
+        assert!(!eligibility.eligible());
+        assert_eq!(
+            eligibility.ineligibility,
+            Some(RepairPacketIneligibility::CrossLanguageTestTargetUnresolved)
+        );
+        assert!(!is_safe_for_repair_packet(&entry));
+        assert!(!repair_packet_queue_visible(&entry));
+        Ok(())
+    }
 
     #[test]
     fn boundary_matching_requires_the_same_operator_and_operands() {

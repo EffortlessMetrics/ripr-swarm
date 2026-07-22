@@ -13,8 +13,15 @@ use crate::analysis::canonical_gap::CanonicalGapIdentity;
 use crate::analysis::repair_route::{
     RepairRouteState, RepairTargetSelection, repair_route_readiness,
 };
+// The cross-language producer facts now live in `analysis::repair_route`
+// (the repair-packet eligibility authority). Re-exported here so existing
+// output/lsp callers keep compiling until their migration slice lands.
+pub(crate) use crate::analysis::repair_route::{
+    cross_language_oracle_visibility_unresolved, cross_language_test_target_unresolved,
+};
 use crate::analysis::seams::{SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
+use crate::domain::CommandSpec;
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
     AssertionShape, CandidateValue, RecommendedTest, assertion_shape_for_entry,
@@ -103,6 +110,8 @@ pub(crate) struct EvidenceRecordCanonicalItem {
     pub(crate) related_test: Option<EvidenceRecordAlignmentRelatedTest>,
     pub(crate) verify_command: Option<String>,
     pub(crate) receipt_command: Option<String>,
+    pub(crate) verify_command_spec: Option<CommandSpec>,
+    pub(crate) receipt_command_spec: Option<CommandSpec>,
     pub(crate) confidence: EvidenceRecordAlignmentConfidence,
 }
 
@@ -576,6 +585,18 @@ fn canonical_item_for(
             }),
         verify_command: recommendation.verify_command.clone(),
         receipt_command: canonical_receipt_command_for(entry, gap_state),
+        verify_command_spec: recommendation
+            .verify_command
+            .as_deref()
+            .and_then(crate::agent::command_specs::agent_command_spec_from_display),
+        receipt_command_spec: (gap_state == "actionable").then(|| {
+            crate::agent::command_specs::agent_receipt_command_spec(
+                ".",
+                WORKFLOW_AGENT_VERIFY_ARTIFACT,
+                entry.seam.id().as_str(),
+                Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            )
+        }),
         confidence: alignment_confidence_for(gap_state, static_limitations),
     }
 }
@@ -801,127 +822,6 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
         ]
         .iter()
         .any(|stage| matches!(stage.state, StageState::Opaque | StageState::Unknown))
-}
-
-pub(crate) fn cross_language_oracle_visibility_unresolved(entry: &ClassifiedSeam) -> bool {
-    if !entry.class.is_headline_eligible() && !matches!(entry.class, SeamGripClass::Opaque) {
-        return false;
-    }
-
-    if has_external_language_related_test(entry) {
-        return true;
-    }
-
-    cross_language_surface_hint(entry) && !has_rust_related_test(entry)
-}
-
-pub(crate) fn cross_language_test_target_unresolved(entry: &ClassifiedSeam) -> bool {
-    if !entry.class.is_headline_eligible() && !matches!(entry.class, SeamGripClass::Opaque) {
-        return false;
-    }
-
-    (has_external_language_related_test(entry) || cross_language_surface_hint(entry))
-        && !has_rust_side_target_context(entry)
-}
-
-fn has_rust_related_test(entry: &ClassifiedSeam) -> bool {
-    entry
-        .evidence
-        .related_tests
-        .iter()
-        .any(related_test_is_rust)
-}
-
-fn has_rust_side_target_context(entry: &ClassifiedSeam) -> bool {
-    entry.evidence.related_tests.iter().any(|test| {
-        related_test_is_rust(test)
-            && matches!(
-                test.relation_reason,
-                RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
-            )
-    })
-}
-
-fn related_test_is_rust(test: &crate::analysis::test_grip_evidence::RelatedTestGrip) -> bool {
-    test.file
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
-}
-
-fn has_external_language_related_test(entry: &ClassifiedSeam) -> bool {
-    entry.evidence.related_tests.iter().any(|test| {
-        test.file
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                matches!(
-                    extension.to_ascii_lowercase().as_str(),
-                    "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "py" | "rb" | "java"
-                )
-            })
-    })
-}
-
-fn cross_language_surface_hint(entry: &ClassifiedSeam) -> bool {
-    let file = display_path(entry.seam.file()).to_ascii_lowercase();
-    let owner = entry.seam.owner().to_ascii_lowercase();
-    let expression = entry.seam.expression().to_ascii_lowercase();
-
-    path_has_cross_language_segment(&file)
-        || text_has_cross_language_marker(&owner)
-        || text_has_cross_language_marker(&expression)
-}
-
-fn path_has_cross_language_segment(file: &str) -> bool {
-    let normalized = file.replace('\\', "/");
-    normalized.split('/').any(|segment| {
-        matches!(
-            segment,
-            "ffi"
-                | "binding"
-                | "bindings"
-                | "napi"
-                | "neon"
-                | "wasm"
-                | "wasm_bindgen"
-                | "pyo3"
-                | "python"
-                | "jni"
-                | "uniffi"
-                | "cxx"
-                | "node"
-                | "jsc"
-                | "javascriptcore"
-        )
-    })
-}
-
-fn text_has_cross_language_marker(text: &str) -> bool {
-    [
-        "from_js",
-        "to_js",
-        "jsvalue",
-        "js_value",
-        "jsc::",
-        "javascriptcore",
-        "napi",
-        "wasm_bindgen",
-        "extern \"c\"",
-        "extern_c",
-        "no_mangle",
-        "export_name",
-        "ffi",
-        "binding",
-        "pyo3",
-        "python",
-        "node_api",
-        "jni",
-        "uniffi",
-        "cxx::bridge",
-    ]
-    .iter()
-    .any(|marker| text.contains(marker))
 }
 
 fn weak_related_oracle(entry: &ClassifiedSeam) -> bool {
@@ -1549,6 +1449,10 @@ fn canonical_item_json(item: &EvidenceRecordCanonicalItem) -> Value {
             .map_or(Value::Null, alignment_related_test_json),
         "verify_command": item.verify_command.as_deref(),
         "receipt_command": item.receipt_command.as_deref(),
+        "command_specs": {
+            "verify": item.verify_command_spec.as_ref(),
+            "receipt": item.receipt_command_spec.as_ref(),
+        },
         "confidence": {
             "basis": item.confidence.basis.as_str(),
             "notes": item

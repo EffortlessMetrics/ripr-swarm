@@ -1,10 +1,11 @@
 use super::AnalysisStatusNotification;
 use super::actions::code_action_response;
 use super::capabilities::{
-    WorkspaceRootResolution, client_supports_diagnostic_refresh, client_supports_pull_diagnostics,
-    client_supports_work_done_progress, initialize_result_for_client, root_from_initialize_params,
+    ConfigurationMode, WorkspaceRootResolution, client_supports_diagnostic_refresh,
+    client_supports_pull_diagnostics, client_supports_work_done_progress, configuration_mode,
+    initialize_result_for_client, root_from_initialize_params,
 };
-use super::config::LspAnalysisConfig;
+use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
     DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
     diagnostic_refresh_plan, take_all_uris,
@@ -23,7 +24,7 @@ use super::refresh_scheduler::{
     RefreshScope,
 };
 use super::state::{
-    AnalysisAttemptState, AnalysisFailure, AnalysisHealth, AnalysisSnapshot,
+    AnalysisAttemptState, AnalysisFailure, AnalysisHealth, AnalysisSnapshot, ConfigPullState,
     DocumentStalenessReason, DocumentStore, QuarantineTransition, WorkspaceRootAuthority,
     WorkspaceRootState, content_digest, format_duration,
 };
@@ -65,16 +66,17 @@ use std::time::{Duration, Instant};
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::Result as LspResult;
+use tower_lsp_server::ls_types::notification::LogTrace;
 use tower_lsp_server::ls_types::{
-    CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, Diagnostic,
+    CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, ConfigurationItem, Diagnostic,
     DidChangeConfigurationParams, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
     DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent, Hover, HoverParams,
-    InitializeParams, InitializeResult, InitializedParams, LSPAny, MessageType, Registration,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    UnchangedDocumentDiagnosticReport, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
-    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    InitializeParams, InitializeResult, InitializedParams, LSPAny, LogTraceParams, MessageType,
+    Registration, RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    TraceValue, UnchangedDocumentDiagnosticReport, Uri, WorkspaceDiagnosticParams,
+    WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
     WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
@@ -89,18 +91,46 @@ pub(super) struct Backend {
     saved_content_digests: Mutex<BTreeMap<tower_lsp_server::ls_types::Uri, String>>,
     analysis_config: Mutex<LspAnalysisConfig>,
     configuration_failure: Mutex<Option<AnalysisFailure>>,
+    /// Negotiated session-configuration transport (#2031, RIPR-SPEC-0136).
+    configuration_mode: Mutex<ConfigurationMode>,
+    /// Epoch guarding pull responses: `workspace/didChangeConfiguration` in
+    /// pull mode bumps it, and a response arriving for an older epoch is
+    /// dropped. Mirrors `workspace_root_epoch`.
+    config_pull_epoch: AtomicU64,
+    config_pull_state: Mutex<ConfigPullState>,
+    /// Coalesces pull scheduling to one in-flight request plus at most one
+    /// queued re-pull for the latest epoch.
+    config_pull_coordinator: Mutex<ConfigPullCoordinator>,
+    /// The root the currently retained pulled layer was scoped to. Pulled
+    /// settings are valid only for that root; any transition landing on a
+    /// different analysis-capable root must re-pull. Compared rather than
+    /// derived from transition deltas so a direct A -> B switch (which
+    /// rewrites to a non-analyzable `RootChanged` state and is re-selected
+    /// later with `root_changed == false`) is still caught.
+    config_pull_scope_root: Mutex<Option<PathBuf>>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
     pull_diagnostics: Mutex<bool>,
+    /// Session-local standard trace level (`$/setTrace`, #2035,
+    /// RIPR-SPEC-0137). Volatile observability state only: it never enters
+    /// snapshot, input-identity, diagnostic, action, command, status, or
+    /// receipt state, and it is never read from refresh or identity paths.
+    trace: Mutex<TraceValue>,
     diagnostic_refresh_support: Mutex<bool>,
     dynamic_file_watch_registration: Mutex<bool>,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
     pub(super) progress: Arc<AnalysisProgressTracker>,
+}
+
+#[derive(Default)]
+struct ConfigPullCoordinator {
+    in_flight: bool,
+    queued: bool,
 }
 
 pub(super) struct RefreshTransaction {
@@ -133,12 +163,18 @@ impl Backend {
             saved_content_digests: Mutex::new(BTreeMap::new()),
             analysis_config: Mutex::new(LspAnalysisConfig::default()),
             configuration_failure: Mutex::new(None),
+            configuration_mode: Mutex::new(ConfigurationMode::InitializationOnly),
+            config_pull_epoch: AtomicU64::new(0),
+            config_pull_state: Mutex::new(ConfigPullState::NotApplicable),
+            config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
+            config_pull_scope_root: Mutex::new(None),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
             pull_diagnostics: Mutex::new(false),
+            trace: Mutex::new(TraceValue::Off),
             diagnostic_refresh_support: Mutex::new(false),
             dynamic_file_watch_registration: Mutex::new(false),
             refresh_scheduler: RefreshScheduler::default(),
@@ -1284,6 +1320,7 @@ impl Backend {
                     .map(|input_identity| serde_json::json!({"input_identity": input_identity}))
             })
             .unwrap_or(serde_json::Value::Null);
+        let pull_state = self.config_pull_state();
         let input_authority = serde_json::json!({
             "current": if configuration_failure.is_some() {
                 serde_json::Value::Null
@@ -1301,6 +1338,28 @@ impl Backend {
             "session_options_present": config
                 .as_ref()
                 .is_some_and(|value| value.session_options.is_some()),
+            // Session-configuration transport disclosure (#2031,
+            // RIPR-SPEC-0136): how governed values arrive, where each one
+            // came from, and the last pull outcome so defaults never
+            // masquerade as accepted requested settings.
+            "configuration_mode": self.configuration_mode().as_str(),
+            "session_value_sources": config
+                .as_ref()
+                .map(|value| serde_json::Value::Object(value.session_value_sources()))
+                .unwrap_or(serde_json::Value::Null),
+            "configuration_pull": {
+                // Snapshot once: the status request handler runs concurrently
+                // with pull tasks, and three separate locked reads could
+                // interleave a state change into a torn payload (e.g. a
+                // failure from a newer state beside an older state string).
+                "state": pull_state.as_str(),
+                "epoch": self.config_pull_epoch.load(Ordering::Relaxed),
+                "failure": pull_state.failure().map(|failure| serde_json::json!({
+                    "kind": failure.kind,
+                    "message": failure.message,
+                })),
+                "recovery_route": pull_state.recovery_route(),
+            },
         });
         let last_success_age_ms = health
             .last_success_at
@@ -1397,12 +1456,47 @@ impl Backend {
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
+        let schedule_deferred_pull = self.apply_workspace_root_authority_locked(authority).await;
+        if schedule_deferred_pull {
+            // Scheduled after the transition guard is released: a deferred
+            // configuration pull (#2031) becomes runnable once a single
+            // workspace root is selected, and its apply path can reach the
+            // refresh path, which re-locks `workspace_root_transition`
+            // (`run_refresh_request`). Scheduling inline while holding the
+            // guard would deadlock.
+            // Indirection via Box::pin: root transitions are reachable from
+            // the refresh path that a pull can schedule, so the direct call
+            // would be a recursive async fn.
+            Box::pin(self.schedule_configuration_pull()).await;
+        }
+    }
+
+    async fn apply_workspace_root_authority_locked(
+        &self,
+        authority: WorkspaceRootAuthority,
+    ) -> bool {
         let _transition = self.workspace_root_transition.lock().await;
         let authority_epoch = self.workspace_root_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let previous = self.workspace_root_authority();
         let changed = previous.state != authority.state
             || previous.effective_root != authority.effective_root
             || previous.candidate_roots != authority.candidate_roots;
+        // Any change away from a selected root affects root-scoped pulled
+        // settings: bump the pull epoch so an in-flight response scoped to
+        // the old root is dropped. A re-pull is scheduled below whenever the
+        // transition lands on an analysis-capable root — including
+        // A -> unavailable -> B, where the intermediate transition has no
+        // root but the retained layer is still A-scoped; the epoch bump at
+        // the A -> unavailable step already dropped A's in-flight responses
+        // (#2211 review). Initial selection (None -> Some) does not bump:
+        // nothing was ever scoped to a prior root.
+        let root_changed = previous.effective_root != authority.effective_root;
+        if previous.effective_root.is_some()
+            && root_changed
+            && self.configuration_mode() == ConfigurationMode::Pull
+        {
+            self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+        }
         if changed {
             self.refresh_scheduler.invalidate_input();
             self.progress
@@ -1418,7 +1512,7 @@ impl Backend {
         }
 
         if self.workspace_root_epoch.load(Ordering::SeqCst) != authority_epoch {
-            return;
+            return false;
         }
 
         let final_authority = if changed
@@ -1440,6 +1534,43 @@ impl Backend {
         self.set_workspace_root_authority(final_authority);
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
+        // A deferred configuration pull (#2031) becomes runnable once a
+        // single workspace root is selected, and a root change after the
+        // pull lifecycle has started needs one re-pull scoped to the new
+        // root. Staleness is decided by comparing the retained layer's scope
+        // root against the final effective root — NOT by transition deltas —
+        // so a direct A -> B switch (rewritten to a non-analyzable
+        // `RootChanged` state and re-selected later with no further root
+        // change) is still caught when B is re-selected. Applied/Failed or
+        // an in-flight pull makes the lifecycle restartable; a
+        // pre-`initialized` Pending state must NOT schedule here — the
+        // client rejects server->client requests before `initialized`
+        // (-32002), and `initialized` owns the first pull. The wrapper
+        // schedules after the transition guard is released.
+        let pull_scope_stale = {
+            let restartable = {
+                let in_flight = self
+                    .config_pull_coordinator
+                    .lock()
+                    .map(|coordinator| coordinator.in_flight)
+                    .unwrap_or(false);
+                in_flight
+                    || matches!(
+                        self.config_pull_state(),
+                        ConfigPullState::Applied | ConfigPullState::Failed(_)
+                    )
+            };
+            restartable
+                && self
+                    .config_pull_scope_root
+                    .lock()
+                    .ok()
+                    .and_then(|scope_root| scope_root.clone())
+                    != self.workspace_root_authority().effective_root
+        };
+        self.configuration_mode() == ConfigurationMode::Pull
+            && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || pull_scope_stale)
+            && self.workspace_root_authority().allows_analysis()
     }
 
     fn set_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
@@ -1598,6 +1729,175 @@ impl Backend {
         self.publish_analysis_status().await;
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
             .await;
+    }
+
+    fn configuration_mode(&self) -> ConfigurationMode {
+        self.configuration_mode
+            .lock()
+            .map(|mode| *mode)
+            .unwrap_or(ConfigurationMode::InitializationOnly)
+    }
+
+    fn config_pull_state(&self) -> ConfigPullState {
+        self.config_pull_state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or(ConfigPullState::NotApplicable)
+    }
+
+    fn set_config_pull_state(&self, state: ConfigPullState) {
+        if let Ok(mut current) = self.config_pull_state.lock() {
+            *current = state;
+        }
+    }
+
+    /// Schedule one coalesced `workspace/configuration` pull (#2031). At most
+    /// one request is in flight; a schedule request arriving while one is
+    /// in flight collapses into a single queued re-pull for the latest epoch.
+    /// The pull is a pure LSP round-trip: it never launches analysis, git,
+    /// network beyond the LSP connection, or edits.
+    async fn schedule_configuration_pull(&self) {
+        {
+            let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
+                return;
+            };
+            if coordinator.in_flight {
+                coordinator.queued = true;
+                return;
+            }
+            coordinator.in_flight = true;
+        }
+        loop {
+            let epoch = self.config_pull_epoch.load(Ordering::SeqCst);
+            self.set_config_pull_state(ConfigPullState::Pending);
+            self.publish_analysis_status().await;
+            self.pull_and_apply_configuration(epoch).await;
+            let queued = {
+                let Ok(mut coordinator) = self.config_pull_coordinator.lock() else {
+                    return;
+                };
+                if coordinator.queued {
+                    coordinator.queued = false;
+                    true
+                } else {
+                    coordinator.in_flight = false;
+                    false
+                }
+            };
+            if !queued {
+                return;
+            }
+        }
+    }
+
+    async fn pull_and_apply_configuration(&self, epoch: u64) {
+        let Some(root) = self.effective_root() else {
+            // No single selected root at pull time (ambiguous or unavailable
+            // workspace): defer the pull; analysis is already blocked there.
+            self.set_config_pull_state(ConfigPullState::Deferred);
+            self.publish_analysis_status().await;
+            return;
+        };
+        let scope_uri = match file_uri_for_path(&root) {
+            Ok(uri) => uri,
+            Err(error) => {
+                self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
+                    kind: "config_pull_failed".to_string(),
+                    message: bounded_failure_message(&format!(
+                        "workspace/configuration scope URI for the selected root is invalid: {error}"
+                    )),
+                }));
+                self.publish_analysis_status().await;
+                return;
+            }
+        };
+        let result = self
+            .client
+            .configuration(vec![ConfigurationItem {
+                scope_uri: Some(scope_uri),
+                section: Some("ripr".to_string()),
+            }])
+            .await;
+        // Epoch guard: a response for an older epoch is dropped; the queued
+        // re-pull for the current epoch owns the disclosed state.
+        if self.config_pull_epoch.load(Ordering::SeqCst) != epoch {
+            return;
+        }
+        match result {
+            Ok(values) => match validated_pulled_options(&values) {
+                Ok(pulled) => {
+                    self.apply_pulled_configuration(pulled).await;
+                    // The retained layer is scoped to the root it was pulled
+                    // for; root transitions compare against this to decide
+                    // whether a re-pull is needed.
+                    if let Ok(mut scope_root) = self.config_pull_scope_root.lock() {
+                        *scope_root = Some(root);
+                    }
+                }
+                Err(message) => {
+                    self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
+                        kind: "config_pull_invalid".to_string(),
+                        message: bounded_failure_message(&message),
+                    }));
+                    self.publish_analysis_status().await;
+                }
+            },
+            Err(error) => {
+                self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
+                    kind: "config_pull_failed".to_string(),
+                    message: bounded_failure_message(&format!(
+                        "workspace/configuration request failed: {error}"
+                    )),
+                }));
+                self.publish_analysis_status().await;
+            }
+        }
+    }
+
+    /// Apply a validated pulled layer. Semantically unchanged effective
+    /// settings do not reschedule analysis (the `next == current` no-op guard
+    /// pattern from `apply_session_configuration_change`, applied to the
+    /// effective settings rather than the retained layer representation).
+    async fn apply_pulled_configuration(&self, pulled: Option<LSPAny>) {
+        let Some(current) = self.analysis_config() else {
+            return;
+        };
+        let next = current.with_pulled_options(pulled.as_ref());
+        self.set_config_pull_state(ConfigPullState::Applied);
+        if next.effective_settings_eq(&current) {
+            // Retain the pulled layer (it decides precedence and source
+            // disclosure on later reloads) without rescheduling analysis:
+            // semantically unchanged effective settings are a no-op.
+            if next != current {
+                self.set_analysis_config(next);
+            }
+            self.publish_analysis_status().await;
+            return;
+        }
+        self.set_analysis_config(next);
+        if self.configuration_failure().is_some() {
+            // Mirror the session-change path: the pulled layer is retained
+            // and re-applied once the repository configuration recovers; it
+            // cannot authorize a refresh on its own.
+            self.publish_analysis_status().await;
+            return;
+        }
+        self.invalidate_analysis_input_and_end_queued_progress(
+            RefreshReason::ConfigReload.as_str(),
+        )
+        .await;
+        self.publish_analysis_status().await;
+        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
+            .await;
+    }
+
+    /// `workspace/didChangeConfiguration` in pull mode: invalidate the cached
+    /// pulled values by bumping the pull epoch (responses for older epochs
+    /// are dropped) and schedule one coalesced re-pull. The retained pulled
+    /// layer stays in effect as last-known-good until the re-pull resolves.
+    async fn handle_pull_mode_configuration_change(&self) {
+        self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
+        self.schedule_configuration_pull().await;
     }
 
     fn file_event_is_repository_config(&self, event: &FileEvent) -> bool {
@@ -2358,38 +2658,181 @@ fn root_authority_receipt_status(state: &WorkspaceRootState) -> LSPAny {
     })
 }
 
+/// Standard LSP protocol tracing (`$/setTrace` / `$/logTrace`, #2035,
+/// RIPR-SPEC-0137).
+///
+/// Trace state is session-local volatile observability: it never enters
+/// snapshot, input-identity, diagnostic, action, command, status, or receipt
+/// state, and toggling it never triggers analysis, refresh, configuration
+/// reload, or source access. Traces are never a semantic or evidence
+/// authority.
+///
+/// Emission is STRUCTURALLY redacted by construction: a trace only ever
+/// carries the direction, the method name, the message class, and — at
+/// `verbose` — bounded numeric metadata (byte counts, outcome classes, error
+/// codes). Source text, paths, configuration values, repair packets, command
+/// arguments, and arbitrary client-provided strings never enter the trace
+/// because the emission sites never receive them as free text; params are
+/// serialized only to count bytes and the serialized form is dropped
+/// immediately.
+impl Backend {
+    pub(super) fn trace_level(&self) -> TraceValue {
+        self.trace
+            .lock()
+            .map(|level| *level)
+            .unwrap_or(TraceValue::Off)
+    }
+
+    fn set_trace_level(&self, level: TraceValue) {
+        if let Ok(mut current) = self.trace.lock() {
+            *current = level;
+        }
+    }
+
+    /// `$/setTrace` notification handler, registered through
+    /// `LspServiceBuilder::custom_method` (tower-lsp-server has no native
+    /// `$/setTrace`; unregistered notifications are silently dropped).
+    /// Updates the session trace level immediately; it never triggers
+    /// analysis, refresh, configuration reload, or source access.
+    ///
+    /// Params arrive as `LSPAny` rather than typed `SetTraceParams` so an
+    /// unknown value is a handled rejection instead of a silently dropped
+    /// parse failure: the current state is kept, and the rejection is
+    /// observable through `$/logTrace` when tracing is enabled. The
+    /// client-provided value is never reflected verbatim. Trace lifecycle
+    /// notifications are never themselves traced, so the trace channel
+    /// cannot recurse.
+    pub(super) async fn set_trace(&self, params: LSPAny) {
+        let level = params
+            .get("value")
+            .and_then(LSPAny::as_str)
+            .and_then(|value| match value {
+                "off" => Some(TraceValue::Off),
+                "messages" => Some(TraceValue::Messages),
+                "verbose" => Some(TraceValue::Verbose),
+                _ => None,
+            });
+        match level {
+            Some(level) => self.set_trace_level(level),
+            None => {
+                if self.trace_level() != TraceValue::Off {
+                    self.emit_log_trace(
+                        "ripr trace: $/setTrace rejected (class=unknown_value); trace state unchanged"
+                            .to_string(),
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    /// Bounded params byte count for `verbose` traces, or `None` below
+    /// `verbose`. The serialized form is used only for its length and is
+    /// dropped immediately.
+    fn verbose_params_bytes(&self, params: &impl serde::Serialize) -> Option<usize> {
+        (self.trace_level() == TraceValue::Verbose).then(|| {
+            serde_json::to_string(params)
+                .map(|text| text.len())
+                .unwrap_or(0)
+        })
+    }
+
+    /// Emit a redacted `$/logTrace` for one inbound message: direction,
+    /// method name, and message class at `messages`; a bounded byte count
+    /// added at `verbose`.
+    async fn trace_inbound(&self, class: &str, method: &str, params_bytes: Option<usize>) {
+        if self.trace_level() == TraceValue::Off {
+            return;
+        }
+        let verbose = params_bytes.map(|bytes| format!("params_bytes={bytes}"));
+        self.emit_log_trace(format!("ripr trace <- {class} {method}"), verbose)
+            .await;
+    }
+
+    /// Emit a redacted `$/logTrace` for one outbound result: direction,
+    /// method name, and the response/error class at `messages`; the outcome
+    /// class plus a bounded byte count (or the error code) added at
+    /// `verbose`.
+    async fn trace_response<T: serde::Serialize>(&self, method: &str, result: &LspResult<T>) {
+        if self.trace_level() == TraceValue::Off {
+            return;
+        }
+        let class = if result.is_ok() { "response" } else { "error" };
+        let verbose = (self.trace_level() == TraceValue::Verbose).then(|| match result {
+            Ok(value) => format!(
+                "outcome=ok response_bytes={}",
+                serde_json::to_string(value)
+                    .map(|text| text.len())
+                    .unwrap_or(0)
+            ),
+            Err(error) => format!("outcome=error code={}", error.code),
+        });
+        self.emit_log_trace(format!("ripr trace -> {class} {method}"), verbose)
+            .await;
+    }
+
+    /// Fire-and-forget `$/logTrace` emission. Emission failure is non-fatal:
+    /// `send_notification` never blocks analysis or shutdown, and it is
+    /// suppressed by the library while the session is not initialized.
+    async fn emit_log_trace(&self, message: String, verbose: Option<String>) {
+        self.client
+            .send_notification::<LogTrace>(LogTraceParams { message, verbose })
+            .await;
+    }
+}
+
 impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
+        self.trace_inbound("notification", "initialized", None)
+            .await;
         let supports_dynamic_registration = self
             .dynamic_file_watch_registration
             .lock()
             .map(|value| *value)
             .unwrap_or(false);
-        if !supports_dynamic_registration {
-            return;
+        if supports_dynamic_registration {
+            let registration = Registration {
+                id: "ripr-config-file-watch".to_string(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+                register_options: Some(serde_json::json!({
+                    "watchers": [
+                        {"globPattern": "**/ripr.toml"},
+                        {"globPattern": "**/Cargo.toml"},
+                        {"globPattern": "**/Cargo.lock"}
+                    ]
+                })),
+            };
+            if let Err(error) = self.client.register_capability(vec![registration]).await {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("ripr workspace input watching unavailable: {error}"),
+                    )
+                    .await;
+            }
         }
-        let registration = Registration {
-            id: "ripr-config-file-watch".to_string(),
-            method: "workspace/didChangeWatchedFiles".to_string(),
-            register_options: Some(serde_json::json!({
-                "watchers": [
-                    {"globPattern": "**/ripr.toml"},
-                    {"globPattern": "**/Cargo.toml"},
-                    {"globPattern": "**/Cargo.lock"}
-                ]
-            })),
-        };
-        if let Err(error) = self.client.register_capability(vec![registration]).await {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("ripr workspace input watching unavailable: {error}"),
-                )
-                .await;
+        // First configuration pull (#2031). This runs in `initialized`, not
+        // `initialize`: tower-lsp-server rejects client requests with -32002
+        // before the session is initialized.
+        if self.configuration_mode() == ConfigurationMode::Pull {
+            self.schedule_configuration_pull().await;
         }
     }
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
+        // Trace emission is suppressed by the transport until the session is
+        // initialized, so the initialize handshake itself is never traced;
+        // this call documents the lifecycle boundary.
+        self.trace_inbound("request", "initialize", None).await;
+        // The standard trace lifecycle (#2035, RIPR-SPEC-0137): honor the
+        // initial trace value selected by the client. An unknown value fails
+        // typed initialize-param parsing per the library contract. Trace
+        // state is volatile session observability only; it never enters
+        // snapshot, input-identity, diagnostic, or action state.
+        if let Some(trace) = params.trace {
+            self.set_trace_level(trace);
+        }
         // Typed ingress bound (#2034): reject oversized client options before
         // any config load, root resolution, or capability state mutation.
         check_initialization_options(params.initialization_options.as_ref())?;
@@ -2403,6 +2846,18 @@ impl LanguageServer for Backend {
         }
         self.progress
             .set_supported(client_supports_work_done_progress(&params));
+        // Negotiate the session-configuration transport from capabilities
+        // only (#2031, RIPR-SPEC-0136): pull when the client answers
+        // `workspace/configuration`, push fallback when it advertises
+        // `workspace/didChangeConfiguration`, otherwise initialization-only.
+        let negotiated_mode = configuration_mode(&params);
+        if let Ok(mut mode) = self.configuration_mode.lock() {
+            *mode = negotiated_mode;
+        }
+        self.set_config_pull_state(match negotiated_mode {
+            ConfigurationMode::Pull => ConfigPullState::Pending,
+            _ => ConfigPullState::NotApplicable,
+        });
         let supports_dynamic_registration = params
             .capabilities
             .workspace
@@ -2450,11 +2905,31 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        self.apply_session_configuration_change(&params.settings)
-            .await;
+        self.trace_inbound(
+            "notification",
+            "workspace/didChangeConfiguration",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        match self.configuration_mode() {
+            // Pull mode (#2031): pushed values are not applied directly; the
+            // notification invalidates the pulled layer and schedules one
+            // coalesced re-pull.
+            ConfigurationMode::Pull => self.handle_pull_mode_configuration_change().await,
+            ConfigurationMode::PushFallback | ConfigurationMode::InitializationOnly => {
+                self.apply_session_configuration_change(&params.settings)
+                    .await;
+            }
+        }
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        self.trace_inbound(
+            "notification",
+            "workspace/didChangeWatchedFiles",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         let (config_changed, workspace_graph_changed) =
             self.watched_file_change_kinds(&params.changes);
         if config_changed {
@@ -2471,7 +2946,13 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn did_change_workspace_folders(&self, _: DidChangeWorkspaceFoldersParams) {
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        self.trace_inbound(
+            "notification",
+            "workspace/didChangeWorkspaceFolders",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         let resolution = match self.client.workspace_folders().await {
             Ok(Some(folders)) => {
                 if folders.is_empty() {
@@ -2499,16 +2980,25 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> LspResult<()> {
+        self.trace_inbound("request", "shutdown", None).await;
         self.refresh_scheduler.stop();
         self.progress.end_all(AnalysisProgressEnd::Cancelled).await;
         self.clear_all_diagnostic_uris();
         self.reset_health_for_input_change();
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
-        Ok(())
+        let result = Ok(());
+        self.trace_response("shutdown", &result).await;
+        result
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        self.trace_inbound(
+            "notification",
+            "textDocument/didOpen",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         // No digest seeding from the didOpen text: it may carry unsaved or
         // recovered buffer text rather than persisted bytes (#2129). The
         // saved-content identity is read from the persisted bytes inside the
@@ -2538,6 +3028,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        self.trace_inbound(
+            "notification",
+            "textDocument/didChange",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         // A buffer that starts or stops diverging from the analyzed saved
         // content crosses a quarantine edge (#1970): withdraw or re-serve
         // the document's line-local diagnostics immediately rather than
@@ -2556,6 +3052,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        self.trace_inbound(
+            "notification",
+            "textDocument/didClose",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         if let Ok(mut digests) = self.saved_content_digests.lock() {
             digests.remove(&params.text_document.uri);
         }
@@ -2567,6 +3069,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        self.trace_inbound(
+            "notification",
+            "textDocument/didSave",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         // Deduplicate by saved-content input identity (#1908): a save whose
         // bytes did not change since the last recorded save cannot change
         // analysis input, so it neither advances the workspace revision nor
@@ -2616,6 +3124,130 @@ impl LanguageServer for Backend {
     }
 
     async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> LspResult<DocumentDiagnosticReportResult> {
+        self.trace_inbound(
+            "request",
+            "textDocument/diagnostic",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        let result = self.document_diagnostic_inner(params).await;
+        self.trace_response("textDocument/diagnostic", &result)
+            .await;
+        result
+    }
+
+    async fn workspace_diagnostic(
+        &self,
+        params: WorkspaceDiagnosticParams,
+    ) -> LspResult<WorkspaceDiagnosticReportResult> {
+        self.trace_inbound(
+            "request",
+            "workspace/diagnostic",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        let result = self.workspace_diagnostic_inner(params).await;
+        self.trace_response("workspace/diagnostic", &result).await;
+        result
+    }
+
+    async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        self.trace_inbound(
+            "request",
+            "textDocument/hover",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        let result = Ok(Some(
+            self.hover_for_position(&params)
+                .unwrap_or_else(hover_response),
+        ));
+        self.trace_response("textDocument/hover", &result).await;
+        result
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+        self.trace_inbound(
+            "request",
+            "textDocument/codeAction",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        let snapshot = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|value| value.clone());
+        let health = self.analysis_health_snapshot();
+        let root_allows_analysis = self.workspace_root_authority().allows_analysis();
+        let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
+            .then_some(snapshot)
+            .flatten();
+        let result = Ok(Some(code_action_response(
+            &params,
+            action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+        )));
+        self.trace_response("textDocument/codeAction", &result)
+            .await;
+        result
+    }
+
+    /// Advisory `textDocument/codeLens` handler (RIPR-SPEC-0099).
+    ///
+    /// Locks `latest_analysis` read-only exactly like `hover_for_position` and
+    /// `code_action`, then delegates to the pure `code_lens_response` helper in
+    /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
+    /// stale lenses from a previous snapshot. Returns an empty Vec when no
+    /// snapshot is available — absence of analysis is not absence of tests, and
+    /// we must not fabricate a 0-count lens.
+    async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
+        self.trace_inbound(
+            "request",
+            "textDocument/codeLens",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        let snapshot = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|value| value.clone());
+        let uri = &params.text_document.uri;
+        let result = Ok(Some(code_lens_response(
+            uri,
+            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+        )));
+        self.trace_response("textDocument/codeLens", &result).await;
+        result
+    }
+
+    async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<LSPAny>> {
+        self.trace_inbound(
+            "request",
+            "workspace/executeCommand",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
+        let result = self.execute_command_inner(params).await;
+        self.trace_response("workspace/executeCommand", &result)
+            .await;
+        result
+    }
+}
+
+fn context_arguments(arguments: &[LSPAny]) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    let first = arguments.first()?;
+    first.as_object()
+}
+
+impl Backend {
+    /// Inner `textDocument/diagnostic` handler, wrapped by the trait
+    /// method so redacted protocol tracing (#2035, RIPR-SPEC-0137)
+    /// covers every exit point.
+    async fn document_diagnostic_inner(
         &self,
         params: DocumentDiagnosticParams,
     ) -> LspResult<DocumentDiagnosticReportResult> {
@@ -2693,7 +3325,10 @@ impl LanguageServer for Backend {
         )
     }
 
-    async fn workspace_diagnostic(
+    /// Inner `workspace/diagnostic` handler, wrapped by the trait
+    /// method so redacted protocol tracing (#2035, RIPR-SPEC-0137)
+    /// covers every exit point.
+    async fn workspace_diagnostic_inner(
         &self,
         params: WorkspaceDiagnosticParams,
     ) -> LspResult<WorkspaceDiagnosticReportResult> {
@@ -2778,52 +3413,13 @@ impl LanguageServer for Backend {
         Ok(WorkspaceDiagnosticReport { items }.into())
     }
 
-    async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        Ok(Some(
-            self.hover_for_position(&params)
-                .unwrap_or_else(hover_response),
-        ))
-    }
-
-    async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
-        let snapshot = self
-            .latest_analysis
-            .lock()
-            .ok()
-            .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
-        let root_allows_analysis = self.workspace_root_authority().allows_analysis();
-        let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
-            .then_some(snapshot)
-            .flatten();
-        Ok(Some(code_action_response(
-            &params,
-            action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
-        )))
-    }
-
-    /// Advisory `textDocument/codeLens` handler (RIPR-SPEC-0099).
-    ///
-    /// Locks `latest_analysis` read-only exactly like `hover_for_position` and
-    /// `code_action`, then delegates to the pure `code_lens_response` helper in
-    /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
-    /// stale lenses from a previous snapshot. Returns an empty Vec when no
-    /// snapshot is available — absence of analysis is not absence of tests, and
-    /// we must not fabricate a 0-count lens.
-    async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
-        let snapshot = self
-            .latest_analysis
-            .lock()
-            .ok()
-            .and_then(|value| value.clone());
-        let uri = &params.text_document.uri;
-        Ok(Some(code_lens_response(
-            uri,
-            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
-        )))
-    }
-
-    async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<LSPAny>> {
+    /// Inner `workspace/executeCommand` handler, wrapped by the trait
+    /// method so redacted protocol tracing (#2035, RIPR-SPEC-0137)
+    /// covers every exit point.
+    async fn execute_command_inner(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> LspResult<Option<LSPAny>> {
         // Typed ingress bound (#2034): reject oversized argument payloads
         // before any command dispatch, refresh, or packet lookup.
         check_execute_command_arguments(&params.arguments)?;
@@ -2863,14 +3459,7 @@ impl LanguageServer for Backend {
         }
         Ok(None)
     }
-}
 
-fn context_arguments(arguments: &[LSPAny]) -> Option<&serde_json::Map<String, serde_json::Value>> {
-    let first = arguments.first()?;
-    first.as_object()
-}
-
-impl Backend {
     fn collect_context_packet(&self, arguments: &[LSPAny]) -> Option<LSPAny> {
         let args = context_arguments(arguments)?;
         let snapshot = self.latest_analysis.lock().ok()?.clone()?;

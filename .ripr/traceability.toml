@@ -99,7 +99,14 @@ metrics = [
 id = "RIPR-SPEC-0002"
 name = "fixture laboratory"
 spec = "docs/specs/RIPR-SPEC-0002-fixture-laboratory.md"
-tests = []
+tests = [
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::typed_command_specs_are_validated_before_projection",
+  "crates/ripr/src/agent/command_specs.rs::tests::typed_agent_routes_preserve_argv_and_disclose_shell_redirection",
+  "crates/ripr/src/agent/command_specs.rs::tests::typed_route_recovery_rejects_arbitrary_test_commands",
+  "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
+  "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
+  "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
+]
 fixtures = [
   "fixtures/boundary_gap",
   "fixtures/boundary_gap_multiline_assert",
@@ -545,6 +552,8 @@ tests = [
   "crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths",
   "crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing",
   "crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults",
+  "crates/ripr/src/lsp/config.rs::tests::pulled_settings_override_initialization_options_for_returned_keys",
+  "crates/ripr/src/lsp/config.rs::tests::repository_reload_preserves_pulled_overrides",
   "crates/ripr/src/app.rs::tests::configured_finding_severity_applies_to_human_json_and_github",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults",
@@ -6402,15 +6411,33 @@ metrics = [
 id = "RIPR-SPEC-0135"
 name = "assurance state vocabulary"
 spec = "docs/specs/RIPR-SPEC-0135-assurance-state-vocabulary.md"
-tests = []
+tests = [
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::typed_command_specs_are_validated_before_projection",
+  "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
+  "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
+  "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
+]
 fixtures = [
   "fixtures/assurance_vocabulary",
   "fixtures/assurance_vocabulary/assurance/corpus.json",
 ]
-code = []
+code = [
+  "crates/ripr/src/agent/command_specs.rs",
+  "crates/ripr/src/domain/command_spec.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+  "crates/ripr/src/output/first_useful_action/model.rs",
+  "crates/ripr/src/output/first_useful_action.rs",
+  "crates/ripr/src/output/evidence_record.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
+  ".allow/spec-system/slices/command-spec-route-population.v1.toml",
+  ".allow/spec-system/slices/typed-command-spec.v1.toml",
+]
 outputs = [
   "schemas/ripr/repair-assurance.schema.json",
   "docs/OUTPUT_SCHEMA.md",
+  "fixtures/boundary_gap/expected/first-useful-action/actionable/first-useful-action.json",
+  "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/first-useful-action.json",
   "docs/adr/0021-static-and-executed-assurance-axes.md",
   "docs/specs/README.md",
   "docs/adr/README.md",
@@ -7078,6 +7105,67 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0133-assertion-shaped-owner-guidance.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0136"
+name = "lsp configuration pull"
+spec = "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md"
+tests = [
+  "crates/ripr/src/lsp/capabilities.rs::tests::configuration_mode_follows_workspace_capabilities",
+  "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_wrong_item_count",
+  "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_non_object_item_and_bad_values",
+  "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_oversized_string_value",
+  "crates/ripr/src/lsp/config.rs::tests::pulled_settings_override_initialization_options_for_returned_keys",
+  "crates/ripr/src/lsp/config.rs::tests::empty_pull_layer_restores_initialization_and_repo_precedence",
+  "crates/ripr/src/lsp/config.rs::tests::session_option_change_preserves_pulled_layer",
+  "crates/ripr/src/lsp/config.rs::tests::effective_settings_eq_ignores_layer_representation",
+  "crates/ripr/src/lsp/config.rs::tests::repository_reload_preserves_pulled_overrides",
+  "crates/ripr/src/lsp/config.rs::tests::session_value_sources_disclose_per_field_origin",
+  "crates/ripr/src/lsp/tests.rs::initialization_only_mode_discloses_transport_and_value_sources",
+  "crates/ripr/src/lsp/tests.rs::pull_mode_is_pending_until_the_first_pull_resolves",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_configuration_pull_applies_and_discloses_pull_state",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/lsp/capabilities.rs",
+  "crates/ripr/src/lsp/config.rs",
+  "crates/ripr/src/lsp/state.rs",
+  "crates/ripr/src/lsp/backend.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md",
+  "docs/CONFIGURATION.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0137"
+name = "lsp protocol tracing"
+spec = "docs/specs/RIPR-SPEC-0137-lsp-protocol-tracing.md"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::lsp_trace_set_trace_updates_state_and_rejects_unknown_values",
+  "crates/ripr/src/lsp/tests.rs::lsp_trace_initialize_honors_client_trace_value",
+  "crates/ripr/src/lsp/tests.rs::lsp_trace_toggle_leaves_status_identity_and_revision_untouched",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_trace_lifecycle_and_redaction",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_trace_initialize_trace_param_enables_tracing",
+  "crates/ripr/src/lsp/tests.rs::serve_stdio_call_presence_observer",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0137-lsp-protocol-tracing.md",
 ]
 metrics = [
   "unit_test_pass_rate",
