@@ -11,13 +11,15 @@ Adds one repo-ops xtask command that regenerates the remote-branch inventory
 from current GitHub/Git data, writes deterministic review artifacts plus a
 digest-bound deletion plan under target/ripr/reports/, and exposes an explicit
 operator-only apply path bound to the reviewed plan digest with pre-deletion
-rechecks and non-force ref deletion. It does not delete any branch in this
-change, does not wire deletion into CI or hooks, and does not govern local
-worktrees, caches, tags, releases, or source-repository refs.
+rechecks and SHA-leased non-force ref deletion. Nothing is deleted
+automatically: deletion happens only when an operator explicitly runs apply
+against a reviewed plan digest, never in this change, never in CI or hooks,
+and never against local worktrees, caches, tags, releases, or
+source-repository refs.
 """
 
 non_goals = [
-  "deleting remote branches in this change",
+  "any automatic or CI-triggered branch deletion",
   "wiring branch deletion into CI, hooks, or scheduled jobs",
   "local worktree, Cargo/npm cache, tag, or release cleanup (#1034/#1635)",
   "source-repository ref governance",
