@@ -4375,7 +4375,13 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
 /// adapter without the runtime learns here, not at the next verify command.
 fn report_language_runtime_probes(root: &Path) {
     for (language, tool, hint) in language_runtime_probes(root) {
-        let (status, evidence) = output::doctor::doctor_tool_check(tool);
+        // yarn loads project config on --version; probe it isolated so a
+        // hostile checkout cannot execute code via doctor (#2183 review).
+        let (status, evidence) = if tool == "yarn" {
+            output::doctor::doctor_tool_check_isolated(tool)
+        } else {
+            output::doctor::doctor_tool_check(tool)
+        };
         println!(
             "{}",
             language_runtime_probe_line(language, status, &evidence, hint)
@@ -4423,16 +4429,22 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
             ));
         }
     }
-    if detected.contains(&LanguageId::TypeScript) || detected.contains(&LanguageId::JavaScript) {
-        probes.push(("typescript", "node", "install Node.js"));
+    for id in [LanguageId::TypeScript, LanguageId::JavaScript] {
+        if !detected.contains(&id) {
+            continue;
+        }
+        // Label with the actually-detected language (#2183 review): a
+        // JS-only workspace must not read "typescript".
+        let lang = id.as_str();
+        probes.push((lang, "node", "install Node.js"));
         if root.join("bun.lockb").exists() || root.join("bun.lock").exists() {
-            probes.push(("typescript", "bun", "install Bun"));
+            probes.push((lang, "bun", "install Bun"));
         }
         if root.join("pnpm-lock.yaml").exists() {
-            probes.push(("typescript", "pnpm", "install pnpm"));
+            probes.push((lang, "pnpm", "install pnpm"));
         }
         if root.join("yarn.lock").exists() {
-            probes.push(("typescript", "yarn", "install Yarn"));
+            probes.push((lang, "yarn", "install Yarn"));
         }
     }
     probes
@@ -8937,6 +8949,19 @@ language = "rust"
             .map(|(_, tool, _)| *tool)
             .collect();
         assert_eq!(tools, vec!["python3"]);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        // A JS-only workspace is labeled javascript, not typescript (#2183
+        // review).
+        let root = unique_command_test_dir("probe-js-only");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("index.js"), "console.log(1);\n")
+            .map_err(|err| format!("write js: {err}"))?;
+        let labels: Vec<&str> = language_runtime_probes(&root)
+            .iter()
+            .map(|(language, _, _)| *language)
+            .collect();
+        assert_eq!(labels, vec!["javascript"]);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
         // pnpm and yarn lockfiles add their runners.

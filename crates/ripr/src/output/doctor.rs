@@ -231,6 +231,26 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
 }
 
 /// Probe a single tool's availability via `<tool> --version`.
+/// Probe a tool that must NOT load project configuration (#2183 review,
+/// CWE-829): `yarn --version` run in a repository checkout executes
+/// repo-controlled code when the repo pins `.yarnrc.yml`/`yarnPath`, so
+/// merely running `ripr doctor` in a hostile checkout would execute it.
+/// The probe runs from the OS temp dir with config resolution disabled.
+pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
+    let mut command = std::process::Command::new(tool);
+    command
+        .arg("--version")
+        .current_dir(std::env::temp_dir())
+        .env("YARN_IGNORE_PATH", "1");
+    match command.output() {
+        Ok(output) if output.status.success() => (
+            DoctorStatus::Pass,
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ),
+        _ => (DoctorStatus::Fail, format!("{tool} not available")),
+    }
+}
+
 pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
     match std::process::Command::new(tool).arg("--version").output() {
         Ok(output) if output.status.success() => (
