@@ -106,11 +106,19 @@ substitute for the delta. The folder-set epoch, the last applied event
 identity, and the root epoch are captured under one lock acquisition before
 the query; after the answer arrives they are re-checked under one lock, and
 a mismatch drops the round-trip untouched — a newer event owns the
-authority. A matching answer replaces the stored set canonically and is a
-no-op when equivalent. A client that cannot answer the query keeps the
-delta-derived state. The derived authority is applied under the root
-transition guard bound to the folder-set epoch it was derived from, so a
-stale derivation can never overwrite a newer folder set.
+authority. Entry identity is the normalized path only; the stored URI
+spelling is display-only, so a path-equivalent answer with a byte-different
+URI spelling is a no-op. When the accepted delta changed the set, the
+answer is consistency-checked against the stored set (same path set) and
+never installed: a consistent answer merely confirms the set, and a
+lagging, contradictory answer — for example the pre-delta list — is
+dropped without mutating, so the delta-derived state stands. When the
+delta did not change the set, the answer is the drift-correction path and
+may replace the stored set canonically; an unparseable answer there
+surfaces the typed bounded rejection. A client that cannot answer the
+query keeps the delta-derived state. The derived authority is applied under
+the root transition guard bound to the folder-set epoch it was derived
+from, so a stale derivation can never overwrite a newer folder set.
 
 ### Transition coalescing
 
@@ -173,6 +181,16 @@ then the answer is dropped,
 and the authority remains selected_single_root at A.
 ```
 
+### Lagging contradictory answer never undoes an accepted delta
+
+```text
+Given a session with stored set {A},
+when an event adds B and the reconciliation answer is the lagging
+pre-delta list [A],
+then the answer is dropped without mutating the stored set,
+and the authority becomes the delta-derived workspace_ambiguous {A, B}.
+```
+
 ### Equivalent set in different order is a no-op
 
 ```text
@@ -213,6 +231,9 @@ and no duplicate analysis runs.
 - `crates/ripr/src/lsp/state.rs::tests::workspace_folder_set_apply_event_tracks_epoch_and_event_identity`
   — folder-set epoch and last applied event identity bookkeeping, including
   the no-op empty delta and the equivalent reconciliation.
+- `crates/ripr/src/lsp/state.rs::tests::workspace_folder_set_reconciliation_with_equivalent_uri_spelling_is_noop`
+  — path-identity reconciliation: a byte-different but path-equivalent URI
+  spelling is a no-op; consistency checks are path-based.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_first_folder_after_none_starts_single_fresh_transition`
   — fixture 1: one fresh transition, no duplicate analysis.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback`
@@ -232,6 +253,9 @@ and no duplicate analysis runs.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_stale_reconciliation_response_is_dropped`
   — fixtures 9 and 10: delayed and stale async completion cannot overwrite
   the newer epoch.
+- `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_lagging_contradictory_reconciliation_is_dropped`
+  — a lagging pre-delta reconciliation answer never undoes an accepted
+  delta; a consistent answer confirms it.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_equivalent_set_different_order_is_noop`
   — fixture 11.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_shutdown_during_inflight_reconciliation_stops_cleanly`

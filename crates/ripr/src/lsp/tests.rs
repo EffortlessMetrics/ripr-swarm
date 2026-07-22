@@ -6853,6 +6853,93 @@ fn workspace_folder_transitions_stale_reconciliation_response_is_dropped() -> Re
 }
 
 #[test]
+fn workspace_folder_transitions_lagging_contradictory_reconciliation_is_dropped()
+-> Result<(), String> {
+    // Review fixture (#2036 review): an accepted delta changes the set, then
+    // the reconciliation answer is the lagging PRE-delta list. The answer
+    // contradicts the stored set and must be dropped without mutating: the
+    // authority keeps the delta-derived state. A consistent answer confirms
+    // the same way.
+    run_workspace_folder_transitions_exchange(
+        "lagging-reconciliation flow did not complete",
+        async {
+            let root_a = unique_lsp_test_root("wft-lagging-a")?;
+            let root_b = unique_lsp_test_root("wft-lagging-b")?;
+            let root_c = unique_lsp_test_root("wft-lagging-c")?;
+            let root_a_uri = file_uri_for_path(root_a.path())?;
+            let root_b_uri = file_uri_for_path(root_b.path())?;
+            let root_c_uri = file_uri_for_path(root_c.path())?;
+            let root_a_path = root_a.path().display().to_string();
+            let root_b_path = root_b.path().display().to_string();
+            let root_c_path = root_c.path().display().to_string();
+            let mut client = WorkspaceFolderTransitionsClient::spawn();
+            client
+                .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
+                    &root_a_uri
+                )]))
+                .await?;
+
+            // Accepted delta: add B (stored set {A, B}). The lagging answer
+            // claims the list is still only [A]; installing it would undo
+            // the delta, so it must be dropped and the delta-derived
+            // ambiguous authority applied.
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                    serde_json::json!([]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                )
+                .await?;
+            let status = client
+                .poll_workspace_status_until("delta-derived ambiguity survives", |status| {
+                    status_root_state(status) == Some("workspace_ambiguous")
+                })
+                .await?;
+            if status_candidate_roots(&status) != vec![root_a_path.clone(), root_b_path.clone()] {
+                return Err(format!(
+                    "the lagging contradictory answer must not undo the accepted delta: {status}"
+                ));
+            }
+
+            // A consistent answer confirms the accepted delta the same way.
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([workspace_folder_json(&root_c_uri)]),
+                    serde_json::json!([]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([
+                        workspace_folder_json(&root_a_uri),
+                        workspace_folder_json(&root_b_uri),
+                        workspace_folder_json(&root_c_uri)
+                    ]),
+                )
+                .await?;
+            let status = client
+                .poll_workspace_status_until("consistent confirmation", |status| {
+                    status_root_state(status) == Some("workspace_ambiguous")
+                        && status_candidate_roots(status).len() == 3
+                })
+                .await?;
+            if status_candidate_roots(&status) != vec![root_a_path, root_b_path, root_c_path] {
+                return Err(format!(
+                    "the consistent answer must confirm the accepted delta: {status}"
+                ));
+            }
+            client.finish().await
+        },
+    )
+}
+
+#[test]
 fn workspace_folder_transitions_equivalent_set_different_order_is_noop() -> Result<(), String> {
     // Issue fixture 11: an equivalent folder set in a different order is
     // byte-identical after canonicalization — no epoch bump, no transition,

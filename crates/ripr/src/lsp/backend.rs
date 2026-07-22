@@ -3173,16 +3173,33 @@ impl LanguageServer for Backend {
                 return;
             }
             match queried {
-                Some(folders) => match set.replace_from_folder_list(&folders) {
-                    Ok(replaced) => {
-                        if replaced || outcome.changed {
-                            Some(Ok(set.folder_set_epoch()))
-                        } else {
-                            None
+                Some(folders) if outcome.changed => {
+                    // The accepted delta is authoritative over the
+                    // round-trip: the answer is consistency-checked but
+                    // NEVER installed. A consistent answer (same path set)
+                    // merely confirms the stored set; a lagging,
+                    // contradictory answer (e.g. the pre-delta list) is
+                    // dropped without mutating — installing it would undo
+                    // the accepted delta and reintroduce the stale
+                    // full-list race this handler exists to close. Either
+                    // way the delta-derived authority is applied below.
+                    let _contradictory_answer_dropped = !set.matches_folder_list_paths(&folders);
+                    Some(Ok(set.folder_set_epoch()))
+                }
+                Some(folders) => {
+                    // No accepted delta: the full-list answer is the
+                    // drift-correction path and may replace the set.
+                    match set.replace_from_folder_list(&folders) {
+                        Ok(replaced) => {
+                            if replaced {
+                                Some(Ok(set.folder_set_epoch()))
+                            } else {
+                                None
+                            }
                         }
+                        Err(rejection) => Some(Err(rejection)),
                     }
-                    Err(rejection) => Some(Err(rejection)),
-                },
+                }
                 None if outcome.changed => Some(Ok(set.folder_set_epoch())),
                 None => None,
             }

@@ -233,19 +233,45 @@ impl WorkspaceFolderSet {
     }
 
     /// Replace the set from a complete folder list returned by the client
-    /// reconciliation query. Returns whether the entries changed; an
-    /// equivalent list (any order, with duplicates) is a no-op.
+    /// reconciliation query. Returns whether the entries changed. Identity
+    /// is the normalized path: an equivalent list (any order, duplicates,
+    /// or a byte-different but path-equivalent URI spelling) is a no-op and
+    /// the stored URI spelling is kept for display.
     pub(super) fn replace_from_folder_list(
         &mut self,
         folders: &[WorkspaceFolder],
     ) -> Result<bool, WorkspaceFolderEventRejection> {
         let entries = canonical_folder_entries(folders)?;
-        if entries == self.entries {
+        if self.same_paths(&entries) {
             return Ok(false);
         }
         self.entries = entries;
         self.folder_set_epoch = self.folder_set_epoch.saturating_add(1);
         Ok(true)
+    }
+
+    /// Whether a complete folder list from the client reconciliation query
+    /// is consistent with the stored set as a path set (order- and
+    /// duplicate-insensitive, path identity only). An unparseable list is
+    /// never consistent. Used to consistency-check a reconciliation answer
+    /// against an accepted delta: a lagging contradictory answer must be
+    /// dropped, never installed over the delta.
+    pub(super) fn matches_folder_list_paths(&self, folders: &[WorkspaceFolder]) -> bool {
+        let Ok(entries) = canonical_folder_entries(folders) else {
+            return false;
+        };
+        self.same_paths(&entries)
+    }
+
+    /// Path-identity comparison against canonical (sorted, deduplicated)
+    /// entries. The URI spelling is display-only and never compared.
+    fn same_paths(&self, entries: &[WorkspaceFolderEntry]) -> bool {
+        self.entries.len() == entries.len()
+            && self
+                .entries
+                .iter()
+                .zip(entries.iter())
+                .all(|(stored, candidate)| stored.path == candidate.path)
     }
 
     /// Apply one `didChangeWorkspaceFolders` delta. Every entry is
@@ -1650,6 +1676,60 @@ mod tests {
                 != vec![PathBuf::from("/workspace/b"), PathBuf::from("/workspace/c")]
         {
             return Err("a changed reconciliation must replace canonically".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_reconciliation_with_equivalent_uri_spelling_is_noop()
+    -> Result<(), String> {
+        // Identity is the normalized path, not the URI spelling
+        // (RIPR-SPEC-0139): a reconciliation answer that re-sends the same
+        // folder with a byte-different but path-equivalent URI spelling
+        // (here: percent-encoded characters) is a no-op — no epoch bump, no
+        // entry change, and the stored spelling is kept for display.
+        let mut set = WorkspaceFolderSet::from_folder_list(&[folder("file:///workspace/ab")?])
+            .map_err(|rejection| format!("unexpected rejection: {rejection:?}"))?;
+        if set
+            .apply_event(&[folder("file:///workspace/cd")?], &[])
+            .map_err(|rejection| format!("unexpected rejection: {rejection:?}"))?
+            .folder_set_epoch
+            != 1
+        {
+            return Err("setup: the addition must bump the epoch once".to_string());
+        }
+        let replaced = set
+            .replace_from_folder_list(&[
+                folder("file:///workspace/%61%62")?,
+                folder("file:///workspace/%63d")?,
+            ])
+            .map_err(|rejection| format!("unexpected rejection: {rejection:?}"))?;
+        if replaced || set.folder_set_epoch() != 1 {
+            return Err("a path-equivalent respelling must not bump the epoch".to_string());
+        }
+        if entry_paths(&set)
+            != vec![
+                PathBuf::from("/workspace/ab"),
+                PathBuf::from("/workspace/cd"),
+            ]
+        {
+            return Err("a path-equivalent respelling must not change entries".to_string());
+        }
+        if set.entries().iter().any(|entry| entry.uri.contains('%')) {
+            return Err("the stored URI spelling must be kept, not rewritten".to_string());
+        }
+        // The consistency check agrees: both spellings match the stored set.
+        if !set.matches_folder_list_paths(&[
+            folder("file:///workspace/%61%62")?,
+            folder("file:///workspace/cd")?,
+        ]) {
+            return Err("path-equivalent spellings must be consistent".to_string());
+        }
+        if set.matches_folder_list_paths(&[folder("file:///workspace/ab")?]) {
+            return Err("a smaller list must not be consistent".to_string());
+        }
+        if set.matches_folder_list_paths(&[folder("https://example.test/ab")?]) {
+            return Err("an unparseable list must not be consistent".to_string());
         }
         Ok(())
     }
