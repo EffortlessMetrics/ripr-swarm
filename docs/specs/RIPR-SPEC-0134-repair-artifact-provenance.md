@@ -112,7 +112,8 @@ an unsupported schema fails before movement calculation.
   duplicate-field rejection.
 - `crates/ripr/tests/cli_smoke.rs` tests valid, tampered, fabricated, and
   editor-loop cases, plus receipt rejection of fabricated and altered verify
-  output, incomparable base revisions, and incomparable analysis inputs.
+  output, incomparable base revisions, incomparable analysis inputs, and
+  byte-different re-renderings of canonical verify output.
 
 ## Implementation Mapping
 

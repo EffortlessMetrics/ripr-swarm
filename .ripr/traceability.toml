@@ -6535,6 +6535,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_tampered_verify_json",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_incomparable_base_revision",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_incomparable_analysis_inputs",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_rerendered_verify_json",
   "crates/ripr/tests/cli_smoke.rs::editor_agent_loop_fixture_outputs_match_expected",
 ]
 fixtures = [
