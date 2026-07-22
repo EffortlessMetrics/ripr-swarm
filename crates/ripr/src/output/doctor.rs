@@ -570,7 +570,7 @@ mod tests {
                     .create_new(true)
                     .open(&shim)
                     .map_err(|err| format!("create shim: {err}"))?;
-                file.write_all(b"#!/bin/sh\nwhile :; do :; done\n")
+                file.write_all(b"#!/bin/sh\nexec sleep 60\n")
                     .map_err(|err| format!("write shim: {err}"))?;
                 file.set_permissions(std::fs::Permissions::from_mode(0o755))
                     .map_err(|err| format!("chmod shim: {err}"))?;
@@ -580,7 +580,7 @@ mod tests {
             let start = std::time::Instant::now();
             let (status, evidence) = doctor_tool_check_with_timeout(
                 shim.to_str().ok_or("shim path is not utf-8")?,
-                std::time::Duration::from_millis(50),
+                std::time::Duration::from_millis(250),
             );
             let elapsed = start.elapsed();
 
