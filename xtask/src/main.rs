@@ -5990,13 +5990,23 @@ enum FixtureCheckFormat {
 /// link check; the absolute path keeps a long `../` from resolving to a
 /// stale binary in the enclosing checkout.
 fn ripr_fixture_binary() -> Result<String, String> {
-    let binary = Path::new("target/debug").join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+    // Honor CARGO_TARGET_DIR (#2176 review): the routed CI jobs set it, so
+    // `cargo build` writes there — a hardcoded target/debug would resolve a
+    // missing or stale binary.
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+    let binary = fixture_binary_path(Path::new(&target_dir));
     if !binary.exists() {
         run("cargo", &["build", "-p", "ripr"])?;
     }
     std::path::absolute(&binary)
         .map(|path| path.to_string_lossy().to_string())
         .map_err(|err| format!("resolve {} failed: {err}", binary.display()))
+}
+
+fn fixture_binary_path(target_dir: &Path) -> PathBuf {
+    target_dir
+        .join("debug")
+        .join(format!("ripr{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn run_fixture_check(
@@ -81470,6 +81480,7 @@ TypeScript repair packet (advisory)
     // ============================================================================
 
     #[test]
+    #[test]
     fn validate_panic_allow_entry_v2_rejects_unfilled_todo_placeholders() -> Result<(), String> {
         // #2090: a pasted --propose entry with TODO-* markers must fail the
         // gate, not pass as reviewed policy.
@@ -81521,6 +81532,15 @@ TypeScript repair packet (advisory)
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn fixture_binary_path_joins_debug_binary_under_the_target_dir() {
+        // #2176 review: with CARGO_TARGET_DIR set (as routed CI does), the
+        // binary must resolve under it, never a hardcoded target/debug.
+        let path = super::fixture_binary_path(Path::new("/mnt/ci-scratch/target/run-1"));
+        let text = path.to_string_lossy().replace('\\', "/");
+        assert!(text.starts_with("/mnt/ci-scratch/target/run-1/debug/ripr"));
     }
 
     #[test]
