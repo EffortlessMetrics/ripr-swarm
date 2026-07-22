@@ -1858,7 +1858,22 @@ fn agent_verify_accepts_historical_comparable_pair_with_disclosure()
     write_bound_repo_exposure_fixture(&root, &after, seam)?;
     std::fs::write(root.join("marker.txt"), "fixture-updated\n")?;
     run_git(&root, &["add", "marker.txt"])?;
-    run_git(&root, &["commit", "-m", "advance fixture"])?;
+    let commit = run_command(
+        "git",
+        Some(&root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "advance fixture",
+        ],
+    )?;
+    if !commit.status.success() {
+        return Err(format!("historical fixture commit failed: {commit:?}").into());
+    }
 
     let before_path = before.display().to_string();
     let after_path = after.display().to_string();
