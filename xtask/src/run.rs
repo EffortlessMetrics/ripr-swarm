@@ -203,8 +203,17 @@ pub(crate) fn tool_build_timeout() -> Result<Duration, String> {
 }
 
 pub(crate) fn env_timeout_secs(name: &str, default_secs: u64) -> Result<Duration, String> {
-    parse_env_timeout_secs(name, std::env::var(name).ok().as_deref(), default_secs)
-        .map(Duration::from_secs)
+    // A malformed override must fail fast, not silently fall back to the
+    // default: NotPresent means "no override", anything else is validated.
+    match std::env::var(name) {
+        Ok(value) => {
+            parse_env_timeout_secs(name, Some(&value), default_secs).map(Duration::from_secs)
+        }
+        Err(std::env::VarError::NotPresent) => Ok(Duration::from_secs(default_secs)),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{name} must be valid UTF-8 text naming a positive integer"
+        )),
+    }
 }
 
 fn parse_env_timeout_secs(
@@ -238,9 +247,10 @@ pub(crate) fn run_output_owned_with_timeout(
 ) -> Result<String, String> {
     let output = capture_output_with_timeout(program, args, &[], timeout, error_context)?;
     if output.timed_out {
+        let seconds = timeout.as_secs();
         return Err(format!(
-            "{error_context} timed out after {} seconds; the child process tree was terminated",
-            timeout.as_secs()
+            "{error_context} timed out after {seconds} {}; the child process tree was terminated",
+            if seconds == 1 { "second" } else { "seconds" }
         ));
     }
     let Some(status) = output.status else {
@@ -910,7 +920,7 @@ mod tests {
         };
         for expected in [
             "bounded build probe",
-            "timed out after 1 seconds",
+            "timed out after 1 second;",
             "process tree was terminated",
         ] {
             if !err.contains(expected) {
