@@ -100,6 +100,13 @@ pub(super) struct Backend {
     /// Coalesces pull scheduling to one in-flight request plus at most one
     /// queued re-pull for the latest epoch.
     config_pull_coordinator: Mutex<ConfigPullCoordinator>,
+    /// The root the currently retained pulled layer was scoped to. Pulled
+    /// settings are valid only for that root; any transition landing on a
+    /// different analysis-capable root must re-pull. Compared rather than
+    /// derived from transition deltas so a direct A -> B switch (which
+    /// rewrites to a non-analyzable `RootChanged` state and is re-selected
+    /// later with `root_changed == false`) is still caught.
+    config_pull_scope_root: Mutex<Option<PathBuf>>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
@@ -154,6 +161,7 @@ impl Backend {
             config_pull_epoch: AtomicU64::new(0),
             config_pull_state: Mutex::new(ConfigPullState::NotApplicable),
             config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
+            config_pull_scope_root: Mutex::new(None),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
@@ -1522,28 +1530,39 @@ impl Backend {
         // A deferred configuration pull (#2031) becomes runnable once a
         // single workspace root is selected, and a root change after the
         // pull lifecycle has started needs one re-pull scoped to the new
-        // root: applied/failed means the old root's layer is live, and an
-        // in-flight pull (Pending with a request outstanding) is queued so
-        // the coordinator re-pulls with the new epoch. A pre-`initialized`
-        // Pending state must NOT schedule here — the client rejects
-        // server->client requests before `initialized` (-32002), and
-        // `initialized` owns the first pull. The wrapper schedules after
-        // the transition guard is released.
-        let pull_restartable = {
-            let in_flight = self
-                .config_pull_coordinator
-                .lock()
-                .map(|coordinator| coordinator.in_flight)
-                .unwrap_or(false);
-            in_flight
-                || matches!(
-                    self.config_pull_state(),
-                    ConfigPullState::Applied | ConfigPullState::Failed(_)
-                )
+        // root. Staleness is decided by comparing the retained layer's scope
+        // root against the final effective root — NOT by transition deltas —
+        // so a direct A -> B switch (rewritten to a non-analyzable
+        // `RootChanged` state and re-selected later with no further root
+        // change) is still caught when B is re-selected. Applied/Failed or
+        // an in-flight pull makes the lifecycle restartable; a
+        // pre-`initialized` Pending state must NOT schedule here — the
+        // client rejects server->client requests before `initialized`
+        // (-32002), and `initialized` owns the first pull. The wrapper
+        // schedules after the transition guard is released.
+        let pull_scope_stale = {
+            let restartable = {
+                let in_flight = self
+                    .config_pull_coordinator
+                    .lock()
+                    .map(|coordinator| coordinator.in_flight)
+                    .unwrap_or(false);
+                in_flight
+                    || matches!(
+                        self.config_pull_state(),
+                        ConfigPullState::Applied | ConfigPullState::Failed(_)
+                    )
+            };
+            restartable
+                && self
+                    .config_pull_scope_root
+                    .lock()
+                    .ok()
+                    .and_then(|scope_root| scope_root.clone())
+                    != self.workspace_root_authority().effective_root
         };
         self.configuration_mode() == ConfigurationMode::Pull
-            && (matches!(self.config_pull_state(), ConfigPullState::Deferred)
-                || (root_changed && pull_restartable))
+            && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || pull_scope_stale)
             && self.workspace_root_authority().allows_analysis()
     }
 
@@ -1799,7 +1818,15 @@ impl Backend {
         }
         match result {
             Ok(values) => match validated_pulled_options(&values) {
-                Ok(pulled) => self.apply_pulled_configuration(pulled).await,
+                Ok(pulled) => {
+                    self.apply_pulled_configuration(pulled).await;
+                    // The retained layer is scoped to the root it was pulled
+                    // for; root transitions compare against this to decide
+                    // whether a re-pull is needed.
+                    if let Ok(mut scope_root) = self.config_pull_scope_root.lock() {
+                        *scope_root = Some(root);
+                    }
+                }
                 Err(message) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
                         kind: "config_pull_invalid".to_string(),
