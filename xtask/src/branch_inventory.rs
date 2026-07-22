@@ -8,8 +8,9 @@
 //! `cargo xtask branch-inventory apply --plan <path> --digest <digest>` is the
 //! only mutating path. It refuses a regenerated or changed plan (sha256 digest
 //! over the canonical plan content), rechecks open PR heads and branch SHAs
-//! immediately before each deletion, uses non-force ref deletion only
-//! (`git push origin --delete`, never `--force`), refuses to run under CI
+//! immediately before each deletion, uses non-force ref deletion bound to
+//! the rechecked SHA (`git push --force-with-lease=<ref>:<sha> origin
+//! --delete`, never plain `--force`), refuses to run under CI
 //! (`CI` / `GITHUB_ACTIONS` environment), and writes a cleanup receipt that
 //! records deleted, skipped, changed, and failed branches with reasons.
 //! Nothing wires the apply path into CI, hooks, or any other xtask command;
@@ -105,6 +106,12 @@ struct InventoryEntry {
     issue_refs: Vec<u64>,
     active_pr_head: bool,
     claim_source: Option<String>,
+    /// The specific merged PR whose head SHA matched this branch head at
+    /// classification time. This is the identity recorded on a deletion plan;
+    /// it must never be re-derived from the broader matching-PR set (a later
+    /// closed-unmerged PR can share the head branch and must not be named on
+    /// a destructive artifact).
+    merged_pr_number: Option<u64>,
     classification: &'static str,
     disposition: &'static str,
     reason: String,
@@ -292,18 +299,21 @@ fn classify_branch(
         .filter(|pr| pr.state == "closed" && !pr.merged)
         .max_by_key(|pr| pr.number);
 
-    let base =
-        |classification: &'static str, disposition: &'static str, reason: String| InventoryEntry {
-            branch: facts.clone(),
-            age_days,
-            matching_prs: matching_numbers.clone(),
-            issue_refs: issue_refs.clone(),
-            active_pr_head: open_pr.is_some(),
-            claim_source: claim.map(|claim| claim.source.clone()),
-            classification,
-            disposition,
-            reason,
-        };
+    let base = |classification: &'static str,
+                disposition: &'static str,
+                reason: String,
+                merged_pr_number: Option<u64>| InventoryEntry {
+        branch: facts.clone(),
+        age_days,
+        matching_prs: matching_numbers.clone(),
+        issue_refs: issue_refs.clone(),
+        active_pr_head: open_pr.is_some(),
+        claim_source: claim.map(|claim| claim.source.clone()),
+        merged_pr_number,
+        classification,
+        disposition,
+        reason,
+    };
 
     if is_authority_branch(&facts.name) || facts.protected {
         return base(
@@ -311,6 +321,7 @@ fn classify_branch(
             DISPOSITION_KEEP,
             "protected or release/source-promotion authority branch; never a deletion candidate"
                 .to_string(),
+            None,
         );
     }
     if let Some(error) = &facts.lookup_error {
@@ -320,6 +331,7 @@ fn classify_branch(
             format!(
                 "GitHub lookup unavailable or ambiguous ({error}); unknown means manual-review"
             ),
+            None,
         );
     }
     if let Some(pr) = open_pr {
@@ -327,6 +339,7 @@ fn classify_branch(
             CLASSIFICATION_ACTIVE,
             DISPOSITION_KEEP,
             format!("branch is the head of open PR #{}", pr.number),
+            None,
         );
     }
     if let Some(claim) = claim {
@@ -337,6 +350,7 @@ fn classify_branch(
                 "branch is named by a #{CLAIMS_ISSUE} claim ({}, state {}); active/parked claims are never deletion candidates",
                 claim.source, claim.state
             ),
+            None,
         );
     }
     if let Some(pr) = merged_pr {
@@ -349,6 +363,7 @@ fn classify_branch(
                         "merged PR #{} matches this head branch and SHA, but the #{CLAIMS_ISSUE} claim lookup was unavailable; fail-closed to manual-review",
                         pr.number
                     ),
+                    Some(pr.number),
                 );
             }
             return base(
@@ -358,6 +373,7 @@ fn classify_branch(
                     "merged PR #{} shares this head branch name and head SHA; squash merges leave the branch unreachable from main, so the merged-PR record — not Git ancestry — is the merged discriminator",
                     pr.number
                 ),
+                Some(pr.number),
             );
         }
         return base(
@@ -367,6 +383,7 @@ fn classify_branch(
                 "merged PR #{} shares this head branch name, but the branch head SHA differs from the PR head SHA; unique commits may exist",
                 pr.number
             ),
+            Some(pr.number),
         );
     }
     if let Some(pr) = closed_pr {
@@ -377,6 +394,7 @@ fn classify_branch(
                 "closed without merge (PR #{}); unique unmerged work requires manual review",
                 pr.number
             ),
+            None,
         );
     }
     base(
@@ -384,6 +402,7 @@ fn classify_branch(
         DISPOSITION_MANUAL_REVIEW,
         "no matching PR in the full all-state lookup and no claim; unknown means manual-review"
             .to_string(),
+        None,
     )
 }
 
@@ -456,17 +475,18 @@ fn plan_deletions(entries: &[InventoryEntry]) -> Vec<PlanDeletion> {
         .iter()
         .filter(|entry| entry.disposition == DISPOSITION_DELETE_CANDIDATE)
         .filter_map(|entry| {
-            entry
-                .matching_prs
-                .iter()
-                .copied()
-                .max()
-                .map(|merged_pr| PlanDeletion {
-                    branch: entry.branch.name.clone(),
-                    head_sha: entry.branch.head_sha.clone(),
-                    merged_pr,
-                    reason: entry.reason.clone(),
-                })
+            // The plan must name the specific merged PR that matched at
+            // classification time, never a re-derived max over all matching
+            // PRs (a later closed-unmerged PR on the same head branch would
+            // otherwise be recorded as the merge evidence). A delete
+            // candidate always carries this number; if it is somehow absent,
+            // fail closed and leave the branch out of the plan.
+            entry.merged_pr_number.map(|merged_pr| PlanDeletion {
+                branch: entry.branch.name.clone(),
+                head_sha: entry.branch.head_sha.clone(),
+                merged_pr,
+                reason: entry.reason.clone(),
+            })
         })
         .collect();
     deletions.sort_by(|left, right| left.branch.cmp(&right.branch));
@@ -581,7 +601,7 @@ fn apply_plan(args: &[String]) -> Result<(), String> {
         let state = recheck_branch(&repository, &deletion.branch);
         let decision = decide_apply(deletion, &state);
         let outcome = if decision.outcome == APPLY_DELETED {
-            match delete_remote_branch(&deletion.branch) {
+            match delete_remote_branch(&deletion.branch, &deletion.head_sha) {
                 Ok(()) => ApplyOutcome {
                     branch: deletion.branch.clone(),
                     outcome: APPLY_DELETED.to_string(),
@@ -590,7 +610,7 @@ fn apply_plan(args: &[String]) -> Result<(), String> {
                 Err(err) => ApplyOutcome {
                     branch: deletion.branch.clone(),
                     outcome: APPLY_FAILED.to_string(),
-                    reason: format!("non-force ref deletion failed: {err}"),
+                    reason: format!("SHA-bound non-force ref deletion failed: {err}"),
                 },
             }
         } else {
@@ -710,7 +730,7 @@ fn decide_apply(deletion: &PlanDeletion, state: &LiveBranchState) -> ApplyDecisi
         Some(sha) if sha == &deletion.head_sha => ApplyDecision {
             outcome: APPLY_DELETED,
             reason: format!(
-                "rechecked head SHA {sha} matches the reviewed plan; non-force ref deletion"
+                "rechecked head SHA {sha} matches the reviewed plan; non-force ref deletion bound to that SHA via --force-with-lease"
             ),
         },
         Some(sha) => ApplyDecision {
@@ -729,10 +749,26 @@ fn decide_apply(deletion: &PlanDeletion, state: &LiveBranchState) -> ApplyDecisi
     }
 }
 
-/// Non-force remote ref deletion. `git push origin --delete` carries no force
-/// semantics; `--force` is never used on this path.
-fn delete_remote_branch(branch: &str) -> Result<(), String> {
-    crate::run::run("git", &["push", "origin", "--delete", branch]).map(|_| ())
+/// Non-force remote ref deletion bound to the rechecked head SHA.
+/// `--force-with-lease=<ref>:<expect>` with an explicit expected value works
+/// with `--delete` (verified against git 2.43.0: a matching SHA deletes, a
+/// stale SHA is rejected with "stale info" and the ref survives), so the
+/// deletion is rejected if the ref moved between the pre-deletion recheck
+/// and the push. Plain `--force` is never used on this path.
+fn delete_branch_argv(branch: &str, expected_sha: &str) -> Vec<String> {
+    vec![
+        "push".to_string(),
+        format!("--force-with-lease=refs/heads/{branch}:{expected_sha}"),
+        "origin".to_string(),
+        "--delete".to_string(),
+        branch.to_string(),
+    ]
+}
+
+fn delete_remote_branch(branch: &str, expected_sha: &str) -> Result<(), String> {
+    let args = delete_branch_argv(branch, expected_sha);
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    crate::run::run("git", &argv).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -1497,7 +1533,7 @@ fn inventory_json(
 
 fn entry_json(entry: &InventoryEntry) -> String {
     format!(
-        "    {{\n      \"name\": \"{}\",\n      \"head_sha\": \"{}\",\n      \"committed_date\": {},\n      \"author\": {},\n      \"committer\": {},\n      \"age_days\": {},\n      \"matching_prs\": {},\n      \"issue_refs\": {},\n      \"active_pr_head\": {},\n      \"claim\": {},\n      \"protected\": {},\n      \"reachable_from_main\": {},\n      \"lookup_error\": {},\n      \"classification\": \"{}\",\n      \"disposition\": \"{}\",\n      \"reason\": \"{}\"\n    }}",
+        "    {{\n      \"name\": \"{}\",\n      \"head_sha\": \"{}\",\n      \"committed_date\": {},\n      \"author\": {},\n      \"committer\": {},\n      \"age_days\": {},\n      \"matching_prs\": {},\n      \"merged_pr\": {},\n      \"issue_refs\": {},\n      \"active_pr_head\": {},\n      \"claim\": {},\n      \"protected\": {},\n      \"reachable_from_main\": {},\n      \"lookup_error\": {},\n      \"classification\": \"{}\",\n      \"disposition\": \"{}\",\n      \"reason\": \"{}\"\n    }}",
         json_escape(&entry.branch.name),
         json_escape(&entry.branch.head_sha),
         json_opt_string(entry.branch.committed_date.as_deref()),
@@ -1505,6 +1541,10 @@ fn entry_json(entry: &InventoryEntry) -> String {
         json_opt_string(entry.branch.committer.as_deref()),
         json_opt_i64(entry.age_days),
         json_u64_array(&entry.matching_prs),
+        entry
+            .merged_pr_number
+            .map(|number| number.to_string())
+            .unwrap_or_else(|| "null".to_string()),
         json_u64_array(&entry.issue_refs),
         entry.active_pr_head,
         json_opt_string(entry.claim_source.as_deref()),
@@ -1545,7 +1585,7 @@ fn inventory_markdown(
     body.push_str("- Classification goes through the all-state PR lookup by head branch name, never Git ancestry. Squash merges leave a merged PR's branch SHAs unreachable from `main`, so `git branch --merged` would misclassify nearly every merged leftover; `reachable_from_main` is recorded for context only.\n");
     body.push_str("- The branch and PR lookups paginate in full (`--paginate` / an explicit GraphQL cursor loop), so nothing below a fixed list window silently classifies as having no PR.\n");
     body.push_str("- Unknown always classifies `manual-review`, never a deletion candidate. Only `merged-pr-leftover` entries whose branch head SHA equals the merged PR head SHA are `delete-candidate`.\n");
-    body.push_str("- Deletion is a separate explicit operator action: `cargo xtask branch-inventory apply --plan <path> --digest <digest>`. It refuses a regenerated or changed plan, rechecks open PR heads and branch SHAs immediately before each deletion, uses non-force ref deletion only, refuses to run under CI, and writes a cleanup receipt.\n");
+    body.push_str("- Deletion is a separate explicit operator action: `cargo xtask branch-inventory apply --plan <path> --digest <digest>`. It refuses a regenerated or changed plan, rechecks open PR heads and branch SHAs immediately before each deletion, uses non-force ref deletion bound to the rechecked SHA (`--force-with-lease=<ref>:<sha>`, never plain `--force`), refuses to run under CI, and writes a cleanup receipt.\n");
 
     body.push_str(
         "\n## Counts by classification\n\n| Classification | Branches |\n| --- | ---: |\n",
@@ -1583,11 +1623,9 @@ fn inventory_markdown(
                 entry.branch.name,
                 short_sha(&entry.branch.head_sha),
                 entry
-                    .matching_prs
-                    .iter()
+                    .merged_pr_number
                     .map(|number| format!("#{number}"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                    .unwrap_or_else(|| "unknown".to_string()),
                 entry
                     .age_days
                     .map(|days| days.to_string())
@@ -1652,7 +1690,7 @@ fn plan_json(
     );
     body.push_str("    \"rechecks open PR heads, branch SHAs, and protection immediately before each deletion\",\n");
     body.push_str(
-        "    \"uses non-force ref deletion only (git push origin --delete, never --force)\",\n",
+        "    \"uses non-force ref deletion bound to the rechecked SHA (git push --force-with-lease=<ref>:<sha> origin --delete, never plain --force)\",\n",
     );
     body.push_str("    \"refuses to run under CI (CI/GITHUB_ACTIONS environment); no workflow or hook wires this path\",\n");
     body.push_str("    \"does not touch local worktrees, caches, tags, releases, or source-repository refs (#1034/#1635 govern those)\"\n");
@@ -2385,6 +2423,80 @@ mod tests {
         ensure(
             digest == plan_digest("owner/repo", &reordered),
             "entry order must not change the digest (sorted-branch canonicalization)",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn branch_inventory_plan_records_the_matched_merged_pr_not_the_latest_pr() -> Result<(), String>
+    {
+        // Merged #700 and a later closed-unmerged #800 share the head branch;
+        // the deletion plan must name the merged PR that established the
+        // delete-candidate status, never the max PR number.
+        let entry = classify_one(
+            &branch("codex/reopened", "aaaa7000"),
+            vec![
+                pr(700, "closed", true, "codex/reopened", "aaaa7000"),
+                pr(800, "closed", false, "codex/reopened", "aaaa7000"),
+            ],
+            Vec::new(),
+        )?;
+        ensure(
+            entry.disposition == DISPOSITION_DELETE_CANDIDATE,
+            "exact SHA match with merged #700 must be a delete candidate",
+        )?;
+        ensure(
+            entry.merged_pr_number == Some(700),
+            "the entry must record the matched merged PR #700",
+        )?;
+        ensure(
+            entry.matching_prs == vec![700, 800],
+            "both PRs stay visible in the inventory",
+        )?;
+        let packet = input(
+            vec![branch("codex/reopened", "aaaa7000")],
+            vec![
+                pr(700, "closed", true, "codex/reopened", "aaaa7000"),
+                pr(800, "closed", false, "codex/reopened", "aaaa7000"),
+            ],
+            Vec::new(),
+        );
+        let entries = classify_all(&packet, REFERENCE_EPOCH);
+        let deletions = plan_deletions(&entries);
+        ensure(deletions.len() == 1, "exactly one plan deletion expected")?;
+        let deletion = deletions
+            .first()
+            .ok_or_else(|| "plan deletion missing".to_string())?;
+        ensure(
+            deletion.merged_pr == 700,
+            "the plan must name merged PR #700, not the later closed PR #800",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn branch_inventory_delete_argv_binds_rechecked_sha_without_plain_force() -> Result<(), String>
+    {
+        let argv = delete_branch_argv("codex/x", "aaaa1111");
+        let expected = vec![
+            "push".to_string(),
+            "--force-with-lease=refs/heads/codex/x:aaaa1111".to_string(),
+            "origin".to_string(),
+            "--delete".to_string(),
+            "codex/x".to_string(),
+        ];
+        ensure(
+            argv == expected,
+            "delete argv must match the documented lease form",
+        )?;
+        ensure(
+            argv.iter()
+                .any(|arg| arg == "--force-with-lease=refs/heads/codex/x:aaaa1111"),
+            "the lease must bind the exact rechecked SHA refspec",
+        )?;
+        ensure(
+            !argv.iter().any(|arg| arg == "--force" || arg == "-f"),
+            "plain force flags must never appear on the delete path",
         )?;
         Ok(())
     }

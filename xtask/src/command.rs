@@ -543,7 +543,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "remote branch refs (non-force deletion only) and target/ripr/reports/branch-inventory-cleanup.{md,json}",
             true,
             false,
-            "Applies an exact reviewed deletion plan: refuses a regenerated or changed plan (sha256 digest), rechecks open PR heads and branch SHAs immediately before each deletion, uses non-force ref deletion only, refuses to run under CI, and writes a cleanup receipt; never wired into CI, hooks, or other commands.",
+            "Applies an exact reviewed deletion plan: refuses a regenerated or changed plan (sha256 digest), rechecks open PR heads and branch SHAs immediately before each deletion, uses non-force ref deletion bound to the rechecked SHA (--force-with-lease=<ref>:<sha>, never plain --force), refuses to run under CI, and writes a cleanup receipt; never wired into CI, hooks, or other commands.",
         ),
         command_entry(
             "gh-pr-status --pr <number>",

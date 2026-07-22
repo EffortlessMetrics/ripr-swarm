@@ -247,7 +247,8 @@ deletes anything. Deletion is a separate explicit operator action,
 `cargo xtask branch-inventory apply --plan <path> --digest <digest>`: it
 refuses a regenerated or changed plan, rechecks open PR heads, protection, and
 branch SHAs immediately before each deletion, uses non-force ref deletion
-only, refuses to run under CI, and writes one cleanup receipt
+bound to the rechecked SHA (`--force-with-lease=<ref>:<sha>`, never plain
+`--force`), refuses to run under CI, and writes one cleanup receipt
 (`branch-inventory-cleanup.{md,json}`) recording every deleted, skipped,
 changed, and failed branch. No CI or scheduled job runs the apply path.
 
