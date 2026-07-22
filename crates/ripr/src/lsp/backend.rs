@@ -1520,11 +1520,30 @@ impl Backend {
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
         // A deferred configuration pull (#2031) becomes runnable once a
-        // single workspace root is selected, and any root change landing on
-        // an analysis-capable root needs one re-pull scoped to the new root.
-        // The wrapper schedules it after the transition guard is released.
+        // single workspace root is selected, and a root change after the
+        // pull lifecycle has started needs one re-pull scoped to the new
+        // root: applied/failed means the old root's layer is live, and an
+        // in-flight pull (Pending with a request outstanding) is queued so
+        // the coordinator re-pulls with the new epoch. A pre-`initialized`
+        // Pending state must NOT schedule here — the client rejects
+        // server->client requests before `initialized` (-32002), and
+        // `initialized` owns the first pull. The wrapper schedules after
+        // the transition guard is released.
+        let pull_restartable = {
+            let in_flight = self
+                .config_pull_coordinator
+                .lock()
+                .map(|coordinator| coordinator.in_flight)
+                .unwrap_or(false);
+            in_flight
+                || matches!(
+                    self.config_pull_state(),
+                    ConfigPullState::Applied | ConfigPullState::Failed(_)
+                )
+        };
         self.configuration_mode() == ConfigurationMode::Pull
-            && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || root_changed)
+            && (matches!(self.config_pull_state(), ConfigPullState::Deferred)
+                || (root_changed && pull_restartable))
             && self.workspace_root_authority().allows_analysis()
     }
 
