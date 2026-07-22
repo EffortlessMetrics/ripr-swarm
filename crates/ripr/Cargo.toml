@@ -10,6 +10,11 @@ description = "Find static mutation-exposure gaps before expensive mutation test
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]
 categories = ["development-tools", "development-tools::testing"]
+# Deliberate (#2070): the tarball ships tests/** and examples/**. They are
+# ~324K against ~11M of src/ (under 3%), keep `cargo test` working from a
+# packaged tarball, and keep `cargo package -p ripr --list` meaningful as
+# release evidence (see README.md Development). Do not slim this list
+# without a documented decision here.
 include = [
   "src/**",
   "tests/**",

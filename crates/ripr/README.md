@@ -264,6 +264,12 @@ cargo package -p ripr --list
 cargo publish -p ripr --dry-run
 ```
 
+The published tarball intentionally includes `tests/**` and `examples/**`
+(#2070): they are under 3% of the packaged source tree, keep `cargo test`
+viable from a packaged tarball, and keep `cargo package -p ripr --list`
+useful as release evidence. The choice is pinned by a comment in
+`Cargo.toml` next to the `include` list.
+
 Useful sample commands:
 
 ```bash
