@@ -2654,6 +2654,25 @@ mod tests {
     }
 
     #[test]
+    fn external_language_related_test_excludes_entry_from_packet_queue() -> Result<(), String> {
+        // Surface-level parity for the authority's cross-language gate: an
+        // entry whose only related test is external-language with no Rust
+        // target is cross-language-unresolved, so the queue pre-filter
+        // (`repair_packet_queue_visible`) must exclude it before `task_for`
+        // is ever reached.
+        let mut entry = weakly_gripped_classified();
+        entry.evidence.related_tests[0].file = PathBuf::from("tests/pricing.ts");
+        entry.evidence.related_tests[0].test_target = None;
+        let json = render_agent_seam_packets_json(&[entry], None);
+        if !json.contains("\"packets_total\": 0") {
+            return Err(format!(
+                "cross-language-unresolved entry must not enter the packet queue: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn unknown_grip_classes_never_project_assertion_repair_packets() -> Result<(), String> {
         for class in [
             SeamGripClass::ActivationUnknown,
