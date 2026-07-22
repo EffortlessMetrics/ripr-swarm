@@ -353,7 +353,17 @@ fn doctor_spawn_failure(tool: &str, kind: std::io::ErrorKind) -> DoctorToolCheck
 }
 
 fn doctor_spawn_failure_is_retryable(kind: std::io::ErrorKind) -> bool {
-    matches!(kind, std::io::ErrorKind::WouldBlock)
+    // The transient launch-failure class (#2242): resource exhaustion or
+    // exec races under load. Observed in the wild as both WouldBlock and
+    // ExecutableFileBusy under full-suite parallelism. NotFound (missing
+    // tool) and PermissionDenied (not executable) are persistent and must
+    // fail immediately.
+    matches!(
+        kind,
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::ExecutableFileBusy
+            | std::io::ErrorKind::OutOfMemory
+    )
 }
 
 fn doctor_timeout_evidence(tool: &str, timeout: Duration) -> String {
@@ -712,9 +722,11 @@ mod tests {
     }
 
     #[test]
-    fn doctor_spawn_failure_retry_policy_is_narrow() -> Result<(), String> {
+    fn doctor_spawn_failure_retry_policy_covers_transient_kinds() -> Result<(), String> {
         for (kind, expected) in [
             (std::io::ErrorKind::WouldBlock, true),
+            (std::io::ErrorKind::ExecutableFileBusy, true),
+            (std::io::ErrorKind::OutOfMemory, true),
             (std::io::ErrorKind::PermissionDenied, false),
             (std::io::ErrorKind::NotFound, false),
         ] {
