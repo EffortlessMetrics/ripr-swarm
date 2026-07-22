@@ -158,7 +158,11 @@ fn classify_statement(statement: &str) -> StatementKind {
     }
 }
 
-const CONTROL_PREFIXES: [&str; 7] = ["for ", "if ", "else", "match ", "while ", "loop", "}"];
+// Every entry carries its word boundary (trailing space or the structural
+// `}`): a boundary-less "else" would also match `elsewhere(...)` and
+// "loop" would match `loopback(...)`, wrongly ignoring real calls
+// (#2170 review).
+const CONTROL_PREFIXES: [&str; 7] = ["for ", "if ", "else ", "match ", "while ", "loop ", "}"];
 
 /// Classify a single-line compound statement (block opens and closes within
 /// the accumulated statement, e.g. `if cond { side_effect(); }`) by its inner
@@ -491,6 +495,30 @@ mod tests {
     // must not merge with the following line (which would classify the merge
     // as Assert) and must not hide the side effect inside the control header.
     #[test]
+    fn control_prefix_boundary_does_not_ignore_lookalike_calls() -> Result<(), String> {
+        // #2170 review: boundary-less "else"/"loop" prefixes would match
+        // `elsewhere(...)` / `loopback(...)` and wrongly ignore real calls,
+        // over-crediting dominance. Both lookalikes must block.
+        for body in [
+            "fn helper(v: i32) {\n    elsewhere(v);\n    assert!(v > 0);\n}\n",
+            "fn helper(v: i32) {\n    loopback(v);\n    assert!(v > 0);\n}\n",
+        ] {
+            if body_is_assertion_dominated(body) {
+                return Err(format!(
+                    "a lookalike-prefixed call must block dominance: {body}"
+                ));
+            }
+        }
+        // Real control flow still reads as control flow.
+        if !body_is_assertion_dominated(
+            "fn helper(v: i32) {\n    if v > 0 {\n        assert!(v > 1);\n    } else {\n        assert!(v < 10);\n    }\n}\n",
+        ) {
+            return Err("real if/else control flow with asserts must stay dominated".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn single_line_if_with_side_effect_blocks_dominance() -> Result<(), String> {
         let owner = function(
             "src/lib.rs",
@@ -598,6 +626,7 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn plain_helper_caller_in_src_blocks_reframe() -> Result<(), String> {
         let owner = function(
             "src/lib.rs",
