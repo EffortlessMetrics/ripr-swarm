@@ -74286,6 +74286,10 @@ mod tests {
         fs::write(path, text).unwrap();
     }
 
+    fn test_condition(condition: bool, message: impl Into<String>) -> Result<(), String> {
+        condition.then_some(()).ok_or(message.into())
+    }
+
     fn write_evidence_promotion_check(fixture: &Path, classification: &str) -> Result<(), String> {
         let check_json = serde_json::json!({
             "summary": {"findings": 1},
@@ -82273,28 +82277,29 @@ column = 5
             return Err(format!("unexpected markdown proposal: {markdown}"));
         }
         let toml = render_no_panic_allowlist_proposals_toml(&proposals);
-        if !toml.contains("receiver_fingerprint = \"left()\"")
-            || !toml.contains("status = \"proposal\"")
-            || !toml.contains("id = \"\"")
-            || !toml.contains("owner = \"\"")
-            || !toml.contains("expires = \"\"")
-            || toml.contains("TODO-")
-            || toml.contains("TODO:")
-        {
-            return Err(format!("unexpected TOML proposal: {toml}"));
-        }
-        let assert_missing_field = |name: &str, contents: &str, field: &str| {
+        let toml_is_review_only = toml.contains("receiver_fingerprint = \"left()\"")
+            && toml.contains("status = \"proposal\"")
+            && toml.contains("id = \"\"")
+            && toml.contains("owner = \"\"")
+            && toml.contains("expires = \"\"")
+            && !toml.contains("TODO-")
+            && !toml.contains("TODO:");
+        test_condition(toml_is_review_only, "unexpected TOML proposal")?;
+        let assert_missing_field = |name: &str,
+                                    contents: &str,
+                                    field: &str|
+         -> Result<(), String> {
             with_temp_cwd(name, |root| {
                 let allowlist_path = root.join("allowlist.toml");
                 write(&allowlist_path, contents);
                 let allowlist_path = allowlist_path.to_str().ok_or("non-UTF-8 proposal path")?;
                 let error = parse_no_panic_allowlist_toml_v2(allowlist_path)
                     .expect_err("review-only proposal must not parse as a governed allowlist");
-                if !error.contains(&format!("missing required field: {field}")) {
-                    return Err(format!(
-                        "expected missing-{field} rejection for review-only proposal, got {error}"
-                    ));
-                }
+                let message = format!(
+                    "expected missing-{field} rejection for review-only proposal, got {error}"
+                );
+                let field_is_missing = error.contains(&format!("missing required field: {field}"));
+                test_condition(field_is_missing, message)?;
                 Ok(())
             })
         };
@@ -82316,14 +82321,12 @@ column = 5
         let finding = findings.first().ok_or("expected one semantic finding")?;
         let proposal = proposal_from_finding(finding, None, false, None, &findings);
         let toml = render_no_panic_allowlist_proposals_toml(&[proposal]);
-        if !toml.contains(
+        let explanation_is_explicit = toml.contains(
             "explanation = \"Review why this panic-family call is allowed before adoption\"",
-        ) {
-            return Err(format!("expected explicit review explanation, got {toml}"));
-        }
-        if toml.contains("TODO-") || toml.contains("TODO:") {
-            return Err(format!("unexpected TODO placeholder in proposal: {toml}"));
-        }
+        );
+        test_condition(explanation_is_explicit, "missing explicit explanation")?;
+        let no_todo_placeholder = !toml.contains("TODO-") && !toml.contains("TODO:");
+        test_condition(no_todo_placeholder, "unexpected TODO placeholder")?;
         Ok(())
     }
 
@@ -82385,14 +82388,10 @@ column = 5
             ));
         }
         let toml = render_no_panic_allowlist_proposals_toml(&proposals);
-        if !toml.contains("id = \"proposal-src-lib-rs-unwrap-20\"")
-            || !toml.contains("owner = \"test-infra\"")
-            || !toml.contains("expires = \"2026-12-31\"")
-        {
-            return Err(format!(
-                "governed proposal fields were not preserved in TOML: {toml}"
-            ));
-        }
+        let governed_fields_preserved = toml.contains("id = \"proposal-src-lib-rs-unwrap-20\"")
+            && toml.contains("owner = \"test-infra\"")
+            && toml.contains("expires = \"2026-12-31\"");
+        test_condition(governed_fields_preserved, "governed fields missing")?;
         Ok(())
     }
 
