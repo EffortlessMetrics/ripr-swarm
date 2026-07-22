@@ -1946,7 +1946,7 @@ additive top-level `artifact` envelope before it is suitable for
   "kind": "repo_exposure",
   "schema_version": "1",
   "canonicalization": "raw_json_placeholder_v1",
-  "producer": {"tool": "ripr", "version": "0.10.1"},
+  "producer": {"tool": "ripr", "version": "0.10.0"},
   "repository": {"root": "<workspace-root>", "head": "<40-hex-sha>"},
   "analysis": {
     "format": "repo-exposure-json",
