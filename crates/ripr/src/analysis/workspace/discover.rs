@@ -49,7 +49,10 @@ fn visit_preview(root: &Path, dir: &Path, out: &mut Vec<(LanguageId, PathBuf)>) 
         } else if let Some(language) = route(&path)
             && matches!(
                 language,
-                LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python
+                LanguageId::TypeScript
+                    | LanguageId::JavaScript
+                    | LanguageId::Python
+                    | LanguageId::Perl
             )
         {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();

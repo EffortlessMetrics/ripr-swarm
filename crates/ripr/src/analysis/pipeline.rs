@@ -282,6 +282,7 @@ const PREVIEW_LANGUAGE_ORDER: &[LanguageId] = &[
     LanguageId::TypeScript,
     LanguageId::JavaScript,
     LanguageId::Python,
+    LanguageId::Perl,
 ];
 
 /// Build preview-language advisories by routing a stream of paths, regardless
