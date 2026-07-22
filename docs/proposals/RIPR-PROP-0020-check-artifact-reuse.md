@@ -98,6 +98,12 @@ The artifact embeds an input identity computed at check time:
   `--diff` file is used), plus the diff *source* (`--diff` path, or the
   base/head pair) so the consumer can re-resolve it;
 - root, mode, diagnostic profile, enabled languages;
+- the complete `CheckInput` option surface that flows into
+  `analysis_options_from_input_and_config` — today `include_unchanged_tests`
+  and `perl_facts_path` (with the fact packet's content hash, since the Perl
+  adapter reads findings-changing facts from that file), plus any future
+  analysis input option, covered by the same closed-allowlist discipline as
+  the config identity below;
 - an analysis-config identity with a **closed, versioned contract**: an
   explicit allowlist of the config fields that change findings, canonically
   serialized (field name, normalized value, defaults materialized), hashed,
@@ -144,7 +150,35 @@ recomputed one given the same render options.
 - Sharing artifacts between machines or committing them; the artifact is a
   local, disposable derivative and must be documented as such.
 
-## Acceptance
+## Alternatives considered
+
+- **Reuse `check --json` as the cache source.** Rejected: it is a lossy
+  render projection (no serde round-trip, related-tests capped at 8,
+  conditional probe owner, render-time severity, no diff identity), so
+  explaining from it would silently explain less than the analysis knew.
+- **Implicit content-addressed cache under `target/ripr/cache/`.** Deferred:
+  it adds eviction, staleness, and cross-run policy questions the three-step
+  flow does not need. The explicit `--write-artifact`/`--from` pair keeps
+  reuse under user intent; the store can layer on later without changing
+  this contract.
+- **Do nothing (keep recomputing).** Rejected for large workspaces: the
+  documented Quick Start triples wall time for no evidence gain.
+
+## Risks
+
+- **Stale-artifact misuse.** Mitigated by the fail-closed identity gate: a
+  mismatched diff, mode, language set, input option, or config identity is a
+  typed error, never a silent recompute or a "close enough" read.
+- **Identity allowlist drift** (a new finding-affecting field omitted from
+  the hash). Mitigated by the closed, versioned contract and a CI
+  enumeration test over the config/input fields.
+- **Artifact format churn.** Mitigated by `schema_version` on the envelope
+  with fail-closed loads; old artifacts error instead of misreading.
+- **Users treating artifacts as durable evidence.** Mitigated by documenting
+  the artifact as a local, disposable derivative: it may never feed a
+  support-tier row, gate, badge, or proof route.
+
+## Success criteria
 
 1. `ripr check --diff X --write-artifact a.json` writes a schema-versioned
    artifact containing the full finding set and the identity block.
