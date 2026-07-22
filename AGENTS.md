@@ -359,8 +359,8 @@ A finding record must name:
   but still requires current source identity and accurate behavior
   description);
 - actual result vs expected result or invariant;
-- an all-state issue/PR search (`gh issue list`/`gh pr list --state all`),
-  not open-only;
+- an all-state issue/PR search (`gh issue list --state all` and
+  `gh pr list --state all` — both default to open-only);
 - known concurrent PRs touching the seam;
 - confidence, remaining uncertainty, and a classification:
   `verified_current | historical | cannot_reproduce | superseded |
