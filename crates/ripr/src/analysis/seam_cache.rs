@@ -31,7 +31,7 @@
 //! A companion corpus fingerprint cache
 //! (`repo-corpus-fingerprint/{schema_version}/{fingerprint}.json`, issue
 //! #2108) maps a stat-only corpus signature — sorted `(path, mtime, size)`
-//! tuples — to the aggregate `files_content_hash` previously computed for
+//! tuples, plus the inode change time on unix — to the aggregate `files_content_hash` previously computed for
 //! that signature, so a warm cache-key computation does not re-read the
 //! corpus. A fingerprint miss costs nothing: the content hash is then
 //! computed exactly as before and the mapping is stored.
@@ -490,47 +490,68 @@ impl WorkspaceState<'_> {
 /// Corpus fingerprint cache schema. Separate directory from the classified
 /// seam cache so the tiny mapping files can evolve independently; old
 /// directories are gc'd on `cargo clean` like the other cache layers.
-pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.1";
+///
+/// `0.1` → `0.2`: the fingerprint mixes in the unix ctime (inode change
+/// time) on unix platforms, closing the mtime-preserving-rewrite residual
+/// there. Old `0.1` mappings were computed without ctime and must never
+/// match a `0.2` fingerprint, so they are orphaned in the `0.1` directory.
+pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.2";
 
 /// Cheap corpus signature: FNV-1a over sorted
 /// `(relative path, mtime secs, mtime nanos, size)` tuples for every file in
-/// `files` (paths relative to `root`). Stat-only — no file contents are
-/// read. Returns `None` when any file cannot be stat'd or has no portable
-/// mtime; callers must then fall back to the full content read, which is
-/// always correct.
+/// `files` (paths relative to `root`), extended with the unix ctime (inode
+/// change time secs + nanos) on unix platforms. Stat-only — no file
+/// contents are read. Returns `None` when any file cannot be stat'd or has
+/// no portable mtime; callers must then fall back to the full content
+/// read, which is always correct.
 ///
-/// Residual (issue #2108): a content change that preserves both the size
-/// and the mtime (to the filesystem's mtime granularity) keeps the same
-/// fingerprint. The stored mapping can then pair this fingerprint with a
-/// content hash derived from different bytes. That direction is bounded by
-/// the write path, which only stores a mapping when the fingerprint is
-/// identical before and after the content read, so a fingerprint hit can
-/// never select a hash derived from a corpus with a *different* signature —
-/// only from a signature-identical corpus whose bytes changed invisibly to
-/// mtime+size.
+/// Residual (issue #2108, narrowed by the ctime mix-in): on unix, ctime
+/// bumps on ANY content or metadata write — including writes by tools that
+/// restore mtime (`rsync -a`, `cp --preserve=timestamps`, archive
+/// extractors) — so a same-size content rewrite with a preserved mtime
+/// still invalidates the fingerprint. The only way to change bytes without
+/// changing this signature is to write without touching any file metadata
+/// at all, which no ordinary file API or tool can do. On non-unix
+/// platforms the signature remains mtime+size only, and the original
+/// caveat stands there: a content change preserving both size and mtime
+/// (to the filesystem's mtime granularity) keeps the old fingerprint and
+/// can serve the stale mapping.
+///
+/// Either way, the direction is bounded by the write path, which only
+/// stores a mapping when the fingerprint is identical before and after the
+/// content read, so a fingerprint hit can never select a hash derived from
+/// a corpus with a *different* signature — only from a signature-identical
+/// corpus whose bytes changed invisibly to the signature's fields.
 pub(crate) fn corpus_fingerprint(root: &Path, files: &[PathBuf]) -> Option<String> {
-    let mut entries: Vec<(String, u64, u32, u64)> = Vec::with_capacity(files.len());
+    let mut entries: Vec<String> = Vec::with_capacity(files.len());
     for path in files {
         let metadata = std::fs::metadata(root.join(path)).ok()?;
         let modified = metadata.modified().ok()?;
         let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-        entries.push((
+        let mut entry = format!(
+            "{}\0{}\0{}\0{}",
             path.to_string_lossy().replace('\\', "/"),
             since_epoch.as_secs(),
             since_epoch.subsec_nanos(),
-            metadata.len(),
-        ));
+            metadata.len()
+        );
+        // Unix hardening: ctime (inode change time) cannot be preserved by
+        // mtime-restoring tools, so mixing it in closes the
+        // preserved-mtime rewrite residual on unix (see the doc comment).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            entry.push('\0');
+            entry.push_str(&metadata.ctime().to_string());
+            entry.push('\0');
+            entry.push_str(&metadata.ctime_nsec().to_string());
+        }
+        entries.push(entry);
     }
     entries.sort();
     let mut buf = String::new();
-    for (path, secs, nanos, size) in &entries {
-        buf.push_str(path);
-        buf.push('\0');
-        buf.push_str(&secs.to_string());
-        buf.push('\0');
-        buf.push_str(&nanos.to_string());
-        buf.push('\0');
-        buf.push_str(&size.to_string());
+    for entry in &entries {
+        buf.push_str(entry);
         buf.push('\n');
     }
     Some(hash_str(&buf))
@@ -2711,6 +2732,31 @@ mod tests {
         Ok(PathBuf::from(relative))
     }
 
+    /// Rewrite `path` with identical content until the inode change time
+    /// advances, so subsequent ctime assertions hold on filesystems with
+    /// coarse timestamp granularity (~1ms is common; some fuse/overlay or
+    /// FAT-like filesystems are coarser). Bounded so a filesystem that
+    /// never bumps ctime fails the test loudly instead of hanging.
+    #[cfg(unix)]
+    fn wait_for_ctime_tick(path: &Path) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+        let reference = std::fs::metadata(path)
+            .map(|m| (m.ctime(), m.ctime_nsec()))
+            .map_err(|err| format!("stat ctime: {err}"))?;
+        let content = std::fs::read(path).map_err(|err| format!("read for tick: {err}"))?;
+        for _ in 0..1_000 {
+            std::fs::write(path, &content).map_err(|err| format!("tick rewrite: {err}"))?;
+            let current = std::fs::metadata(path)
+                .map(|m| (m.ctime(), m.ctime_nsec()))
+                .map_err(|err| format!("stat ctime: {err}"))?;
+            if current != reference {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        Err("filesystem ctime never advanced; ctime assertions cannot run here".to_string())
+    }
+
     #[test]
     fn corpus_fingerprint_is_stable_for_unchanged_files() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-stable");
@@ -2757,7 +2803,12 @@ mod tests {
             "size change with preserved mtime must change the fingerprint"
         );
 
-        // Same size, bumped mtime: must invalidate.
+        // Same size, bumped mtime: must invalidate. The ctime tick wait
+        // first guarantees the unix ctime has advanced even on filesystems
+        // with coarse timestamp granularity, so the unix assertion below
+        // is deterministic.
+        #[cfg(unix)]
+        wait_for_ctime_tick(&dir.join(&a))?;
         std::fs::write(dir.join(&a), "pub fn a() -> i32 { 1 }\n")
             .map_err(|err| format!("restore: {err}"))?;
         let restored = corpus_fingerprint(&dir, std::slice::from_ref(&a))
@@ -2772,11 +2823,17 @@ mod tests {
             .map_err(|err| format!("open for set_modified: {err}"))?;
         file.set_modified(original_mtime)
             .map_err(|err| format!("set_modified: {err}"))?;
-        let same_signature = corpus_fingerprint(&dir, std::slice::from_ref(&a))
-            .ok_or("same-signature fingerprint should compute")?;
+        let restored_signature = corpus_fingerprint(&dir, std::slice::from_ref(&a))
+            .ok_or("restored-signature fingerprint should compute")?;
+        #[cfg(not(unix))]
         assert_eq!(
-            baseline, same_signature,
-            "same path + mtime + size must reproduce the baseline fingerprint"
+            baseline, restored_signature,
+            "non-unix: same path + mtime + size must reproduce the baseline fingerprint"
+        );
+        #[cfg(unix)]
+        assert_ne!(
+            baseline, restored_signature,
+            "unix: the rewrites above bumped ctime, so restoring content + mtime must NOT reproduce the baseline fingerprint"
         );
 
         // Path-set change: must invalidate.
@@ -2786,6 +2843,48 @@ mod tests {
         assert_ne!(
             baseline, with_b,
             "adding a file must change the fingerprint"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Unix hardening (codex P2 on #2175): a same-size content rewrite
+    /// with the mtime explicitly restored — exactly what `rsync -a`,
+    /// `cp --preserve=timestamps`, or an archive extractor does — bumps
+    /// the inode change time, so the fingerprint must change.
+    #[cfg(unix)]
+    #[test]
+    fn corpus_fingerprint_unix_ctime_invalidates_mtime_preserving_rewrite() -> Result<(), String> {
+        let dir = isolated_dir("fingerprint-ctime");
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = write_corpus_file(&dir, "src/a.rs", "pub fn a() -> i32 { 1 }\n")?;
+        let baseline = corpus_fingerprint(&dir, std::slice::from_ref(&a))
+            .ok_or("baseline fingerprint should compute")?;
+
+        let original_mtime = std::fs::metadata(dir.join(&a))
+            .and_then(|m| m.modified())
+            .map_err(|err| format!("stat mtime: {err}"))?;
+        // Guarantee at least one filesystem timestamp tick has elapsed so
+        // the rewrite below bumps ctime even on coarse-granularity
+        // filesystems; the helper rewrites identical bytes, so only the
+        // signature — never the content — is affected.
+        wait_for_ctime_tick(&dir.join(&a))?;
+        // Same length, different bytes — mtime and size preserved.
+        std::fs::write(dir.join(&a), "pub fn a() -> i32 { 2 }\n")
+            .map_err(|err| format!("rewrite: {err}"))?;
+        let file = std::fs::File::options()
+            .write(true)
+            .open(dir.join(&a))
+            .map_err(|err| format!("open for set_modified: {err}"))?;
+        file.set_modified(original_mtime)
+            .map_err(|err| format!("set_modified: {err}"))?;
+
+        let after = corpus_fingerprint(&dir, std::slice::from_ref(&a))
+            .ok_or("post-rewrite fingerprint should compute")?;
+        assert_ne!(
+            baseline, after,
+            "unix ctime must invalidate the fingerprint on a same-size rewrite with restored mtime"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

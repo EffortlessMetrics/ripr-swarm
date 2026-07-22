@@ -172,8 +172,8 @@ pub(crate) fn inventory_classified_seams_at_with_config(
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
-    // holds a mapping for the current (path, mtime, size) signature, the
-    // cache key is rebuilt without reading any file contents.
+    // holds a mapping for the current (path, mtime, size, ctime on unix)
+    // signature, the cache key is rebuilt without reading any file contents.
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         trace_latency_phase(
             "collect_workspace_state",
@@ -1692,6 +1692,30 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
     }
 
+    /// Rewrite `path` with identical content until the inode change time
+    /// advances, so ctime-based assertions hold on filesystems with coarse
+    /// timestamp granularity. Bounded so a filesystem that never bumps
+    /// ctime fails the test loudly instead of hanging.
+    #[cfg(unix)]
+    fn wait_for_ctime_tick(path: &Path) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+        let reference = std::fs::metadata(path)
+            .map(|m| (m.ctime(), m.ctime_nsec()))
+            .map_err(|err| format!("stat ctime: {err}"))?;
+        let content = std::fs::read(path).map_err(|err| format!("read for tick: {err}"))?;
+        for _ in 0..1_000 {
+            std::fs::write(path, &content).map_err(|err| format!("tick rewrite: {err}"))?;
+            let current = std::fs::metadata(path)
+                .map(|m| (m.ctime(), m.ctime_nsec()))
+                .map_err(|err| format!("stat ctime: {err}"))?;
+            if current != reference {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Err("filesystem ctime never advanced; ctime assertions cannot run here".to_string())
+    }
+
     fn cache_dir_under(root: &Path) -> PathBuf {
         root.join("target")
             .join("ripr")
@@ -2224,16 +2248,19 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(())
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn given_preserved_signature_when_content_is_swapped_then_stored_hash_is_reused()
     -> Result<(), String> {
-        // Pins the issue #2108 fast path: when every file keeps its
-        // (path, mtime, size) signature, the warm run must rebuild the
-        // byte-identical cache key from the fingerprint store WITHOUT
-        // re-reading file contents. Proof: the bytes on disk are swapped
-        // for different same-length content (so any content read would
-        // produce a different key), yet the run still hits the cache entry
-        // written under the original content's key.
+        // Pins the issue #2108 fast path on non-unix platforms: when every
+        // file keeps its (path, mtime, size) signature, the warm run must
+        // rebuild the byte-identical cache key from the fingerprint store
+        // WITHOUT re-reading file contents. Proof: the bytes on disk are
+        // swapped for different same-length content (so any content read
+        // would produce a different key), yet the run still hits the cache
+        // entry written under the original content's key. On unix this
+        // scenario invalidates via ctime instead — see the unix-gated
+        // companion test below.
         let root = make_tempdir("fingerprint-warm-hit")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -2290,6 +2317,85 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 "fingerprint hit should reuse the stored hash and return the cached (empty) seams without re-reading the corpus, got {} seams",
                 warm.len()
             ));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Unix companion to the test above (codex P2 on #2175): the same
+    /// mtime-preserving rewrite bumps the inode change time, so the
+    /// fingerprint changes, the doctored cache entry under the old key is
+    /// NOT served, and the rerun recomputes from the swapped content.
+    #[cfg(unix)]
+    #[test]
+    fn given_mtime_preserving_rewrite_when_inventory_reruns_then_ctime_invalidates_mapping()
+    -> Result<(), String> {
+        let root = make_tempdir("fingerprint-ctime-invalidate")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+
+        let cold = inventory_classified_seams_at(&root)?;
+        if cold.is_empty() {
+            return Err("cold path should classify at least one seam from foo.rs".into());
+        }
+        let cold_key = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+
+        // Doctor the cache entry so serving it would be observable.
+        let entries = list_cache_entries(&root)?;
+        if entries.len() != 1 {
+            return Err(format!(
+                "expected exactly 1 cache entry, got {}",
+                entries.len()
+            ));
+        }
+        let cache_file = &entries[0];
+        let bytes = std::fs::read(cache_file)
+            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
+        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
+        let rewritten =
+            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
+        std::fs::write(cache_file, rewritten)
+            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+
+        // Same-size rewrite with the mtime explicitly restored — what
+        // `rsync -a` / `cp --preserve=timestamps` do. On unix the ctime
+        // still bumps, so the fingerprint must invalidate. The tick wait
+        // (identical bytes, so content is untouched) guarantees the fs
+        // timestamp clock has advanced even on coarse-granularity
+        // filesystems.
+        let original_mtime = std::fs::metadata(root.join("src/foo.rs"))
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("stat mtime: {err}"))?;
+        wait_for_ctime_tick(&root.join("src/foo.rs"))?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount <= threshold }\n",
+        )?;
+        let file = std::fs::File::options()
+            .write(true)
+            .open(root.join("src/foo.rs"))
+            .map_err(|err| format!("open for set_modified: {err}"))?;
+        file.set_modified(original_mtime)
+            .map_err(|err| format!("set_modified: {err}"))?;
+
+        let rerun = inventory_classified_seams_at(&root)?;
+        if rerun.is_empty() {
+            return Err(
+                "mtime-preserving rewrite must invalidate the fingerprint via ctime and recompute"
+                    .into(),
+            );
+        }
+        let new_key = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        if new_key == cold_key {
+            return Err(
+                "mtime-preserving rewrite must produce a new cache key on unix (ctime changed)"
+                    .into(),
+            );
         }
 
         let _ = std::fs::remove_dir_all(&root);
