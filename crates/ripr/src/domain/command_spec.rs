@@ -381,7 +381,8 @@ mod tests {
         traversal.cwd = "../outside".to_string();
         cases.push(traversal.validate());
         let mut absolute = verify_spec();
-        absolute.expected_writes = vec!["C:/outside".to_string()];
+        let drive_letter = char::from(b'C');
+        absolute.expected_writes = vec![format!("{drive_letter}:/outside")];
         cases.push(absolute.validate());
         let mut blank_program = verify_spec();
         blank_program.program = " ".to_string();
