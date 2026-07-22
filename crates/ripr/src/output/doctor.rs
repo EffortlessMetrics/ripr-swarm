@@ -237,9 +237,8 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
 /// merely running `ripr doctor` in a hostile checkout would execute it.
 /// The probe runs from the OS temp dir with config resolution disabled.
 pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
-    let mut command = std::process::Command::new(tool);
+    let mut command = doctor_tool_command(tool);
     command
-        .arg("--version")
         .current_dir(std::env::temp_dir())
         .env("YARN_IGNORE_PATH", "1");
     match command.output() {
@@ -251,8 +250,14 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     }
 }
 
+fn doctor_tool_command(tool: &str) -> std::process::Command {
+    let mut command = std::process::Command::new(tool);
+    command.arg("--version");
+    command
+}
+
 pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
-    match std::process::Command::new(tool).arg("--version").output() {
+    match doctor_tool_command(tool).output() {
         Ok(output) if output.status.success() => (
             DoctorStatus::Pass,
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
