@@ -8509,6 +8509,7 @@ fn routed_rust_workflow_contract_accepts_swarm_shape() {
 jobs:
   route:
     name: Route Ripr Rust Small
+    timeout-minutes: 10
     steps:
       - name: Select runner
         env:
@@ -8526,8 +8527,12 @@ jobs:
           reason=cpx42_idle
           reason=cx53_idle
           echo rust-medium rust-16gb rust-large
+  detect-docs-only:
+    name: Detect Docs-Only Surface
+    timeout-minutes: 10
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
     env:
@@ -8543,6 +8548,7 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
     env:
@@ -8558,6 +8564,7 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
     env:
@@ -8578,11 +8585,16 @@ jobs:
       needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
+    timeout-minutes: 90
     steps:
       - name: Proof route dry-run (advisory)
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+  docs-gate:
+    name: Ripr Docs Gate
+    timeout-minutes: 20
   result:
     name: Ripr Rust Small Result
+    timeout-minutes: 10
     env:
       DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
       CX43_SCRATCH_STATUS: ${{ needs.rust-cx43.outputs.scratch_status }}
@@ -8712,6 +8724,11 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
         violations
             .iter()
             .any(|violation| { violation.contains("must list only `Ripr Rust Small Result`") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("`timeout-minutes` job deadline on every job") })
     );
 }
 

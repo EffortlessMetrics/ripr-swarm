@@ -6679,6 +6679,16 @@ fn routed_rust_workflow_contract_violations(
         ));
     }
 
+    // Issue #2230 (PR #2228 hang): every routed-rust job carries an explicit
+    // job deadline so a hung step fails the job in bounded time instead of
+    // holding the required aggregate check open indefinitely.
+    let job_deadlines = workflow.matches("timeout-minutes:").count();
+    if job_deadlines < 8 {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must set an explicit `timeout-minutes` job deadline on every job (route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate, result); found {job_deadlines} occurrence(s)"
+        ));
+    }
+
     if workflow.contains("repos/${REPOSITORY}/actions/runners")
         || workflow.contains("repos/$REPOSITORY/actions/runners")
         || workflow.contains("repos/EffortlessMetrics/ripr-swarm/actions/runners")
