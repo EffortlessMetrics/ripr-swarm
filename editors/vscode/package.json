@@ -138,7 +138,7 @@
         "ripr.server.autoDownload": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically download the matching ripr server binary when no configured, bundled, or cached server is available. Downloads over HTTPS — by default from github.com/EffortlessMetrics/ripr releases, configurable via ripr.server.downloadBaseUrl — and archives are SHA-256 verified against the release manifest before extraction.",
+          "description": "Automatically download the matching ripr server binary when no configured, bundled, or cached server is available. Downloads over HTTPS \u2014 by default from github.com/EffortlessMetrics/ripr releases, configurable via ripr.server.downloadBaseUrl \u2014 and archives are SHA-256 verified against the release manifest before extraction.",
           "scope": "resource"
         },
         "ripr.server.version": {
@@ -352,21 +352,6 @@
           "command": "ripr.showRouteQuality",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
           "group": "ripr@7"
-        },
-        {
-          "command": "ripr.copySuggestedAssertion",
-          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr.targeted-test@1"
-        },
-        {
-          "command": "ripr.copyTargetedTestBrief",
-          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr.targeted-test@2"
-        },
-        {
-          "command": "ripr.openRelatedTest",
-          "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
-          "group": "ripr.targeted-test@3"
         }
       ]
     },
