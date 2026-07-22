@@ -25531,10 +25531,15 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("goldens check")?);
     assert!(ci_enforced("check-doc-index")?);
     assert!(ci_enforced("release-upload-assets --version <version>")?);
+    // Issue #2258: the routed-rust lanes invoke `cargo xtask precommit` as the
+    // shared required gate table, so precommit and every gate it runs are
+    // CI-enforced.
+    assert!(ci_enforced("precommit")?);
+    assert!(ci_enforced("check-architecture")?);
+    assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(ci_enforced("markdown-links")?);
     assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
-    assert!(!ci_enforced("check-doc-artifacts")?);
-    assert!(!ci_enforced("markdown-links")?);
     Ok(())
 }
 
@@ -25665,6 +25670,7 @@ fn command_catalog_ci_enforced_flags_match_repo_workflows() -> Result<(), String
         let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
         enforced.extend(ci_enforced_xtask_invocations(&text));
     }
+    super::expand_precommit_ci_invocations(&mut enforced);
     let catalog = command_catalog();
     assert_eq!(
         command_catalog_ci_drift_violations(&catalog, &enforced),
@@ -45304,5 +45310,170 @@ fn route_quality_cross_validates_with_attempt_ledger_repair_route_quality() -> R
     assert!(value.get("top_orphan_receipt_sources").is_none());
     assert!(value.get("stale_receipt_count").is_none());
     assert!(value.get("top_limitation_routes").is_none());
+    Ok(())
+}
+
+/// Issue #2258: every routed-rust required lane must invoke the shared
+/// `cargo xtask precommit` gate table instead of enumerating a subset, so the
+/// lanes cannot drift from the precommit contract again.
+fn routed_rust_workflow_text() -> Result<String, String> {
+    let path = repo_root()?.join(".github/workflows/routed-rust.yml");
+    std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
+}
+
+/// Extracts the run-block lines of each `- name: <step>` whose name matches
+/// `step_name`, stopping at the next step (`- ` at the same indent).
+fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
+    let marker = format!("- name: {step_name}");
+    let mut blocks = Vec::new();
+    let mut current: Option<Vec<String>> = None;
+    for line in workflow.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- name: ") {
+            if let Some(block) = current.take() {
+                blocks.push(block);
+            }
+            if trimmed == marker {
+                current = Some(Vec::new());
+            }
+            continue;
+        }
+        if let Some(block) = current.as_mut() {
+            block.push(line.to_string());
+        }
+    }
+    if let Some(block) = current.take() {
+        blocks.push(block);
+    }
+    blocks
+}
+
+#[test]
+fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
+    if blocks.len() != 4 {
+        return Err(format!(
+            "routed-rust.yml must have exactly 4 `Required Rust gates` steps, found {}",
+            blocks.len()
+        ));
+    }
+    for (index, block) in blocks.iter().enumerate() {
+        if !block
+            .iter()
+            .any(|line| line.trim() == "cargo xtask precommit")
+        {
+            return Err(format!(
+                "Required Rust gates step {} must invoke `cargo xtask precommit`",
+                index + 1
+            ));
+        }
+        for lane_only in [
+            "cargo xtask check-evidence-promotion-honesty",
+            "cargo xtask check-dependencies",
+            "cargo xtask check-process-policy",
+            "cargo xtask check-network-policy",
+            "cargo xtask goldens check",
+            "cargo xtask fixtures",
+        ] {
+            if !block.iter().any(|line| line.trim() == lane_only) {
+                return Err(format!(
+                    "Required Rust gates step {} must keep lane-only gate `{lane_only}` enumerated",
+                    index + 1
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let docs_gate = workflow
+        .split("\n  docs-gate:")
+        .nth(1)
+        .ok_or("routed-rust.yml must declare a docs-gate job")?;
+    let docs_gate = docs_gate
+        .split("\n  result:")
+        .next()
+        .ok_or("docs-gate job must precede the result job")?;
+    if !docs_gate
+        .lines()
+        .any(|line| line.trim() == "cargo xtask precommit")
+    {
+        return Err(
+            "docs-gate job must invoke `cargo xtask precommit` so docs-only PRs run the full gate table"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn routed_rust_precommit_invocation_count_is_five() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let count = workflow.matches("cargo xtask precommit").count();
+    if count != 5 {
+        return Err(format!(
+            "routed-rust.yml must invoke `cargo xtask precommit` exactly 5 times (4 required lanes + docs-gate), found {count}"
+        ));
+    }
+    Ok(())
+}
+
+/// Pins the drift-check expansion table to the precommit report so the two
+/// cannot drift apart silently.
+#[test]
+fn precommit_gate_commands_match_report() -> Result<(), String> {
+    let report = super::precommit_report_body();
+    let report_gates: Vec<&str> = report
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("- `cargo xtask ")
+                .and_then(|rest| rest.strip_suffix('`'))
+        })
+        .collect();
+    let expected: Vec<&str> = super::PRECOMMIT_GATE_COMMANDS.to_vec();
+    if report_gates != expected {
+        return Err(format!(
+            "precommit report gates {report_gates:?} must match PRECOMMIT_GATE_COMMANDS {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// An enforced `cargo xtask precommit` invocation must expand into every gate
+/// precommit runs; an advisory invocation must not.
+#[test]
+fn precommit_ci_invocation_expansion_covers_precommit_gates() -> Result<(), String> {
+    let workflow = r#"
+jobs:
+  rust:
+    steps:
+      - name: Required Rust gates
+        run: |
+          cargo xtask precommit
+      - name: Advisory precommit
+        continue-on-error: true
+        run: |
+          cargo xtask precommit
+"#;
+    let mut enforced = super::ci_enforced_xtask_invocations(workflow);
+    super::expand_precommit_ci_invocations(&mut enforced);
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        let invocation = ((*gate).to_string(), String::new());
+        if !enforced.contains(&invocation) {
+            return Err(format!(
+                "enforced precommit invocation must expand to `{gate}`"
+            ));
+        }
+    }
+    let mut without_precommit: std::collections::BTreeSet<super::WorkflowXtaskInvocation> =
+        std::collections::BTreeSet::new();
+    super::expand_precommit_ci_invocations(&mut without_precommit);
+    if !without_precommit.is_empty() {
+        return Err("expansion must not add gates when precommit is not enforced".to_string());
+    }
     Ok(())
 }
