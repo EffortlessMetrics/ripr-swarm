@@ -8,8 +8,9 @@ change_class = "behavior_change"
 
 claim_boundary = """
 Makes the default receipt file location portable for colon-delimited
-canonical gap ids by sanitizing only the filesystem representation
-(filename-unsafe characters become `-`) in the shared write/check path
+canonical gap ids by percent-encoding only the filesystem representation
+(filename-unsafe characters become `%XX`, with `%` itself encoded, so the
+mapping is injective and collision-free) in the shared write/check path
 derivation. The canonical gap id inside the receipt JSON is unchanged, and
 explicit --out / --path values are used verbatim. This slice does not change
 receipt structure, validation, provenance binding, or ledger semantics.

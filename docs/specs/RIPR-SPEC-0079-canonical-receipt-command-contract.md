@@ -92,7 +92,7 @@ ripr receipt write --gap <canonical_gap_id> --packet <packet_id> \
 | `--packet <packet_id>` | required | Identifies the repair packet the agent acted on. |
 | `--verify-command "<cmd>"` | required | The exact shell command that was run to verify the repair (e.g. `cargo test -p ripr`). Quoted. |
 | `--status <verify_status>` | required | The outcome of the verify command. See valid values below. |
-| `--out <path>` | optional | Write the receipt JSON to this path. When omitted, writes to `target/ripr/receipts/<canonical_gap_id>.json` with filename-unsafe characters replaced by `-` (see default path portability below). |
+| `--out <path>` | optional | Write the receipt JSON to this path. When omitted, writes to `target/ripr/receipts/<canonical_gap_id>.json` with filename-unsafe characters percent-encoded (see default path portability below). |
 
 The `ripr receipt check` command reads a receipt file and reports
 whether it is structurally valid and not stale:
@@ -108,16 +108,19 @@ path portability rule as `receipt write`.
 
 ### Default path portability
 
-Canonical gap ids are colon-delimited, and `:` is not valid in a Windows
-filename. When `--out` / `--path` is omitted, both `receipt write` and
-`receipt check` derive the default file name by replacing characters that
-are unsafe in filenames (`< > : " / \ | ? *` and ASCII control
-characters) with `-`. The mapping is deterministic and applied on every
-platform, so a colon-delimited gap id such as `gap:rust:pricing:aabbccdd`
-resolves to `target/ripr/receipts/gap-rust-pricing-aabbccdd.json`
-everywhere. The canonical gap id inside the receipt JSON is unchanged;
-only its filesystem representation is made portable. Explicit `--out` /
-`--path` values are used verbatim.
+Canonical gap ids commonly contain `:`-delimited segments, and `:` is not
+valid in a Windows filename. When `--out` / `--path` is omitted, both
+`receipt write` and `receipt check` derive the default file name by
+percent-encoding the escape character `%` itself and every character that
+is unsafe in filenames (`< > : " / \ | ? *` and ASCII control characters)
+as `%XX` (uppercase hex of the UTF-8 code point). The encoding is
+injective — distinct gap ids never collide on one file name —
+deterministic, and applied on every platform, so a colon-delimited gap id
+such as `gap:rust:pricing:aabbccdd` resolves to
+`target/ripr/receipts/gap%3Arust%3Apricing%3Aaabbccdd.json` everywhere.
+The canonical gap id inside the receipt JSON is unchanged; only its
+filesystem representation is made portable. Explicit `--out` / `--path`
+values are used verbatim.
 
 ### Repository HEAD binding
 

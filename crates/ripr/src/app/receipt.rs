@@ -250,27 +250,29 @@ pub(crate) fn receipt_out_path(opts: &ReceiptWriteOptions) -> PathBuf {
 
 /// Derive the filesystem-safe receipt file stem for a canonical gap id.
 ///
-/// Canonical gap ids are colon-delimited (for example
+/// Canonical gap ids commonly contain `:`-delimited segments (for example
 /// `gap:rust:pricing:aabbccdd`), and `:` is not valid in a Windows filename.
 /// The receipt's JSON content keeps the canonical gap id unchanged; only its
-/// filesystem representation is made portable by replacing characters that are
-/// unsafe in filenames (`< > : " / \ | ? *` and ASCII control characters)
-/// with `-`. The mapping is deterministic and applied on every platform so
-/// `receipt write` and `receipt check` resolve the same default path
-/// everywhere.
+/// filesystem representation is made portable by percent-encoding the escape
+/// character `%` itself and every character that is unsafe in filenames
+/// (`< > : " / \ | ? *` and ASCII control characters) as `%XX` (uppercase
+/// hex of the UTF-8 code point). The encoding is injective — distinct gap
+/// ids never collide on one file name — deterministic, and applied on every
+/// platform, so `receipt write` and `receipt check` resolve the same default
+/// path everywhere.
 fn receipt_file_stem(canonical_gap_id: &str) -> String {
-    canonical_gap_id
-        .chars()
-        .map(|c| {
-            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-                || c.is_ascii_control()
-            {
-                '-'
-            } else {
-                c
-            }
-        })
-        .collect()
+    let mut stem = String::with_capacity(canonical_gap_id.len());
+    for c in canonical_gap_id.chars() {
+        if c == '%'
+            || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            || c.is_ascii_control()
+        {
+            stem.push_str(&format!("%{:02X}", c as u32));
+        } else {
+            stem.push(c);
+        }
+    }
+    stem
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -1056,24 +1058,42 @@ mod tests {
         let opts = write_opts("gap:test:aabbccdd", "passed");
         assert_eq!(
             receipt_out_path(&opts),
-            PathBuf::from("target/ripr/receipts/gap-test-aabbccdd.json")
+            PathBuf::from("target/ripr/receipts/gap%3Atest%3Aaabbccdd.json")
         );
     }
 
     // ── receipt_file_stem portability ─────────────────────────────────────────
 
     #[test]
-    fn receipt_file_stem_replaces_filesystem_unsafe_characters() {
+    fn receipt_file_stem_percent_encodes_filesystem_unsafe_characters() {
         assert_eq!(
             receipt_file_stem("gap:rust:pricing:aabbccdd"),
-            "gap-rust-pricing-aabbccdd"
+            "gap%3Arust%3Apricing%3Aaabbccdd"
         );
         assert_eq!(
             receipt_file_stem("a<b>c:d\"e/f\\g|h?i*j"),
-            "a-b-c-d-e-f-g-h-i-j"
+            "a%3Cb%3Ec%3Ad%22e%2Ff%5Cg%7Ch%3Fi%2Aj"
         );
-        assert_eq!(receipt_file_stem("gap\u{0007}bell"), "gap-bell");
+        assert_eq!(receipt_file_stem("gap\u{0007}bell"), "gap%07bell");
+        assert_eq!(receipt_file_stem("100%certain"), "100%25certain");
         assert_eq!(receipt_file_stem("gap.test_ok-1"), "gap.test_ok-1");
+    }
+
+    #[test]
+    fn receipt_file_stem_is_collision_free_for_distinct_gap_ids() {
+        // A lossy `-` mapping would collapse these pairs onto one file name,
+        // letting a default write overwrite another gap's receipt.
+        for (left, right) in [
+            ("gap:rust:a-b", "gap:rust:a:b"),
+            ("gap:rust:a%3Ab", "gap:rust:a:b"),
+            ("gap:rust:a b", "gap:rust:a%20b"),
+        ] {
+            assert_ne!(
+                receipt_file_stem(left),
+                receipt_file_stem(right),
+                "distinct gap ids must not share a default receipt file: {left} vs {right}"
+            );
+        }
     }
 
     #[test]
