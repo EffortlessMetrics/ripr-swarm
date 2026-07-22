@@ -279,6 +279,16 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
             DoctorStatus::Fail,
             format!("{tool} timed out after {}s", DOCTOR_TOOL_TIMEOUT.as_secs()),
         ),
+        // A transient launch failure (resource exhaustion under load) is not
+        // the same evidence as the tool being absent (#2242): name it
+        // distinctly instead of collapsing it into "not available".
+        Err(DoctorToolRunError::Spawn(std::io::ErrorKind::NotFound)) => {
+            (DoctorStatus::Fail, format!("{tool} not available"))
+        }
+        Err(DoctorToolRunError::Spawn(kind)) => (
+            DoctorStatus::Fail,
+            format!("{tool} could not be launched: {kind:?}"),
+        ),
         _ => (DoctorStatus::Fail, format!("{tool} not available")),
     }
 }
@@ -299,13 +309,20 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
             DoctorStatus::Fail,
             format!("{tool} timed out after {}s", DOCTOR_TOOL_TIMEOUT.as_secs()),
         ),
+        Err(DoctorToolRunError::Spawn(std::io::ErrorKind::NotFound)) => {
+            (DoctorStatus::Fail, format!("{tool} not available"))
+        }
+        Err(DoctorToolRunError::Spawn(kind)) => (
+            DoctorStatus::Fail,
+            format!("{tool} could not be launched: {kind:?}"),
+        ),
         _ => (DoctorStatus::Fail, format!("{tool} not available")),
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DoctorToolRunError {
-    Spawn,
+    Spawn(std::io::ErrorKind),
     Wait,
     TimedOut,
 }
@@ -317,7 +334,9 @@ fn run_doctor_tool(
     command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = command.spawn().map_err(|_err| DoctorToolRunError::Spawn)?;
+    let mut child = command
+        .spawn()
+        .map_err(|err| DoctorToolRunError::Spawn(err.kind()))?;
     let started = Instant::now();
     loop {
         match child.try_wait() {
@@ -562,7 +581,19 @@ mod tests {
         }
 
         let start = std::time::Instant::now();
-        let (status, evidence) = doctor_tool_check(shim.to_str().ok_or("shim path is not utf-8")?);
+        // #2242: under full-suite parallelism a transient spawn failure
+        // (resource exhaustion) previously collapsed into "not available"
+        // and flaked the named-timeout assertion. Transient launch failures
+        // are now named distinctly; retry only that class, never a real
+        // timeout result.
+        let mut attempt = 0usize;
+        let (status, evidence) = loop {
+            attempt += 1;
+            let outcome = doctor_tool_check(shim.to_str().ok_or("shim path is not utf-8")?);
+            if attempt >= 3 || !outcome.1.contains("could not be launched") {
+                break outcome;
+            }
+        };
         let elapsed = start.elapsed();
 
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
