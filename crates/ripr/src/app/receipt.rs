@@ -36,7 +36,7 @@ pub(crate) struct ReceiptWriteOptions {
     pub(crate) verify_command: String,
     pub(crate) verify_status: String,
     pub(crate) current_head: Option<String>,
-    /// When `None`, defaults to `target/ripr/receipts/<canonical_gap_id>.json`.
+    /// When `None`, defaults to the filesystem-safe canonical receipt path.
     pub(crate) out: Option<PathBuf>,
     pub(crate) json: bool,
 }
@@ -240,10 +240,37 @@ fn cross_reference_receipt(
 pub(crate) fn receipt_out_path(opts: &ReceiptWriteOptions) -> PathBuf {
     match &opts.out {
         Some(p) => p.clone(),
-        None => {
-            PathBuf::from("target/ripr/receipts").join(format!("{}.json", opts.canonical_gap_id))
+        None => receipt_path_for_gap(&opts.canonical_gap_id),
+    }
+}
+
+/// Derive the shared default path used by receipt write and `check --gap`.
+///
+/// Canonical gap IDs intentionally contain punctuation such as `:` and `/`.
+/// Those characters are valid identity data but are not portable filename
+/// characters. Percent-encoding every byte outside ASCII digits and `-`
+/// gives a deterministic, collision-free filename while leaving the JSON
+/// `canonical_gap_id` unchanged.
+pub(crate) fn receipt_path_for_gap(canonical_gap_id: &str) -> PathBuf {
+    PathBuf::from("target/ripr/receipts").join(format!(
+        "{}.json",
+        encode_receipt_filename(canonical_gap_id)
+    ))
+}
+
+fn encode_receipt_filename(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for &byte in value.as_bytes() {
+        if byte.is_ascii_digit() || byte == b'-' {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0F) as usize] as char);
         }
     }
+    encoded
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -340,7 +367,7 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
 fn resolve_check_path(opts: &ReceiptCheckOptions) -> Result<PathBuf, String> {
     match (&opts.path, &opts.gap) {
         (Some(p), _) => Ok(p.clone()),
-        (None, Some(gap)) => Ok(PathBuf::from("target/ripr/receipts").join(format!("{gap}.json"))),
+        (None, Some(gap)) => Ok(receipt_path_for_gap(gap)),
         (None, None) => Err(
             "receipt check requires --path <receipt_path> or --gap <canonical_gap_id>".to_string(),
         ),
@@ -1026,8 +1053,23 @@ mod tests {
         let opts = write_opts("gap:test:aabbccdd", "passed");
         assert_eq!(
             receipt_out_path(&opts),
-            PathBuf::from("target/ripr/receipts/gap:test:aabbccdd.json")
+            PathBuf::from("target/ripr/receipts")
+                .join("%67%61%70%3A%74%65%73%74%3A%61%61%62%62%63%63%64%64.json",)
         );
+    }
+
+    #[test]
+    fn receipt_filename_encoding_is_collision_free_for_punctuation() {
+        assert_eq!(
+            receipt_path_for_gap("gap:one/two%three"),
+            PathBuf::from("target/ripr/receipts")
+                .join("%67%61%70%3A%6F%6E%65%2F%74%77%6F%25%74%68%72%65%65.json",)
+        );
+        assert_ne!(
+            receipt_path_for_gap("gap:one"),
+            receipt_path_for_gap("gap%3Aone")
+        );
+        assert_ne!(receipt_path_for_gap("gap:A"), receipt_path_for_gap("gap:a"));
     }
 
     // ── written_at format ─────────────────────────────────────────────────────
