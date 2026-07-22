@@ -89,6 +89,16 @@ A refresh request never triggers analysis, refresh scheduling, configuration
 reload, or source access by itself. It is presentation-only: it never
 strengthens producer actionability and never creates a repair route.
 
+### Cleared analysis state
+
+A root transition that clears analysis state (root removed, unavailable, or
+otherwise no longer analysis-capable) makes every visible lens stale: the
+visible view becomes the empty view, and the server records the cleared
+identity and sends one `workspace/codeLens/refresh` for it — after the
+root-transition guard is released, under the same scheduling discipline as
+the deferred configuration pull. The recording is coalesced identically: a
+view that is already cleared sends nothing.
+
 ### Failure behavior
 
 A failed or declined request is logged (`window/logMessage`, warning) as a
