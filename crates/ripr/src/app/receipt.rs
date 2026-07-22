@@ -20,6 +20,7 @@
 
 use crate::output::gap_decision_ledger::parse_gap_records_json;
 use crate::output::json;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Schema version for receipts written by this command.
@@ -249,13 +250,37 @@ pub(crate) fn receipt_out_path(opts: &ReceiptWriteOptions) -> PathBuf {
 /// Canonical gap IDs intentionally contain punctuation such as `:` and `/`.
 /// Those characters are valid identity data but are not portable filename
 /// characters. Percent-encoding every byte outside ASCII digits and `-`
-/// gives a deterministic, collision-free filename while leaving the JSON
-/// `canonical_gap_id` unchanged.
+/// gives a deterministic, bounded filename while leaving the JSON
+/// `canonical_gap_id` unchanged. Long encoded IDs retain a prefix and the
+/// full SHA-256 digest so truncation does not alias IDs that share a prefix.
 pub(crate) fn receipt_path_for_gap(canonical_gap_id: &str) -> PathBuf {
     PathBuf::from("target/ripr/receipts").join(format!(
         "{}.json",
-        encode_receipt_filename(canonical_gap_id)
+        bounded_receipt_filename(canonical_gap_id)
     ))
+}
+
+const MAX_RECEIPT_FILENAME_COMPONENT_LEN: usize = 255;
+const RECEIPT_FILENAME_EXTENSION_LEN: usize = ".json".len();
+const MAX_RECEIPT_FILENAME_STEM_LEN: usize =
+    MAX_RECEIPT_FILENAME_COMPONENT_LEN - RECEIPT_FILENAME_EXTENSION_LEN;
+const RECEIPT_FILENAME_HASH_HEX_LEN: usize = 64;
+
+fn bounded_receipt_filename(value: &str) -> String {
+    let encoded = encode_receipt_filename(value);
+    if encoded.len() <= MAX_RECEIPT_FILENAME_STEM_LEN {
+        return encoded;
+    }
+
+    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+    let suffix_len = 1 + RECEIPT_FILENAME_HASH_HEX_LEN;
+    let prefix_limit = MAX_RECEIPT_FILENAME_STEM_LEN - suffix_len;
+    let prefix_len = complete_percent_encoded_prefix_len(&encoded, prefix_limit);
+    format!(
+        "{}~{}",
+        &encoded[..prefix_len],
+        &digest[..RECEIPT_FILENAME_HASH_HEX_LEN]
+    )
 }
 
 fn encode_receipt_filename(value: &str) -> String {
@@ -271,6 +296,14 @@ fn encode_receipt_filename(value: &str) -> String {
         }
     }
     encoded
+}
+
+fn complete_percent_encoded_prefix_len(encoded: &str, limit: usize) -> usize {
+    let prefix = &encoded[..limit];
+    match prefix.rfind('%') {
+        Some(percent) if percent + 3 > limit => percent,
+        _ => limit,
+    }
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -1070,6 +1103,36 @@ mod tests {
             receipt_path_for_gap("gap%3Aone")
         );
         assert_ne!(receipt_path_for_gap("gap:A"), receipt_path_for_gap("gap:a"));
+    }
+
+    #[test]
+    fn receipt_filename_encoding_is_bounded_for_long_gap_ids() {
+        let at_limit = "1".repeat(MAX_RECEIPT_FILENAME_STEM_LEN);
+        let beyond_limit = format!("{at_limit}0");
+        let at_limit_path = receipt_path_for_gap(&at_limit);
+        let beyond_limit_path = receipt_path_for_gap(&beyond_limit);
+
+        assert_eq!(
+            at_limit_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::len),
+            Some(MAX_RECEIPT_FILENAME_COMPONENT_LEN)
+        );
+        assert_eq!(
+            beyond_limit_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::len),
+            Some(MAX_RECEIPT_FILENAME_COMPONENT_LEN)
+        );
+        assert_ne!(at_limit_path, beyond_limit_path);
+        assert!(
+            beyond_limit_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains('~'))
+        );
     }
 
     // ── written_at format ─────────────────────────────────────────────────────

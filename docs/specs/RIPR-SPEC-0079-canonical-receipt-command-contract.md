@@ -95,9 +95,12 @@ ripr receipt write --gap <canonical_gap_id> --packet <packet_id> \
 | `--out <path>` | optional | Write the receipt JSON to this path. When omitted, writes to `target/ripr/receipts/<encoded-canonical-gap-id>.json`. |
 
 When `--out` is omitted, the default filename is a percent-encoded form of the
-UTF-8 `canonical_gap_id`: ASCII digits and `-` remain unchanged, and
-every other byte is encoded as `%HH`. This keeps the identity unchanged in the
-JSON while making the filesystem representation deterministic and portable.
+UTF-8 `canonical_gap_id`: ASCII digits and `-` remain unchanged, and every
+other byte is encoded as `%HH`. The `.json` filename component is capped at 255
+characters. If the encoded stem would exceed that limit, the path uses a
+bounded encoded prefix plus `~` and the lowercase SHA-256 digest of the full
+canonical ID. This keeps the identity unchanged in the JSON while making the
+filesystem representation deterministic and portable.
 
 The `ripr receipt check` command reads a receipt file and reports
 whether it is structurally valid and not stale:
@@ -346,6 +349,7 @@ Unit tests (app layer) — `crates/ripr/src/app/receipt.rs`:
 - `receipt_out_path_uses_explicit_path_when_provided`
 - `receipt_out_path_defaults_to_canonical_location`
 - `receipt_filename_encoding_is_collision_free_for_punctuation`
+- `receipt_filename_encoding_is_bounded_for_long_gap_ids`
 
 Integration smoke tests — `crates/ripr/tests/cli_smoke.rs`:
 
