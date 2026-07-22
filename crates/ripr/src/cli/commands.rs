@@ -4901,10 +4901,10 @@ fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>)
     );
     if managed && found_bin.is_some() {
         // Managed mode + producer present: ripr invokes the exporter itself.
-        "ripr check --languages perl --base origin/main --head HEAD".to_string()
+        "ripr check --perl-facts <packet.json> --diff <diff.patch> --json".to_string()
     } else if managed {
         // Managed mode configured but producer missing.
-        "install perllsp on PATH (or set [perl].executable), then: ripr check --languages perl"
+        "install perllsp on PATH (or set [perl].executable), then: ripr check --perl-facts <packet.json> --diff <diff.patch> --json"
             .to_string()
     } else {
         // Explicit packet mode (or producer absent): supply --perl-facts.
