@@ -475,14 +475,18 @@ fn plan_deletions(entries: &[InventoryEntry]) -> Vec<PlanDeletion> {
 
 /// Canonical plan content: one header line, the repository line, then one
 /// `branch|head_sha|merged_pr|reason` line per deletion, sorted by branch.
-/// The timestamp is deliberately excluded so the digest is stable across
-/// regeneration of identical review content.
+/// Sorting happens here (not only at plan construction) so the canonical form
+/// is order-independent at the digest layer itself. The timestamp is
+/// deliberately excluded so the digest is stable across regeneration of
+/// identical review content.
 fn plan_canonical_content(repository: &str, deletions: &[PlanDeletion]) -> String {
+    let mut sorted: Vec<&PlanDeletion> = deletions.iter().collect();
+    sorted.sort_by(|left, right| left.branch.cmp(&right.branch));
     let mut lines = vec![
         "branch-inventory-deletion-plan v1".to_string(),
         format!("repository: {repository}"),
     ];
-    for deletion in deletions {
+    for deletion in sorted {
         lines.push(format!(
             "{}|{}|{}|{}",
             deletion.branch, deletion.head_sha, deletion.merged_pr, deletion.reason
@@ -965,8 +969,23 @@ fn gh_all_pull_requests(repository: &str) -> Result<Vec<PullRequestFacts>, Strin
             ".[]".to_string(),
         ],
     )?;
+    let items = parse_paginated_items(&output, "pulls")?;
+    pull_request_facts_from_items(&items, repository)
+}
+
+/// Build PR facts from raw pulls items. Only same-repository heads count:
+/// GitHub sets `head.repo.full_name` to the repository the head branch
+/// belongs to, so a value equal to `repository` always names a branch in
+/// this repository. Fork heads and deleted forks (`head.repo: null`) are
+/// excluded — the failure direction is conservative (an origin branch whose
+/// only PR history is a fork PR classifies unowned/manual-review, never a
+/// deletion candidate).
+fn pull_request_facts_from_items(
+    items: &[Value],
+    repository: &str,
+) -> Result<Vec<PullRequestFacts>, String> {
     let mut prs = Vec::new();
-    for item in parse_paginated_items(&output, "pulls")? {
+    for item in items {
         let head = item.get("head").cloned().unwrap_or(Value::Null);
         let same_repository = head
             .get("repo")
@@ -980,7 +999,7 @@ fn gh_all_pull_requests(repository: &str) -> Result<Vec<PullRequestFacts>, Strin
             .get("number")
             .and_then(Value::as_u64)
             .ok_or_else(|| "pulls item is missing numeric `number`".to_string())?;
-        let state = json_string(&item, "state", "pulls item")?;
+        let state = json_string(item, "state", "pulls item")?;
         let merged = item.get("merged_at").is_some_and(|value| !value.is_null());
         let head_ref = json_string(&head, "ref", "pulls item head")?;
         let head_sha = json_string(&head, "sha", "pulls item head")?;
@@ -1029,9 +1048,19 @@ fn parse_paginated_items(text: &str, label: &str) -> Result<Vec<Value>, String> 
     Ok(items)
 }
 
-/// Conservative #2022 claim lookup: any comment on the claims issue that
-/// names a branch counts as a claim. Over-protection is intentional — a
-/// stale mention parks a branch; it never marks one for deletion.
+/// Conservative #2022 claim lookup: a comment that names a branch as a whole
+/// token counts as a claim. Over-protection is intentional — a stale mention
+/// parks a branch; it never marks one for deletion.
+///
+/// Matching rule (see #2022's claim fields: "branch and worktree when
+/// created", and the repo convention that working branches carry a
+/// `prefix/`): a claim match requires either a backtick-quoted occurrence of
+/// the exact branch name (`` `fix` ``), or — for slash-prefixed names only —
+/// an unquoted occurrence bounded on both sides by characters outside the
+/// branch-name alphabet (`[A-Za-z0-9-_+/]`). A bare unquoted single-segment
+/// name never matches: prose like "fix the bug" must not park a branch named
+/// `fix`, while realistic claim blocks name branches backtick-quoted or with
+/// their prefix.
 fn collect_claims(branch_names: &[String]) -> Result<Vec<ClaimFacts>, String> {
     let output = run_output(
         "gh",
@@ -1060,7 +1089,7 @@ fn collect_claims(branch_names: &[String]) -> Result<Vec<ClaimFacts>, String> {
             if name == "main" || claims.iter().any(|claim| claim.branch == *name) {
                 continue;
             }
-            if body.contains(name.as_str()) {
+            if comment_claims_branch(body, name) {
                 claims.push(ClaimFacts {
                     source: format!("issue:{CLAIMS_ISSUE} comment {id}"),
                     branch: name.clone(),
@@ -1071,6 +1100,36 @@ fn collect_claims(branch_names: &[String]) -> Result<Vec<ClaimFacts>, String> {
     }
     claims.sort_by(|left, right| left.branch.cmp(&right.branch));
     Ok(claims)
+}
+
+/// Characters that can extend a branch reference: a neighbor in this alphabet
+/// means the occurrence is part of a longer token (e.g. `hotfix`, `xcodex/a`,
+/// `codex/a/b`), not a standalone branch mention. `.` is deliberately outside
+/// the alphabet so sentence-final periods still count as boundaries; the
+/// resulting over-match parks (fail-safe) and never deletes.
+fn is_branch_token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '+' | '/')
+}
+
+/// Whole-token claim match: backtick-quoted exact name always matches;
+/// unquoted matches require a slash-prefixed name bounded by non-branch
+/// characters on both sides. Bare unquoted single-segment names never match.
+fn comment_claims_branch(body: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if body.contains(&format!("`{name}`")) {
+        return true;
+    }
+    if !name.contains('/') {
+        return false;
+    }
+    body.match_indices(name).any(|(start, _)| {
+        let before = body[..start].chars().next_back();
+        let after = body[start + name.len()..].chars().next();
+        before.is_none_or(|ch| !is_branch_token_char(ch))
+            && after.is_none_or(|ch| !is_branch_token_char(ch))
+    })
 }
 
 /// Reachability of each origin branch from origin/main, for context only.
@@ -2281,6 +2340,178 @@ mod tests {
         ensure(
             digest != plan_digest("owner/other", &deletions),
             "a different repository must recompute to a different digest",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn branch_inventory_plan_digest_covers_every_field_and_canonicalizes_order()
+    -> Result<(), String> {
+        let deletions = vec![
+            PlanDeletion {
+                branch: "codex/a".to_string(),
+                head_sha: "aaaa1111".to_string(),
+                merged_pr: 100,
+                reason: "merged PR #100".to_string(),
+            },
+            PlanDeletion {
+                branch: "codex/b".to_string(),
+                head_sha: "bbbb2222".to_string(),
+                merged_pr: 200,
+                reason: "merged PR #200".to_string(),
+            },
+        ];
+        let digest = plan_digest("owner/repo", &deletions);
+
+        let mut merged_pr_tampered = deletions.clone();
+        if let Some(first) = merged_pr_tampered.first_mut() {
+            first.merged_pr = 101;
+        }
+        ensure(
+            digest != plan_digest("owner/repo", &merged_pr_tampered),
+            "a tampered merged_pr field must change the digest",
+        )?;
+
+        let mut reason_tampered = deletions.clone();
+        if let Some(first) = reason_tampered.first_mut() {
+            first.reason = "merged PR #100 (edited after review)".to_string();
+        }
+        ensure(
+            digest != plan_digest("owner/repo", &reason_tampered),
+            "a tampered reason field must change the digest",
+        )?;
+
+        let reordered: Vec<PlanDeletion> = deletions.iter().rev().cloned().collect();
+        ensure(
+            digest == plan_digest("owner/repo", &reordered),
+            "entry order must not change the digest (sorted-branch canonicalization)",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn branch_inventory_pull_requests_aggregate_across_pages_and_exclude_forks()
+    -> Result<(), String> {
+        // Two `--paginate --jq .[]` pages: a closed PR and a merged PR share
+        // head branch `codex/multi` across the page boundary; a fork head and
+        // a deleted-fork (null repo) head with the same branch name must be
+        // excluded, never aliasing the origin branch.
+        let page_one = concat!(
+            "{\"number\": 775, \"state\": \"closed\", \"merged_at\": null,",
+            " \"title\": \"attempt one\", \"body\": \"refs #100\",",
+            " \"head\": {\"ref\": \"codex/multi\", \"sha\": \"cccc3333\",",
+            " \"repo\": {\"full_name\": \"owner/repo\"}}}\n",
+            "{\"number\": 800, \"state\": \"closed\", \"merged_at\": \"2026-06-01T00:00:00Z\",",
+            " \"title\": \"fork attempt\", \"body\": null,",
+            " \"head\": {\"ref\": \"codex/multi\", \"sha\": \"cccc3333\",",
+            " \"repo\": {\"full_name\": \"someone/fork\"}}}\n",
+        );
+        let page_two = concat!(
+            "{\"number\": 801, \"state\": \"closed\", \"merged_at\": \"2026-06-02T00:00:00Z\",",
+            " \"title\": \"deleted fork\", \"body\": null,",
+            " \"head\": {\"ref\": \"codex/multi\", \"sha\": \"cccc3333\", \"repo\": null}}\n",
+            "{\"number\": 789, \"state\": \"closed\", \"merged_at\": \"2026-06-03T00:00:00Z\",",
+            " \"title\": \"attempt two\", \"body\": null,",
+            " \"head\": {\"ref\": \"codex/multi\", \"sha\": \"cccc3333\",",
+            " \"repo\": {\"full_name\": \"owner/repo\"}}}\n",
+        );
+        let text = format!("{page_one}{page_two}");
+        let items = parse_paginated_items(&text, "pulls")?;
+        ensure(items.len() == 4, "both pages must be aggregated")?;
+        let prs = pull_request_facts_from_items(&items, "owner/repo")?;
+        ensure(prs.len() == 2, "fork and null-repo heads must be excluded")?;
+        ensure(
+            prs.iter().map(|pr| pr.number).collect::<Vec<_>>() == vec![775, 789],
+            "surviving PRs must be ordered by number across pages",
+        )?;
+        ensure(
+            prs.iter().all(|pr| pr.head_ref == "codex/multi"),
+            "matching by head branch name must span the page boundary",
+        )?;
+        let merged = prs.iter().filter(|pr| pr.merged).count();
+        ensure(merged == 1, "exactly the same-repo merged PR survives")?;
+
+        // Classification over the aggregated pages: the merged record from
+        // page two wins, and the fork/null-repo collisions never contributed.
+        let facts = branch("codex/multi", "cccc3333");
+        let packet = InventoryInput {
+            repository: "owner/repo".to_string(),
+            claims_available: true,
+            branches: vec![facts],
+            pull_requests: prs,
+            claims: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let entries = classify_all(&packet, REFERENCE_EPOCH);
+        let entry = entries
+            .first()
+            .ok_or_else(|| "classification returned no entry".to_string())?;
+        ensure(
+            entry.classification == CLASSIFICATION_MERGED_PR_LEFTOVER,
+            "cross-page merged record must classify merged-pr-leftover",
+        )?;
+        ensure(
+            entry.disposition == DISPOSITION_DELETE_CANDIDATE,
+            "exact SHA match across pages must be a delete candidate",
+        )?;
+        ensure(
+            entry.matching_prs == vec![775, 789],
+            "both same-repo PRs must be recorded, sorted",
+        )?;
+        ensure(
+            entry.issue_refs == vec![100],
+            "issue refs must survive parsing",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn branch_inventory_claims_match_whole_tokens_only() -> Result<(), String> {
+        // Near-collision prose must NOT park a branch.
+        ensure(
+            !comment_claims_branch("please fix the bug before Friday", "fix"),
+            "prose `fix the bug` must not park branch `fix`",
+        )?;
+        ensure(
+            !comment_claims_branch("see the release notes", "release"),
+            "prose `release notes` must not park branch `release`",
+        )?;
+        ensure(
+            !comment_claims_branch("hotfix landed on main", "fix"),
+            "a longer token containing the name must not match",
+        )?;
+        ensure(
+            !comment_claims_branch("work continues in xcodex/foo today", "codex/foo"),
+            "a branch-name prefix glued to prose must not match",
+        )?;
+        ensure(
+            !comment_claims_branch("see codex/foo/bar for the follow-up", "codex/foo"),
+            "a longer path continuing the name must not match",
+        )?;
+        // Realistic claim shapes MUST park the branch.
+        ensure(
+            comment_claims_branch("claim: branch `fix`, worktree wt/fix", "fix"),
+            "a backtick-quoted name must park branch `fix`",
+        )?;
+        ensure(
+            comment_claims_branch("claim: branch codex/foo, slice alpha", "codex/foo"),
+            "an unquoted slash-prefixed whole token must match",
+        )?;
+        ensure(
+            comment_claims_branch("branch: codex/foo.", "codex/foo"),
+            "a sentence-final period still counts as a boundary",
+        )?;
+        ensure(
+            comment_claims_branch("codex/foo", "codex/foo"),
+            "a comment consisting of just the branch name must match",
+        )?;
+        ensure(
+            !comment_claims_branch("", "codex/foo"),
+            "an empty comment never matches",
+        )?;
+        ensure(
+            !comment_claims_branch("anything", ""),
+            "an empty branch name never matches",
         )?;
         Ok(())
     }
