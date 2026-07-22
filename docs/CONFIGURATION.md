@@ -834,10 +834,12 @@ For CLI commands:
 CLI flag  >  ripr.toml  >  CheckInput::default()
 ```
 
-For LSP:
+For LSP, the negotiated configuration transport decides (see "LSP
+configuration pull" above):
 
 ```
-LSP initializationOptions  >  ripr.toml  >  CheckInput::default()
+pull mode:      valid pulled setting  >  LSP initializationOptions  >  ripr.toml  >  CheckInput::default()
+other modes:    LSP initializationOptions  >  ripr.toml  >  CheckInput::default()
 ```
 
 ## See also

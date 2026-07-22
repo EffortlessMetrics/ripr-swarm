@@ -109,10 +109,11 @@ Until the first pull resolves, the analysis status payload discloses the
 pull state as `pending`; with no single selected workspace root the pull is
 `deferred` (analysis is already blocked there, and the pull is retried when
 a single root is selected). Pulled settings are scoped to the root URI they
-were pulled for: a switch of the selected root invalidates them, bumps the
-pull epoch so an in-flight response for the old root is dropped, and
-schedules exactly one re-pull scoped to the new root. A failed or malformed
-pull discloses a typed
+were pulled for: any change of the effective root bumps the pull epoch so
+an in-flight response for the old root is dropped, and a transition that
+lands on an analysis-capable root — including an `A → unavailable → B`
+sequence — schedules exactly one re-pull scoped to that root. A failed or
+malformed pull discloses a typed
 state (`config_pull_failed` / `config_pull_invalid`, mirroring the
 `AnalysisFailure { kind, message }` pattern) with a recovery route, while
 the last-known-good pulled layer is retained as stale. Defaults never

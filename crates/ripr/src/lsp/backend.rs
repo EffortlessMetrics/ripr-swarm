@@ -1305,6 +1305,7 @@ impl Backend {
                     .map(|input_identity| serde_json::json!({"input_identity": input_identity}))
             })
             .unwrap_or(serde_json::Value::Null);
+        let pull_state = self.config_pull_state();
         let input_authority = serde_json::json!({
             "current": if configuration_failure.is_some() {
                 serde_json::Value::Null
@@ -1332,13 +1333,17 @@ impl Backend {
                 .map(|value| serde_json::Value::Object(value.session_value_sources()))
                 .unwrap_or(serde_json::Value::Null),
             "configuration_pull": {
-                "state": self.config_pull_state().as_str(),
+                // Snapshot once: the status request handler runs concurrently
+                // with pull tasks, and three separate locked reads could
+                // interleave a state change into a torn payload (e.g. a
+                // failure from a newer state beside an older state string).
+                "state": pull_state.as_str(),
                 "epoch": self.config_pull_epoch.load(Ordering::Relaxed),
-                "failure": self.config_pull_state().failure().map(|failure| serde_json::json!({
+                "failure": pull_state.failure().map(|failure| serde_json::json!({
                     "kind": failure.kind,
                     "message": failure.message,
                 })),
-                "recovery_route": self.config_pull_state().recovery_route(),
+                "recovery_route": pull_state.recovery_route(),
             },
         });
         let last_success_age_ms = health
@@ -1461,14 +1466,14 @@ impl Backend {
         let changed = previous.state != authority.state
             || previous.effective_root != authority.effective_root
             || previous.candidate_roots != authority.candidate_roots;
-        // A true root switch (A -> B) invalidates the pulled settings: they
-        // were scoped to root A's URI. Bump the pull epoch so an in-flight
-        // response for the old root is dropped, and schedule one re-pull for
-        // the new root below. Initial selection (None -> Some) is covered by
-        // the deferred-pull retry, not this path.
-        let root_switch = previous.effective_root.is_some()
-            && previous.effective_root != authority.effective_root;
-        if root_switch && self.configuration_mode() == ConfigurationMode::Pull {
+        // Any change of the effective root affects root-scoped pulled
+        // settings: bump the pull epoch so an in-flight response scoped to
+        // the old root is dropped. A re-pull is scheduled below whenever the
+        // transition lands on an analysis-capable root — including
+        // A -> unavailable -> B, where the intermediate transition has no
+        // root but the retained layer is still A-scoped (#2211 review).
+        let root_changed = previous.effective_root != authority.effective_root;
+        if root_changed && self.configuration_mode() == ConfigurationMode::Pull {
             self.config_pull_epoch.fetch_add(1, Ordering::SeqCst);
         }
         if changed {
@@ -1509,11 +1514,11 @@ impl Backend {
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
         // A deferred configuration pull (#2031) becomes runnable once a
-        // single workspace root is selected, and a root switch needs one
-        // re-pull scoped to the new root. The wrapper schedules it after the
-        // transition guard is released.
+        // single workspace root is selected, and any root change landing on
+        // an analysis-capable root needs one re-pull scoped to the new root.
+        // The wrapper schedules it after the transition guard is released.
         self.configuration_mode() == ConfigurationMode::Pull
-            && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || root_switch)
+            && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || root_changed)
             && self.workspace_root_authority().allows_analysis()
     }
 
