@@ -288,11 +288,13 @@ The eligibility decision has this closed outcome table:
 | Any missing route field | `incomplete_repair_route`; visible advisory only. |
 | Limited or partial analysis scope | `limited_partial_scope`; gate-ineligible and never a full-run pass. |
 | Stale artifact or non-current repository snapshot | Gate-ineligible, or `config_error` when the selected mode requires current input. |
+| Failed analysis | `failed`; gate-ineligible and fail-closed, or `config_error` when the selected mode requires a successful current analysis. |
+| Unavailable analysis | `unavailable`; gate-ineligible and fail-closed, or `config_error` when the selected mode requires an available current analysis. |
 | Unsupported preview-language authority | Advisory only; it cannot gain blocking authority through projection. |
 | Explicit advisory mode | Never blocks, including for an otherwise complete route. |
 | Explicit calibrated blocking mode | Blocks only a complete, current, full-scope, policy-eligible decision. |
 
-This contract does not make the default generated workflow blocking. It also
+This contract does not make the default-generated workflow blocking. It also
 does not populate a missing `GapRecord.seam_id`; the producer-owned identity
 carry-through is the next implementation slice under #1933. Until that slice
 lands, gap-ledger routes remain visibly `incomplete_repair_route` and the gate
