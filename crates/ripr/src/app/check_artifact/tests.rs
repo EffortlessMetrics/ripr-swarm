@@ -115,28 +115,41 @@ fn artifact_wire_form_uses_documented_snake_case_vocabulary() -> Result<(), Stri
         }
         let mut language_checked = false;
         for (index, finding) in findings.iter().enumerate() {
-            for field in ["family", "delta"] {
-                let actual = finding["probe"][field]
-                    .as_str()
-                    .ok_or_else(|| format!("findings[{index}].probe.{field} must be a string"))?;
-                if actual.is_empty()
-                    || !actual
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
-                {
-                    return Err(format!(
-                        "findings[{index}].probe.{field} must serialize in documented snake_case, got {actual:?}"
-                    ));
-                }
+            // Closed documented vocabularies (ProbeFamily / DeltaKind /
+            // LanguageId), not character shape: a drifted or arbitrary
+            // lowercase value fails.
+            let family = finding["probe"]["family"]
+                .as_str()
+                .ok_or_else(|| format!("findings[{index}].probe.family must be a string"))?;
+            if ![
+                "predicate",
+                "return_value",
+                "error_path",
+                "call_deletion",
+                "field_construction",
+                "side_effect",
+                "match_arm",
+                "static_unknown",
+            ]
+            .contains(&family)
+            {
+                return Err(format!(
+                    "findings[{index}].probe.family must serialize in the documented ProbeFamily vocabulary, got {family:?}"
+                ));
+            }
+            let delta = finding["probe"]["delta"]
+                .as_str()
+                .ok_or_else(|| format!("findings[{index}].probe.delta must be a string"))?;
+            if !["value", "control", "effect", "unknown"].contains(&delta) {
+                return Err(format!(
+                    "findings[{index}].probe.delta must serialize in the documented DeltaKind vocabulary, got {delta:?}"
+                ));
             }
             if let Some(language) = finding["language"].as_str() {
                 language_checked = true;
-                if language
-                    .chars()
-                    .any(|c| !c.is_ascii_lowercase() && c != '_')
-                {
+                if !["rust", "python", "typescript", "javascript", "perl"].contains(&language) {
                     return Err(format!(
-                        "findings[{index}].language must serialize in documented lowercase, got {language:?}"
+                        "findings[{index}].language must serialize in the documented LanguageId vocabulary, got {language:?}"
                     ));
                 }
             }
