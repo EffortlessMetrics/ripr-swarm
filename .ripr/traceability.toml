@@ -5234,6 +5234,7 @@ tests = [
   "crates/ripr/src/app/receipt.rs::receipt_filename_encoding_is_bounded_for_long_gap_ids",
   "crates/ripr/tests/cli_smoke.rs::receipt_write_then_check_exits_zero",
   "crates/ripr/tests/cli_smoke.rs::receipt_default_colon_gap_path_round_trips_smoke",
+  "crates/ripr/tests/cli_smoke.rs::receipt_default_long_gap_path_round_trips_smoke",
   "crates/ripr/tests/cli_smoke.rs::receipt_write_with_packet_id_smoke",
   "crates/ripr/tests/cli_smoke.rs::receipt_write_missing_gap_exits_nonzero_smoke",
   "crates/ripr/tests/cli_smoke.rs::receipt_write_invalid_status_exits_nonzero_smoke",

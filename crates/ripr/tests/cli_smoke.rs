@@ -5558,7 +5558,29 @@ fn receipt_write_then_check_exits_zero() -> Result<(), Box<dyn std::error::Error
 /// `receipt check --gap` from an isolated Git repository.
 #[test]
 fn receipt_default_colon_gap_path_round_trips_smoke() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = unique_temp_workspace("receipt-default-colon-gap");
+    let gap_id = format!(
+        "gap:windows:portable:{}",
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    receipt_default_gap_path_round_trip("receipt-default-colon-gap", &gap_id)
+}
+
+/// Smoke: a long canonical gap ID stays within the default path bound and
+/// round-trips through the public CLI.
+#[test]
+fn receipt_default_long_gap_path_round_trips_smoke() -> Result<(), Box<dyn std::error::Error>> {
+    let gap_id = format!(
+        "gap:windows:long:{}",
+        "segment-with-punctuation/".repeat(32)
+    );
+    receipt_default_gap_path_round_trip("receipt-default-long-gap", &gap_id)
+}
+
+fn receipt_default_gap_path_round_trip(
+    label: &str,
+    gap_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace(label);
     std::fs::create_dir_all(&workspace)?;
     run_git(&workspace, &["init"])?;
     run_git(&workspace, &["config", "user.email", "test@test.com"])?;
@@ -5567,12 +5589,7 @@ fn receipt_default_colon_gap_path_round_trips_smoke() -> Result<(), Box<dyn std:
     run_git(&workspace, &["add", "."])?;
     run_git(&workspace, &["commit", "-m", "initial"])?;
 
-    let gap_id = format!(
-        "gap:windows:portable:{}",
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
     let bin = env!("CARGO_BIN_EXE_ripr");
-    let gap_arg = gap_id.as_str();
     let write = run_command(
         bin,
         Some(&workspace),
@@ -5580,7 +5597,7 @@ fn receipt_default_colon_gap_path_round_trips_smoke() -> Result<(), Box<dyn std:
             "receipt",
             "write",
             "--gap",
-            gap_arg,
+            gap_id,
             "--verify-command",
             "cargo test",
             "--status",
@@ -5595,7 +5612,7 @@ fn receipt_default_colon_gap_path_round_trips_smoke() -> Result<(), Box<dyn std:
     let check = run_command(
         bin,
         Some(&workspace),
-        &["receipt", "check", "--gap", gap_arg],
+        &["receipt", "check", "--gap", gap_id],
     )?;
     assert_success(&check);
     assert!(String::from_utf8_lossy(&check.stdout).contains("structurally valid"));

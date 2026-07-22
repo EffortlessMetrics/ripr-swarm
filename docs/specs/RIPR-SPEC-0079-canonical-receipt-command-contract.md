@@ -328,6 +328,7 @@ non-zero on any error, printing a human-readable message to stderr.
 6. `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id <id> --json` is accepted as the legacy alias and produces the same receipt output.
 7. No surface emits `ripr outcome ...` in the `receipt_command` field; any such occurrence is a failing test.
 8. A colon-delimited `canonical_gap_id` writes to the encoded default path and is found again by `ripr receipt check --gap <canonical_gap_id>`.
+9. A long punctuation-containing `canonical_gap_id` writes to the bounded default path and is found again by `ripr receipt check --gap <canonical_gap_id>`.
 
 ## Test Mapping
 
@@ -362,6 +363,7 @@ Integration smoke tests — `crates/ripr/tests/cli_smoke.rs`:
 - `receipt_help_exits_zero_smoke`
 - `agent_receipt_legacy_alias_still_dispatches_smoke`
 - `receipt_default_colon_gap_path_round_trips_smoke`
+- `receipt_default_long_gap_path_round_trips_smoke`
 
 Emitter-alignment tests (PR 2):
 
