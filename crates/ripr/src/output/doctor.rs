@@ -299,15 +299,19 @@ fn doctor_tool_check_with_timeout(tool: &str, timeout: Duration) -> (DoctorStatu
             DoctorStatus::Pass,
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
         ),
-        Err(DoctorToolRunError::TimedOut) => (
-            DoctorStatus::Fail,
-            if timeout < Duration::from_secs(1) {
-                format!("{tool} timed out after {}ms", timeout.as_millis())
-            } else {
-                format!("{tool} timed out after {}s", timeout.as_secs())
-            },
-        ),
+        Err(DoctorToolRunError::TimedOut) => {
+            (DoctorStatus::Fail, doctor_timeout_evidence(tool, timeout))
+        }
         _ => (DoctorStatus::Fail, format!("{tool} not available")),
+    }
+}
+
+fn doctor_timeout_evidence(tool: &str, timeout: Duration) -> String {
+    let milliseconds = timeout.as_millis();
+    if milliseconds < 1_000 || !milliseconds.is_multiple_of(1_000) {
+        format!("{tool} timed out after {milliseconds}ms")
+    } else {
+        format!("{tool} timed out after {}s", timeout.as_secs())
     }
 }
 
@@ -429,6 +433,22 @@ mod tests {
         let text = report.render_text();
         assert!(text.contains("✓ config"));
         assert!(text.contains("✓ doctor checks passed"));
+    }
+
+    #[test]
+    fn doctor_timeout_evidence_preserves_fractional_durations() {
+        assert_eq!(
+            doctor_timeout_evidence("probe", std::time::Duration::from_millis(250)),
+            "probe timed out after 250ms"
+        );
+        assert_eq!(
+            doctor_timeout_evidence("probe", std::time::Duration::from_millis(1_500)),
+            "probe timed out after 1500ms"
+        );
+        assert_eq!(
+            doctor_timeout_evidence("probe", std::time::Duration::from_secs(5)),
+            "probe timed out after 5s"
+        );
     }
 
     #[test]
@@ -578,10 +598,9 @@ mod tests {
             }
 
             let start = std::time::Instant::now();
-            let (status, evidence) = doctor_tool_check_with_timeout(
-                shim.to_str().ok_or("shim path is not utf-8")?,
-                std::time::Duration::from_millis(250),
-            );
+            let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
+            let (status, evidence) =
+                doctor_tool_check_with_timeout(shim_text, std::time::Duration::from_millis(250));
             let elapsed = start.elapsed();
 
             std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
@@ -590,9 +609,9 @@ mod tests {
                     "attempt {attempt}: hanging tool unexpectedly passed"
                 ));
             }
-            if !evidence.contains("timed out") {
+            if evidence != format!("{shim_text} timed out after 250ms") {
                 return Err(format!(
-                    "attempt {attempt}: expected a named timeout, got: {evidence}"
+                    "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
                 ));
             }
             if elapsed >= std::time::Duration::from_secs(30) {
