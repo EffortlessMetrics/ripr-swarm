@@ -4376,13 +4376,28 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
 fn report_language_runtime_probes(root: &Path) {
     for (language, tool, hint) in language_runtime_probes(root) {
         let (status, evidence) = output::doctor::doctor_tool_check(tool);
-        match status {
-            output::doctor::DoctorStatus::Pass => {
-                println!("✓ {language} verify-route runtime: {evidence}");
-            }
-            output::doctor::DoctorStatus::Fail => {
-                println!("! {language} verify-route runtime: {evidence} — {hint}");
-            }
+        println!(
+            "{}",
+            language_runtime_probe_line(language, status, &evidence, hint)
+        );
+    }
+}
+
+/// One doctor output line for a runtime probe (#2071). Pure so the emitted
+/// contract (labels, evidence, install hint) is directly testable (#2183
+/// review).
+fn language_runtime_probe_line(
+    language: &str,
+    status: output::doctor::DoctorStatus,
+    evidence: &str,
+    hint: &str,
+) -> String {
+    match status {
+        output::doctor::DoctorStatus::Pass => {
+            format!("✓ {language} verify-route runtime: {evidence}")
+        }
+        output::doctor::DoctorStatus::Fail => {
+            format!("! {language} verify-route runtime: {evidence} — {hint}")
         }
     }
 }
@@ -4398,10 +4413,9 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
             "python3",
             "install python3 (e.g. apt install python3)",
         ));
-        if root.join("pytest.ini").exists()
-            || root.join("pyproject.toml").exists()
-            || root.join("conftest.py").exists()
-        {
+        // Reuse the shared framework detector (#2183 review) — no parallel
+        // marker list.
+        if analysis::detect_python_test_framework(root) == Some("pytest") {
             probes.push((
                 "python",
                 "pytest",
@@ -4413,6 +4427,12 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
         probes.push(("typescript", "node", "install Node.js"));
         if root.join("bun.lockb").exists() || root.join("bun.lock").exists() {
             probes.push(("typescript", "bun", "install Bun"));
+        }
+        if root.join("pnpm-lock.yaml").exists() {
+            probes.push(("typescript", "pnpm", "install pnpm"));
+        }
+        if root.join("yarn.lock").exists() {
+            probes.push(("typescript", "yarn", "install Yarn"));
         }
     }
     probes
@@ -8902,7 +8922,62 @@ language = "rust"
             .collect();
         assert_eq!(tools, vec!["node", "bun"]);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        // #2183 review: a bare pyproject.toml is PEP 517 packaging, not
+        // pytest evidence — only python3 is probed.
+        let root = unique_command_test_dir("probe-pyproject-only");
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create tests: {err}"))?;
+        std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"x\"\n")
+            .map_err(|err| format!("write pyproject: {err}"))?;
+        std::fs::write(root.join("tests/test_x.py"), "import unittest\n")
+            .map_err(|err| format!("write test: {err}"))?;
+        let tools: Vec<&str> = language_runtime_probes(&root)
+            .iter()
+            .map(|(_, tool, _)| *tool)
+            .collect();
+        assert_eq!(tools, vec!["python3"]);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        // pnpm and yarn lockfiles add their runners.
+        for (lockfile, tool) in [("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn")] {
+            let root = unique_command_test_dir("probe-pm");
+            std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+            std::fs::write(root.join("package.json"), "{}")
+                .map_err(|err| format!("write pkg: {err}"))?;
+            std::fs::write(root.join(lockfile), "").map_err(|err| format!("write lock: {err}"))?;
+            let tools: Vec<&str> = language_runtime_probes(&root)
+                .iter()
+                .map(|(_, candidate, _)| *candidate)
+                .collect();
+            assert_eq!(tools, vec!["node", tool], "lockfile {lockfile}");
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
         Ok(())
+    }
+
+    #[test]
+    fn language_runtime_probe_line_names_labels_evidence_and_hint() {
+        // #2183 review: the emitted contract is pinned, not just the list.
+        let pass = language_runtime_probe_line(
+            "python",
+            output::doctor::DoctorStatus::Pass,
+            "Python 3.12.3",
+            "install python3",
+        );
+        assert!(pass.starts_with('✓'));
+        assert!(pass.contains("python verify-route runtime: Python 3.12.3"));
+        assert!(!pass.contains("install python3"));
+        let fail = language_runtime_probe_line(
+            "python",
+            output::doctor::DoctorStatus::Fail,
+            "python3 not available",
+            "install python3 (e.g. apt install python3)",
+        );
+        assert!(fail.starts_with('!'));
+        assert!(
+            fail.contains("python3 not available — install python3 (e.g. apt install python3)")
+        );
     }
 
     #[test]
