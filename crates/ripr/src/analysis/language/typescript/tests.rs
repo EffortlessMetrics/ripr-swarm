@@ -1735,6 +1735,133 @@ test("mocked cart total stays ambiguous", () => {
 }
 
 #[test]
+fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
+    // issue #2269: a test that mocks the changed Function owner's OWN module
+    // must NOT be credited `DirectOwnerCall` — the owner call executes the
+    // mock, not the changed code. Only the advisory same-file-stem proximity
+    // heuristic may link the test.
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owners.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let tests = extract_tests(
+        Path::new("tests/owners.test.ts"),
+        r#"import { applyDiscount } from "../src/owners";
+
+vi.mock("../src/owners");
+
+test("mocked applyDiscount stays ambiguous", () => {
+    const result = applyDiscount(100, 100);
+    expect(result).toBe(90);
+});
+"#,
+    );
+
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.relation.is_uncertain()),
+        "mocked owner module must not credit any oracle-using relation: {candidates:?}"
+    );
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::SameFileProximity
+    );
+}
+
+#[test]
+fn find_related_tests_credits_unmocked_function_owner_call() {
+    // Positive control for the #2269 guard: the same scenario WITHOUT the
+    // owner-module mock keeps the `DirectOwnerCall` credit.
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owners.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let tests = extract_tests(
+        Path::new("tests/owners.test.ts"),
+        r#"import { applyDiscount } from "../src/owners";
+
+test("unmocked applyDiscount observes the owner", () => {
+    const result = applyDiscount(100, 100);
+    expect(result).toBe(90);
+});
+"#,
+    );
+
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::DirectOwnerCall
+    );
+}
+
+#[test]
+fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result<(), String> {
+    // issue #2269: mocked owner module + strong exact-value oracle must not
+    // classify `exposed`; the `mocked_module` static limit stays disclosed.
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let tests = extract_tests(
+        Path::new("tests/lib.test.ts"),
+        r#"import { applyDiscount } from "../src/lib";
+
+jest.mock("../src/lib");
+
+test("mocked applyDiscount stays ambiguous", () => {
+    const result = applyDiscount(100, 100);
+    expect(result).toBe(90);
+});
+"#,
+    );
+    let finding = classify_change(
+        Path::new("src/lib.ts"),
+        2,
+        "    if (amount >= threshold) {",
+        &[owner],
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding for the changed line".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected weakly_exposed, got {:?}",
+        finding.class
+    );
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::MockedModule)
+    );
+    Ok(())
+}
+
+#[test]
 fn find_related_tests_matches_bounded_class_method_calls() {
     let owner = TypeScriptOwner {
         name: "build".to_string(),
