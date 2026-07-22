@@ -314,7 +314,10 @@ export class RiprClientController {
         nextStep: 'Run ripr: Select Workspace Root, or open a Rust or enabled preview-language file from one workspace folder, then run ripr: Restart Server.'
       });
       this.output.appendLine('ripr multi-root workspace is ambiguous; select a workspace folder before starting the server.');
-      await this.offerWorkspaceRootSelection();
+      // Fire and forget (#2180 review): awaiting the warning would block
+      // start() — and extension activation, which awaits it — until the
+      // user answers the notification, which may never happen.
+      void this.offerWorkspaceRootSelection();
       return;
     }
 
