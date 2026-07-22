@@ -2680,11 +2680,14 @@ fn make_hook_executable(path: &Path) -> Result<(), String> {
     // regardless — but a checkout later used from WSL or Linux would
     // silently skip it (#2091). Say so at install time instead of
     // no-oping quietly.
+    // Display the POSIX form: backslashes from a Windows display path are
+    // escapes in a WSL/Linux shell, so the printed remedy would target the
+    // wrong file (#2177 review).
+    let posix_path = path.display().to_string().replace('\\', "/");
     eprintln!(
         "install-hooks: {} was written without an executable bit (unused on this platform); \
          if this checkout is later used from WSL or Linux, run `chmod +x {}`",
-        path.display(),
-        path.display()
+        posix_path, posix_path
     );
     Ok(())
 }
