@@ -3,6 +3,27 @@
 `ripr` emits stable JSON for tools, CI systems, editor integrations, and coding
 agents.
 
+## Output streams by command family
+
+The CLI has two intentional output conventions:
+
+- The check-family commands (`check`, `diff`, `explain`, and `context`) write
+  their primary result to stdout. `check`, `diff`, and `context` can emit
+  machine-readable JSON; `explain` emits its human explanation. Warnings and
+  diagnostics go to stderr, so scripts can capture stdout without filtering
+  status text.
+- The gate-family commands (`gate evaluate`, `baseline`, and `zero status`)
+  write JSON and Markdown reports to the paths shown by their help text. They
+  print human `Wrote ...` status lines to stdout and do not currently provide a
+  stdout-JSON mode. Use the explicit `--out` and `--out-md` paths when wiring
+  these reports into CI or another tool.
+
+This split is deliberate: check-family output is a direct analysis result,
+while gate-family output is a reviewed, file-backed policy/report artifact.
+The gate evaluator can still return a non-zero status after writing its
+artifacts when the decision is `blocked` or `config_error`; callers should
+inspect both the exit status and the written JSON.
+
 The `ripr check --format json` schema version is:
 
 ```text
