@@ -2946,9 +2946,13 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn did_change_workspace_folders(&self, _: DidChangeWorkspaceFoldersParams) {
-        self.trace_inbound("notification", "workspace/didChangeWorkspaceFolders", None)
-            .await;
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        self.trace_inbound(
+            "notification",
+            "workspace/didChangeWorkspaceFolders",
+            self.verbose_params_bytes(&params),
+        )
+        .await;
         let resolution = match self.client.workspace_folders().await {
             Ok(Some(folders)) => {
                 if folders.is_empty() {
