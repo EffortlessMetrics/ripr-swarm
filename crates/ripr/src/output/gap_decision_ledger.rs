@@ -198,7 +198,7 @@ pub(crate) fn validate_gap_record_seam_identities(
                 .as_deref()
                 .is_none_or(|seam_id| seam_id.trim().is_empty())
         });
-        if seam_ids.len() > 1 || has_missing_identity {
+        if seam_ids.len() > 1 || (has_missing_identity && !seam_ids.is_empty()) {
             errors.push(format!(
                 "conflicting seam identities for canonical gap {canonical_gap_id}"
             ));

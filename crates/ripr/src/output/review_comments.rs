@@ -620,6 +620,13 @@ fn gap_record_comment_json(
             "PR comments require a non-empty anchor and dedupe fingerprint.",
         ));
     }
+    let Some(seam_id) = record.seam_id.as_deref().and_then(non_empty) else {
+        return Err(gap_record_suppressed_json(
+            record,
+            "missing_seam_identity",
+            "PR comments require producer-owned seam identity.",
+        ));
+    };
     if !seen_dedupe.insert(dedupe.to_string()) {
         return Err(gap_record_suppressed_json(
             record,
@@ -642,13 +649,6 @@ fn gap_record_comment_json(
         ));
     }
 
-    let Some(seam_id) = record.seam_id.as_deref().and_then(non_empty) else {
-        return Err(gap_record_suppressed_json(
-            record,
-            "missing_seam_identity",
-            "PR comments require producer-owned seam identity.",
-        ));
-    };
     let gap_id = gap_record_id(record);
     let repair_text = repair_text(repair_route);
     let why = repair_why(record, repair_route);
@@ -2293,10 +2293,7 @@ mod tests {
             value["comments"][0].get("confidence").is_none(),
             "repair cards should not expose generic confidence optics"
         );
-        assert_eq!(
-            value["suppressed"][0]["reason"],
-            "duplicate_dedupe_fingerprint"
-        );
+        assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
         assert_eq!(value["suppressed"][1]["reason"], "not_pr_comment_eligible");
 
         let markdown = render_gap_record_review_comments_markdown(
@@ -2341,6 +2338,33 @@ mod tests {
             .map_err(|err| format!("parse suppressed JSON: {err}"))?;
         assert_eq!(value["summary"]["comments"], 0);
         assert_eq!(value["summary"]["suppressed"], 1);
+        assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_missing_seam_does_not_consume_duplicate_slot() -> Result<(), String> {
+        let mut legacy = eligible_gap_record_json("gap:legacy", "dedupe:shared");
+        legacy
+            .as_object_mut()
+            .ok_or("legacy fixture should be an object")?
+            .remove("seam_id");
+        let valid = eligible_gap_record_json("gap:valid", "dedupe:shared");
+        let records_json = serde_json::json!({ "records": [legacy, valid] }).to_string();
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+        let rendered = render_gap_record_review_comments_json(
+            Path::new("."),
+            "main",
+            "HEAD",
+            &Mode::Draft,
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+        )?;
+        let value: Value = serde_json::from_str(&rendered)
+            .map_err(|err| format!("parse mixed migration JSON: {err}"))?;
+        assert_eq!(value["summary"]["comments"], 1);
+        assert_eq!(value["summary"]["suppressed"], 1);
+        assert_eq!(value["comments"][0]["gap_id"], "gap:valid");
         assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
         Ok(())
     }

@@ -1014,6 +1014,52 @@ fn conflicting_gap_ledger_seam_identities_fail_closed_as_config_error() -> Resul
 }
 
 #[test]
+fn multiple_legacy_gap_ledger_records_remain_route_limited() -> Result<(), String> {
+    let dir = temp_dir("gate-gap-ledger-legacy-duplicates")?;
+    let mut value: Value = serde_json::from_str(&legacy_gap_ledger_json()?)
+        .map_err(|err| format!("legacy fixture should parse: {err}"))?;
+    let record = value["gap_records"][0].clone();
+    value["gap_records"] = Value::Array(vec![record.clone(), record]);
+    let gap_ledger = write_temp_json(
+        &dir,
+        "gap-ledger.json",
+        &serde_json::to_string(&value).map_err(|err| err.to_string())?,
+    )?;
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(
+            gap_ledger
+                .strip_prefix(&dir)
+                .map_err(|err| err.to_string())?
+                .to_path_buf(),
+        ),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "advisory");
+    assert!(report.config_errors.is_empty());
+    assert_eq!(report.summary.evaluated, 2);
+    assert!(report.decisions.iter().all(|decision| {
+        decision.decision == "advisory" && decision.gate_reason.contains("incomplete_repair_route")
+    }));
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn gate_gap_ledger_static_unknown_only_stays_report_only() -> Result<(), String> {
     let dir = temp_dir("gate-gap-ledger-report-only")?;
     let gap_ledger = write_temp_json(&dir, "gap-ledger.json", GAP_LEDGER_REPORT_ONLY_JSON)?;
