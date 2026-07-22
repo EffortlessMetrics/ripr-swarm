@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     let marker = raw.strip_prefix("+++ ")?;
@@ -7,7 +7,12 @@ pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
         return None;
     }
     let path = path.strip_prefix("b/").unwrap_or(&path);
-    Some(PathBuf::from(path))
+    let parsed = PathBuf::from(path);
+    if is_path_safe(&parsed) {
+        Some(parsed)
+    } else {
+        None
+    }
 }
 
 pub(super) fn parse_old_path_marker(raw: &str) -> bool {
@@ -26,6 +31,19 @@ pub(super) fn parse_old_path_marker(raw: &str) -> bool {
 
 fn is_plausible_unquoted_diff_path(path: &str) -> bool {
     !path.is_empty() && !path.chars().any(char::is_whitespace)
+}
+
+/// Reject paths that traverse outside the workspace root or are absolute.
+/// A git diff path like `b/../../../etc/passwd` would otherwise be joined
+/// to the workspace root at the consumer site (`root.join(changed.path)`),
+/// producing a path outside root. This guard stops the traversal at the
+/// parser boundary so every downstream consumer inherits the protection.
+/// See #2099.
+fn is_path_safe(path: &Path) -> bool {
+    !path.is_absolute()
+        && !path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::RootDir))
 }
 
 fn parse_diff_path_token(raw: &str) -> Option<String> {
@@ -90,4 +108,43 @@ where
     }
 
     char::from_u32(value).unwrap_or('\u{FFFD}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_new_path_marker;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parse_new_path_marker_accepts_normal_relative_path() -> Result<(), String> {
+        let path = parse_new_path_marker("+++ b/src/lib.rs")
+            .ok_or_else(|| "expected Some for normal relative path".to_string())?;
+        assert_eq!(path, PathBuf::from("src/lib.rs"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_new_path_marker_rejects_parent_dir_traversal() {
+        // `+++ b/../../../etc/passwd` must be rejected — the path would
+        // escape the workspace root when joined at the consumer site.
+        assert_eq!(parse_new_path_marker("+++ b/../../../etc/passwd"), None);
+    }
+
+    #[test]
+    fn parse_new_path_marker_rejects_single_parent_dir() {
+        assert_eq!(parse_new_path_marker("+++ ../secret"), None);
+    }
+
+    #[test]
+    fn parse_new_path_marker_rejects_absolute_path() {
+        assert_eq!(parse_new_path_marker("+++ /etc/passwd"), None);
+    }
+
+    #[test]
+    fn parse_new_path_marker_accepts_nested_subdirectory() -> Result<(), String> {
+        let path = parse_new_path_marker("+++ b/src/nested/deep/file.rs")
+            .ok_or_else(|| "expected Some for nested path".to_string())?;
+        assert_eq!(path, PathBuf::from("src/nested/deep/file.rs"));
+        Ok(())
+    }
 }
