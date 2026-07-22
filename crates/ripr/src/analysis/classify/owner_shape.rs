@@ -592,7 +592,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn bare_name_collision_with_same_named_function_blocks_reframe() -> Result<(), String> {
         // The spec's fail-closed claim (#2170 review): an oracle named
         // `check` and an unrelated same-named helper in another module are
