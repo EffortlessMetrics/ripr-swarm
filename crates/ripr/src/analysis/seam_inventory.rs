@@ -2419,22 +2419,20 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         // Change the on-disk bytes after storing the mapping. The helper only
         // receives the already-computed fingerprint, so returning the stored
         // hash proves this fast path does not re-read the corpus.
-        write_file(
-            &root.join(&relative),
-            "pub fn discount(amount: i32, threshold: i32) -> bool { amount <= threshold }\n",
-        )?;
+        let changed_content =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount <= threshold }\n";
+        write_file(&root.join(&relative), changed_content)?;
 
         let inputs = workspace_key_inputs(&root, &RiprConfig::default());
         let key = fingerprint_cached_workspace_key(&root, &inputs, Some(&fingerprint))
             .ok_or("stored fingerprint should rebuild a cache key")?;
-        if key.files_content_hash != content_hash {
-            return Err("reconstructed key must reuse the stored content hash".into());
-        }
-        if fingerprint_cached_workspace_key(&root, &inputs, Some("missing-fingerprint")).is_some() {
-            return Err(
-                "unknown fingerprint mapping must fail closed to the content-read path".into(),
-            );
-        }
+        (key.files_content_hash == content_hash)
+            .then_some(())
+            .ok_or("reconstructed key must reuse the stored content hash")?;
+        fingerprint_cached_workspace_key(&root, &inputs, Some("missing-fingerprint"))
+            .is_none()
+            .then_some(())
+            .ok_or("unknown fingerprint mapping must fail closed to the content-read path")?;
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
