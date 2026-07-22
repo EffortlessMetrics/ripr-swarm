@@ -1017,6 +1017,30 @@ fn command_specs_from_value(
     Ok((verify, receipt))
 }
 
+/// Return only validated typed routes for machine-facing LSP projections.
+/// Missing or malformed producer payloads remain absent rather than being
+/// reconstructed from legacy display strings.
+pub(super) fn command_specs_for_projection(value: Option<&Value>) -> Option<Value> {
+    let (verify, receipt) = command_specs_from_value(value).ok()?;
+    validate_typed_command_specs(&verify, crate::domain::CommandRole::Verify).ok()?;
+    validate_typed_command_specs(&receipt, crate::domain::CommandRole::Receipt).ok()?;
+    if verify.is_empty() && receipt.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "verify": command_spec_collection_value(&verify),
+        "receipt": command_spec_collection_value(&receipt),
+    }))
+}
+
+fn command_spec_collection_value(specs: &[CommandSpec]) -> Value {
+    if specs.len() == 1 {
+        serde_json::json!(specs[0])
+    } else {
+        serde_json::json!(specs)
+    }
+}
+
 fn parse_command_spec_collection(
     value: Option<&Value>,
     field: &'static str,
@@ -1936,6 +1960,28 @@ mod tests {
                 if message == "command_specs must be an object"
         ) {
             return Err(format!("unexpected rejection: {rejection:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_command_specs_are_safe_for_action_projection() -> Result<(), String> {
+        let value = json!({
+            "command_specs": {
+                "verify": crate::agent::command_specs::agent_verify_command_spec(
+                    ".", "before.json", "after.json", None,
+                ),
+                "receipt": crate::agent::command_specs::agent_receipt_command_spec(
+                    ".", "verify.json", "seam-a", Some("receipt.json"),
+                ),
+            }
+        });
+        let projected = command_specs_for_projection(Some(&value))
+            .ok_or_else(|| format!("producer specs were rejected: {value}"))?;
+        if projected["verify"]["command_id"] != "ripr:agent:verify"
+            || projected["receipt"]["command_id"] != "ripr:agent:receipt"
+        {
+            return Err(format!("unexpected projected specs: {projected}"));
         }
         Ok(())
     }

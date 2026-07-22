@@ -12,6 +12,7 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_projection_ready;
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
 use crate::domain::OracleStrength;
+use crate::lsp::gap_artifacts::command_specs_for_projection;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_for_classified_seam,
 };
@@ -507,6 +508,9 @@ fn gap_repair_packet_target(
     if let Some(command) = first_safe_receipt_command(snapshot.root.as_path(), data) {
         object.insert("receipt_command".to_string(), Value::String(command));
     }
+    if let Some(command_specs) = command_specs_for_projection(Some(data)) {
+        object.insert("command_specs".to_string(), command_specs);
+    }
     copy_optional_value(object, data, "receipt");
     if let Some(note) = static_limit_note(data) {
         object.insert("static_limit_note".to_string(), Value::String(note));
@@ -604,6 +608,9 @@ fn first_repair_packet_target(
         "receipt_command".to_string(),
         Value::String(receipt_command),
     );
+    if let Some(command_specs) = command_specs_for_projection(Some(data)) {
+        target.insert("command_specs".to_string(), command_specs);
+    }
     Some(Value::Object(target))
 }
 

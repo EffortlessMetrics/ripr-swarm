@@ -2401,7 +2401,19 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     )
     .map_err(|err| format!("write related test failed: {err}"))?;
     let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let diagnostic = gap_action_diagnostic();
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .ok_or_else(|| "missing diagnostic data".to_string())?;
+    data["command_specs"] = serde_json::json!({
+        "verify": crate::agent::command_specs::agent_verify_command_spec(
+            ".", "before.json", "after.json", None,
+        ),
+        "receipt": crate::agent::command_specs::agent_receipt_command_spec(
+            ".", "verify.json", "seam-a", Some("receipt.json"),
+        ),
+    });
     let mut snapshot = sample_analysis_snapshot(
         root.path().to_path_buf(),
         uri.clone(),
@@ -2453,6 +2465,14 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         commands[0].2[0]["receipt_command"],
         "ripr agent receipt --root . --json"
     );
+    assert_eq!(
+        commands[0].2[0]["command_specs"]["verify"]["command_id"],
+        "ripr:agent:verify"
+    );
+    assert_eq!(
+        commands[0].2[0]["command_specs"]["receipt"]["command_id"],
+        "ripr:agent:receipt"
+    );
     let packet = commands[0].2[0]["packet"]
         .as_str()
         .ok_or_else(|| "missing first repair packet text".to_string())?;
@@ -2492,6 +2512,10 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         "target/ripr/reports/gap-decision-ledger.json"
     );
     assert_eq!(commands[2].2[0]["label"], "gap_repair_packet");
+    assert_eq!(
+        commands[2].2[0]["command_specs"]["verify"]["execution_mode"],
+        "direct"
+    );
     assert_eq!(commands[2].2[0]["canonical_gap_id"], "gap:py:pricing");
     assert_eq!(
         commands[2].2[0]["repair_route"]["related_test"],
