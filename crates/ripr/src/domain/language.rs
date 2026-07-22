@@ -13,6 +13,7 @@
 /// separately labeled in output. Adding a new variant here is a deliberate
 /// contract change and must update RIPR-SPEC-0026.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LanguageId {
     Rust,
     TypeScript,
@@ -63,6 +64,7 @@ impl LanguageId {
 /// RIPR-SPEC-0026. The wire field is omitted entirely for Rust per the
 /// spec; preview adapters set `Preview`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LanguageStatus {
     Stable,
     Preview,
@@ -85,6 +87,7 @@ impl LanguageStatus {
 /// They let preview adapters identify the syntactic owner that received a
 /// changed line without forcing downstream consumers to parse evidence text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OwnerKind {
     Function,
     Method,
@@ -115,6 +118,7 @@ impl OwnerKind {
 /// They give downstream consumers a typed discriminator for display and
 /// reporting without parsing human evidence text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StaticLimitKind {
     DynamicDispatch,
     Metaprogramming,

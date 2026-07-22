@@ -93,6 +93,42 @@ fn artifact_round_trip_preserves_full_fidelity_findings() -> Result<(), String> 
 }
 
 #[test]
+fn artifact_wire_form_uses_documented_snake_case_vocabulary() -> Result<(), String> {
+    // The envelope is a wire contract: the domain enums it serializes must
+    // use the same lowercase/snake_case spellings OUTPUT_SCHEMA.md
+    // documents for the same data in `check --json` — not serde's default
+    // PascalCase variant names.
+    let dir = unique_temp_dir("wire-form")?;
+    let result = (|| {
+        let (path, _, _, _) = write_sample_artifact(&dir)?;
+        let text =
+            std::fs::read_to_string(&path).map_err(|err| format!("read artifact failed: {err}"))?;
+        for required in ["\"predicate\"", "\"control\"", "\"rust\""] {
+            if !text.contains(required) {
+                return Err(format!(
+                    "artifact wire form must use documented snake_case vocabulary {required}"
+                ));
+            }
+        }
+        for forbidden in [
+            "\"Predicate\"",
+            "\"Control\"",
+            "\"Rust\"",
+            "\"WeaklyExposed\"",
+        ] {
+            if text.contains(forbidden) {
+                return Err(format!(
+                    "artifact wire form must not use serde-default PascalCase {forbidden}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+#[test]
 fn explain_from_artifact_is_byte_identical_to_fresh_explain() -> Result<(), String> {
     let dir = unique_temp_dir("explain-identical")?;
     let result = (|| {

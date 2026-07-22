@@ -6,6 +6,7 @@ use super::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProbeFamily {
     Predicate,
     ReturnValue,
@@ -33,6 +34,7 @@ impl ProbeFamily {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeltaKind {
     Value,
     Control,
@@ -52,6 +54,7 @@ impl DeltaKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StopReason {
     MaxDepthReached,
     ExternalCrateBoundary,
@@ -119,6 +122,7 @@ pub struct Probe {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FlowSinkKind {
     ReturnValue,
     ErrorVariant,
@@ -176,6 +180,7 @@ pub struct FlowSinkFact {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ValueContext {
     FunctionArgument,
     AssertionArgument,

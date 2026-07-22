@@ -142,7 +142,9 @@ Options:
                            version). It is a local, disposable derivative:
                            never a gate, badge, or proof input. Diff-scoped
                            findings runs only; not supported for repo-scoped
-                           formats, --gap-ledger, or --worktree.
+                           formats, --gap-ledger, --worktree, or managed
+                           [perl] producer packet generation (pass
+                           --perl-facts PATH explicitly instead).
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
