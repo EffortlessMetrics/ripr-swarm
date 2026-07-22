@@ -5224,6 +5224,8 @@ tests = [
   "crates/ripr/src/app/receipt.rs::receipt_check_missing_file_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_malformed_json_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_missing_required_field_exits_nonzero",
+  "crates/ripr/src/app/receipt.rs::receipt_check_missing_current_head_exits_nonzero",
+  "crates/ripr/src/app/receipt.rs::receipt_check_invalid_current_head_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_invalid_status_in_file_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_no_path_no_gap_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_out_path_uses_explicit_path_when_provided",

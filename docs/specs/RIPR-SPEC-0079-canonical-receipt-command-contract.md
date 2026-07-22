@@ -115,6 +115,11 @@ actual repository HEAD; a plausible but stale SHA is rejected and no receipt
 is written. A write outside a Git repository, or against a repository without
 a resolvable HEAD, fails closed.
 
+`ripr receipt check` also requires `current_head` and validates it as a
+40-character hexadecimal SHA before reporting the receipt structurally valid.
+This is format/provenance validation only; the checker does not yet compare a
+transported receipt's head with a selected repository root.
+
 This is the first provenance floor for the receipt writer. It does not yet
 bind the receipt to an analysis artifact, configuration digest, executed
 command result, or a repository-root identity that can be checked after the
