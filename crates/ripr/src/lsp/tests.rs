@@ -5010,6 +5010,251 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
 }
 
 #[test]
+fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
+    // Regression pin for the root-switch re-pull (#2031 review): pulled
+    // settings are scoped to the root URI, so leaving a selected root in
+    // pull mode must invalidate the old layer (epoch bump) and landing on a
+    // new analysis-capable root must schedule one re-pull scoped to the NEW
+    // root. Drives A -> removed -> B; a single remove+add notification lands
+    // on the RootChanged authority, where analysis (and therefore the pull)
+    // is intentionally paused until re-selection.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root_a = std::fs::canonicalize(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input"),
+        )
+        .map_err(|err| format!("failed to canonicalize fixture root: {err}"))?;
+        let root_a_uri = file_uri_for_path(&root_a)?;
+        let root_b = unique_lsp_test_root("framed-config-pull-root-switch")?;
+        let root_b_uri = file_uri_for_path(root_b.path())?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let mut client_read = client_read;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "workspaceFolders": [
+                        {"uri": root_a_uri.as_str(), "name": "root-a"}
+                    ],
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant"
+                    },
+                    "capabilities": {
+                        "workspace": {"configuration": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        assert!(initialize.get("error").is_none());
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {}
+            }),
+        )
+        .await?;
+
+        let exchange = async {
+            // First pull, scoped to root A; the answer matches the effective
+            // defaults so the apply is a clean no-op that reaches Applied.
+            let first_pull = read_lsp_request(&mut client_read, "workspace/configuration").await?;
+            assert_eq!(
+                first_pull["params"]["items"],
+                serde_json::json!([{"scopeUri": root_a_uri.as_str(), "section": "ripr"}])
+            );
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": first_pull["id"].clone(),
+                    "result": [{"includeUnchangedTests": true}]
+                }),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                        "arguments": []
+                    }
+                }),
+            )
+            .await?;
+            let status = read_lsp_response(&mut client_read, 2).await?;
+            assert!(status.get("error").is_none());
+            let authority = &status["result"]["analysis_status"]["input_authority"];
+            assert_eq!(authority["configuration_pull"]["state"], "applied");
+            assert_eq!(authority["configuration_pull"]["epoch"], 0);
+
+            // A -> removed: no analysis-capable root, so no re-pull yet; the
+            // epoch bump invalidates A's layer.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeWorkspaceFolders",
+                    "params": {"event": {"added": [], "removed": []}}
+                }),
+            )
+            .await?;
+            let folders_request =
+                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": folders_request["id"].clone(),
+                    "result": []
+                }),
+            )
+            .await?;
+
+            // removed -> B: the Applied pull lifecycle is restartable, so the
+            // server must send a SECOND pull scoped to root B, never root A.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeWorkspaceFolders",
+                    "params": {"event": {"added": [], "removed": []}}
+                }),
+            )
+            .await?;
+            let folders_request =
+                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": folders_request["id"].clone(),
+                    "result": [{"uri": root_b_uri.as_str(), "name": "root-b"}]
+                }),
+            )
+            .await?;
+            let second_pull =
+                read_lsp_request(&mut client_read, "workspace/configuration").await?;
+            assert_eq!(
+                second_pull["params"]["items"],
+                serde_json::json!([{"scopeUri": root_b_uri.as_str(), "section": "ripr"}]),
+                "the re-pull must be scoped to the new root B"
+            );
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": second_pull["id"].clone(),
+                    "result": [{"includeUnchangedTests": false, "seamDiagnostics": false}]
+                }),
+            )
+            .await?;
+
+            // The B answer replaces the retained layer wholesale:
+            // seamDiagnostics was absent from A's answer, so a "pulled"
+            // source for it can only come from B's layer.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                        "arguments": []
+                    }
+                }),
+            )
+            .await?;
+            let status = read_lsp_response(&mut client_read, 3).await?;
+            assert!(status.get("error").is_none());
+            let authority = &status["result"]["analysis_status"]["input_authority"];
+            assert_eq!(authority["configuration_pull"]["state"], "applied");
+            assert_eq!(authority["configuration_pull"]["epoch"], 1);
+            assert_eq!(
+                authority["session_value_sources"]["include_unchanged_tests"],
+                "pulled"
+            );
+            assert_eq!(
+                authority["session_value_sources"]["seam_diagnostics"],
+                "pulled"
+            );
+
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "shutdown",
+                    "params": null
+                }),
+            )
+            .await?;
+            let shutdown = read_lsp_response(&mut client_read, 4).await?;
+            assert!(shutdown.get("error").is_none());
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "exit",
+                    "params": null
+                }),
+            )
+            .await?;
+            client_write
+                .shutdown()
+                .await
+                .map_err(|err| format!("failed to close test client: {err}"))?;
+            Ok::<(), String>(())
+        };
+        match tokio::time::timeout(Duration::from_secs(10), exchange).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(error),
+            Err(_) => {
+                return Err(
+                    "root-switch re-pull did not complete: the server never sent a workspace/configuration request scoped to the new root"
+                        .to_string(),
+                );
+            }
+        }
+        match tokio::time::timeout(Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn backend_starts_with_default_lsp_analysis_config() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
