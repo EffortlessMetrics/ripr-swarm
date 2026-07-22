@@ -82384,6 +82384,15 @@ column = 5
                 "single-match semantic proposal should be high confidence: {proposal:?}"
             ));
         }
+        let toml = render_no_panic_allowlist_proposals_toml(&proposals);
+        if !toml.contains("id = \"proposal-src-lib-rs-unwrap-20\"")
+            || !toml.contains("owner = \"test-infra\"")
+            || !toml.contains("expires = \"2026-12-31\"")
+        {
+            return Err(format!(
+                "governed proposal fields were not preserved in TOML: {toml}"
+            ));
+        }
         Ok(())
     }
 
