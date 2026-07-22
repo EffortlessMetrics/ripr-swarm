@@ -41,6 +41,17 @@ pub(super) struct LensViewIdentity {
     items: Vec<LensViewItem>,
 }
 
+impl LensViewIdentity {
+    /// The empty visible view: no snapshot is current (root removed,
+    /// ambiguous, or analysis state cleared), so every lens should vanish.
+    pub(super) fn cleared() -> Self {
+        Self {
+            input_identity: None,
+            items: Vec::new(),
+        }
+    }
+}
+
 /// One finding's contribution to the visible lens set.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct LensViewItem {

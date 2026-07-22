@@ -1056,6 +1056,12 @@ impl Backend {
         if !self.note_lens_view_for_refresh(new_identity) {
             return;
         }
+        self.send_code_lens_refresh().await;
+    }
+
+    /// Bare `workspace/codeLens/refresh` send with log-only failure, shared
+    /// by the view-changed and view-cleared paths.
+    async fn send_code_lens_refresh(&self) {
         if let Err(error) = self.client.code_lens_refresh().await {
             self.client
                 .log_message(
@@ -1530,7 +1536,14 @@ impl Backend {
     }
 
     async fn apply_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {
-        let schedule_deferred_pull = self.apply_workspace_root_authority_locked(authority).await;
+        let (schedule_deferred_pull, lens_view_cleared) =
+            self.apply_workspace_root_authority_locked(authority).await;
+        if lens_view_cleared {
+            // Sent after the transition guard is released, same discipline as
+            // the deferred configuration pull: a cleared analysis state means
+            // every lens is stale (#2032, RIPR-SPEC-0138).
+            self.send_code_lens_refresh().await;
+        }
         if schedule_deferred_pull {
             // Scheduled after the transition guard is released: a deferred
             // configuration pull (#2031) becomes runnable once a single
@@ -1548,7 +1561,7 @@ impl Backend {
     async fn apply_workspace_root_authority_locked(
         &self,
         authority: WorkspaceRootAuthority,
-    ) -> bool {
+    ) -> (bool, bool) {
         let _transition = self.workspace_root_transition.lock().await;
         let authority_epoch = self.workspace_root_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let previous = self.workspace_root_authority();
@@ -1586,7 +1599,7 @@ impl Backend {
         }
 
         if self.workspace_root_epoch.load(Ordering::SeqCst) != authority_epoch {
-            return false;
+            return (false, false);
         }
 
         let final_authority = if changed
@@ -1642,9 +1655,16 @@ impl Backend {
                     .and_then(|scope_root| scope_root.clone())
                     != self.workspace_root_authority().effective_root
         };
-        self.configuration_mode() == ConfigurationMode::Pull
+        let schedule_deferred_pull = self.configuration_mode() == ConfigurationMode::Pull
             && (matches!(self.config_pull_state(), ConfigPullState::Deferred) || pull_scope_stale)
-            && self.workspace_root_authority().allows_analysis()
+            && self.workspace_root_authority().allows_analysis();
+        // Clearing analysis state (#2032): the visible lens view just became
+        // empty. Record the cleared identity (coalesced — no-op when already
+        // cleared or unsupported); the wrapper sends the refresh after the
+        // guard is released.
+        let lens_view_cleared =
+            changed && self.note_lens_view_for_refresh(LensViewIdentity::cleared());
+        (schedule_deferred_pull, lens_view_cleared)
     }
 
     fn set_workspace_root_authority(&self, authority: WorkspaceRootAuthority) {

@@ -1394,6 +1394,31 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
             "the first snapshot commit must send exactly one workspace/codeLens/refresh"
         );
 
+        // Vacuous-pass guard (tests-red-green review): the fixture must
+        // actually produce lenses, or the request counts in this test could
+        // pass on an empty view (an empty first view also changes the
+        // recorded identity from None).
+        let changed_file_uri = file_uri_for_path(&root.path.join("src/lib.rs"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "textDocument/codeLens",
+                "params": {
+                    "textDocument": { "uri": changed_file_uri.as_str() }
+                }
+            }),
+        )
+        .await?;
+        let lenses = read_lsp_response(&mut client_read, 20).await?;
+        let lens_count = lenses["result"].as_array().map_or(0, Vec::len);
+        if lens_count == 0 {
+            return Err(format!(
+                "fixture must produce at least one code lens, or the refresh counts pass vacuously: {lenses}"
+            ));
+        }
+
         // Refresh 2: byte-identical inputs. A new snapshot commits with a
         // fresh wall-clock age (the rendered title suffix changes), but the
         // semantic lens view is unchanged, so no request may be sent.
@@ -1450,6 +1475,41 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
             refresh_requests, 1,
             "a semantic lens-view change must send exactly one workspace/codeLens/refresh"
         );
+
+        // Refresh 4 (RIPR-SPEC-0138, review): removing the workspace root
+        // clears analysis state — every lens is now stale — so the server
+        // must send one more refresh for the cleared view.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {"event": {"added": [], "removed": [{"uri": root_uri.as_str(), "name": "fixture"}]}}
+            }),
+        )
+        .await?;
+        let folders_request =
+            read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": folders_request["id"].clone(),
+                "result": []
+            }),
+        )
+        .await?;
+        let cleared_refresh =
+            read_lsp_request(&mut client_read, "workspace/codeLens/refresh").await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": cleared_refresh["id"].clone(),
+                "result": null
+            }),
+        )
+        .await?;
 
         write_lsp_message(
             &mut client_write,
