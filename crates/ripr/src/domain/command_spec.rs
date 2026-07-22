@@ -260,7 +260,13 @@ fn validate_root_relative_path(
         return Err(CommandSpecValidationError::EmptyField(field));
     }
     let path = Path::new(value);
+    let has_drive_prefix = value.as_bytes().get(1) == Some(&b':');
+    let has_host_independent_escape = value.starts_with('/')
+        || value.starts_with('\\')
+        || value.split(['/', '\\']).any(|component| component == "..");
     let safe = !path.is_absolute()
+        && !has_drive_prefix
+        && !has_host_independent_escape
         && path.components().all(|component| {
             !matches!(
                 component,
