@@ -96,8 +96,9 @@ ripr receipt write --gap <canonical_gap_id> --packet <packet_id> \
 
 When `--out` is omitted, the default filename is a percent-encoded form of the
 UTF-8 `canonical_gap_id`: ASCII digits and `-` remain unchanged, and every
-other byte is encoded as `%HH`. The `.json` filename component is capped at 255
-characters. If the encoded stem would exceed that limit, the path uses a
+other byte is encoded as `%HH`. The complete relative default path, including
+`target/ripr/receipts/` and the `.json` extension, is capped at 260 characters.
+If the encoded stem would exceed the derived filename budget, the path uses a
 bounded encoded prefix plus `~` and the lowercase SHA-256 digest of the full
 canonical ID. This keeps the identity unchanged in the JSON while making the
 filesystem representation deterministic and portable.

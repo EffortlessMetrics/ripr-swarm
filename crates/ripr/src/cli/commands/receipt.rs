@@ -275,7 +275,8 @@ Options:
   --out PATH            Write receipt JSON to this path. When omitted, writes to
                         target/ripr/receipts/<encoded-canonical-gap-id>.json.
                         Punctuation is percent-encoded for portability; long IDs
-                        use a bounded prefix and digest.
+                        use a bounded prefix and digest; the default path is
+                        capped at 260 characters.
   --json                Print JSON output to stdout (also written to --out path).
 
 Fail-closed:
@@ -297,7 +298,8 @@ Options:
   --gap ID          Resolve path from canonical location
                     target/ripr/receipts/<encoded-canonical-gap-id>.json.
                     The canonical gap ID is percent-encoded for portability;
-                    long IDs use the same bounded prefix and digest.
+                    long IDs use the same bounded prefix and digest; the
+                    default path is capped at 260 characters.
   --ledger PATH     Path to a gap-decision-ledger JSON file.  When provided,
                     cross-references the receipt's canonical_gap_id against the
                     live gap set and classifies the result as:

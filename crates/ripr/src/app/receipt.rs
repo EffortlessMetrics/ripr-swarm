@@ -254,14 +254,18 @@ pub(crate) fn receipt_out_path(opts: &ReceiptWriteOptions) -> PathBuf {
 /// `canonical_gap_id` unchanged. Long encoded IDs retain a prefix and the
 /// full SHA-256 digest so truncation does not alias IDs that share a prefix.
 pub(crate) fn receipt_path_for_gap(canonical_gap_id: &str) -> PathBuf {
-    PathBuf::from("target/ripr/receipts").join(format!(
+    PathBuf::from(RECEIPT_DEFAULT_DIRECTORY).join(format!(
         "{}.json",
         bounded_receipt_filename(canonical_gap_id)
     ))
 }
 
-const MAX_RECEIPT_FILENAME_COMPONENT_LEN: usize = 255;
+const RECEIPT_DEFAULT_DIRECTORY: &str = "target/ripr/receipts";
+const MAX_RECEIPT_DEFAULT_PATH_LEN: usize = 260;
+const RECEIPT_DEFAULT_DIRECTORY_WITH_SEPARATOR_LEN: usize = RECEIPT_DEFAULT_DIRECTORY.len() + 1;
 const RECEIPT_FILENAME_EXTENSION_LEN: usize = ".json".len();
+const MAX_RECEIPT_FILENAME_COMPONENT_LEN: usize =
+    MAX_RECEIPT_DEFAULT_PATH_LEN - RECEIPT_DEFAULT_DIRECTORY_WITH_SEPARATOR_LEN;
 const MAX_RECEIPT_FILENAME_STEM_LEN: usize =
     MAX_RECEIPT_FILENAME_COMPONENT_LEN - RECEIPT_FILENAME_EXTENSION_LEN;
 const RECEIPT_FILENAME_HASH_HEX_LEN: usize = 64;
@@ -1112,6 +1116,14 @@ mod tests {
         let at_limit_path = receipt_path_for_gap(&at_limit);
         let beyond_limit_path = receipt_path_for_gap(&beyond_limit);
 
+        assert_eq!(
+            at_limit_path.to_string_lossy().len(),
+            MAX_RECEIPT_DEFAULT_PATH_LEN
+        );
+        assert_eq!(
+            beyond_limit_path.to_string_lossy().len(),
+            MAX_RECEIPT_DEFAULT_PATH_LEN
+        );
         assert_eq!(
             at_limit_path
                 .file_name()
