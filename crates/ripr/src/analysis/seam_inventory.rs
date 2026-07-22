@@ -2430,8 +2430,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         if key.files_content_hash != content_hash {
             return Err("reconstructed key must reuse the stored content hash".into());
         }
-        if fingerprint_cached_workspace_key(&root, &inputs, None).is_some() {
-            return Err("missing fingerprint must fail closed to the content-read path".into());
+        if fingerprint_cached_workspace_key(&root, &inputs, Some("missing-fingerprint")).is_some() {
+            return Err(
+                "unknown fingerprint mapping must fail closed to the content-read path".into(),
+            );
         }
 
         let _ = std::fs::remove_dir_all(&root);
