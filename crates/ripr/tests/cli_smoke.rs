@@ -796,6 +796,11 @@ fn gate_evaluate_complete_gap_ledger_is_advisory_in_visible_only_mode() -> Resul
         value["decisions"][0]["repair_route"]["seam_id"],
         "seam-pricing-threshold"
     );
+    assert_eq!(
+        value["decisions"][0]["repair_route"]["inspection_command"],
+        "ripr agent brief --root . --seam-id seam-pricing-threshold --json"
+    );
+    assert!(decision.contains("static_ripr_evidence_only"));
     Ok(())
 }
 
