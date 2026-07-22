@@ -29356,7 +29356,7 @@ const REPAIR_PACKET_AUTHORITY_COMPAT_PATHS: [&str; 2] = [
     "crates/ripr/src/cli/rerun.rs",
 ];
 const REPAIR_PACKET_AUTHORITY_FORBIDDEN_CALLS: [&str; 2] =
-    ["repair_projection_ready(", "repair_route_readiness("];
+    ["repair_projection_ready", "repair_route_readiness"];
 
 fn repair_packet_authority_forbidden_call(file: &str, text: &str) -> Option<&'static str> {
     if !file.starts_with("crates/ripr/src/") || !file.ends_with(".rs") {
@@ -29368,7 +29368,28 @@ fn repair_packet_authority_forbidden_call(file: &str, text: &str) -> Option<&'st
     }
     REPAIR_PACKET_AUTHORITY_FORBIDDEN_CALLS
         .into_iter()
-        .find(|forbidden| text.contains(forbidden))
+        .find(|forbidden| contains_call(text, forbidden))
+}
+
+/// True when `text` contains a call to `name`: the identifier followed by
+/// optional whitespace and `(`. Matching the bare identifier plus a paren
+/// scan (instead of the literal `name(`) keeps `name (args)` and line-break
+/// splits before the call paren from evading the guard. Field mentions
+/// (`name: value`), re-exports (`use ...::name;`), and prose without a call
+/// paren do not match.
+fn contains_call(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(start, _)| {
+        let bounded_left = start == 0
+            || text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| !c.is_alphanumeric() && c != '_');
+        let calls = text[start + name.len()..]
+            .chars()
+            .find(|c| !c.is_whitespace())
+            == Some('(');
+        bounded_left && calls
+    })
 }
 
 #[cfg(test)]
@@ -29381,7 +29402,7 @@ mod repair_packet_authority_guard_tests {
                     fn brief(entry: &ClassifiedSeam) -> bool { repair_projection_ready(entry) }";
         let fired = repair_packet_authority_forbidden_call("crates/ripr/src/lsp/actions.rs", text)
             .ok_or_else(|| "guard did not fire on a direct readiness call".to_string())?;
-        assert_eq!(fired, "repair_projection_ready(");
+        assert_eq!(fired, "repair_projection_ready");
         Ok(())
     }
 
@@ -29390,7 +29411,33 @@ mod repair_packet_authority_guard_tests {
         let text = "let readiness = repair_route_readiness(entry);";
         let fired = repair_packet_authority_forbidden_call("crates/ripr/src/lsp/backend.rs", text)
             .ok_or_else(|| "guard did not fire on a readiness-struct call".to_string())?;
-        assert_eq!(fired, "repair_route_readiness(");
+        assert_eq!(fired, "repair_route_readiness");
+        Ok(())
+    }
+
+    #[test]
+    fn guard_fires_on_whitespace_separated_call_forms() -> Result<(), String> {
+        for text in [
+            "let readiness = repair_route_readiness (entry);",
+            "let readiness = repair_route_readiness\n    (entry);",
+            "let ready = repair_projection_ready\t(entry);",
+        ] {
+            if repair_packet_authority_forbidden_call("crates/ripr/src/lsp/backend.rs", text)
+                .is_none()
+            {
+                return Err(format!(
+                    "guard did not fire on whitespace-separated call: {text:?}"
+                ));
+            }
+        }
+        // A longer identifier that merely ends with a forbidden name is not a
+        // call to the readiness internal.
+        let lookalike = "let readiness = my_repair_route_readiness_helper(entry);";
+        if repair_packet_authority_forbidden_call("crates/ripr/src/lsp/backend.rs", lookalike)
+            .is_some()
+        {
+            return Err("guard fired on a lookalike identifier".to_string());
+        }
         Ok(())
     }
 
