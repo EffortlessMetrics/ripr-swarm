@@ -755,7 +755,6 @@ fn text_has_cross_language_marker(text: &str) -> bool {
         "export_name",
         "ffi",
         "pyo3",
-        "python",
         "node_api",
         "jni",
         "uniffi",
@@ -777,6 +776,8 @@ fn text_has_cross_language_marker(text: &str) -> bool {
         || text.contains("javascriptcore")
         || text.contains("extern \"c\"")
         || text.contains("cxx::bridge")
+        || text.starts_with("python::")
+        || text.contains("::python::")
 }
 
 #[cfg(test)]
@@ -1016,6 +1017,26 @@ mod tests {
             "python_binding_count >= binding_total",
             RequiredDiscriminator::BoundaryValue {
                 description: "python_binding_count >= binding_total".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+
+        assert!(!cross_language_oracle_visibility_unresolved(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn unqualified_python_identifier_does_not_hide_a_plain_rust_route() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/metrics.rs",
+            "metrics::python",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "value >= threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "value >= threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
         );
