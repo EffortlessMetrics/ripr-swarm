@@ -30,7 +30,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"fragment.crate_root.as_deref().unwrap_or(\"\")","line":11}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed behavior appears to influence returned value: fragment.crate_root.as_deref().unwrap_or(\"\")", "Predicate changed, but no literal boundary was visible in the changed expression", "Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable", "owner_shape: assertion_shaped (its body is dominated by assert*/expect calls and nothing outside tests calls it)"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed behavior appears to influence returned value: fragment.crate_root.as_deref().unwrap_or(\"\")", "Predicate changed, but no literal boundary was visible in the changed expression", "Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable"],
       "missing": ["No detected boundary input for the changed predicate", "No strong discriminator was detected", "Predicate changed, but no literal boundary was visible in the changed expression"],
       "assertion_texts": {
       },
@@ -60,8 +60,8 @@
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",
-      "recommended_next_step": "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); there is no fixture/builder for ripr.toml to describe. Add a boundary or negative-path case for the code this helper checks.",
-      "suggested_next_action": "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); there is no fixture/builder for ripr.toml to describe. Add a boundary or negative-path case for the code this helper checks.",
+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust"
     }
   ]

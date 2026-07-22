@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+reword banned static-language term in repair-route guidance (#2222)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -30,7 +30,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"!normalized.contains('//')","line":15}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed behavior appears to influence returned value: !normalized.contains('//')", "Related tests appear to reach assert_normalized_paths_have_no_separators: normalized_paths_have_native_separators", "Related tests contain input values, but the equality-boundary discriminator is missing", "owner_shape: assertion_shaped (its body is dominated by assert*/expect calls and nothing outside tests calls it)"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed behavior appears to influence returned value: !normalized.contains('//')", "Related tests appear to reach assert_normalized_paths_have_no_separators: normalized_paths_have_native_separators", "Related tests contain input values, but the equality-boundary discriminator is missing"],
       "missing": ["Missing discriminator value: normalized.len() == path.len()", "No strong discriminator was detected"],
       "assertion_texts": {
         "24": "assert_normalized_paths_have_no_separators(&[\"a//b\", \"c/d\"]);"
@@ -91,8 +91,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",
-      "recommended_next_step": "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it), so exact-equality advice for code under test may not apply — boolean invariants have no exact equality. Tighten the loosest assertion in this helper: a sharper predicate, an exact expected value where one exists, or a case the current assertions would not flag.",
-      "suggested_next_action": "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it), so exact-equality advice for code under test may not apply — boolean invariants have no exact equality. Tighten the loosest assertion in this helper: a sharper predicate, an exact expected value where one exists, or a case the current assertions would not flag.",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
       "language": "rust"
     }
   ]
