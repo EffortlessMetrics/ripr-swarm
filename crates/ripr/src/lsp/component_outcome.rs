@@ -219,15 +219,21 @@ impl ComponentOutcome {
     /// The stable dedup fragment for this outcome: identical degradations on
     /// consecutive refreshes produce an identical fragment, which the backend
     /// uses to emit at most one warning per distinct degradation (#1997).
+    /// The bounded message is part of the fragment: a NEW failure detail
+    /// under the same kind is a different degradation, not a duplicate — its
+    /// updated warning must be sent. Messages are already normalized,
+    /// path-redacted, and bounded at construction, so a repeated failure
+    /// repeats the same fragment.
     fn degradation_fragment(&self) -> Option<String> {
         if !self.is_degraded() {
             return None;
         }
         Some(format!(
-            "{}={}:{}",
+            "{}={}:{}:{}",
             self.component.as_str(),
             self.state.as_str(),
-            self.kind.unwrap_or("-")
+            self.kind.unwrap_or("-"),
+            self.message.as_deref().unwrap_or("-")
         ))
     }
 }
@@ -410,7 +416,26 @@ mod tests {
         assert_eq!(signature_a, degradation_signature(&degraded_b));
         assert_eq!(
             signature_a.as_deref(),
-            Some("seam_inventory=failed:seam_inventory_failed")
+            Some("seam_inventory=failed:seam_inventory_failed:walk failed")
+        );
+
+        // A new failure detail under the same component/state/kind is a
+        // different degradation, not a duplicate (#1997 review): its updated
+        // warning must be sent.
+        let degraded_new_detail = vec![
+            ComponentOutcome::complete(AnalysisComponent::Diff),
+            ComponentOutcome::failed(
+                AnalysisComponent::SeamInventory,
+                "seam_inventory_failed",
+                "walk timed out",
+                true,
+                "retry ripr.refreshDiagnostics",
+            ),
+        ];
+        assert_ne!(
+            signature_a,
+            degradation_signature(&degraded_new_detail),
+            "a changed failure detail must change the dedup signature"
         );
     }
 

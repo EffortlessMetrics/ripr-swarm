@@ -1773,6 +1773,12 @@ impl Backend {
         if let Ok(mut failure) = self.configuration_failure.lock() {
             *failure = None;
         }
+        // The degradation-dedup state belongs to the old input/root context
+        // (#1997 review): a signature suppressed there must re-warn once in
+        // the new context instead of staying silently suppressed.
+        if let Ok(mut last) = self.last_component_degradation.lock() {
+            *last = None;
+        }
         if let Ok(mut health) = self.analysis_health.lock() {
             health.state = AnalysisAttemptState::Stopped;
             health.attempt_id = None;
@@ -6727,6 +6733,31 @@ mod delivery_selection_parity_tests {
         let mut sorted = ids.to_vec();
         sorted.sort();
         sorted
+    }
+
+    #[test]
+    fn input_change_reset_clears_component_degradation_dedup() -> Result<(), String> {
+        // #1997 review: the degradation-dedup state belongs to the old
+        // input/root context; a suppressed signature must re-warn once in the
+        // new context instead of staying silently suppressed.
+        let harness = parity_backend()?;
+        let backend = harness.service.inner();
+        {
+            let Ok(mut last) = backend.last_component_degradation.lock() else {
+                return Err("dedup lock poisoned".to_string());
+            };
+            *last = Some("seam_inventory=failed:seam_inventory_failed:walk failed".to_string());
+        }
+        backend.reset_health_for_input_change();
+        let cleared = backend
+            .last_component_degradation
+            .lock()
+            .map(|last| last.is_none())
+            .unwrap_or(false);
+        if !cleared {
+            return Err("input-change reset must clear the degradation dedup state".to_string());
+        }
+        Ok(())
     }
 
     #[test]
