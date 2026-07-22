@@ -211,6 +211,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Cache the cargo registry, git checkouts, and dependency builds
+      # (#2008): an uncached `cargo install ripr --locked` recompiles for
+      # minutes on every PR. The install itself still runs (no stale-binary
+      # risk); the warm caches cut most of the compile.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ripr-install
+
       - name: Install ripr
         run: cargo install ripr --locked
 

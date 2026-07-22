@@ -9598,6 +9598,10 @@ language = "rust"
         let fixture = generated_workflow_smoke_fixture();
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
+        // Install caching (#2008): the registry/git/dependency caches are
+        // warm, and the install still runs fresh (no stale-binary risk).
+        assert!(workflow.contains("Swatinem/rust-cache@v2"));
+        assert!(workflow.contains("shared-key: ripr-install"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("actions/upload-artifact@v7"));
         assert!(workflow.contains("github/codeql-action/upload-sarif@v4"));
