@@ -6530,6 +6530,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_verify_discloses_current_head_with_dirty_worktree",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_unsupported_repo_exposure_schema",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_malformed_typed_seam",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_fabricated_verify_json",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_tampered_verify_json",
   "crates/ripr/tests/cli_smoke.rs::editor_agent_loop_fixture_outputs_match_expected",
 ]
 fixtures = [
@@ -6541,6 +6544,7 @@ code = [
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/output/repo_exposure.rs",
   "crates/ripr/src/output/outcome/render_json.rs",
+  ".allow/spec-system/slices/receipt-verify-input-validation.v1.toml",
 ]
 outputs = [
   "docs/OUTPUT_SCHEMA.md",
