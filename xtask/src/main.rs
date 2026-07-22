@@ -48122,7 +48122,8 @@ fn dogfood_gate_adoption_run(scenario: &DogfoodGateScenario) -> Result<DogfoodGa
     let markdown_path = actual_dir.join("gate-decision.md");
     let args = dogfood_gate_adoption_args(scenario, &json_path, &markdown_path);
     let args_ref = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let output = capture_output("cargo", &args_ref, "cargo run -p ripr -- gate evaluate")?;
+    let binary = ripr_fixture_binary()?;
+    let output = capture_output(&binary, &args_ref, "ripr gate evaluate (dogfood)")?;
     let exit_success = output.status.success();
     let mut errors = Vec::new();
 
@@ -48242,10 +48243,6 @@ fn dogfood_gate_adoption_args(
     markdown_path: &Path,
 ) -> Vec<String> {
     let mut args = vec![
-        "run".to_string(),
-        "-p".to_string(),
-        "ripr".to_string(),
-        "--".to_string(),
         "gate".to_string(),
         "evaluate".to_string(),
         "--root".to_string(),
