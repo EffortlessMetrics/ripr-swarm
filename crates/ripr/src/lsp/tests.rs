@@ -11318,6 +11318,15 @@ fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
             traces.iter().all(|params| params.get("verbose").is_none()),
             "messages level must not add verbose detail, got {traces:?}"
         );
+        // No recursion (RIPR-SPEC-0137): the `$/setTrace` that enabled this
+        // phase and any `$/logTrace` emission are never themselves traced.
+        assert!(
+            traces.iter().all(|params| params["message"]
+                .as_str()
+                .is_some_and(|message| !message.contains("$/setTrace")
+                    && !message.contains("$/logTrace"))),
+            "trace lifecycle notifications must never be traced: {traces:?}"
+        );
         let rendered = traces
             .iter()
             .map(serde_json::Value::to_string)
@@ -11411,8 +11420,13 @@ fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
             "the rejected $/setTrace must leave the previous verbose level in effect, got {traces:?}"
         );
 
-        // 5. Back to off: tracing stops immediately.
+        // 5. Back to off: tracing stops immediately. Drain after the
+        //    transition so a slow trailing verbose-phase emission cannot
+        //    leak into this phase's assertion window (tests-red-green
+        //    review): the emptiness assertion below covers only traffic
+        //    sent while off.
         write_lsp_message(&mut client_write, set_trace("off")).await?;
+        let _stragglers = read_lsp_messages_for(&mut client_read, Duration::from_millis(150)).await?;
         write_lsp_message(&mut client_write, hover(6)).await?;
         let (_response, notifications) =
             read_response_and_notifications(&mut client_read, 6).await?;
