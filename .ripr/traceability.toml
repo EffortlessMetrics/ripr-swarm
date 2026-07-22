@@ -99,7 +99,14 @@ metrics = [
 id = "RIPR-SPEC-0002"
 name = "fixture laboratory"
 spec = "docs/specs/RIPR-SPEC-0002-fixture-laboratory.md"
-tests = []
+tests = [
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::typed_command_specs_are_validated_before_projection",
+  "crates/ripr/src/agent/command_specs.rs::tests::typed_agent_routes_preserve_argv_and_disclose_shell_redirection",
+  "crates/ripr/src/agent/command_specs.rs::tests::typed_route_recovery_rejects_arbitrary_test_commands",
+  "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
+  "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
+  "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
+]
 fixtures = [
   "fixtures/boundary_gap",
   "fixtures/boundary_gap_multiline_assert",
@@ -6414,9 +6421,6 @@ tests = [
   "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
   "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
   "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
-  "crates/ripr/src/domain/command_spec.rs::tests::invalid_paths_and_program_values_fail_closed",
-  "crates/ripr/src/domain/command_spec.rs::tests::shell_and_manual_modes_remain_explicit",
-  "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
 ]
 fixtures = [
   "fixtures/assurance_vocabulary",
@@ -7144,6 +7148,31 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md",
   "docs/CONFIGURATION.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0137"
+name = "lsp protocol tracing"
+spec = "docs/specs/RIPR-SPEC-0137-lsp-protocol-tracing.md"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::lsp_trace_set_trace_updates_state_and_rejects_unknown_values",
+  "crates/ripr/src/lsp/tests.rs::lsp_trace_initialize_honors_client_trace_value",
+  "crates/ripr/src/lsp/tests.rs::lsp_trace_toggle_leaves_status_identity_and_revision_untouched",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_trace_lifecycle_and_redaction",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_trace_initialize_trace_param_enables_tracing",
+  "crates/ripr/src/lsp/tests.rs::serve_stdio_call_presence_observer",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0137-lsp-protocol-tracing.md",
 ]
 metrics = [
   "unit_test_pass_rate",
