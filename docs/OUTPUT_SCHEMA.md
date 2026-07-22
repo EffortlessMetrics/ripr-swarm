@@ -12,11 +12,13 @@ The CLI has two intentional output conventions:
   machine-readable JSON; `explain` emits its human explanation. Warnings and
   diagnostics go to stderr, so scripts can capture stdout without filtering
   status text.
-- The gate-family commands (`gate evaluate`, `baseline`, and `zero status`)
-  write JSON and Markdown reports to the paths shown by their help text. They
-  print human `Wrote ...` status lines to stdout and do not currently provide a
-  stdout-JSON mode. Use the explicit `--out` and `--out-md` paths when wiring
-  these reports into CI or another tool.
+- The gate-family commands write reviewed artifacts to the paths shown by their
+  help text and print human `Wrote ...` status lines to stdout. `gate evaluate`,
+  `baseline diff`, and `zero status` support their documented JSON/Markdown
+  output paths; `baseline create` and `baseline update` support `--out` for the
+  JSON ledger, while `baseline diff` is the baseline subcommand that also
+  supports `--out-md`. `baseline create --dry-run` is the explicit exception:
+  it prints the candidate JSON to stdout without writing a file.
 
 This split is deliberate: check-family output is a direct analysis result,
 while gate-family output is a reviewed, file-backed policy/report artifact.
