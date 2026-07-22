@@ -2675,7 +2675,17 @@ fn make_hook_executable(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-fn make_hook_executable(_path: &Path) -> Result<(), String> {
+fn make_hook_executable(path: &Path) -> Result<(), String> {
+    // Windows does not use the POSIX exec bit, so the hook runs there
+    // regardless — but a checkout later used from WSL or Linux would
+    // silently skip it (#2091). Say so at install time instead of
+    // no-oping quietly.
+    eprintln!(
+        "install-hooks: {} was written without an executable bit (unused on this platform); \
+         if this checkout is later used from WSL or Linux, run `chmod +x {}`",
+        path.display(),
+        path.display()
+    );
     Ok(())
 }
 
