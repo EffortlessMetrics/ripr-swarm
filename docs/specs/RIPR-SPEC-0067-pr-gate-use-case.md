@@ -1,6 +1,6 @@
 # RIPR-SPEC-0067: PR Gate Use Case
 
-Status: proposed
+Status: accepted
 
 Owner: product / swarm
 
@@ -22,10 +22,11 @@ Linked issues:
 
 - #1440
 - #1933
+- #1963
 
 Linked PRs:
 
-- None yet
+- #2249 (gap-ledger seam identity and route eligibility)
 
 Support-tier impact:
 
