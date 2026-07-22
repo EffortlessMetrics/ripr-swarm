@@ -9,7 +9,7 @@ use crate::domain::Summary;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-mod options_builder;
+pub(crate) mod options_builder;
 mod output_builder;
 
 /// Runs the end-to-end static exposure analysis for a workspace.

@@ -3662,6 +3662,9 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     // default path triggers auto-resolution.
     let mut base_explicitly_provided = false;
     let mut worktree_explicitly_provided = false;
+    // RIPR-SPEC-0140: explicit artifact sink for the explain/context reuse
+    // pair. No implicit cache: the user names the artifact path.
+    let mut write_artifact: Option<PathBuf> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -3718,6 +3721,10 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
                     "--suppression-policy",
                 )?));
             }
+            "--write-artifact" => {
+                i += 1;
+                write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
+            }
             "--help" | "-h" => {
                 help::print_check_help();
                 return Ok(());
@@ -3763,6 +3770,32 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
+    // RIPR-SPEC-0140: --write-artifact records a diff-scoped findings run.
+    // Repo-scoped and gap-ledger paths produce no such finding set, and the
+    // --worktree diff source cannot yet be re-resolved for identity
+    // verification, so all three fail closed with a named limitation rather
+    // than silently skipping the requested artifact.
+    if let Some(path) = write_artifact.as_ref() {
+        if gap_ledger.is_some() {
+            return Err(format!(
+                "--write-artifact {} cannot be combined with --gap-ledger: the artifact records a findings-based check run",
+                path.display()
+            ));
+        }
+        if matches!(format, OutputFormat::RepoExposureJson) || format.is_repo_scope() {
+            return Err(format!(
+                "--write-artifact {} records a diff-scoped findings run; --format {} is repo-scoped and produces no such artifact",
+                path.display(),
+                format.primary_cli_name()
+            ));
+        }
+        if worktree_explicitly_provided {
+            return Err(format!(
+                "--write-artifact {} is not yet supported for --worktree runs (named limitation: the worktree diff source cannot be re-resolved for identity verification)",
+                path.display()
+            ));
+        }
+    }
     if let Some(warning) =
         repo_scope_diff_bound_warning(format, base_explicitly_provided, input.diff_file.as_deref())
     {
@@ -3828,6 +3861,17 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
             return Err(err);
         }
     };
+    // RIPR-SPEC-0140: persist the full-fidelity finding set plus the input
+    // identity for a later `explain --from` / `context --from`. A failed
+    // write fails the command: the user explicitly requested the artifact.
+    if let Some(path) = write_artifact.as_deref() {
+        app::check_artifact::write_check_artifact(
+            path,
+            &limited_check_input,
+            &config,
+            &output.findings,
+        )?;
+    }
     // RIPR-SPEC-0083: disclose when no scope was provided and the result is empty.
     // The guidance fires only when scope was NOT explicitly provided — it must
     // NOT fire when --diff/--base/--mode produced a real analyzed-empty result.
@@ -4099,6 +4143,11 @@ fn render_check_gap_ledger_badge(
 pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let mut input = CheckInput::default();
     let mut selector: Option<String> = None;
+    // RIPR-SPEC-0140: `--from` loads a previously written check artifact
+    // instead of re-running the pipeline. Scope flags passed alongside it
+    // are assertions verified against the recording, not overrides.
+    let mut from_artifact: Option<PathBuf> = None;
+    let mut base_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -4109,10 +4158,15 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             "--base" => {
                 i += 1;
                 input.base = Some(expect_value(args, i, "--base")?.to_string());
+                base_explicitly_provided = true;
             }
             "--diff" => {
                 i += 1;
                 input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
+            }
+            "--from" => {
+                i += 1;
+                from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
             "--help" | "-h" => {
                 help::print_explain_help();
@@ -4126,10 +4180,22 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let selector = selector.ok_or_else(|| "missing finding selector".to_string())?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
-    println!(
-        "{}",
-        app::explain_finding_with_config(input, &selector, &config)?
-    );
+    let asserted_base = if base_explicitly_provided {
+        input.base.clone()
+    } else {
+        None
+    };
+    let rendered = match from_artifact.as_deref() {
+        Some(artifact_path) => app::explain_finding_from_artifact(
+            input,
+            &selector,
+            &config,
+            artifact_path,
+            asserted_base.as_deref(),
+        )?,
+        None => app::explain_finding_with_config(input, &selector, &config)?,
+    };
+    println!("{rendered}");
     Ok(())
 }
 
@@ -4141,6 +4207,11 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
     let mut selector: Option<String> = None;
     let mut max_tests = crate::config::DEFAULT_CONTEXT_RELATED_TESTS;
     let mut explicit_max_tests = false;
+    // RIPR-SPEC-0140: `--from` loads a previously written check artifact
+    // instead of re-running the pipeline. Scope flags passed alongside it
+    // are assertions verified against the recording, not overrides.
+    let mut from_artifact: Option<PathBuf> = None;
+    let mut base_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -4151,10 +4222,15 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
             "--base" => {
                 i += 1;
                 input.base = Some(expect_value(args, i, "--base")?.to_string());
+                base_explicitly_provided = true;
             }
             "--diff" => {
                 i += 1;
                 input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
+            }
+            "--from" => {
+                i += 1;
+                from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
             "--at" => {
                 i += 1;
@@ -4186,10 +4262,23 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
     if !explicit_max_tests {
         max_tests = config.reports().max_related_tests();
     }
-    println!(
-        "{}",
-        app::collect_context_with_config(input, &selector, max_tests, &config)?
-    );
+    let asserted_base = if base_explicitly_provided {
+        input.base.clone()
+    } else {
+        None
+    };
+    let rendered = match from_artifact.as_deref() {
+        Some(artifact_path) => app::collect_context_from_artifact(
+            input,
+            &selector,
+            max_tests,
+            &config,
+            artifact_path,
+            asserted_base.as_deref(),
+        )?,
+        None => app::collect_context_with_config(input, &selector, max_tests, &config)?,
+    };
+    println!("{rendered}");
     Ok(())
 }
 
