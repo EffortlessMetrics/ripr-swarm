@@ -45348,6 +45348,24 @@ fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<Strin
     blocks
 }
 
+/// Returns an error unless `lines` mention `cargo xtask precommit` exactly
+/// once as a bare invocation line. A commented-out (`# cargo xtask
+/// precommit`) or otherwise decorated mention does not count as an
+/// invocation, so drift toward a disabled line fails instead of passing.
+fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result<(), String> {
+    let mentions: Vec<&str> = lines
+        .iter()
+        .map(|line| line.trim())
+        .filter(|trimmed| trimmed.contains("cargo xtask precommit"))
+        .collect();
+    if mentions != ["cargo xtask precommit"] {
+        return Err(format!(
+            "{context} must contain exactly one bare `cargo xtask precommit` invocation line (commented or decorated mentions do not count), found {mentions:?}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
@@ -45359,12 +45377,13 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
         ));
     }
     for (index, block) in blocks.iter().enumerate() {
-        if !block
-            .iter()
-            .any(|line| line.trim() == "cargo xtask precommit")
-        {
+        require_single_bare_precommit_line(
+            block,
+            &format!("Required Rust gates step {}", index + 1),
+        )?;
+        if block.iter().any(|line| line.contains("if: false")) {
             return Err(format!(
-                "Required Rust gates step {} must invoke `cargo xtask precommit`",
+                "Required Rust gates step {} must not guard gates behind `if: false`",
                 index + 1
             ));
         }
@@ -45398,15 +45417,11 @@ fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
         .split("\n  result:")
         .next()
         .ok_or("docs-gate job must precede the result job")?;
-    if !docs_gate
-        .lines()
-        .any(|line| line.trim() == "cargo xtask precommit")
-    {
-        return Err(
-            "docs-gate job must invoke `cargo xtask precommit` so docs-only PRs run the full gate table"
-                .to_string(),
-        );
-    }
+    let lines: Vec<String> = docs_gate.lines().map(str::to_string).collect();
+    require_single_bare_precommit_line(
+        &lines,
+        "docs-gate job (docs-only PRs must run the full gate table)",
+    )?;
     Ok(())
 }
 
@@ -45474,6 +45489,102 @@ jobs:
     super::expand_precommit_ci_invocations(&mut without_precommit);
     if !without_precommit.is_empty() {
         return Err("expansion must not add gates when precommit is not enforced".to_string());
+    }
+    Ok(())
+}
+
+/// Pins PRECOMMIT_GATE_COMMANDS to the gate calls `precommit()` actually
+/// executes, in order. The drift-check expansion trusts the const, so it must
+/// match the real executed sequence, not only the report prose
+/// (`precommit_gate_commands_match_report` covers the report direction).
+#[test]
+fn precommit_gate_commands_match_executed_precommit_source() -> Result<(), String> {
+    let path = repo_root()?.join("xtask/src/main.rs");
+    let source =
+        std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let start = source
+        .find("\nfn precommit() -> Result<(), String> {")
+        .ok_or("xtask/src/main.rs must define `fn precommit()`")?;
+    let body = &source[start..];
+    let end = body
+        .find("precommit_report_body")
+        .ok_or("precommit body extraction must stop before `precommit_report_body`")?;
+    let body = &body[..end];
+    let executed: Vec<String> = body
+        .lines()
+        .filter_map(|line| {
+            let call = line.trim().strip_suffix("()?;")?;
+            if call == "markdown_links" || call.starts_with("check_") {
+                Some(call.replace('_', "-"))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let expected: Vec<String> = super::PRECOMMIT_GATE_COMMANDS
+        .iter()
+        .map(|gate| (*gate).to_string())
+        .collect();
+    if executed != expected {
+        return Err(format!(
+            "gates executed by `precommit()` {executed:?} must match PRECOMMIT_GATE_COMMANDS {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Advisory-only `cargo xtask precommit` invocations (`continue-on-error`
+/// steps and `|| true` shielding) must not put precommit or any of its gates
+/// into the expanded enforced set.
+#[test]
+fn precommit_ci_invocation_expansion_ignores_advisory_invocations() -> Result<(), String> {
+    let workflow = r#"
+jobs:
+  rust:
+    steps:
+      - name: Advisory step precommit
+        continue-on-error: true
+        run: |
+          cargo xtask precommit
+      - name: Shielded precommit
+        run: |
+          cargo xtask precommit || true
+"#;
+    let mut enforced = super::ci_enforced_xtask_invocations(workflow);
+    super::expand_precommit_ci_invocations(&mut enforced);
+    if enforced.contains(&("precommit".to_string(), String::new())) {
+        return Err("advisory precommit invocations must not enter the enforced set".to_string());
+    }
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        let invocation = ((*gate).to_string(), String::new());
+        if enforced.contains(&invocation) {
+            return Err(format!(
+                "advisory precommit invocations must not expand to `{gate}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every gate the drift-check expansion credits must be cataloged as
+/// CI-enforced, so the expansion set and the catalog flags can never disagree
+/// (precommit itself is enforced, so its whole table is enforced).
+#[test]
+fn precommit_gate_commands_are_catalog_ci_enforced() -> Result<(), String> {
+    let catalog = command_catalog();
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        // Catalog entries may carry argument suffixes (for example
+        // `check-no-panic-family [--propose]`); match by command root, the
+        // same way the drift check matches workflow invocations.
+        let entry = catalog
+            .iter()
+            .find(|entry| entry.command.split_whitespace().next() == Some(*gate))
+            .ok_or_else(|| format!("missing catalog entry for `{gate}`"))?;
+        if !entry.ci_enforced {
+            return Err(format!(
+                "precommit gate `{gate}` must be cataloged ci_enforced=true because enforced precommit invocations expand to it"
+            ));
+        }
     }
     Ok(())
 }
