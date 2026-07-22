@@ -36,7 +36,8 @@ pub(crate) struct ReceiptWriteOptions {
     pub(crate) verify_command: String,
     pub(crate) verify_status: String,
     pub(crate) current_head: Option<String>,
-    /// When `None`, defaults to `target/ripr/receipts/<canonical_gap_id>.json`.
+    /// When `None`, defaults to `target/ripr/receipts/<sanitized canonical_gap_id>.json`
+    /// (see [`receipt_file_stem`]).
     pub(crate) out: Option<PathBuf>,
     pub(crate) json: bool,
 }
@@ -240,10 +241,36 @@ fn cross_reference_receipt(
 pub(crate) fn receipt_out_path(opts: &ReceiptWriteOptions) -> PathBuf {
     match &opts.out {
         Some(p) => p.clone(),
-        None => {
-            PathBuf::from("target/ripr/receipts").join(format!("{}.json", opts.canonical_gap_id))
-        }
+        None => PathBuf::from("target/ripr/receipts").join(format!(
+            "{}.json",
+            receipt_file_stem(&opts.canonical_gap_id)
+        )),
     }
+}
+
+/// Derive the filesystem-safe receipt file stem for a canonical gap id.
+///
+/// Canonical gap ids are colon-delimited (for example
+/// `gap:rust:pricing:aabbccdd`), and `:` is not valid in a Windows filename.
+/// The receipt's JSON content keeps the canonical gap id unchanged; only its
+/// filesystem representation is made portable by replacing characters that are
+/// unsafe in filenames (`< > : " / \ | ? *` and ASCII control characters)
+/// with `-`. The mapping is deterministic and applied on every platform so
+/// `receipt write` and `receipt check` resolve the same default path
+/// everywhere.
+fn receipt_file_stem(canonical_gap_id: &str) -> String {
+    canonical_gap_id
+        .chars()
+        .map(|c| {
+            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                || c.is_ascii_control()
+            {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -340,7 +367,10 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
 fn resolve_check_path(opts: &ReceiptCheckOptions) -> Result<PathBuf, String> {
     match (&opts.path, &opts.gap) {
         (Some(p), _) => Ok(p.clone()),
-        (None, Some(gap)) => Ok(PathBuf::from("target/ripr/receipts").join(format!("{gap}.json"))),
+        (None, Some(gap)) => {
+            Ok(PathBuf::from("target/ripr/receipts")
+                .join(format!("{}.json", receipt_file_stem(gap))))
+        }
         (None, None) => Err(
             "receipt check requires --path <receipt_path> or --gap <canonical_gap_id>".to_string(),
         ),
@@ -1026,8 +1056,51 @@ mod tests {
         let opts = write_opts("gap:test:aabbccdd", "passed");
         assert_eq!(
             receipt_out_path(&opts),
-            PathBuf::from("target/ripr/receipts/gap:test:aabbccdd.json")
+            PathBuf::from("target/ripr/receipts/gap-test-aabbccdd.json")
         );
+    }
+
+    // ── receipt_file_stem portability ─────────────────────────────────────────
+
+    #[test]
+    fn receipt_file_stem_replaces_filesystem_unsafe_characters() {
+        assert_eq!(
+            receipt_file_stem("gap:rust:pricing:aabbccdd"),
+            "gap-rust-pricing-aabbccdd"
+        );
+        assert_eq!(
+            receipt_file_stem("a<b>c:d\"e/f\\g|h?i*j"),
+            "a-b-c-d-e-f-g-h-i-j"
+        );
+        assert_eq!(receipt_file_stem("gap\u{0007}bell"), "gap-bell");
+        assert_eq!(receipt_file_stem("gap.test_ok-1"), "gap.test_ok-1");
+    }
+
+    #[test]
+    fn receipt_write_and_check_resolve_the_same_default_path() -> Result<(), String> {
+        let gap = "gap:rust:pricing:discount:threshold-boundary";
+        let write_path = receipt_out_path(&write_opts(gap, "passed"));
+        let check_opts = ReceiptCheckOptions {
+            gap: Some(gap.to_string()),
+            path: None,
+            ledger: None,
+        };
+        let check_path = resolve_check_path(&check_opts)?;
+        assert_eq!(write_path, check_path);
+        let file_name = check_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!("default receipt path has no UTF-8 file name: {check_path:?}")
+            })?;
+        assert!(
+            !file_name.chars().any(|c| matches!(
+                c,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            ) || c.is_ascii_control()),
+            "default receipt file name must be filesystem-portable: {file_name}"
+        );
+        Ok(())
     }
 
     // ── written_at format ─────────────────────────────────────────────────────
