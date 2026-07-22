@@ -337,8 +337,27 @@ mod tests {
     #[test]
     fn doctor_json_carries_enabled_languages() -> Result<(), String> {
         // #2072: generated CI consumes the typed languages surface.
-        let report = evaluate_doctor_core(Path::new("."));
+        // Hermetic: a temp root with a configured enabled list, so the
+        // test proves config propagation, not just built-in defaults
+        // (#2182 review).
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-doctor-lang-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"probe\"\n")
+            .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        std::fs::write(
+            root.join(crate::config::CONFIG_FILE_NAME),
+            "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        )
+        .map_err(|err| format!("write config: {err}"))?;
+
+        let report = evaluate_doctor_core(&root);
         let json = report.render_json()?;
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
         let languages = parsed["languages"]
@@ -346,7 +365,11 @@ mod tests {
             .ok_or_else(|| "languages must be an array".to_string())?;
         assert!(
             languages.iter().any(|language| language == "rust"),
-            "the workspace's enabled set must include rust: {languages:?}"
+            "configured set must include rust: {languages:?}"
+        );
+        assert!(
+            languages.iter().any(|language| language == "python"),
+            "configured set must include python: {languages:?}"
         );
         Ok(())
     }

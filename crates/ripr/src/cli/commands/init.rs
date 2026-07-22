@@ -736,7 +736,15 @@ jobs:
               || true
           )"
           if [ -z "$preview_languages" ]; then
-            echo 'No TypeScript or Python preview languages are configured; preview promotion packets were not generated.'
+            # Empty can mean "none configured" OR "doctor --json failed"
+            # (#2182 review): doctor always emits at least the default
+            # language, so an empty result is a detection failure. Say so
+            # instead of asserting none are configured.
+            if ripr doctor --root . --json > /dev/null 2>&1; then
+              echo 'No TypeScript or Python preview languages are configured; preview promotion packets were not generated.'
+            else
+              echo 'Language detection via `ripr doctor --json` failed; preview promotion packets were not generated. Run ripr doctor locally for the underlying error.'
+            fi
             exit 0
           fi
           for language in $preview_languages; do

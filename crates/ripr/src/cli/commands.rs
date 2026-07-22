@@ -9545,6 +9545,16 @@ language = "rust"
         assert!(summary.contains("sed -n '/^typescript$/p; /^python$/p'"));
         assert!(!summary.contains("sed -n 's/^- Enabled languages: //p'"));
         assert!(summary.contains("|| true"));
+
+        // The preview-promotion detection site uses the same typed surface
+        // and discloses a doctor failure instead of claiming "none
+        // configured" (#2182 review).
+        let packets = workflow_step(&workflow, "Render RIPR preview promotion packets");
+        assert!(packets.contains("ripr doctor --root . --json"));
+        assert!(packets.contains("jq -r '.languages[]?'"));
+        assert!(!packets.contains("sed -n 's/^- Enabled languages: //p'"));
+        assert!(packets.contains("Language detection via `ripr doctor --json` failed"));
+        assert!(!packets.contains("No TypeScript or Python preview languages are configured; preview promotion packets were not generated.'\n            fi") || packets.contains("if ripr doctor --root . --json > /dev/null 2>&1"));
         assert!(summary.contains("target/ripr/reports/repo-exposure.json"));
         assert!(summary.contains("target/ripr/pilot/repo-exposure.json"));
         assert!(summary.contains(".language_status? != \"preview\""));
