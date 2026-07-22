@@ -21,6 +21,7 @@ Linked issues:
 
 Support-tier impact:
 
+- See: [support tiers](../status/SUPPORT_TIERS.md).
 - No support-tier promotion. This contract separates static movement, command
   execution, receipt issuance, and external runtime mutation confirmation.
 - Existing CLI, LSP, report, and receipt surfaces remain advisory and static
