@@ -461,6 +461,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
 
     let verify_json =
         verify_json.ok_or_else(|| "agent receipt requires --verify-json <path>".to_string())?;
+    let seam_id = seam_id.ok_or_else(|| "agent receipt requires --seam-id".to_string())?;
     if !json {
         return Err(
             "agent receipt requires --json (the supported output for this subcommand)".to_string(),
@@ -470,7 +471,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
     Ok(AgentReceiptOptions {
         root,
         verify_json,
-        seam_id: seam_id.ok_or_else(|| "agent receipt requires --seam-id".to_string())?,
+        seam_id,
         test_changed,
         commands_run,
         json,
