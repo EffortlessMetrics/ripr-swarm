@@ -124,14 +124,25 @@ pub(crate) fn agent_command_spec_from_display(command: &str) -> Option<CommandSp
         }
         Some("receipt") => {
             let args = words.get(1..)?.to_vec();
-            if args.is_empty() {
+            if args.is_empty() || args.iter().any(|arg| arg == ">") {
                 return None;
             }
-            let expected_writes = words
-                .windows(2)
-                .find(|pair| pair[0] == "--out")
-                .map(|pair| vec![pair[1].clone()])
-                .unwrap_or_default();
+            let mut expected_writes = Vec::new();
+            let mut out_seen = false;
+            for (index, arg) in args.iter().enumerate() {
+                if arg != "--out" {
+                    continue;
+                }
+                if out_seen {
+                    return None;
+                }
+                let out_path = args.get(index + 1)?;
+                if out_path.is_empty() || out_path == ">" {
+                    return None;
+                }
+                expected_writes.push(out_path.clone());
+                out_seen = true;
+            }
             Some(command_spec(
                 "ripr:agent:receipt",
                 CommandRole::Receipt,
@@ -314,6 +325,31 @@ mod tests {
                 verify.args
             ));
         }
-        verify.validate().map_err(|err| err.to_string())
+        verify.validate().map_err(|err| err.to_string())?;
+
+        let receipt = agent_command_spec_from_display(
+            "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json --out receipt.json",
+        )
+        .ok_or_else(|| "canonical receipt route was not recoverable".to_string())?;
+        if receipt.args.get(0..2) != Some(["agent".to_string(), "receipt".to_string()].as_slice()) {
+            return Err(format!(
+                "recovered receipt argv omitted route words: {:?}",
+                receipt.args
+            ));
+        }
+        if receipt.expected_writes != ["receipt.json".to_string()] {
+            return Err(format!(
+                "recovered receipt output path was not preserved: {:?}",
+                receipt.expected_writes
+            ));
+        }
+        if agent_command_spec_from_display(
+            "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json --out",
+        )
+        .is_some()
+        {
+            return Err("receipt route accepted a missing --out path".to_string());
+        }
+        receipt.validate().map_err(|err| err.to_string())
     }
 }

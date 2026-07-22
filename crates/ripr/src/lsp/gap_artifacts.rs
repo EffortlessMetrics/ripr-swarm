@@ -1007,6 +1007,11 @@ fn command_specs_from_value(
     let Some(command_specs) = value.and_then(|value| value.get("command_specs")) else {
         return Ok((Vec::new(), Vec::new()));
     };
+    if !command_specs.is_object() {
+        return Err(GapArtifactRejection::MalformedCommandPayload(
+            "command_specs must be an object".to_string(),
+        ));
+    }
     let verify = parse_command_spec_collection(command_specs.get("verify"), "verify")?;
     let receipt = parse_command_spec_collection(command_specs.get("receipt"), "receipt")?;
     Ok((verify, receipt))
@@ -1914,6 +1919,23 @@ mod tests {
             Err(GapArtifactRejection::MalformedCommandPayload(_))
         ) {
             return Err("role-mismatched typed command spec was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn command_specs_container_must_be_an_object() -> Result<(), String> {
+        let artifact = json!({"command_specs": "not-an-object"});
+        let rejection = match command_specs_from_value(Some(&artifact)) {
+            Ok(_) => return Err("scalar command_specs container was accepted".to_string()),
+            Err(rejection) => rejection,
+        };
+        if !matches!(
+            rejection,
+            GapArtifactRejection::MalformedCommandPayload(ref message)
+                if message == "command_specs must be an object"
+        ) {
+            return Err(format!("unexpected rejection: {rejection:?}"));
         }
         Ok(())
     }

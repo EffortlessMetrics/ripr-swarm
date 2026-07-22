@@ -3766,9 +3766,13 @@ fields plus a receipt command or path; otherwise the stable
 `projection_exclusion_reasons[]` values explain why an otherwise useful agent
 packet is not yet a public badge item. This does not change committed badge
 endpoint semantics.
-Canonical gap-ledger and agent-packet projections may carry the same additive
-`command_specs: {"verify": [...], "receipt": [...]}` object. LSP gap-artifact
-validation rejects malformed or role-mismatched specs before projection.
+Canonical evidence-record items carry additive `command_specs.verify` and
+`command_specs.receipt` `CommandSpec` objects when RIPR owns those routes.
+GapRecord-derived gap-ledger and agent-packet queue projections currently carry
+arrays of those objects when multiple legacy route strings are present. LSP
+gap-artifact validation accepts the object form and this compatibility array
+form, but rejects non-object `command_specs` containers, malformed specs, and
+role-mismatched specs before projection.
 
 ## RIPR Swarm Plan
 
