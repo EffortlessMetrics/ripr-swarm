@@ -4188,6 +4188,7 @@ pub(super) fn doctor(args: &[String]) -> Result<(), String> {
     report_config_status(&root, core_evaluation.config, &mut ok);
     report_cache_status(&root);
     report_detected_languages(&root);
+    report_language_runtime_probes(&root);
     suggest_preview_language_enablement(&root);
     report_detected_test_surfaces(&root);
     report_perl_preview(&root);
@@ -4367,6 +4368,56 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
 /// Appends `[adapter not compiled]` when `LanguageId::is_available()` is
 /// false for the detected language. If no markers are found, prints
 /// `none detected` rather than claiming any language.
+/// Probe the runtimes the verify/proof route needs for each detected
+/// language (#2071). Advisory only: a missing runtime is named with an
+/// install hint and never flips doctor to failure — preview languages are
+/// optional, and analysis itself is static. A user who enables a preview
+/// adapter without the runtime learns here, not at the next verify command.
+fn report_language_runtime_probes(root: &Path) {
+    for (language, tool, hint) in language_runtime_probes(root) {
+        let (status, evidence) = output::doctor::doctor_tool_check(tool);
+        match status {
+            output::doctor::DoctorStatus::Pass => {
+                println!("✓ {language} verify-route runtime: {evidence}");
+            }
+            output::doctor::DoctorStatus::Fail => {
+                println!("! {language} verify-route runtime: {evidence} — {hint}");
+            }
+        }
+    }
+}
+
+/// The (language, tool, install hint) runtime probes for a root (#2071).
+/// Factored from the printer so the probe list is directly testable.
+fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'static str)> {
+    let detected = detect_languages(root);
+    let mut probes: Vec<(&str, &str, &str)> = Vec::new();
+    if detected.contains(&LanguageId::Python) {
+        probes.push((
+            "python",
+            "python3",
+            "install python3 (e.g. apt install python3)",
+        ));
+        if root.join("pytest.ini").exists()
+            || root.join("pyproject.toml").exists()
+            || root.join("conftest.py").exists()
+        {
+            probes.push((
+                "python",
+                "pytest",
+                "install pytest (e.g. pip install pytest)",
+            ));
+        }
+    }
+    if detected.contains(&LanguageId::TypeScript) || detected.contains(&LanguageId::JavaScript) {
+        probes.push(("typescript", "node", "install Node.js"));
+        if root.join("bun.lockb").exists() || root.join("bun.lock").exists() {
+            probes.push(("typescript", "bun", "install Bun"));
+        }
+    }
+    probes
+}
+
 fn report_detected_languages(root: &Path) {
     let detected = detect_languages(root);
     if detected.is_empty() {
@@ -8814,6 +8865,43 @@ language = "rust"
         assert_eq!(owners[0].line, 3);
         assert!(owners[0].owner.ends_with("discounted_total"));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn language_runtime_probes_follow_detected_languages() -> Result<(), String> {
+        // #2071: rust-only roots get no probes; a python root with pytest
+        // markers gets python3 + pytest; a bun workspace adds bun.
+        let root = unique_command_test_dir("probe-rust");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        assert!(language_runtime_probes(&root).is_empty());
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_command_test_dir("probe-python");
+        let tests_dir = root.join("tests");
+        std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(tests_dir.join("test_x.py"), "import unittest\n")
+            .map_err(|err| format!("write test: {err}"))?;
+        std::fs::write(root.join("conftest.py"), "")
+            .map_err(|err| format!("write conftest: {err}"))?;
+        let tools: Vec<&str> = language_runtime_probes(&root)
+            .iter()
+            .map(|(_, tool, _)| *tool)
+            .collect();
+        assert_eq!(tools, vec!["python3", "pytest"]);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        let root = unique_command_test_dir("probe-bun");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        std::fs::write(root.join("package.json"), "{}")
+            .map_err(|err| format!("write pkg: {err}"))?;
+        std::fs::write(root.join("bun.lockb"), "").map_err(|err| format!("write lock: {err}"))?;
+        let tools: Vec<&str> = language_runtime_probes(&root)
+            .iter()
+            .map(|(_, tool, _)| *tool)
+            .collect();
+        assert_eq!(tools, vec!["node", "bun"]);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 
