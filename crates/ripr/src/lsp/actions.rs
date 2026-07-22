@@ -70,6 +70,7 @@ struct GapActionContext<'a> {
     diagnostic: &'a Diagnostic,
     data: &'a Value,
     snapshot: &'a AnalysisSnapshot,
+    artifact: &'a ValidatedGapArtifact,
 }
 
 fn seam_action_context<'a>(
@@ -107,7 +108,7 @@ fn gap_action_context<'a>(
     if !snapshot_has_current_gap_diagnostic(params, snapshot, data) {
         return None;
     }
-    let _artifact = snapshot.gap_artifacts.iter().find(|artifact| {
+    let artifact = snapshot.gap_artifacts.iter().find(|artifact| {
         artifact.is_safe_projection_input()
             && artifact.is_actionable_gap()
             && artifact_matches_gap_diagnostic(artifact, data)
@@ -116,6 +117,7 @@ fn gap_action_context<'a>(
         diagnostic,
         data,
         snapshot,
+        artifact,
     })
 }
 
@@ -279,24 +281,33 @@ fn push_gap_actions(
     context: GapActionContext<'_>,
 ) {
     if !gap_cross_language_target_unresolved(context.data) {
-        if let Some(target) = first_repair_packet_target(context.snapshot, context.diagnostic) {
-            actions.push(copy_context_action(
-                COPY_FIRST_REPAIR_PACKET_TITLE,
-                COPY_FIRST_REPAIR_PACKET_TITLE,
-                target,
-            ));
-        }
         if let Some(target) =
-            python_agent_packet_target(params, context.snapshot, context.diagnostic)
+            first_repair_packet_target(context.snapshot, context.diagnostic, context.artifact)
         {
+            actions.push(copy_context_action(
+                COPY_FIRST_REPAIR_PACKET_TITLE,
+                COPY_FIRST_REPAIR_PACKET_TITLE,
+                target,
+            ));
+        }
+        if let Some(target) = python_agent_packet_target(
+            params,
+            context.snapshot,
+            context.diagnostic,
+            context.artifact,
+        ) {
             actions.push(copy_context_action(
                 COPY_PYTHON_AGENT_PACKET_TITLE,
                 COPY_PYTHON_AGENT_PACKET_TITLE,
                 target,
             ));
         }
-        if let Some(target) = gap_repair_packet_target(params, context.snapshot, context.diagnostic)
-        {
+        if let Some(target) = gap_repair_packet_target(
+            params,
+            context.snapshot,
+            context.diagnostic,
+            context.artifact,
+        ) {
             actions.push(copy_context_action(
                 INSPECT_GAP_PACKET_TITLE,
                 INSPECT_GAP_PACKET_COMMAND_TITLE,
@@ -465,6 +476,7 @@ fn gap_repair_packet_target(
     params: &CodeActionParams,
     snapshot: &AnalysisSnapshot,
     diagnostic: &Diagnostic,
+    artifact: &ValidatedGapArtifact,
 ) -> Option<LSPAny> {
     let data = diagnostic.data.as_ref()?;
     let repair_route = data.get("repair_route")?;
@@ -508,7 +520,7 @@ fn gap_repair_packet_target(
     if let Some(command) = first_safe_receipt_command(snapshot.root.as_path(), data) {
         object.insert("receipt_command".to_string(), Value::String(command));
     }
-    if let Some(command_specs) = command_specs_for_projection(Some(data)) {
+    if let Some(command_specs) = command_specs_for_projection(artifact) {
         object.insert("command_specs".to_string(), command_specs);
     }
     copy_optional_value(object, data, "receipt");
@@ -529,6 +541,7 @@ fn python_agent_packet_target(
     params: &CodeActionParams,
     snapshot: &AnalysisSnapshot,
     diagnostic: &Diagnostic,
+    artifact: &ValidatedGapArtifact,
 ) -> Option<LSPAny> {
     let data = diagnostic.data.as_ref()?;
     if string_at(data, &["source"]) != Some("gap_decision_ledger")
@@ -545,7 +558,7 @@ fn python_agent_packet_target(
     }
     first_safe_command_at(snapshot.root.as_path(), data, &["verification_commands"])?;
     first_safe_receipt_command(snapshot.root.as_path(), data)?;
-    let mut target = gap_repair_packet_target(params, snapshot, diagnostic)?;
+    let mut target = gap_repair_packet_target(params, snapshot, diagnostic, artifact)?;
     let object = target.as_object_mut()?;
     object.insert(
         "label".to_string(),
@@ -569,6 +582,7 @@ fn python_agent_packet_target(
 fn first_repair_packet_target(
     snapshot: &AnalysisSnapshot,
     diagnostic: &Diagnostic,
+    artifact: &ValidatedGapArtifact,
 ) -> Option<LSPAny> {
     let data = diagnostic.data.as_ref()?;
     let gap_identity = first_gap_identity(data)?;
@@ -608,7 +622,7 @@ fn first_repair_packet_target(
         "receipt_command".to_string(),
         Value::String(receipt_command),
     );
-    if let Some(command_specs) = command_specs_for_projection(Some(data)) {
+    if let Some(command_specs) = command_specs_for_projection(artifact) {
         target.insert("command_specs".to_string(), command_specs);
     }
     Some(Value::Object(target))

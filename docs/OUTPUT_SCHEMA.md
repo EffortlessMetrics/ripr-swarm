@@ -13029,7 +13029,7 @@ GapRecord diagnostic shape:
     },
     "evidence_ids": ["evidence:pricing:threshold-boundary"],
     "verification_commands": ["cargo xtask fixtures boundary_gap"],
-    "command_specs": {
+    "command_specs": { // abbreviated CommandSpec fields for the shape example; full fields are required
       "verify": { "command_id": "ripr:agent:verify", "role": "verify", "execution_mode": "direct" },
       "receipt": { "command_id": "ripr:agent:receipt", "role": "receipt", "execution_mode": "direct" }
     }
@@ -13047,7 +13047,9 @@ rerun analysis, edit source, generate tests, call a provider, run mutation
 testing, or parse the diagnostic message. Stale, missing, disabled, or
 unvalidated gap artifacts fail closed to refresh-only actions.
 
-When present, `data.command_specs.verify` and `.receipt` are producer-owned
+The `command_specs` objects in the diagnostic example are abbreviated to show
+the projection shape; real emitted objects carry the complete `CommandSpec`
+fields described above. When present, `data.command_specs.verify` and `.receipt` are producer-owned
 `CommandSpec` objects. The `first_repair_packet` and `gap_repair_packet` code
 action payloads carry the same validated objects for machine-facing clients;
 legacy display command fields remain for human and compatibility consumers.

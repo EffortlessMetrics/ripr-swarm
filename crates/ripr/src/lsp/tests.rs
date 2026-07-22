@@ -2418,6 +2418,9 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
             ".", "verify.json", "seam-a", Some("receipt.json"),
         ),
     });
+    data["command_specs"]["verify"]["program"] = serde_json::json!("cargo");
+    data["command_specs"]["verify"]["args"] = serde_json::json!(["test", "untrusted"]);
+    data["command_specs"]["receipt"]["program"] = serde_json::json!("python");
     let mut snapshot = sample_analysis_snapshot(
         root.path().to_path_buf(),
         uri.clone(),
@@ -2477,6 +2480,10 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         commands[0].2[0]["command_specs"]["receipt"]["command_id"],
         "ripr:agent:receipt"
     );
+    assert_eq!(
+        commands[0].2[0]["command_specs"]["verify"]["program"],
+        "ripr"
+    );
     let packet = commands[0].2[0]["packet"]
         .as_str()
         .ok_or_else(|| "missing first repair packet text".to_string())?;
@@ -2519,6 +2526,10 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert_eq!(
         commands[2].2[0]["command_specs"]["verify"]["execution_mode"],
         "direct"
+    );
+    assert_eq!(
+        commands[2].2[0]["command_specs"]["receipt"]["program"],
+        "ripr"
     );
     assert_eq!(commands[2].2[0]["canonical_gap_id"], "gap:py:pricing");
     assert_eq!(
@@ -6282,8 +6293,18 @@ fn validated_gap_artifact() -> ValidatedGapArtifact {
         related_paths: vec!["tests/test_pricing.py".to_string()],
         verify_commands: vec!["ripr agent verify --root . --json".to_string()],
         receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-        verify_command_specs: Vec::new(),
-        receipt_command_specs: Vec::new(),
+        verify_command_specs: vec![crate::agent::command_specs::agent_verify_command_spec(
+            ".",
+            "before.json",
+            "after.json",
+            None,
+        )],
+        receipt_command_specs: vec![crate::agent::command_specs::agent_receipt_command_spec(
+            ".",
+            "verify.json",
+            "seam-a",
+            Some("receipt.json"),
+        )],
         static_limit_kinds: vec!["missing_import_graph".to_string()],
         has_text_static_limit: false,
     }

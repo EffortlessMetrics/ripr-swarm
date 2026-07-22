@@ -6453,6 +6453,9 @@ outputs = [
 metrics = [
   "repair_assurance_vocabulary_closed",
   "repair_assurance_static_only_disclosure",
+  "command_spec_projection_accepted_routes",
+  "command_spec_projection_omitted_fail_closed",
+  "command_spec_projection_multi_route_arrays",
 ]
 
 [[behavior]]
