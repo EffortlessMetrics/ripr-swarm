@@ -765,8 +765,7 @@ fn text_has_cross_language_marker(text: &str) -> bool {
         .any(|token| {
             TOKEN_MARKERS.iter().any(|marker| {
                 token == *marker
-                    || matches!(*marker, "from_js" | "to_js")
-                        && token.starts_with(marker)
+                    || token.starts_with(marker)
                         && token.as_bytes().get(marker.len()) == Some(&b'_')
             })
         });
@@ -1043,6 +1042,47 @@ mod tests {
         let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
 
         assert!(!cross_language_oracle_visibility_unresolved(&entry));
+        Ok(())
+    }
+
+    #[test]
+    fn snake_case_bridge_markers_keep_same_test_file_routes_fail_closed() -> Result<(), String> {
+        for owner in [
+            "metrics::ffi_read",
+            "metrics::pyo3_parse",
+            "metrics::napi_call",
+            "metrics::jni_handle",
+            "metrics::uniffi_parse",
+            "metrics::wasm_bindgen_bridge",
+        ] {
+            let seam = RepoSeam::new(
+                "src/metrics.rs",
+                owner,
+                SeamKind::PredicateBoundary,
+                42,
+                88,
+                "value >= discount_threshold",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "value >= discount_threshold".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            );
+            let entry = classified_with(
+                seam,
+                SeamGripClass::WeaklyGripped,
+                vec![rust_related_test(RelationReason::SameTestFile)],
+            );
+
+            let eligibility = repair_packet_eligibility(&entry);
+            assert!(eligibility.readiness.is_repair_ready());
+            assert_eq!(
+                eligibility.ineligibility,
+                Some(RepairPacketIneligibility::CrossLanguageTestTargetUnresolved),
+                "expected {owner} to retain the fail-closed target limitation"
+            );
+            assert!(!eligibility.eligible());
+        }
+
         Ok(())
     }
 
