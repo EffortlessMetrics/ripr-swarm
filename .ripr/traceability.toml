@@ -4935,7 +4935,7 @@ outputs = [
   "schemas/ripr/gate-decision.schema.json",
 ]
 metrics = [
-  "pr_gate_use_case_status_accepted",
+  "pr_gate_use_case_status_proposed",
   "gate_repair_route_completeness",
 ]
 

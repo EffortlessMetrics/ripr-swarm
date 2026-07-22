@@ -1,6 +1,6 @@
 # RIPR-SPEC-0067: PR Gate Use Case
 
-Status: accepted
+Status: proposed
 
 Owner: product / swarm
 
