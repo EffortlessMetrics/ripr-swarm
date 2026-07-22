@@ -2416,6 +2416,13 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         RepoCorpusFingerprintCache::at(&root)
             .store(&root, &fingerprint, &content_hash)
             .map_err(|err| format!("store fingerprint mapping: {err}"))?;
+        // Change the on-disk bytes after storing the mapping. The helper only
+        // receives the already-computed fingerprint, so returning the stored
+        // hash proves this fast path does not re-read the corpus.
+        write_file(
+            &root.join(&relative),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount <= threshold }\n",
+        )?;
 
         let inputs = workspace_key_inputs(&root, &RiprConfig::default());
         let key = fingerprint_cached_workspace_key(&root, &inputs, Some(&fingerprint))
