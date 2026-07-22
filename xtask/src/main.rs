@@ -74188,14 +74188,15 @@ mod tests {
         pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
         pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
         pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-        pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-        public_contract_rows, read_json_value, read_lsp_cockpit_json_value,
-        read_mutation_input_json, read_repo_exposure_summary_artifact, receipt_json, receipt_specs,
-        receipt_status_from_reports, render_no_panic_allowlist_proposals_markdown,
-        render_no_panic_allowlist_proposals_toml, repo_badge_artifact_command_args,
-        repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-        repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-        repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+        pr_triage_queue_dispositions, precommit_report_body, proposal_from_finding,
+        public_badge_basis_violations, public_contract_rows, read_json_value,
+        read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+        receipt_json, receipt_specs, receipt_status_from_reports,
+        render_no_panic_allowlist_proposals_markdown, render_no_panic_allowlist_proposals_toml,
+        repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+        repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+        repo_badge_artifacts_summary_markdown, repo_exposure_latency_json,
+        repo_exposure_latency_markdown, repo_exposure_latency_run,
         repo_exposure_latency_run_from_output, repo_exposure_latency_status,
         repo_exposure_latency_trace, repo_exposure_summary_report_timeout_ms_from_env, repo_root,
         repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
@@ -82282,19 +82283,47 @@ column = 5
         {
             return Err(format!("unexpected TOML proposal: {toml}"));
         }
-        with_temp_cwd("no_panic_proposal_requires_review_fields", |root| {
-            let allowlist_path = root.join("allowlist.toml");
-            write(&allowlist_path, &toml);
-            let allowlist_path = allowlist_path.to_str().ok_or("non-UTF-8 proposal path")?;
-            let error = parse_no_panic_allowlist_toml_v2(allowlist_path)
-                .expect_err("review-only proposal must not parse as a governed allowlist");
-            if !error.contains("missing required field: id") {
-                return Err(format!(
-                    "expected missing-id rejection for review-only proposal, got {error}"
-                ));
-            }
-            Ok(())
-        })?;
+        let assert_missing_field = |name: &str, contents: &str, field: &str| {
+            with_temp_cwd(name, |root| {
+                let allowlist_path = root.join("allowlist.toml");
+                write(&allowlist_path, contents);
+                let allowlist_path = allowlist_path.to_str().ok_or("non-UTF-8 proposal path")?;
+                let error = parse_no_panic_allowlist_toml_v2(allowlist_path)
+                    .expect_err("review-only proposal must not parse as a governed allowlist");
+                if !error.contains(&format!("missing required field: {field}")) {
+                    return Err(format!(
+                        "expected missing-{field} rejection for review-only proposal, got {error}"
+                    ));
+                }
+                Ok(())
+            })
+        };
+        assert_missing_field("no_panic_proposal_requires_id", &toml, "id")?;
+        let owner_missing = toml.replace("id = \"\"\n", "id = \"proposal-review\"\n");
+        assert_missing_field("no_panic_proposal_requires_owner", &owner_missing, "owner")?;
+        let expires_missing = owner_missing.replace("owner = \"\"\n", "owner = \"reviewer\"\n");
+        assert_missing_field(
+            "no_panic_proposal_requires_expiry",
+            &expires_missing,
+            "expires",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn no_panic_new_proposals_use_explicit_review_explanation() -> Result<(), String> {
+        let findings = vec![semantic_panic_finding(20, "my_fn", Some("left()"))];
+        let finding = findings.first().ok_or("expected one semantic finding")?;
+        let proposal = proposal_from_finding(finding, None, false, None, &findings);
+        let toml = render_no_panic_allowlist_proposals_toml(&[proposal]);
+        if !toml.contains(
+            "explanation = \"Review why this panic-family call is allowed before adoption\"",
+        ) {
+            return Err(format!("expected explicit review explanation, got {toml}"));
+        }
+        if toml.contains("TODO-") || toml.contains("TODO:") {
+            return Err(format!("unexpected TODO placeholder in proposal: {toml}"));
+        }
         Ok(())
     }
 
