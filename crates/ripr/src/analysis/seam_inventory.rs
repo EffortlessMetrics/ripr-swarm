@@ -1335,6 +1335,7 @@ mod tests {
     use crate::analysis::rust_index::{
         FileFacts, FunctionFact, RaRustSyntaxAdapter, RustSyntaxAdapter,
     };
+    use crate::analysis::seam_cache::files_content_hash;
     use crate::domain::SymbolId;
 
     fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
@@ -2396,6 +2397,34 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 "mtime-preserving rewrite must produce a new cache key on unix (ctime changed)"
                     .into(),
             );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn fingerprint_cached_workspace_key_rebuilds_key_from_stored_hash() -> Result<(), String> {
+        let root = make_tempdir("fingerprint-key-hit")?;
+        let content =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let relative = PathBuf::from("src/foo.rs");
+        write_file(&root.join(&relative), content)?;
+        let fingerprint = corpus_fingerprint(&root, std::slice::from_ref(&relative))
+            .ok_or("fingerprint should compute for the test corpus")?;
+        let content_hash = files_content_hash(&[(relative.clone(), content.as_bytes().to_vec())]);
+        RepoCorpusFingerprintCache::at(&root)
+            .store(&root, &fingerprint, &content_hash)
+            .map_err(|err| format!("store fingerprint mapping: {err}"))?;
+
+        let inputs = workspace_key_inputs(&root, &RiprConfig::default());
+        let key = fingerprint_cached_workspace_key(&root, &inputs, Some(&fingerprint))
+            .ok_or("stored fingerprint should rebuild a cache key")?;
+        if key.files_content_hash != content_hash {
+            return Err("reconstructed key must reuse the stored content hash".into());
+        }
+        if fingerprint_cached_workspace_key(&root, &inputs, None).is_some() {
+            return Err("missing fingerprint must fail closed to the content-read path".into());
         }
 
         let _ = std::fs::remove_dir_all(&root);
