@@ -1024,7 +1024,7 @@ pub(super) fn command_specs_for_projection(artifact: &ValidatedGapArtifact) -> O
     let receipt = &artifact.receipt_command_specs;
     validate_typed_command_specs(verify, crate::domain::CommandRole::Verify).ok()?;
     validate_typed_command_specs(receipt, crate::domain::CommandRole::Receipt).ok()?;
-    if verify.is_empty() && receipt.is_empty() {
+    if verify.is_empty() || receipt.is_empty() {
         return None;
     }
     Some(serde_json::json!({
