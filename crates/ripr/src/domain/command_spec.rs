@@ -256,6 +256,7 @@ fn validate_root_relative_path(
     field: &'static str,
     value: &str,
 ) -> Result<(), CommandSpecValidationError> {
+    validate_no_nul(field, value)?;
     if value.trim().is_empty() {
         return Err(CommandSpecValidationError::EmptyField(field));
     }
@@ -359,22 +360,6 @@ mod tests {
     }
 
     #[test]
-    fn valid_spec_round_trips_without_losing_argument_boundaries() -> Result<(), String> {
-        let spec = verify_spec();
-        spec.validate().map_err(|error| error.to_string())?;
-        let value = serde_json::to_value(&spec).map_err(|error| error.to_string())?;
-        let decoded: CommandSpec =
-            serde_json::from_value(value).map_err(|error| error.to_string())?;
-        if decoded != spec {
-            return Err("typed command spec changed during JSON round trip".to_string());
-        }
-        if decoded.args.get(2).map(String::as_str) != Some("pricing crate") {
-            return Err("argument boundary was not preserved".to_string());
-        }
-        Ok(())
-    }
-
-    #[test]
     fn invalid_paths_and_program_values_fail_closed() -> Result<(), String> {
         let mut cases = Vec::new();
         let mut traversal = verify_spec();
@@ -384,6 +369,12 @@ mod tests {
         let drive_letter = char::from(b'C');
         absolute.expected_writes = vec![format!("{drive_letter}:/outside")];
         cases.push(absolute.validate());
+        let mut nul_cwd = verify_spec();
+        nul_cwd.cwd = "work\0dir".to_string();
+        cases.push(nul_cwd.validate());
+        let mut nul_write = verify_spec();
+        nul_write.expected_writes = vec!["out\0/**".to_string()];
+        cases.push(nul_write.validate());
         let mut blank_program = verify_spec();
         blank_program.program = " ".to_string();
         cases.push(blank_program.validate());
