@@ -5473,6 +5473,10 @@ fn check_pr_report_body() -> String {
 }
 
 pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
+    // Build once per invocation (#2110): every scenario then invokes the
+    // fresh worktree binary directly instead of paying `cargo run` + link
+    // check per scenario.
+    run("cargo", &["build", "-p", "ripr"])?;
     let fixture_dirs = fixture_dirs()?;
     let selected = match name {
         Some(value) => vec![fixture_dir_for_name(value)?],
@@ -5981,16 +5985,27 @@ enum FixtureCheckFormat {
     HumanFull,
 }
 
+/// The worktree-absolute debug binary, built once per fixtures/dogfood
+/// run (#2110): each scenario previously paid a `cargo run` spawn plus
+/// link check; the absolute path keeps a long `../` from resolving to a
+/// stale binary in the enclosing checkout.
+fn ripr_fixture_binary() -> Result<String, String> {
+    let binary = Path::new("target/debug").join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+    if !binary.exists() {
+        run("cargo", &["build", "-p", "ripr"])?;
+    }
+    std::path::absolute(&binary)
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|err| format!("resolve {} failed: {err}", binary.display()))
+}
+
 fn run_fixture_check(
     root: &str,
     diff_file: &str,
     format: FixtureCheckFormat,
 ) -> Result<String, String> {
+    let binary = ripr_fixture_binary()?;
     let mut args = vec![
-        "run".to_string(),
-        "-p".to_string(),
-        "ripr".to_string(),
-        "--".to_string(),
         "check".to_string(),
         "--root".to_string(),
         root.to_string(),
@@ -6007,7 +6022,7 @@ fn run_fixture_check(
             args.push("human-full".to_string());
         }
     }
-    run_output_owned("cargo", &args)
+    run_output_owned(&binary, &args)
 }
 
 fn fixture_golden_comparisons(
@@ -47927,6 +47942,8 @@ fn extract_json_warnings(json: &str) -> Vec<String> {
 }
 
 pub(crate) fn dogfood_impl() -> Result<(), String> {
+    // Same shared-binary build as fixtures_impl (#2110).
+    run("cargo", &["build", "-p", "ripr"])?;
     let runs = dogfood_scenarios()
         .into_iter()
         .map(|scenario| dogfood_run(&scenario))
