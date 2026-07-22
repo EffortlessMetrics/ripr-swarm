@@ -229,9 +229,13 @@ available.
 - `crates/ripr/src/lsp/gap_artifacts.rs` validates projected typed specs and
   rejects malformed or role-mismatched route payloads before editor use.
 - `crates/ripr/src/domain/verification_result.rs` owns
-  `VerificationExecutionResultV1`, command-spec digest binding, and exact
+  `VerificationExecutionResultV1`, command-spec digest binding validation
+  against a caller-supplied expected digest, and exact
   root/HEAD/currentness validation. It is a consumer validation seam, not a
-  process runner.
+  process runner, and stays JSON-free (policy/architecture.txt).
+- `crates/ripr/src/app/verification_result.rs` owns
+  `command_spec_sha256`, the JSON-serialized command-spec digest supplied to
+  the domain validator.
 - `.allow/spec-system/slices/command-spec-route-population.v1.toml` records the
   PR-local claim boundary and return conditions for #1755.
 - `.allow/spec-system/slices/typed-command-spec.v1.toml` records the PR-local
@@ -257,6 +261,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-fixture-contracts
 cargo xtask check-output-contracts
 cargo test -p ripr domain::verification_result --lib
+cargo test -p ripr app::verification_result --lib
 cargo xtask check-command-catalog
 git diff --check
 ```

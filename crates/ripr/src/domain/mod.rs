@@ -53,5 +53,5 @@ pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
 pub use verification_result::{
     VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION, VerificationCurrentnessV1,
     VerificationExecutionResultV1, VerificationExecutionResultValidationError,
-    VerificationProcessDispositionV1, command_spec_sha256,
+    VerificationProcessDispositionV1,
 };

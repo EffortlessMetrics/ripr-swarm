@@ -4,9 +4,13 @@
 //! does not decide whether static RIPR evidence improved. Consumers must
 //! validate a result against the producer-owned command spec and the exact
 //! repository identities they observed around the run.
+//!
+//! Domain stays JSON-free (policy/architecture.txt): the command-spec digest
+//! is computed by the application layer
+//! (`crate::app::verification_result::command_spec_sha256`) and supplied to
+//! [`VerificationExecutionResultV1::validate_against`] as the expected value.
 
 use super::{CommandAuthorityBoundary, CommandRole, CommandSpec};
-use sha2::{Digest, Sha256};
 use std::fmt;
 
 const SHA256_PREFIX: &str = "sha256:";
@@ -175,9 +179,16 @@ impl VerificationExecutionResultV1 {
 
     /// Validate the result against the exact execution context observed by a
     /// producer. This is the only domain entry point for accepting a result.
+    ///
+    /// `expected_command_spec_sha256` is the digest of `command_spec` as
+    /// computed by the application layer
+    /// (`crate::app::verification_result::command_spec_sha256`); passing the
+    /// digest in keeps this domain module JSON-free while the binding check
+    /// stays mandatory.
     pub fn validate_against(
         &self,
         command_spec: &CommandSpec,
+        expected_command_spec_sha256: &str,
         expected_root_identity: &str,
         expected_head_before: &str,
         expected_head_after: &str,
@@ -238,11 +249,11 @@ impl VerificationExecutionResultV1 {
                 },
             );
         }
-        let expected_digest = command_spec_sha256(command_spec)?;
-        if self.command_spec_sha256 != expected_digest {
+        validate_sha256("expected_command_spec_sha256", expected_command_spec_sha256)?;
+        if self.command_spec_sha256 != expected_command_spec_sha256 {
             return Err(
                 VerificationExecutionResultValidationError::CommandSpecDigestMismatch {
-                    expected: expected_digest,
+                    expected: expected_command_spec_sha256.to_string(),
                     actual: self.command_spec_sha256.clone(),
                 },
             );
@@ -284,18 +295,6 @@ impl VerificationExecutionResultV1 {
         }
         Ok(())
     }
-}
-
-/// Hash the canonical serialized command specification used by the result
-/// binding. The human display string is included only as ordinary typed data;
-/// consumers never reconstruct argv from it.
-pub fn command_spec_sha256(
-    command_spec: &CommandSpec,
-) -> Result<String, VerificationExecutionResultValidationError> {
-    let bytes = serde_json::to_vec(command_spec).map_err(|error| {
-        VerificationExecutionResultValidationError::CommandSpecInvalid(error.to_string())
-    })?;
-    Ok(sha256_bytes(&bytes))
 }
 
 fn validate_non_empty(
@@ -348,11 +347,6 @@ fn validate_sha256(
     }
 }
 
-fn sha256_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    format!("sha256:{digest:x}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +361,11 @@ mod tests {
     const ROOT: &str = "root:fixture";
     const ZERO_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    /// Digest of the fixture [`command_spec`] as computed by the application
+    /// layer (`app::verification_result::command_spec_sha256`); the pin lives
+    /// with the app-side digest tests.
+    const SPEC_DIGEST: &str =
+        "sha256:7594ebd8d5ea61336f33c236c213c87467b752befec1b582d7cc99ce42f8a5ab";
 
     fn command_spec() -> CommandSpec {
         CommandSpec {
@@ -394,49 +393,45 @@ mod tests {
         }
     }
 
-    fn result(spec: &CommandSpec) -> Result<VerificationExecutionResultV1, String> {
-        Ok(VerificationExecutionResultV1 {
+    fn result() -> VerificationExecutionResultV1 {
+        VerificationExecutionResultV1 {
             schema_version: VerificationExecutionResultV1::SCHEMA_VERSION.to_string(),
             root_identity: ROOT.to_string(),
             head_before: HEAD_BEFORE.to_string(),
             head_after: HEAD_AFTER.to_string(),
-            command_spec_sha256: command_spec_sha256(spec).map_err(|error| error.to_string())?,
+            command_spec_sha256: SPEC_DIGEST.to_string(),
             process_disposition: VerificationProcessDispositionV1::Completed,
             exit_status: Some(0),
             stdout_sha256: ZERO_DIGEST.to_string(),
             stderr_sha256: ZERO_DIGEST.to_string(),
             currentness: VerificationCurrentnessV1::Current,
-        })
+        }
     }
 
     #[test]
-    fn valid_result_round_trips_and_validates_against_exact_context() -> Result<(), String> {
+    fn valid_result_validates_against_exact_context() -> Result<(), String> {
         let spec = command_spec();
-        let result = result(&spec)?;
-        let encoded = serde_json::to_string(&result).map_err(|error| error.to_string())?;
-        let decoded: VerificationExecutionResultV1 =
-            serde_json::from_str(&encoded).map_err(|error| error.to_string())?;
-        decoded
-            .validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER)
+        result()
+            .validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER)
             .map_err(|error| error.to_string())
     }
 
     #[test]
     fn wrong_root_and_command_digest_fail_closed() -> Result<(), String> {
         let spec = command_spec();
-        let mut wrong_root = result(&spec)?;
+        let mut wrong_root = result();
         wrong_root.root_identity = "root:other".to_string();
         if !matches!(
-            wrong_root.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            wrong_root.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::RootIdentityMismatch { .. })
         ) {
             return Err("wrong repository root was accepted".to_string());
         }
 
-        let mut wrong_digest = result(&spec)?;
+        let mut wrong_digest = result();
         wrong_digest.command_spec_sha256 = ZERO_DIGEST.to_string();
         if !matches!(
-            wrong_digest.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            wrong_digest.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::CommandSpecDigestMismatch { .. })
         ) {
             return Err("fabricated command-spec digest was accepted".to_string());
@@ -446,7 +441,7 @@ mod tests {
         receipt_spec.role = CommandRole::Receipt;
         receipt_spec.authority_boundary = CommandAuthorityBoundary::ReceiptRouteOnly;
         if !matches!(
-            result(&spec)?.validate_against(&receipt_spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            result().validate_against(&receipt_spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::NonVerificationCommandRole { .. })
         ) {
             return Err("receipt command was accepted as verification evidence".to_string());
@@ -457,22 +452,29 @@ mod tests {
     #[test]
     fn malformed_commitments_and_heads_fail_closed() -> Result<(), String> {
         let spec = command_spec();
-        let mut malformed = result(&spec)?;
+        let mut malformed = result();
         malformed.head_before = format!("{}A", "a".repeat(39));
         if !matches!(
-            malformed.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            malformed.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::InvalidHead { .. })
         ) {
             return Err("malformed HEAD was accepted".to_string());
         }
 
-        let mut malformed_output = result(&spec)?;
+        let mut malformed_output = result();
         malformed_output.stdout_sha256 = "sha256:UPPER".to_string();
         if !matches!(
-            malformed_output.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            malformed_output.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::InvalidSha256 { .. })
         ) {
             return Err("malformed output commitment was accepted".to_string());
+        }
+
+        if !matches!(
+            result().validate_against(&spec, "sha256:UPPER", ROOT, HEAD_BEFORE, HEAD_AFTER),
+            Err(VerificationExecutionResultValidationError::InvalidSha256 { .. })
+        ) {
+            return Err("malformed expected command-spec digest was accepted".to_string());
         }
         Ok(())
     }
@@ -480,29 +482,30 @@ mod tests {
     #[test]
     fn impossible_process_and_currentness_states_fail_closed() -> Result<(), String> {
         let spec = command_spec();
-        let mut missing_status = result(&spec)?;
+        let mut missing_status = result();
         missing_status.exit_status = None;
         if !matches!(
-            missing_status.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            missing_status.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::MissingExitStatus)
         ) {
             return Err("completed result without exit status was accepted".to_string());
         }
 
-        let mut timed_out_status = result(&spec)?;
+        let mut timed_out_status = result();
         timed_out_status.process_disposition = VerificationProcessDispositionV1::TimedOut;
         if !matches!(
-            timed_out_status.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            timed_out_status.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::UnexpectedExitStatus)
         ) {
             return Err("timed-out result with exit status was accepted".to_string());
         }
 
-        let mut changed_head = result(&spec)?;
+        let mut changed_head = result();
         changed_head.head_after = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
         if !matches!(
             changed_head.validate_against(
                 &spec,
+                SPEC_DIGEST,
                 ROOT,
                 HEAD_BEFORE,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -512,22 +515,13 @@ mod tests {
             return Err("current result with changed HEAD was accepted".to_string());
         }
 
-        let mut unavailable = result(&spec)?;
+        let mut unavailable = result();
         unavailable.currentness = VerificationCurrentnessV1::Unavailable;
         if !matches!(
-            unavailable.validate_against(&spec, ROOT, HEAD_BEFORE, HEAD_AFTER),
+            unavailable.validate_against(&spec, SPEC_DIGEST, ROOT, HEAD_BEFORE, HEAD_AFTER),
             Err(VerificationExecutionResultValidationError::CurrentnessUnavailable)
         ) {
             return Err("unavailable currentness was accepted as validated".to_string());
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn command_spec_digest_is_pinned_to_serialized_field_order() -> Result<(), String> {
-        let digest = command_spec_sha256(&command_spec()).map_err(|error| error.to_string())?;
-        if digest != "sha256:7594ebd8d5ea61336f33c236c213c87467b752befec1b582d7cc99ce42f8a5ab" {
-            return Err(format!("unexpected command-spec digest: {digest}"));
         }
         Ok(())
     }

@@ -1,0 +1,56 @@
+schema_version = "2.0"
+id = "ripr.slice.verification-result-domain-json-free.v1"
+generation = 1
+
+source_issue = "issue:1979"
+design_reference = "RIPR-SPEC-0135#implementation-mapping"
+change_class = "refactor"
+
+claim_boundary = """
+Restores the domain-must-not-know-JSON-rendering architecture rule
+(policy/architecture.txt) broken by #2232: the JSON-serialized command-spec
+digest computation moves from domain/verification_result.rs to
+app/verification_result.rs, and validate_against takes the expected digest as
+a parameter so the binding check stays mandatory while domain stays
+JSON-free. The digest bytes, validation semantics, error variants, and
+serialized result shape are unchanged; no consumer exists yet outside tests.
+"""
+
+non_goals = [
+  "changes to the VerificationExecutionResultV1 schema or serialized shape",
+  "changes to digest bytes (the app-side pin test reuses the same expected value)",
+  "a command runner or process execution (stays #1979 scope)",
+  "weakening policy/architecture.txt with an exception entry",
+]
+
+return_conditions = [
+  "Return to root if any digest byte or validation outcome changes.",
+  "Return to root if a consumer outside tests calls the old signature.",
+]
+
+owned_seams = [
+  "seam:ripr:app:verification-result-digest",
+  "seam:ripr:domain:verification-result-validation",
+]
+
+shared_seams = [
+  "seam:ripr:spec:0135-assurance-vocabulary",
+]
+
+forbidden_seams = [
+  "seam:ripr:agent:command-runner",
+  "seam:ripr:output:check-json-contract",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0135#implementation-mapping"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
