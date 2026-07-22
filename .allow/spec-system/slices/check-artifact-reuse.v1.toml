@@ -14,7 +14,8 @@ languages, analysis options, versioned config identity, analyzer version),
 and byte-identical reused selection/rendering. It does not change the
 `check --json` output contract, add any implicit cache, cache repository
 content identity, feed any gate/badge/proof route, or support `--worktree`
-artifacts (named limitation, fails closed).
+artifacts or managed `[perl] producer` packet generation (named
+limitations, fail closed).
 """
 
 non_goals = [
@@ -23,6 +24,7 @@ non_goals = [
   "per-file fact cache (#1912 / #1967)",
   "LSP warm refresh (#1908)",
   "--worktree artifact support",
+  "managed [perl] producer packet generation as an artifact input",
   "full-repository content fingerprinting in the identity gate",
   "gate, badge, support-tier, or proof-route authority for artifacts",
 ]

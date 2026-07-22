@@ -5186,6 +5186,200 @@ fn check_write_artifact_rejects_unsupported_run_shapes() {
     );
 }
 
+/// An artifact written with a CLI-only non-default `--mode` is consumable
+/// when the same flag is passed on the reuse side (byte-identical), and
+/// fails closed naming `mode` when it is not.
+#[test]
+fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let dir = unique_temp_workspace("check-artifact-mode");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let artifact = dir.join("ready.json");
+    let artifact_arg = artifact.display().to_string();
+    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--mode",
+        "ready",
+        "--write-artifact",
+        &artifact_arg,
+    ]);
+    assert_success(&check);
+
+    let fresh = run_ripr(&[
+        "explain", "--root", &root, "--diff", &diff, "--mode", "ready", selector,
+    ]);
+    assert_success(&fresh);
+    let reused = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--from",
+        &artifact_arg,
+        "--mode",
+        "ready",
+        selector,
+    ]);
+    assert_success(&reused);
+    assert_eq!(
+        fresh.stdout, reused.stdout,
+        "explain --from --mode ready must be byte-identical to the fresh ready run"
+    );
+
+    let without_flag = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--from",
+        &artifact_arg,
+        selector,
+    ]);
+    assert_failure(&without_flag);
+    let stderr = String::from_utf8_lossy(&without_flag.stderr);
+    assert!(
+        stderr.contains("cannot be reused")
+            && stderr.contains("identity mismatch")
+            && stderr.contains("mode"),
+        "mode mismatch must be named:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// An artifact written with `--no-unchanged-tests` is consumable with the
+/// same flag (byte-identical) and fails closed naming
+/// `analysis_options.include_unchanged_tests` without it.
+#[test]
+fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let dir = unique_temp_workspace("check-artifact-unchanged");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
+    let artifact = dir.join("no-unchanged.json");
+    let artifact_arg = artifact.display().to_string();
+    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--no-unchanged-tests",
+        "--write-artifact",
+        &artifact_arg,
+    ]);
+    assert_success(&check);
+
+    let fresh = run_ripr(&[
+        "context",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--no-unchanged-tests",
+        "--at",
+        selector,
+    ]);
+    assert_success(&fresh);
+    let reused = run_ripr(&[
+        "context",
+        "--root",
+        &root,
+        "--from",
+        &artifact_arg,
+        "--no-unchanged-tests",
+        "--at",
+        selector,
+    ]);
+    assert_success(&reused);
+    assert_eq!(
+        fresh.stdout, reused.stdout,
+        "context --from --no-unchanged-tests must be byte-identical to the fresh run"
+    );
+
+    let without_flag = run_ripr(&[
+        "context",
+        "--root",
+        &root,
+        "--from",
+        &artifact_arg,
+        "--at",
+        selector,
+    ]);
+    assert_failure(&without_flag);
+    let stderr = String::from_utf8_lossy(&without_flag.stderr);
+    assert!(
+        stderr.contains("cannot be reused")
+            && stderr.contains("identity mismatch")
+            && stderr.contains("analysis_options.include_unchanged_tests"),
+        "include_unchanged_tests mismatch must be named:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Managed `[perl] producer` packet generation cannot join the recorded
+/// identity (the packet is generated inside the analysis run), so
+/// `--write-artifact` fails closed with a named limitation. No producer
+/// process is spawned: the rejection happens before analysis.
+#[test]
+fn check_write_artifact_rejects_managed_perl_producer() -> Result<(), String> {
+    let dir = unique_temp_workspace("check-artifact-producer");
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let result = (|| {
+        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::copy(sample.join("example.diff"), dir.join("example.diff"))
+            .map_err(|err| format!("copy: {err}"))?;
+        std::fs::copy(sample.join("src/lib.rs"), dir.join("src/lib.rs"))
+            .map_err(|err| format!("copy: {err}"))?;
+        std::fs::copy(
+            sample.join("tests/pricing.rs"),
+            dir.join("tests/pricing.rs"),
+        )
+        .map_err(|err| format!("copy: {err}"))?;
+        std::fs::write(
+            dir.join("ripr.toml"),
+            "[perl]\nproducer = \"perl-ripr-facts\"\n",
+        )
+        .map_err(|err| format!("write config: {err}"))?;
+
+        let root = dir.display().to_string();
+        let diff = dir.join("example.diff").display().to_string();
+        let artifact = dir.join("a.json");
+        let artifact_arg = artifact.display().to_string();
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--write-artifact",
+            &artifact_arg,
+        ]);
+        assert_failure(&output);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("producer packet generation") && stderr.contains("--perl-facts"),
+            "managed producer limitation must be named:\n{stderr}"
+        );
+        assert!(
+            !artifact.exists(),
+            "no artifact may be written for the rejected run shape"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
 // -------- suppressions/v1 smoke --------
 
 fn fixture_test_efficiency_with_actionable_test() -> &'static str {

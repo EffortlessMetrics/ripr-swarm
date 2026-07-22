@@ -7324,6 +7324,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_byte_identical",
   "crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity",
   "crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_unsupported_run_shapes",
+  "crates/ripr/tests/cli_smoke.rs::explain_from_consumes_artifact_written_with_non_default_mode",
+  "crates/ripr/tests/cli_smoke.rs::context_from_consumes_artifact_written_with_no_unchanged_tests",
+  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_managed_perl_producer",
 ]
 fixtures = []
 code = [

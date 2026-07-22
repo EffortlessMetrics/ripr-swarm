@@ -3795,6 +3795,24 @@ pub(super) fn check(args: &[String]) -> Result<(), String> {
                 path.display()
             ));
         }
+        // Managed producer mode generates the Perl fact packet inside
+        // `run_check`, after the CLI-level input was captured — the
+        // generated packet would not be part of the recorded identity, and
+        // resolving it at reuse time would re-run the producer and defeat
+        // reuse. Mirror the --worktree precedent: fail closed with a named
+        // limitation. An explicit --perl-facts packet is already recorded
+        // (path + content hash) and remains supported.
+        if input.perl_facts_path.is_none()
+            && config
+                .perl()
+                .producer()
+                .is_some_and(app::is_managed_perl_producer)
+        {
+            return Err(format!(
+                "--write-artifact {} does not support [perl] producer packet generation (named limitation: the generated packet is not part of the recorded identity); pass --perl-facts <path> explicitly to make the packet part of the recorded identity",
+                path.display()
+            ));
+        }
     }
     if let Some(warning) =
         repo_scope_diff_bound_warning(format, base_explicitly_provided, input.diff_file.as_deref())
@@ -4142,10 +4160,14 @@ fn render_check_gap_ledger_badge(
 
 pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let mut input = CheckInput::default();
+    let mut explicit = CheckInputExplicit::default();
     let mut selector: Option<String> = None;
     // RIPR-SPEC-0140: `--from` loads a previously written check artifact
     // instead of re-running the pipeline. Scope flags passed alongside it
     // are assertions verified against the recording, not overrides.
+    // `--mode` and `--no-unchanged-tests` feed the identity recomputation:
+    // an artifact recorded with non-default values is only consumable when
+    // the same values resolve here (flag or config).
     let mut from_artifact: Option<PathBuf> = None;
     let mut base_explicitly_provided = false;
     let mut i = 0usize;
@@ -4168,6 +4190,15 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 i += 1;
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
+            "--mode" => {
+                i += 1;
+                input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
+                explicit.mode = true;
+            }
+            "--no-unchanged-tests" => {
+                input.include_unchanged_tests = false;
+                explicit.include_unchanged_tests = true;
+            }
             "--help" | "-h" => {
                 help::print_explain_help();
                 return Ok(());
@@ -4179,7 +4210,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     }
     let selector = selector.ok_or_else(|| "missing finding selector".to_string())?;
     let config = load_for_root(&input.root)?;
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    apply_to_check_input(&mut input, &config, explicit);
     let asserted_base = if base_explicitly_provided {
         input.base.clone()
     } else {
@@ -4204,12 +4235,16 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
         format: OutputFormat::Json,
         ..CheckInput::default()
     };
+    let mut explicit = CheckInputExplicit::default();
     let mut selector: Option<String> = None;
     let mut max_tests = crate::config::DEFAULT_CONTEXT_RELATED_TESTS;
     let mut explicit_max_tests = false;
     // RIPR-SPEC-0140: `--from` loads a previously written check artifact
     // instead of re-running the pipeline. Scope flags passed alongside it
     // are assertions verified against the recording, not overrides.
+    // `--mode` and `--no-unchanged-tests` feed the identity recomputation:
+    // an artifact recorded with non-default values is only consumable when
+    // the same values resolve here (flag or config).
     let mut from_artifact: Option<PathBuf> = None;
     let mut base_explicitly_provided = false;
     let mut i = 0usize;
@@ -4231,6 +4266,15 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
             "--from" => {
                 i += 1;
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
+            }
+            "--mode" => {
+                i += 1;
+                input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
+                explicit.mode = true;
+            }
+            "--no-unchanged-tests" => {
+                input.include_unchanged_tests = false;
+                explicit.include_unchanged_tests = true;
             }
             "--at" => {
                 i += 1;
@@ -4258,7 +4302,7 @@ pub(super) fn context(args: &[String]) -> Result<(), String> {
     }
     let selector = selector.ok_or_else(|| "missing --at or --finding selector".to_string())?;
     let config = load_for_root(&input.root)?;
-    apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
+    apply_to_check_input(&mut input, &config, explicit);
     if !explicit_max_tests {
         max_tests = config.reports().max_related_tests();
     }

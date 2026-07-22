@@ -29,7 +29,7 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
-    check_workspace_worktree_with_config,
+    check_workspace_worktree_with_config, is_managed_perl_producer,
 };
 pub use context::{collect_context, collect_context_with_input};
 pub(crate) use context::{collect_context_from_artifact, collect_context_with_config};

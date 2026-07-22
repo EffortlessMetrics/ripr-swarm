@@ -220,7 +220,7 @@ fn root_relative_finding_path(root: &Path, file: &Path) -> String {
 /// mode (post perl-lsp-swarm #3294). The canonical producer is
 /// `perl-ripr-facts`; `perllsp`/`perl-lsp` are accepted for backward
 /// compatibility (they must be wrappers over the same batch exporter).
-fn is_managed_perl_producer(producer: &str) -> bool {
+pub(crate) fn is_managed_perl_producer(producer: &str) -> bool {
     matches!(producer, "perl-ripr-facts" | "perllsp" | "perl-lsp")
 }
 

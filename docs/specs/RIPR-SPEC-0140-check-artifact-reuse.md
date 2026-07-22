@@ -56,9 +56,15 @@ write.
 
 `--write-artifact` records a diff-scoped findings run. It fails closed
 with a named limitation when combined with `--gap-ledger`, a repo-scoped
-format, or `--worktree` (the worktree diff source cannot yet be
-re-resolved for identity verification — see Non-Goals). A failed artifact
-write fails the command: the user explicitly requested the artifact.
+format, `--worktree` (the worktree diff source cannot yet be re-resolved
+for identity verification — see Non-Goals), or managed `[perl] producer`
+packet generation without an explicit `--perl-facts` packet (the generated
+packet is produced inside the analysis run, after the CLI-level input is
+captured, so it cannot join the recorded identity; resolving it at reuse
+time would re-run the producer and defeat reuse). An explicit
+`--perl-facts <path>` packet is recorded (path plus content hash) and
+remains supported. A failed artifact write fails the command: the user
+explicitly requested the artifact.
 
 ### `CheckArtifactV1` envelope, full-fidelity findings
 
@@ -127,10 +133,16 @@ git), and the root, mode, languages, analysis options, config identity,
 and analyzer version are recomputed from the invocation's working
 directory and config files. Scope flags passed alongside `--from`
 (`--diff`, `--base`) are assertions verified against the recording, never
-overrides. On any mismatch — or when the recorded diff source no longer
-exists or cannot be re-resolved — the command fails with a typed error
-naming every mismatched identity field. There is no silent fallback to
-recompute and no "close enough" matching.
+overrides. `explain` and `context` also accept `--mode` and
+`--no-unchanged-tests`: both feed the identity recomputation (and the
+fresh analysis when `--from` is absent), so an artifact recorded with a
+non-default mode or with unchanged tests excluded is consumable when the
+same value resolves on the reuse side (flag or `ripr.toml`) — a mismatch
+is a typed error naming `mode` or
+`analysis_options.include_unchanged_tests`. On any mismatch — or when the
+recorded diff source no longer exists or cannot be re-resolved — the
+command fails with a typed error naming every mismatched identity field.
+There is no silent fallback to recompute and no "close enough" matching.
 
 The identity gate commits to the diff bytes, config, and option surface —
 not to full repository content. A source or test file edited between the
@@ -176,6 +188,12 @@ artifact stores the uncapped related-tests list.
 - `--worktree` artifacts: the worktree diff source is not yet
   re-resolvable from the app layer; the combination fails closed with a
   named limitation until it is.
+- Managed `[perl] producer` packet generation as an artifact input: the
+  generated packet cannot join the recorded identity (it is produced
+  inside the analysis run) and resolving it at reuse time would re-run
+  the producer, defeating reuse; the combination fails closed with a
+  named limitation. An explicit `--perl-facts <path>` packet is fully
+  supported.
 - Full-repository content fingerprinting in the identity gate (see the
   documented limitation above).
 - Sharing artifacts between machines or committing them; the artifact is
@@ -259,6 +277,16 @@ even though the `check --json` render caps related tests at 8.
 - `crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity`
   and `check_write_artifact_rejects_unsupported_run_shapes` — CLI-level
   fail-closed paths.
+- `crates/ripr/tests/cli_smoke.rs::explain_from_consumes_artifact_written_with_non_default_mode`
+  — an artifact written with `--mode ready` is consumable with the same
+  flag (byte-identical) and fails closed naming `mode` without it.
+- `crates/ripr/tests/cli_smoke.rs::context_from_consumes_artifact_written_with_no_unchanged_tests`
+  — an artifact written with `--no-unchanged-tests` is consumable with the
+  same flag and fails closed naming
+  `analysis_options.include_unchanged_tests` without it.
+- `crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_managed_perl_producer`
+  — managed `[perl] producer` packet generation fails closed with the
+  named limitation.
 
 ## Implementation Mapping
 
