@@ -14,6 +14,7 @@
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
 use serde::Serialize;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 /// The single source of truth for which tools doctor probes for availability.
 /// Both the evaluation (which actually spawns each tool to check it) and the
@@ -21,6 +22,7 @@ use std::path::Path;
 /// the report) iterate this list, so there is exactly one place that names
 /// the probed tools.
 pub(crate) const DOCTOR_TOOLS: [&str; 3] = ["git", "cargo", "rustc"];
+const DOCTOR_TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The top-level doctor status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -238,31 +240,78 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
 /// The probe runs from the OS temp dir with config resolution disabled.
 pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     let mut command = doctor_tool_command(tool);
+    command.arg("--version");
     command
         .current_dir(std::env::temp_dir())
         .env("YARN_IGNORE_PATH", "1");
-    match command.output() {
+    match run_doctor_tool(command, DOCTOR_TOOL_TIMEOUT) {
         Ok(output) if output.status.success() => (
             DoctorStatus::Pass,
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ),
+        Err(DoctorToolRunError::TimedOut) => (
+            DoctorStatus::Fail,
+            format!("{tool} timed out after {}s", DOCTOR_TOOL_TIMEOUT.as_secs()),
         ),
         _ => (DoctorStatus::Fail, format!("{tool} not available")),
     }
 }
 
 fn doctor_tool_command(tool: &str) -> std::process::Command {
-    let mut command = std::process::Command::new(tool);
-    command.arg("--version");
-    command
+    std::process::Command::new(tool)
 }
 
 pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
-    match doctor_tool_command(tool).output() {
+    let mut command = doctor_tool_command(tool);
+    command.arg("--version");
+    match run_doctor_tool(command, DOCTOR_TOOL_TIMEOUT) {
         Ok(output) if output.status.success() => (
             DoctorStatus::Pass,
             String::from_utf8_lossy(&output.stdout).trim().to_string(),
         ),
+        Err(DoctorToolRunError::TimedOut) => (
+            DoctorStatus::Fail,
+            format!("{tool} timed out after {}s", DOCTOR_TOOL_TIMEOUT.as_secs()),
+        ),
         _ => (DoctorStatus::Fail, format!("{tool} not available")),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DoctorToolRunError {
+    Spawn,
+    Wait,
+    TimedOut,
+}
+
+fn run_doctor_tool(
+    mut command: std::process::Command,
+    timeout: Duration,
+) -> Result<std::process::Output, DoctorToolRunError> {
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().map_err(|_| DoctorToolRunError::Spawn)?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|_| DoctorToolRunError::Wait);
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DoctorToolRunError::TimedOut);
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DoctorToolRunError::Wait);
+            }
+        }
     }
 }
 
@@ -440,5 +489,20 @@ mod tests {
             evidence.ends_with("not available"),
             "unexpected evidence for missing tool: {evidence:?}"
         );
+    }
+
+    #[test]
+    fn doctor_tool_runner_times_out_and_reaps_child() -> Result<(), String> {
+        let mut command = doctor_tool_command(if cfg!(windows) { "powershell" } else { "sh" });
+        #[cfg(windows)]
+        command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+        #[cfg(not(windows))]
+        command.args(["-c", "sleep 5"]);
+
+        match run_doctor_tool(command, Duration::from_millis(20)) {
+            Err(DoctorToolRunError::TimedOut) => Ok(()),
+            Err(error) => Err(format!("expected timeout, got {error:?}")),
+            Ok(_) => Err("timed-out tool unexpectedly completed".into()),
+        }
     }
 }
