@@ -199,9 +199,12 @@ target/ripr/install-smoke-cratesio/bin/ripr agent verify --root . --before fixtu
 target/ripr/install-smoke-cratesio/bin/ripr agent receipt --root . --verify-json target/ripr/install-smoke-cratesio/agent/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/install-smoke-cratesio/agent/agent-receipt.json
 ```
 
-Tag the release:
+Tag the release — in a checkout of the **source** repository
+(`EffortlessMetrics/ripr`), never in ripr-swarm (#2025):**
 
 ```bash
+# Run inside an EffortlessMetrics/ripr checkout; `origin` must be that repo.
+git remote get-url origin   # expect github.com/EffortlessMetrics/ripr(.git)?
 git tag v0.8.0
 git push origin v0.8.0
 ```
@@ -223,7 +226,9 @@ analysis, default blocking, or stable preview-language gate authority.
 ## Recovery
 
 If a release workflow fails after the tag has been pushed, prefer
-fix-forward over retagging. The tag is the release-prep snapshot; the
+fix-forward over retagging. Workflow reruns (`gh workflow run ...`) also
+belong to the source repository: run them with `--repo EffortlessMetrics/ripr`
+from anywhere else, or from a source checkout. The tag is the release-prep snapshot; the
 release workflows can be rerun against `main` (or any commit that contains
 the fix) using `workflow_dispatch`, and uploaded assets attach to the
 existing GitHub Release rather than replacing it.
