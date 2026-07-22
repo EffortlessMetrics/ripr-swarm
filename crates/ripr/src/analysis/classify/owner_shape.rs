@@ -564,6 +564,40 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn bare_name_collision_with_same_named_function_blocks_reframe() -> Result<(), String> {
+        // The spec's fail-closed claim (#2170 review): an oracle named
+        // `check` and an unrelated same-named helper in another module are
+        // indistinguishable by bare-name matching. The collision must BLOCK
+        // the reframe — never reframe on a guessed identity.
+        let owner = function(
+            "src/invariants.rs",
+            "check",
+            "fn check(value: i32) {\n    assert!(value >= 0);\n    assert_eq!(value % 2, 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        // A production fn that calls `check(...)` — but its target is a
+        // different same-named function (e.g. a local validation helper).
+        let coincidental_caller = function(
+            "src/handler.rs",
+            "handle",
+            "fn handle() {\n    check(2);\n}\n",
+            false,
+            vec!["check"],
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone(), coincidental_caller],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "a bare-name collision must block the reframe (fail-closed)"
+        );
+        Ok(())
+    }
+
     fn plain_helper_caller_in_src_blocks_reframe() -> Result<(), String> {
         let owner = function(
             "src/lib.rs",
