@@ -70,6 +70,23 @@ fn repo_index_file_limit_from_env(
     positive_limit_from_env(REPO_INDEX_FILE_LIMIT_ENV, REPO_INDEX_FILE_LIMIT, value)
 }
 
+/// Fail closed when a repo-scoped working set exceeds the guard (#2109).
+/// The repair route names only effective continuations: a diff-based run
+/// (`--base`/`--diff`) or raising the limit. A "narrower mode" is NOT
+/// offered — repo-scoped analysis does not select files by mode, so that
+/// retry would hit the same guard.
+fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Result<(), String> {
+    if file_count <= scope_limit {
+        return Ok(());
+    }
+    Err(format!(
+        "repo_scope_oversized: {file_count} indexed Rust files exceed the \
+         {REPO_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to protect \
+         runner memory. Repair route: narrow the scope with a diff-based run (--base/--diff), \
+         or raise the limit via {REPO_INDEX_FILE_LIMIT_ENV}=<number>."
+    ))
+}
+
 fn diff_changed_rust_line_limit() -> Result<usize, String> {
     diff_changed_rust_line_limit_from_env(std::env::var(DIFF_CHANGED_RUST_LINE_LIMIT_ENV))
 }
@@ -1196,12 +1213,7 @@ impl LanguageAdapter for RustAdapter {
         // over-limit repo analysis is a named error with a repair route,
         // not an unbounded read+index that can exhaust host memory.
         let scope_limit = repo_index_file_limit_from_env(std::env::var(REPO_INDEX_FILE_LIMIT_ENV))?;
-        if rust_files.len() > scope_limit {
-            return Err(format!(
-                "repo_scope_oversized: {} indexed Rust files exceed the                  {REPO_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to                  protect runner memory. Repair route: narrow the scope with a diff-based run                  (--base/--diff), run a narrower mode, or raise the limit via                  {REPO_INDEX_FILE_LIMIT_ENV}=<number>.",
-                rust_files.len()
-            ));
-        }
+        enforce_repo_index_file_limit(rust_files.len(), scope_limit)?;
         let production_files = rust_files
             .iter()
             .filter(|path| workspace::is_production_rust_path(path))
@@ -1269,8 +1281,8 @@ mod tests {
         apply_rust_macro_wrapped_assertion_limit, changed_rust_line_count,
         cross_language_limit_kind, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
-        enforce_changed_rust_line_limit, macro_reach_limit_kind, owner_has_ffi_attr,
-        partial_diff_budgets_from_env, partition_canonical_form,
+        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, macro_reach_limit_kind,
+        owner_has_ffi_attr, partial_diff_budgets_from_env, partition_canonical_form,
         replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
         select_partial_diff_partition, sha256_hex, transitive_reach_limit_kind,
     };
@@ -1862,6 +1874,27 @@ mod tests {
             if repo_index_file_limit_from_env(Ok(bad.to_string())).is_ok() {
                 return Err(format!("invalid override {bad:?} must fail closed"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enforce_repo_index_file_limit_is_fail_closed_exactly_over_the_guard() -> Result<(), String> {
+        // Exactly at the limit passes; one file over fails with the named
+        // error, the guard identity, and the repair route (#2109 review).
+        enforce_repo_index_file_limit(800, 800)
+            .map_err(|err| format!("exactly-at-limit must pass: {err}"))?;
+        let err = match enforce_repo_index_file_limit(801, 800) {
+            Err(err) => err,
+            Ok(()) => return Err("one over the limit must fail".to_string()),
+        };
+        for needle in [
+            "repo_scope_oversized",
+            "801 indexed Rust files",
+            "RIPR_MAX_REPO_INDEX_FILES",
+            "--base/--diff",
+        ] {
+            assert!(err.contains(needle), "error missing `{needle}`: {err}");
         }
         Ok(())
     }
