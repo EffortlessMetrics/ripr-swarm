@@ -87,7 +87,54 @@
         "result": {
           "anyOf": [{ "$ref": "#/$defs/execution_result" }, { "type": "null" }]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "state": { "const": "verification_command_available" } }
+          },
+          "then": {
+            "properties": {
+              "command_spec": { "$ref": "#/$defs/command_spec" },
+              "result": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": ["verification_executed_pass", "verification_executed_fail"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "command_spec": { "$ref": "#/$defs/command_spec" },
+              "result": { "$ref": "#/$defs/execution_result" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "verification_not_run",
+                  "verification_unavailable",
+                  "verification_cancelled_or_timed_out"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "command_spec": { "type": "null" },
+              "result": { "type": "null" }
+            }
+          }
+        }
+      ]
     },
     "command_spec": {
       "type": "object",
@@ -109,7 +156,10 @@
         "schema_version": { "const": "1" },
         "program": { "type": "string", "minLength": 1 },
         "args": { "type": "array", "items": { "type": "string" } },
-        "working_directory": { "type": "string", "pattern": "^[^/\\\\].*" },
+        "working_directory": {
+          "type": "string",
+          "pattern": "^(?![^\\\\/]+:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$"
+        },
         "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 3600000 },
         "cancellation": { "enum": ["allowed", "not_allowed"] },
         "network": { "enum": ["disabled", "declared", "unrestricted"] },
@@ -126,6 +176,7 @@
         "root_identity",
         "head_before",
         "head_after",
+        "command_spec_sha256",
         "exit_status",
         "stdout_sha256",
         "stderr_sha256",
@@ -135,6 +186,7 @@
         "root_identity": { "type": "string", "minLength": 1 },
         "head_before": { "type": "string", "minLength": 1 },
         "head_after": { "type": "string", "minLength": 1 },
+        "command_spec_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "exit_status": { "type": ["integer", "null"] },
         "stdout_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "stderr_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },

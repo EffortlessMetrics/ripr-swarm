@@ -95,9 +95,12 @@ request, JSON field, or editor action automatically runs a command.
 
 An execution result records the declared command identity, root and revision
 before/after the run, process disposition, exit status, bounded stdout/stderr
-commitments, and currentness. `verification_executed_pass` means only that the
-declared command completed with the producer-defined passing disposition. It
-does not mean that the static gap closed or that the repository is correct.
+commitments, an immutable command-spec digest, and currentness.
+`verification_executed_pass` means only that the declared command completed
+with the producer-defined passing disposition. It does not mean that the
+static gap closed or that the repository is correct. A future runner must
+reject a result whose command-spec digest, root, or revision does not match the
+declared execution context.
 
 ### Receipt issuance
 
