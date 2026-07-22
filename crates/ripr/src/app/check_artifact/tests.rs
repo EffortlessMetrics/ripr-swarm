@@ -97,30 +97,54 @@ fn artifact_wire_form_uses_documented_snake_case_vocabulary() -> Result<(), Stri
     // The envelope is a wire contract: the domain enums it serializes must
     // use the same lowercase/snake_case spellings OUTPUT_SCHEMA.md
     // documents for the same data in `check --json` — not serde's default
-    // PascalCase variant names.
+    // PascalCase variant names. Assertions are scoped to the typed JSON
+    // paths: a whole-text scan could match free-form evidence text or pass
+    // while the enum field itself is wrong.
     let dir = unique_temp_dir("wire-form")?;
     let result = (|| {
         let (path, _, _, _) = write_sample_artifact(&dir)?;
         let text =
             std::fs::read_to_string(&path).map_err(|err| format!("read artifact failed: {err}"))?;
-        for required in ["\"predicate\"", "\"control\"", "\"rust\""] {
-            if !text.contains(required) {
-                return Err(format!(
-                    "artifact wire form must use documented snake_case vocabulary {required}"
-                ));
+        let artifact: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|err| format!("artifact must parse as JSON: {err}"))?;
+        let findings = artifact["findings"]
+            .as_array()
+            .ok_or_else(|| "artifact findings must be an array".to_string())?;
+        if findings.is_empty() {
+            return Err("sample artifact must carry at least one finding".to_string());
+        }
+        let mut language_checked = false;
+        for (index, finding) in findings.iter().enumerate() {
+            for field in ["family", "delta"] {
+                let actual = finding["probe"][field]
+                    .as_str()
+                    .ok_or_else(|| format!("findings[{index}].probe.{field} must be a string"))?;
+                if actual.is_empty()
+                    || !actual
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+                {
+                    return Err(format!(
+                        "findings[{index}].probe.{field} must serialize in documented snake_case, got {actual:?}"
+                    ));
+                }
+            }
+            if let Some(language) = finding["language"].as_str() {
+                language_checked = true;
+                if language
+                    .chars()
+                    .any(|c| !c.is_ascii_lowercase() && c != '_')
+                {
+                    return Err(format!(
+                        "findings[{index}].language must serialize in documented lowercase, got {language:?}"
+                    ));
+                }
             }
         }
-        for forbidden in [
-            "\"Predicate\"",
-            "\"Control\"",
-            "\"Rust\"",
-            "\"WeaklyExposed\"",
-        ] {
-            if text.contains(forbidden) {
-                return Err(format!(
-                    "artifact wire form must not use serde-default PascalCase {forbidden}"
-                ));
-            }
+        if !language_checked {
+            return Err(
+                "sample artifact must carry at least one finding with a language".to_string(),
+            );
         }
         Ok(())
     })();
