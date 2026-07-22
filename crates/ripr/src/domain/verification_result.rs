@@ -6,9 +6,10 @@
 //! repository identities they observed around the run.
 //!
 //! Domain stays JSON-free (policy/architecture.txt): the command-spec digest
-//! is computed by the application layer
-//! (`crate::app::verification_result::command_spec_sha256`) and supplied to
-//! [`VerificationExecutionResultV1::validate_against`] as the expected value.
+//! is computed by the consuming layer (the #1979 command runner; the
+//! reference computation is pinned by `tests/verification_result.rs`) and
+//! supplied to [`VerificationExecutionResultV1::validate_against`] as the
+//! expected value.
 
 use super::{CommandAuthorityBoundary, CommandRole, CommandSpec};
 use std::fmt;
@@ -181,10 +182,10 @@ impl VerificationExecutionResultV1 {
     /// producer. This is the only domain entry point for accepting a result.
     ///
     /// `expected_command_spec_sha256` is the digest of `command_spec` as
-    /// computed by the application layer
-    /// (`crate::app::verification_result::command_spec_sha256`); passing the
-    /// digest in keeps this domain module JSON-free while the binding check
-    /// stays mandatory.
+    /// computed by the consuming layer (the #1979 command runner; the
+    /// reference computation is pinned by `tests/verification_result.rs`);
+    /// passing the digest in keeps this domain module JSON-free while the
+    /// binding check stays mandatory.
     pub fn validate_against(
         &self,
         command_spec: &CommandSpec,
@@ -361,9 +362,9 @@ mod tests {
     const ROOT: &str = "root:fixture";
     const ZERO_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    /// Digest of the fixture [`command_spec`] as computed by the application
-    /// layer (`app::verification_result::command_spec_sha256`); the pin lives
-    /// with the app-side digest tests.
+    /// Digest of the fixture [`command_spec`] as computed by the consuming
+    /// layer; the pin lives with the digest tests in
+    /// `tests/verification_result.rs`.
     const SPEC_DIGEST: &str =
         "sha256:7594ebd8d5ea61336f33c236c213c87467b752befec1b582d7cc99ce42f8a5ab";
 

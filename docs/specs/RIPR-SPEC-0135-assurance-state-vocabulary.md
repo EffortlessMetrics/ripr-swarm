@@ -233,9 +233,10 @@ available.
   against a caller-supplied expected digest, and exact
   root/HEAD/currentness validation. It is a consumer validation seam, not a
   process runner, and stays JSON-free (policy/architecture.txt).
-- `crates/ripr/src/app/verification_result.rs` owns
-  `command_spec_sha256`, the JSON-serialized command-spec digest supplied to
-  the domain validator.
+- `crates/ripr/tests/verification_result.rs` owns the reference
+  `command_spec_sha256` computation (JSON-serialized command-spec digest)
+  and pins its bytes until the #1979 command runner lands as the first
+  production consumer.
 - `.allow/spec-system/slices/command-spec-route-population.v1.toml` records the
   PR-local claim boundary and return conditions for #1755.
 - `.allow/spec-system/slices/typed-command-spec.v1.toml` records the PR-local
@@ -261,7 +262,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-fixture-contracts
 cargo xtask check-output-contracts
 cargo test -p ripr domain::verification_result --lib
-cargo test -p ripr app::verification_result --lib
+cargo test -p ripr --test verification_result
 cargo xtask check-command-catalog
 git diff --check
 ```

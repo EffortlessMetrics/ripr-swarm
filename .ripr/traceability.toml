@@ -6430,9 +6430,9 @@ tests = [
   "crates/ripr/src/domain/verification_result.rs::tests::wrong_root_and_command_digest_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::malformed_commitments_and_heads_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::impossible_process_and_currentness_states_fail_closed",
-  "crates/ripr/src/app/verification_result.rs::tests::command_spec_digest_is_pinned_to_serialized_field_order",
-  "crates/ripr/src/app/verification_result.rs::tests::valid_result_round_trips_and_validates_against_exact_context",
-  "crates/ripr/src/app/verification_result.rs::tests::digest_from_a_different_spec_fails_the_binding",
+  "crates/ripr/tests/verification_result.rs::command_spec_digest_is_pinned_to_serialized_field_order",
+  "crates/ripr/tests/verification_result.rs::valid_result_round_trips_and_validates_against_exact_context",
+  "crates/ripr/tests/verification_result.rs::digest_from_a_different_spec_fails_the_binding",
 ]
 fixtures = [
   "fixtures/assurance_vocabulary",
@@ -6440,9 +6440,9 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/agent/command_specs.rs",
-  "crates/ripr/src/app/verification_result.rs",
   "crates/ripr/src/domain/command_spec.rs",
   "crates/ripr/src/domain/verification_result.rs",
+  "crates/ripr/tests/verification_result.rs",
   "crates/ripr/src/lsp/gap_artifacts.rs",
   "crates/ripr/src/lsp/actions.rs",
   "crates/ripr/src/output/first_useful_action/model.rs",

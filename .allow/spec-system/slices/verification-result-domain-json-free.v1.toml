@@ -9,11 +9,14 @@ change_class = "refactor"
 claim_boundary = """
 Restores the domain-must-not-know-JSON-rendering architecture rule
 (policy/architecture.txt) broken by #2232: the JSON-serialized command-spec
-digest computation moves from domain/verification_result.rs to
-app/verification_result.rs, and validate_against takes the expected digest as
-a parameter so the binding check stays mandatory while domain stays
-JSON-free. The digest bytes, validation semantics, error variants, and
-serialized result shape are unchanged; no consumer exists yet outside tests.
+digest computation leaves domain/verification_result.rs, and
+validate_against takes the expected digest as a parameter so the binding
+check stays mandatory while domain stays JSON-free. Until the #1979 command
+runner lands as the first production consumer, the reference digest
+computation and its byte pin live in the crates/ripr/tests/
+verification_result.rs integration test. The digest bytes, validation
+semantics, error variants, and serialized result shape are unchanged; no
+consumer exists yet outside tests.
 """
 
 non_goals = [
@@ -29,8 +32,8 @@ return_conditions = [
 ]
 
 owned_seams = [
-  "seam:ripr:app:verification-result-digest",
   "seam:ripr:domain:verification-result-validation",
+  "seam:ripr:tests:verification-result-digest-reference",
 ]
 
 shared_seams = [
