@@ -358,9 +358,11 @@ A finding record must name:
   reproduction exists (a design question does not need a failing command,
   but still requires current source identity and accurate behavior
   description);
-- actual result vs expected result or invariant;
-- an all-state issue/PR search (`gh issue list --state all` and
-  `gh pr list --state all` — both default to open-only);
+- actual result vs. expected result or invariant;
+- an all-state, finding-specific issue/PR search (`gh issue list
+  --state all --search <term>` and `gh pr list --state all --search
+  <term>` — both default to open-only, and a bare list is not evidence
+  bound to the finding);
 - known concurrent PRs touching the seam;
 - confidence, remaining uncertainty, and a classification:
   `verified_current | historical | cannot_reproduce | superseded |
