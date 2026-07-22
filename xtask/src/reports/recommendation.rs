@@ -1328,7 +1328,7 @@ mod tests {
     #[test]
     fn recommendation_calibration_report_counts_fixture_expectations() -> Result<(), String> {
         let args = RecommendationCalibrationArgs {
-            root: PathBuf::from("."),
+            root: workspace_root(),
             pr_guidance: Vec::new(),
             expectations: PathBuf::from(DEFAULT_EXPECTATIONS),
             outcome_receipts: vec![PathBuf::from(
