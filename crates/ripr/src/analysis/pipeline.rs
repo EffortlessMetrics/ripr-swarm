@@ -6,7 +6,7 @@ use super::language::PythonAdapter;
 use super::language::TypeScriptAdapter;
 use super::language::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter,
+    RustAdapter, route,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -156,6 +156,46 @@ fn run_pipeline_for_diff_text(
     // require the adapter to be enabled.
     let preview_paths: Vec<&diff::ChangedFile> = changed_files.iter().collect();
     let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
+
+    // Disclose when the diff contains only non-source files (docs/config-only
+    // PRs): an empty result with zero probes is not a "clean" result in that
+    // case — the user needs to know ripr saw no analyzable source files
+    // (#1888, #2304).
+    if findings.is_empty()
+        && rust_changed_files == 0
+        && changed_files_by_language
+            .iter()
+            .all(|(_, count)| *count == 0)
+    {
+        let source_count = changed_files
+            .iter()
+            .filter(|file| route(&file.path).is_some())
+            .count();
+        if source_count == 0 && !changed_files.is_empty() {
+            let non_source_count = changed_files.len();
+            let extensions: Vec<String> = changed_files
+                .iter()
+                .filter_map(|file| {
+                    file.path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| format!(".{ext}"))
+                })
+                .collect();
+            let ext_summary = if extensions.is_empty() {
+                "extensionless files".to_string()
+            } else {
+                extensions.join(", ")
+            };
+            // Emit as stderr disclosure — this is not a Finding (no probe was
+            // generated), but the user needs to know why the result is empty.
+            eprintln!(
+                "ripr: diff contained {non_source_count} non-source file(s) ({ext_summary}); \
+                 no analyzable Rust, TypeScript, Python, or Perl files found. \
+                 The empty result is correct — ripr cannot analyze non-source files."
+            );
+        }
+    }
 
     sort::sort_findings(&mut findings);
     cancellation::checkpoint()?;
