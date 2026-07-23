@@ -1779,6 +1779,50 @@ test("mocked applyDiscount stays ambiguous", () => {
 }
 
 #[test]
+fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
+    // issue #2269 (ArrowFunction arm): the owner-module mock guard must cover
+    // both Function and ArrowFunction owner kinds — an arrow-function owner
+    // call under its own module's mock executes the mock, not the changed
+    // code, so only the advisory proximity heuristic may link the test.
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/owners.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::ArrowFunction,
+        class_name: None,
+        decorated: false,
+        imports: Vec::new(),
+    };
+    let tests = extract_tests(
+        Path::new("tests/owners.test.ts"),
+        r#"import { applyDiscount } from "../src/owners";
+
+vi.mock("../src/owners");
+
+test("mocked arrow applyDiscount stays ambiguous", () => {
+    const result = applyDiscount(100, 100);
+    expect(result).toBe(90);
+});
+"#,
+    );
+
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
+
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.relation.is_uncertain()),
+        "mocked owner module must not credit any oracle-using relation: {candidates:?}"
+    );
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::SameFileProximity
+    );
+}
+
+#[test]
 fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
     // issue #2269 (ImportedOwnerCall arm): the #2269 guard sits above BOTH the
     // `DirectOwnerCall` and the `ImportedOwnerCall` arms in
