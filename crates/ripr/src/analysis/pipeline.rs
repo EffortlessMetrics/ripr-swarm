@@ -73,6 +73,8 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
                 .and_then(|ext| ext.to_str())
                 .map(|ext| format!(".{ext}"))
         })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
     let ext_summary = if extensions.is_empty() {
         "extensionless files".to_string()
@@ -593,8 +595,8 @@ mod tests {
         // is explained instead of reading as a clean zero.
         let files = vec![
             changed_file("docs/ROADMAP.md"),
+            changed_file("docs/CHANGELOG.md"),
             changed_file("policy/ci-budget.toml"),
-            changed_file("rustfmt.toml"),
         ];
         let message = non_source_disclosure_message(&files)
             .ok_or_else(|| "docs-only diff must produce the disclosure".to_string())?;
@@ -603,6 +605,9 @@ mod tests {
         }
         if !message.contains(".md") || !message.contains(".toml") {
             return Err(format!("disclosure must list extensions: {message}"));
+        }
+        if message.contains(".md, .md") {
+            return Err(format!("extensions must be deduplicated: {message}"));
         }
         if !message.contains("empty result is correct") {
             return Err(format!("disclosure must carry the non-claim: {message}"));
