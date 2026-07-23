@@ -261,11 +261,15 @@ mod tests {
         false
     }
 
-    fn hang_command() -> Result<Command, String> {
+    fn self_reexec_command(env_key: &str) -> Result<Command, String> {
         let exe = std::env::current_exe().map_err(|err| err.to_string())?;
         let mut command = Command::new(exe);
-        command.env(HANG_ENV, "1");
+        command.env(env_key, "1");
         Ok(command)
+    }
+
+    fn hang_command() -> Result<Command, String> {
+        self_reexec_command(HANG_ENV)
     }
 
     #[test]
@@ -402,9 +406,7 @@ mod tests {
         if reexec_harness() {
             return Ok(());
         }
-        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-        let mut command = Command::new(exe);
-        command.env(FLOOD_ENV, "1");
+        let mut command = self_reexec_command(FLOOD_ENV)?;
         let started = Instant::now();
         let output = collect_output_with_deadline(
             &mut command,
