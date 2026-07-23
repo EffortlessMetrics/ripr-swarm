@@ -583,8 +583,11 @@ semantic assertions are enforced by opt-in execution against the current binary.
 - Does NOT re-classify any finding.
 - Does NOT bump schema_version, crate version, or touch release workflows.
 - Does NOT replace `goldens check`; composes with it.
-- Static-language clean: gate output uses `exposed`, `weakly_exposed`,
-  `reachable_unrevealed` only — all allowed vocabulary.
+- Static-language clean: gate output uses the conservative static vocabulary
+  (`exposed`, `weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
+  `infection_unknown`, `propagation_unknown`, `static_unknown`) — all allowed
+  vocabulary. The `*_unknown` classes appear only as named-limitation states
+  (for example alongside `must_emit_limitation`), never as promoted classes.
 
 ## Acceptance Examples
 
