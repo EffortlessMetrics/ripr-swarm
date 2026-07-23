@@ -223,12 +223,6 @@ fn detect_languages(root: &Path) -> Vec<LanguageId> {
     found
 }
 
-/// Print `- Detected languages: rust (stable), typescript (preview), …`
-///
-/// Each entry shows its canonical `LanguageStatus` tier in parentheses.
-/// Appends `[adapter not compiled]` when `LanguageId::is_available()` is
-/// false for the detected language. If no markers are found, prints
-/// `none detected` rather than claiming any language.
 /// Probe the runtimes the verify/proof route needs for each detected
 /// language (#2071). Advisory only: a missing runtime is named with an
 /// install hint and never flips doctor to failure — preview languages are
@@ -311,6 +305,12 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
     probes
 }
 
+/// Print `- Detected languages: rust (stable), typescript (preview), …`
+///
+/// Each entry shows its canonical `LanguageStatus` tier in parentheses.
+/// Appends `[adapter not compiled]` when `LanguageId::is_available()` is
+/// false for the detected language. If no markers are found, prints
+/// `none detected` rather than claiming any language.
 fn report_detected_languages(root: &Path) {
     let detected = detect_languages(root);
     if detected.is_empty() {
@@ -515,16 +515,6 @@ fn detected_test_surface_lines(root: &Path) -> Vec<String> {
     lines
 }
 
-/// Print static limitation notes for the doctor first-run diagnosis.
-///
-/// Every statement is conservative: no claim is made beyond what the static
-/// analysis layer can actually determine. Wording sources:
-///   - `language.rs` doc comment: TypeScript/JavaScript/Python/Perl are
-///     preview surfaces.
-///   - `StaticLimitKind::CrossLanguageOracleVisibilityUnresolved` wire string
-///     and its doc comment.
-///   - 0.9.0 CHANGELOG non-claims.
-///
 /// Count files with a given extension under the root (recursive). Used by the
 /// Perl preview to report real .pm/.pl/.t counts. Campaign 31 item 5: the
 /// prior `shallow_has_extension as usize` returned only 0/1, not a real count.
@@ -859,6 +849,15 @@ fn perl_next_command(producer_configured: Option<&str>, found_bin: Option<&str>)
     }
 }
 
+/// Print static limitation notes for the doctor first-run diagnosis.
+///
+/// Every statement is conservative: no claim is made beyond what the static
+/// analysis layer can actually determine. Wording sources:
+///   - `language.rs` doc comment: TypeScript/JavaScript/Python/Perl are
+///     preview surfaces.
+///   - `StaticLimitKind::CrossLanguageOracleVisibilityUnresolved` wire string
+///     and its doc comment.
+///   - 0.9.0 CHANGELOG non-claims.
 fn report_known_limitations() {
     println!("- Known limitations:");
     println!(
