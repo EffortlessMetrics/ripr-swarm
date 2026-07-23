@@ -1026,6 +1026,7 @@ fixtures = [
   "fixtures/boundary_gap/expected/pr-guidance"
 ]
 code = [
+  "crates/ripr/src/app/annotations.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/help.rs",
