@@ -746,8 +746,12 @@ fn fallback_identity_for(
     static_class: Option<&str>,
 ) -> Option<String> {
     match (path, line) {
+        // Normalize exactly like the baseline writers
+        // (`baseline_update.rs` / `baseline_delta.rs`): a candidate reported
+        // as `./src/x.rs` or `src\x.rs` must still match the legacy entry.
         (Some(path), Some(line)) => Some(format!(
-            "{path}:{line}:{}",
+            "{}:{line}:{}",
+            path.replace('\\', "/").trim_start_matches("./"),
             static_class.unwrap_or("unknown")
         )),
         _ => None,

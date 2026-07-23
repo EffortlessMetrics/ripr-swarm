@@ -3070,3 +3070,25 @@ const GAP_LEDGER_REPORT_ONLY_JSON: &str = r#"{
         }
       ]
     }"#;
+
+#[test]
+fn fallback_identity_for_normalizes_like_the_baseline_writers() -> Result<(), String> {
+    // #2285 review: baseline writers normalize `\` -> `/` and strip `./`
+    // (baseline_update.rs / baseline_delta.rs); the gate's fallback identity
+    // must match that form or a legacy entry misses a compatibility match.
+    let expected = Some("src/pricing.rs:88:weakly_exposed".to_string());
+    for raw in [
+        "src/pricing.rs",
+        "./src/pricing.rs",
+        r"src\pricing.rs",
+        r".\src\pricing.rs",
+    ] {
+        let actual = fallback_identity_for(Some(raw), Some(88), Some("weakly_exposed"));
+        if actual != expected {
+            return Err(format!(
+                "fallback identity for {raw:?} must normalize to {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
