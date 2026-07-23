@@ -348,11 +348,13 @@ impl ClientFeatureProfile {
             .unwrap_or(serde_json::Value::Null);
         serde_json::json!({
             "position_encoding": self.selected_position_encoding.as_str(),
-            "advertised_position_encodings": self
-                .advertised_position_encodings
-                .iter()
-                .map(|kind| kind.as_str())
-                .collect::<Vec<_>>(),
+            "advertised_position_encodings": projected_string_list(
+                &self
+                    .advertised_position_encodings
+                    .iter()
+                    .map(|kind| kind.as_str().to_string())
+                    .collect::<Vec<_>>(),
+            ),
             "stale_request_cancellation": self.stale_request_cancellation,
             "push_diagnostics": self.push_diagnostics,
             "pull_diagnostics": self.pull_diagnostics,
@@ -365,11 +367,13 @@ impl ClientFeatureProfile {
                 "code_description": self.publish_code_description,
                 "data": self.publish_data,
             },
-            "hover_content_formats": self
-                .hover_content_formats
-                .iter()
-                .map(|kind| serde_json::to_value(kind).unwrap_or(serde_json::Value::Null))
-                .collect::<Vec<_>>(),
+            "hover_content_formats": projected_string_list(
+                &self
+                    .hover_content_formats
+                    .iter()
+                    .map(markup_kind_label)
+                    .collect::<Vec<_>>(),
+            ),
             "code_action": {
                 "literal": self.code_action_literal,
                 "kinds": projected_string_list(&self.code_action_kind_value_set),
@@ -461,7 +465,8 @@ fn parse_ripr_editor(value: &serde_json::Value) -> Option<RiprEditorClientCapabi
 
 /// Parse the `riprAgent` experimental block with the same fail-closed
 /// discipline as `parse_ripr_editor`: an unsupported protocol major, an
-/// unknown profile or delivery literal, or a wrong JSON type yields `None`.
+/// unknown profile or delivery literal, a wrong JSON type, or an over-bound
+/// string yields `None`.
 fn parse_ripr_agent(value: &serde_json::Value) -> Option<RiprAgentClientPreferences> {
     let object = value.as_object()?;
     let protocol_version =
@@ -473,7 +478,14 @@ fn parse_ripr_agent(value: &serde_json::Value) -> Option<RiprAgentClientPreferen
             return None;
         }
         for item in items {
-            profiles.push(serde_json::from_value::<RiprAgentProfile>(item.clone()).ok()?);
+            // The per-string byte bound applies before the closed-vocabulary
+            // parse, so an over-long string fails closed at the bound
+            // (#1987 review).
+            let profile = bounded_experimental_string(item)?;
+            profiles.push(
+                serde_json::from_value::<RiprAgentProfile>(serde_json::Value::String(profile))
+                    .ok()?,
+            );
         }
     }
     let mut delivery = Vec::new();
@@ -483,7 +495,8 @@ fn parse_ripr_agent(value: &serde_json::Value) -> Option<RiprAgentClientPreferen
             return None;
         }
         for item in items {
-            delivery.push(RiprAgentDeliveryPreference::parse(item.as_str()?)?);
+            let channel = bounded_experimental_string(item)?;
+            delivery.push(RiprAgentDeliveryPreference::parse(&channel)?);
         }
     }
     Some(RiprAgentClientPreferences {
@@ -513,6 +526,14 @@ fn projected_string_list(values: &[String]) -> serde_json::Value {
             .collect::<Vec<_>>(),
         "omitted_count": values.len().saturating_sub(MAX_PROJECTED_LIST_ITEMS),
     })
+}
+
+/// The wire label for a hover content format in the bounded projection.
+fn markup_kind_label(kind: &MarkupKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1007,6 +1028,103 @@ mod tests {
         {
             return Err("absent experimental blocks must project as null".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_agent_entries_fail_closed_beyond_the_string_byte_bound() -> Result<(), String> {
+        let overlong = "a".repeat(MAX_EXPERIMENTAL_STRING_BYTES + 1);
+        for (label, block) in [
+            (
+                "profile",
+                serde_json::json!({"protocol": "0.1", "profiles": [overlong]}),
+            ),
+            (
+                "delivery",
+                serde_json::json!({"protocol": "0.1", "delivery": [overlong]}),
+            ),
+        ] {
+            let params = params_from_json(
+                serde_json::json!({"capabilities": {"experimental": {"riprAgent": block}}}),
+            )?;
+            if ClientFeatureProfile::from_initialize_params(&params)
+                .ripr_agent
+                .is_some()
+            {
+                return Err(format!("over-long {label} string must fail closed"));
+            }
+        }
+        // At the bound the string is accepted: a padded valid literal trims
+        // to the closed-vocabulary entry and the block parses.
+        let padded = format!("{:>width$}", "full", width = MAX_EXPERIMENTAL_STRING_BYTES);
+        let params = params_from_json(
+            serde_json::json!({"capabilities": {"experimental": {"riprAgent": {"protocol": "0.1", "profiles": [padded]}}}}),
+        )?;
+        let agent = ClientFeatureProfile::from_initialize_params(&params)
+            .ripr_agent
+            .ok_or_else(|| "an at-bound string must be accepted".to_string())?;
+        assert_eq!(agent.profiles, vec![RiprAgentProfile::Full]);
+        Ok(())
+    }
+
+    #[test]
+    fn status_projection_caps_every_projected_list() -> Result<(), String> {
+        let encodings = (0..20)
+            .map(|index| format!("enc-{index}"))
+            .collect::<Vec<_>>();
+        let formats = (0..20)
+            .map(|index| {
+                if index % 2 == 0 {
+                    "markdown"
+                } else {
+                    "plaintext"
+                }
+            })
+            .collect::<Vec<_>>();
+        let params = params_from_json(serde_json::json!({
+            "capabilities": {
+                "general": {"positionEncodings": encodings},
+                "textDocument": {"hover": {"contentFormat": formats}}
+            }
+        }))?;
+        let projection = ClientFeatureProfile::from_initialize_params(&params).status_projection();
+        for key in ["advertised_position_encodings", "hover_content_formats"] {
+            let list = projection
+                .get(key)
+                .ok_or_else(|| format!("projection must carry `{key}`"))?;
+            let values = list
+                .get("values")
+                .and_then(|values| values.as_array())
+                .ok_or_else(|| format!("`{key}` must project a capped values list"))?;
+            if values.len() != MAX_PROJECTED_LIST_ITEMS {
+                return Err(format!(
+                    "`{key}` must be capped at {MAX_PROJECTED_LIST_ITEMS} entries, got {}",
+                    values.len()
+                ));
+            }
+            assert_eq!(
+                list.get("omitted_count").and_then(|count| count.as_u64()),
+                Some(4),
+                "`{key}` must disclose the omission count"
+            );
+        }
+
+        // A short list projects unchanged with a zero omission count.
+        let short = params_from_json(serde_json::json!({
+            "capabilities": {
+                "general": {"positionEncodings": ["utf-16"]},
+                "textDocument": {"hover": {"contentFormat": ["markdown"]}}
+            }
+        }))?;
+        let projection = ClientFeatureProfile::from_initialize_params(&short).status_projection();
+        assert_eq!(
+            projection.get("advertised_position_encodings"),
+            Some(&serde_json::json!({"values": ["utf-16"], "omitted_count": 0}))
+        );
+        assert_eq!(
+            projection.get("hover_content_formats"),
+            Some(&serde_json::json!({"values": ["markdown"], "omitted_count": 0}))
+        );
         Ok(())
     }
 

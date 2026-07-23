@@ -1830,8 +1830,16 @@ impl Backend {
     }
 
     pub(super) fn set_configuration_failure(&self, message: impl Into<String>) {
+        self.record_blocking_failure("config_invalid", message);
+    }
+
+    /// Record a failure that pauses analysis until the session state is
+    /// repaired: the typed failure lands in `configuration_failure` and the
+    /// analysis health so the status payload discloses it instead of
+    /// presenting an internally inconsistent session as normal.
+    fn record_blocking_failure(&self, kind: &str, message: impl Into<String>) {
         let failure = AnalysisFailure {
-            kind: "config_invalid".to_string(),
+            kind: kind.to_string(),
             message: bounded_failure_message(&message.into()),
         };
         if let Ok(mut current) = self.configuration_failure.lock() {
@@ -1952,6 +1960,22 @@ impl Backend {
             .lock()
             .map(|features| features.status_projection())
             .unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Poison the profile store so tests can exercise the fail-closed
+    /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
+    /// poisoned only when a guard holder unwinds, so this helper triggers a
+    /// runtime index failure while holding the guard; the index is derived
+    /// at runtime so the compiler cannot const-prove it, and catch_unwind
+    /// confines the unwind to this helper. No production path is involved.
+    #[cfg(test)]
+    pub(super) fn poison_client_features_for_test(&self) {
+        let out_of_bounds = std::env::args_os().count() + 1;
+        let slots = [0u8];
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.client_features.lock();
+            let _tombstone = slots[out_of_bounds];
+        }));
     }
 
     fn config_pull_state(&self) -> ConfigPullState {
@@ -3106,9 +3130,6 @@ impl LanguageServer for Backend {
         if let Ok(mut supported) = self.dynamic_file_watch_registration.lock() {
             *supported = supports_dynamic_registration;
         }
-        if let Ok(mut features) = self.client_features.lock() {
-            *features = profile.clone();
-        }
         let resolution = root_from_initialize_params(&params);
         // Retain the canonical workspace-folder set (#2036, RIPR-SPEC-0139)
         // so `didChangeWorkspaceFolders` deltas apply to stored state
@@ -3144,6 +3165,32 @@ impl LanguageServer for Backend {
                 )
                 .await;
             self.set_configuration_failure(error);
+            self.publish_analysis_status().await;
+        }
+        // The profile store lands after the root application and config
+        // failure handling because applying a workspace-root authority
+        // resets the failure channel for the new input context; a failure
+        // recorded here is the last writer and stays disclosed.
+        if let Ok(mut features) = self.client_features.lock() {
+            *features = profile.clone();
+        } else {
+            // Fail closed, never silent (#1987 review): a poisoned profile
+            // store would leave the pre-initialize `unsupported()` profile
+            // beside sibling session fields just populated from the parsed
+            // profile — an internally inconsistent session. Surface it
+            // through the same blocking-failure channel as a config load
+            // failure so the status payload discloses the state and analysis
+            // stays paused instead of running on a torn negotiation.
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    "ripr client feature profile could not be stored; analysis is paused",
+                )
+                .await;
+            self.record_blocking_failure(
+                "session_state_inconsistent",
+                "client feature profile could not be stored after initialize negotiation; analysis is paused",
+            );
             self.publish_analysis_status().await;
         }
         Ok(initialize_result_for_client(

@@ -7436,10 +7436,13 @@ tests = [
   "crates/ripr/src/lsp/client_features.rs::tests::session_capability_identity_changes_only_when_selected_behavior_changes",
   "crates/ripr/src/lsp/client_features.rs::tests::guarded_test_edit_requires_explicit_opt_in",
   "crates/ripr/src/lsp/client_features.rs::tests::status_projection_is_bounded_and_never_includes_client_identity",
+  "crates/ripr/src/lsp/client_features.rs::tests::status_projection_caps_every_projected_list",
+  "crates/ripr/src/lsp/client_features.rs::tests::ripr_agent_entries_fail_closed_beyond_the_string_byte_bound",
   "crates/ripr/src/lsp/client_features.rs::tests::position_encoding_selection_matches_the_documented_preference",
   "crates/ripr/src/lsp/tests.rs::initialize_discloses_bounded_client_feature_profile_in_workspace_status",
   "crates/ripr/src/lsp/tests.rs::receipt_status_discloses_bounded_client_feature_profile",
   "crates/ripr/src/lsp/tests.rs::malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsupported",
+  "crates/ripr/src/lsp/tests.rs::initialize_surfaces_poisoned_client_features_store_as_a_session_failure",
 ]
 fixtures = []
 code = [

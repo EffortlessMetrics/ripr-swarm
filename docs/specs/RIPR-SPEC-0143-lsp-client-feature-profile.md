@@ -121,6 +121,12 @@ lists with omission counts, and `null` for absent experimental blocks. The
 raw capability document is never dumped, and client name, PID, and timing
 never appear.
 
+A session that cannot store the parsed profile (a poisoned session lock)
+fails closed through the blocking-failure channel: the status payload
+discloses a `session_state_inconsistent` failure and analysis stays paused
+rather than running on a torn negotiation where sibling session fields were
+populated from a profile the session no longer holds.
+
 ### Editor advertisement
 
 The VS Code extension advertises the `riprEditor` block (extension version,
@@ -225,6 +231,12 @@ and never the raw capability document or the client name.
 - `crates/ripr/src/lsp/client_features.rs::tests::status_projection_is_bounded_and_never_includes_client_identity`
   — the projection caps client-advertised lists and never leaks client
   identity.
+- `crates/ripr/src/lsp/client_features.rs::tests::status_projection_caps_every_projected_list`
+  — every projected list is capped with a disclosed omission count; short
+  lists project unchanged.
+- `crates/ripr/src/lsp/client_features.rs::tests::ripr_agent_entries_fail_closed_beyond_the_string_byte_bound`
+  — over-bound agent profile/delivery strings fail closed; at-bound strings
+  are accepted.
 - `crates/ripr/src/lsp/client_features.rs::tests::position_encoding_selection_matches_the_documented_preference`
   — encoding preference order.
 - `crates/ripr/src/lsp/tests.rs::initialize_discloses_bounded_client_feature_profile_in_workspace_status`
@@ -234,6 +246,9 @@ and never the raw capability document or the client name.
   — receipts disclose the bounded projection including agent preferences.
 - `crates/ripr/src/lsp/tests.rs::malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsupported`
   — malformed blocks keep the standard session and disclose unsupported.
+- `crates/ripr/src/lsp/tests.rs::initialize_surfaces_poisoned_client_features_store_as_a_session_failure`
+  — a poisoned profile store surfaces a `session_state_inconsistent`
+  blocking failure instead of a silently torn session.
 - `editors/vscode/test/suite/extension.test.ts::initialize advertises the RIPR experimental capability block`
   — the extension advertises the riprEditor block.
 

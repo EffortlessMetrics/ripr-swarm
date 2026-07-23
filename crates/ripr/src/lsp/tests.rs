@@ -5396,6 +5396,61 @@ fn malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsuppor
 }
 
 #[test]
+fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("client-feature-profile-poisoned-store")?;
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        // Poison the profile store: a std::sync::Mutex is poisoned when a
+        // holder panics. The helper confines the injected panic; no
+        // production path is involved.
+        backend.poison_client_features_for_test();
+        backend
+            .initialize(initialize_params(
+                None,
+                Some(file_uri_for_path(root.path())?),
+            ))
+            .await
+            .map_err(|err| format!("initialize failed: {err}"))?;
+
+        // The store failure must surface through the blocking-failure
+        // channel instead of leaving the pre-initialize profile beside
+        // negotiated sibling state.
+        let failure = backend
+            .configuration_failure()
+            .ok_or_else(|| "poisoned profile store must surface a session failure".to_string())?;
+        if failure.kind != "session_state_inconsistent" {
+            return Err(format!(
+                "poisoned profile store surfaced the wrong failure kind: {}",
+                failure.kind
+            ));
+        }
+        let status = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                arguments: vec![],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected workspace status".to_string())?;
+        assert_eq!(
+            status["analysis_status"]["input_authority"]["configuration_state"],
+            "invalid"
+        );
+        assert_eq!(
+            status["analysis_status"]["failure"]["kind"],
+            "session_state_inconsistent"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
