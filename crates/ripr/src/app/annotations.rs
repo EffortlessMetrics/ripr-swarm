@@ -346,14 +346,24 @@ mod tests {
     #[test]
     fn production_loader_has_no_exists_pre_check() -> Result<(), String> {
         // issue #1958: one direct read determines file presence — a separate
-        // exists() decision is the removed TOCTOU-shaped pattern.
+        // existence decision is the removed TOCTOU-shaped pattern. This is a
+        // source scan, not a behavioral proof (behavior is identical by
+        // design for every portable input class): it covers the realistic
+        // re-introduction spellings, and the behavioral pins are the
+        // directory-as-path and invalid-UTF-8 tests above.
         let source = include_str!("annotations.rs");
-        // Needle split so this test's own source does not satisfy the search.
-        let needle = ["comments_path.", "exists()"].concat();
-        if source.contains(&needle) {
-            return Err(
-                "render_annotations must not re-introduce an exists() pre-check".to_string(),
-            );
+        // Needles split so this test's own source does not satisfy the search.
+        let needles = [
+            ["comments_path.", "exists()"].concat(),
+            ["comments_path.", "try_exists()"].concat(),
+            ["metadata(&comments", "_path)"].concat(),
+        ];
+        for needle in needles {
+            if source.contains(&needle) {
+                return Err(format!(
+                    "render_annotations must not re-introduce an existence pre-check (`{needle}`)"
+                ));
+            }
         }
         Ok(())
     }
