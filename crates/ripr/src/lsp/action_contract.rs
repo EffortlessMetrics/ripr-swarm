@@ -5,7 +5,10 @@
 //! addresses without parsing title text. The payload mirrors the
 //! `stable_id()` disclosure posture: hashed identities and producer-owned
 //! identifiers only — no absolute paths, no fix-instruction summaries, no
-//! retrieval references (those belong to resolve).
+//! retrieval references (those belong to resolve). Each action also carries
+//! its stable snake_case machine name (`action_name`), which joins the
+//! `action_id` fingerprint so constructors that share one command id on one
+//! diagnostic still fingerprint distinctly.
 //!
 //! Disabled reasons are a closed vocabulary. Only reasons with a real
 //! producer in the current code may be emitted (real producers only,
@@ -164,6 +167,11 @@ pub(super) fn action_class_for_kind(kind: &str) -> &'static str {
 pub(super) struct ActionDataInputs<'a> {
     /// The action's `CodeActionKind` string (e.g. `source.ripr.inspect`).
     pub(super) action_kind: &'a str,
+    /// The action's stable snake_case machine name (e.g.
+    /// `copy_gap_repair_packet`) — never title text. Several constructors
+    /// share a command id and kind, so the name is what keeps their
+    /// `action_id` fingerprints distinct on one diagnostic.
+    pub(super) action_name: &'a str,
     /// The command the action executes (or would execute, when disabled).
     pub(super) command_id: &'a str,
     /// The capability the client must have for the action to run: the
@@ -179,14 +187,16 @@ pub(super) struct ActionDataInputs<'a> {
 
 /// Builds the bounded, versioned `CodeAction.data` payload (#1892). The
 /// `action_id` fingerprints the action class, the canonical addressed
-/// identity, and the command id — never title text — so it is stable across
-/// calls and distinct across actions.
+/// identity, the command id, and the action's stable machine name — never
+/// title text — so it is stable across calls and distinct across actions,
+/// including the constructors that share one command id on one diagnostic.
 pub(super) fn action_data(inputs: &ActionDataInputs<'_>) -> Value {
     let action_class = action_class_for_kind(inputs.action_kind);
     let canonical_identity = canonical_identity(inputs.diagnostic).unwrap_or_default();
     let action_id = crate::config::config_fingerprint(&format!(
-        "{action_class}|{canonical_identity}|{command_id}",
-        command_id = inputs.command_id
+        "{action_class}|{canonical_identity}|{command_id}|{action_name}",
+        command_id = inputs.command_id,
+        action_name = inputs.action_name
     ));
     let mut payload = serde_json::Map::new();
     payload.insert(
@@ -201,6 +211,10 @@ pub(super) fn action_data(inputs: &ActionDataInputs<'_>) -> Value {
     payload.insert(
         "action_kind".to_string(),
         Value::String(inputs.action_kind.to_string()),
+    );
+    payload.insert(
+        "action_name".to_string(),
+        Value::String(inputs.action_name.to_string()),
     );
     if let Some(diagnostic) = inputs.diagnostic {
         if let Some(code) = diagnostic_code_id(diagnostic) {
@@ -308,6 +322,7 @@ mod tests {
     fn inputs_for<'a>(diagnostic: Option<&'a Diagnostic>) -> ActionDataInputs<'a> {
         ActionDataInputs {
             action_kind: "source.ripr.inspect",
+            action_name: "copy_gap_repair_packet",
             command_id: "ripr.copyContext",
             required_client_capability: "ripr.copyContext",
             diagnostic,
@@ -369,6 +384,7 @@ mod tests {
             "action_class",
             "action_id",
             "action_kind",
+            "action_name",
             "canonical_gap_id",
             "diagnostic_id",
             "finding_id",
@@ -393,6 +409,9 @@ mod tests {
         if payload["action_kind"] != "source.ripr.inspect" {
             return Err(format!("action kind drifted: {payload}"));
         }
+        if payload["action_name"] != "copy_gap_repair_packet" {
+            return Err(format!("action name missing: {payload}"));
+        }
         if payload["diagnostic_id"] != "ripr-gap-MissingBoundaryAssertion" {
             return Err(format!("diagnostic id missing: {payload}"));
         }
@@ -406,12 +425,27 @@ mod tests {
             return Err("enabled actions must not carry disabled_reason".to_string());
         }
         let serialized = payload.to_string();
-        // Needle split so check-local-context does not flag the drive-letter
-        // prefix literal in this source file (same precedent as
-        // app/annotations.rs).
-        let windows_prefix = ["C:", "\\"].concat();
-        if serialized.contains("/workspace") || serialized.contains(&windows_prefix) {
+        // The needles are built programmatically so check-local-context does
+        // not flag a drive-letter prefix literal in this source file (same
+        // precedent as app/annotations.rs).
+        const BACKSLASH: char = '\\';
+        if serialized.contains("/workspace") {
             return Err(format!("payload leaks an absolute path: {serialized}"));
+        }
+        let unc_prefix = format!("{BACKSLASH}{BACKSLASH}");
+        if serialized.contains(&unc_prefix) {
+            return Err(format!("payload leaks a UNC path: {serialized}"));
+        }
+        for letter in b'A'..=b'Z' {
+            let letter = char::from(letter);
+            for separator in [BACKSLASH, '/'] {
+                let drive_prefix = format!("{letter}:{separator}");
+                if serialized.contains(&drive_prefix) {
+                    return Err(format!(
+                        "payload leaks a drive-letter path ({drive_prefix}): {serialized}"
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -435,6 +469,14 @@ mod tests {
         let other_kind = action_data(&other_kind);
         if first["action_id"] == other_kind["action_id"] {
             return Err("action_id must differ across action classes".to_string());
+        }
+        let mut other_name = inputs_for(Some(&diagnostic));
+        other_name.action_name = "copy_first_repair_packet";
+        let other_name = action_data(&other_name);
+        if first["action_id"] == other_name["action_id"] {
+            return Err(
+                "action_id must differ across action names sharing one command".to_string(),
+            );
         }
         let no_diagnostic = action_data(&inputs_for(None));
         if first["action_id"] == no_diagnostic["action_id"] {

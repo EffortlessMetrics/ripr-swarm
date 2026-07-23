@@ -7116,6 +7116,7 @@ tests = [
   "crates/ripr/src/lsp/action_contract.rs::tests::disabled_reason_is_included_only_when_disabled",
   "crates/ripr/src/lsp/actions.rs::tests::disabled_action_fails_closed_for_reserved_reasons",
   "crates/ripr/src/lsp/tests.rs::code_action_response_actions_carry_versioned_data_payloads",
+  "crates/ripr/src/lsp/tests.rs::gap_code_actions_carry_distinct_action_ids_and_names",
   "crates/ripr/src/lsp/tests.rs::code_action_response_disabled_capable_client_receives_inert_client_command_actions",
   "crates/ripr/src/lsp/tests.rs::code_action_response_disabled_actions_never_execute_across_scenarios",
   "crates/ripr/src/lsp/tests.rs::code_action_response_disabled_policy_keeps_only_filter_parity",

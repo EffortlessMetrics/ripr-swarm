@@ -48,6 +48,7 @@ pub(super) fn code_action_response(
         && let Some(action) = disabled_action(
             INSPECT_GAP_PACKET_TITLE,
             "source.ripr.inspect",
+            "copy_gap_repair_packet",
             COPY_CONTEXT_COMMAND,
             diagnostic,
             Some(current),
@@ -68,6 +69,7 @@ pub(super) fn code_action_response(
         actions.push(copy_context_action(
             INSPECT_FINDING_CONTEXT_TITLE,
             INSPECT_FINDING_CONTEXT_COMMAND_TITLE,
+            "copy_finding_context",
             copy_context_target(params, diagnostic),
             diagnostic,
             snapshot,
@@ -83,6 +85,7 @@ pub(super) fn code_action_response(
         }),
         data: Some(action_data_payload(
             "source.ripr.refresh",
+            "refresh_analysis",
             REFRESH_COMMAND,
             None,
             snapshot,
@@ -167,11 +170,16 @@ fn command_allowed_for_client(
     };
     match command {
         None => true,
-        Some(command) => {
-            SERVER_EXECUTED_COMMANDS.contains(&command.command.as_str())
-                || client_features.supports_client_command(&command.command)
-        }
+        Some(command) => command_permitted(&command.command, client_features),
     }
+}
+
+/// The shared client-command permission predicate (#1776, #1892): a command
+/// is permitted when it executes inside the server or when the negotiated
+/// profile advertised it. Both the omit filter and the disabled-form policy
+/// delegate here so the two paths can never drift apart.
+fn command_permitted(command: &str, client_features: &ClientFeatureProfile) -> bool {
+    SERVER_EXECUTED_COMMANDS.contains(&command) || client_features.supports_client_command(command)
 }
 
 /// The capability the client must hold for a command (#1892): a
@@ -186,14 +194,19 @@ fn required_client_capability(command_id: &str) -> &str {
 }
 
 /// The versioned `CodeAction.data` payload for an enabled action (#1892).
+/// `action_name` is the action's stable snake_case machine identity — never
+/// title text — and keeps the `action_id` distinct across constructors that
+/// share one command id on one diagnostic.
 fn action_data_payload(
     action_kind: &str,
+    action_name: &'static str,
     command_id: &str,
     diagnostic: Option<&Diagnostic>,
     snapshot: Option<&AnalysisSnapshot>,
 ) -> LSPAny {
     action_data(&ActionDataInputs {
         action_kind,
+        action_name,
         command_id,
         required_client_capability: required_client_capability(command_id),
         diagnostic,
@@ -218,9 +231,7 @@ fn disable_missing_client_command_action(
     let Some(command) = action.command.as_ref() else {
         return;
     };
-    if SERVER_EXECUTED_COMMANDS.contains(&command.command.as_str())
-        || client_features.supports_client_command(&command.command)
-    {
+    if command_permitted(&command.command, client_features) {
         return;
     }
     action.command = None;
@@ -252,6 +263,7 @@ fn disable_missing_client_command_action(
 fn disabled_action(
     title: &str,
     action_kind: &'static str,
+    action_name: &'static str,
     command_id: &str,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
@@ -269,6 +281,7 @@ fn disabled_action(
         }),
         data: Some(action_data(&ActionDataInputs {
             action_kind,
+            action_name,
             command_id,
             required_client_capability: required_client_capability(command_id),
             diagnostic: Some(diagnostic),
@@ -411,6 +424,7 @@ fn push_seam_actions(
     actions.push(copy_context_action(
         INSPECT_SEAM_PACKET_TITLE,
         INSPECT_SEAM_PACKET_TITLE,
+        "copy_seam_packet",
         copy_seam_packet_target(params, context.diagnostic, context.seam),
         context.diagnostic,
         Some(context.snapshot),
@@ -423,6 +437,7 @@ fn push_seam_actions(
             && let Some(action) = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
                 "source.ripr.inspect",
+                "copy_targeted_test_brief",
                 COPY_TARGETED_TEST_BRIEF_COMMAND,
                 context.diagnostic,
                 Some(context.snapshot),
@@ -452,6 +467,7 @@ fn push_seam_actions(
     actions.push(copy_agent_loop_command_action(
         AGENT_PACKET_COMMAND_TITLE,
         COPY_AGENT_PACKET_COMMAND,
+        "copy_agent_packet_command",
         agent_loop_command_target(
             context.snapshot,
             context.diagnostic,
@@ -470,6 +486,7 @@ fn push_seam_actions(
     actions.push(copy_agent_loop_command_action(
         AGENT_BRIEF_COMMAND_TITLE,
         COPY_AGENT_BRIEF_COMMAND,
+        "copy_agent_brief_command",
         agent_loop_command_target(
             context.snapshot,
             context.diagnostic,
@@ -488,6 +505,7 @@ fn push_seam_actions(
     actions.push(copy_agent_loop_command_action(
         AFTER_SNAPSHOT_COMMAND_TITLE,
         COPY_AFTER_SNAPSHOT_COMMAND,
+        "copy_after_snapshot_command",
         agent_loop_command_target(
             context.snapshot,
             context.diagnostic,
@@ -507,6 +525,7 @@ fn push_seam_actions(
     actions.push(copy_agent_loop_command_action(
         AGENT_VERIFY_COMMAND_TITLE,
         COPY_AGENT_VERIFY_COMMAND,
+        "copy_agent_verify_command",
         agent_loop_command_target(
             context.snapshot,
             context.diagnostic,
@@ -526,6 +545,7 @@ fn push_seam_actions(
     actions.push(copy_agent_loop_command_action(
         AGENT_RECEIPT_COMMAND_TITLE,
         COPY_AGENT_RECEIPT_COMMAND,
+        "copy_agent_receipt_command",
         agent_loop_command_target(
             context.snapshot,
             context.diagnostic,
@@ -574,6 +594,7 @@ fn push_gap_actions(
             actions.push(copy_context_action(
                 COPY_FIRST_REPAIR_PACKET_TITLE,
                 COPY_FIRST_REPAIR_PACKET_TITLE,
+                "copy_first_repair_packet",
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
@@ -588,6 +609,7 @@ fn push_gap_actions(
             actions.push(copy_context_action(
                 COPY_PYTHON_AGENT_PACKET_TITLE,
                 COPY_PYTHON_AGENT_PACKET_TITLE,
+                "copy_python_agent_packet",
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
@@ -602,6 +624,7 @@ fn push_gap_actions(
             actions.push(copy_context_action(
                 INSPECT_GAP_PACKET_TITLE,
                 INSPECT_GAP_PACKET_COMMAND_TITLE,
+                "copy_gap_repair_packet",
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
@@ -630,6 +653,7 @@ fn push_gap_actions(
             actions.push(copy_context_action(
                 COPY_TYPESCRIPT_REPAIR_PACKET_TITLE,
                 COPY_TYPESCRIPT_REPAIR_PACKET_TITLE,
+                "copy_typescript_repair_packet",
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
@@ -651,6 +675,7 @@ fn push_gap_actions(
             Some(command) => actions.push(copy_agent_loop_command_action(
                 AGENT_VERIFY_COMMAND_TITLE,
                 COPY_AGENT_VERIFY_COMMAND,
+                "copy_agent_verify_command",
                 gap_command_target(context.diagnostic, "gap_verify", command),
                 context.diagnostic,
                 Some(context.snapshot),
@@ -663,6 +688,7 @@ fn push_gap_actions(
                     && let Some(action) = disabled_action(
                         AGENT_VERIFY_COMMAND_TITLE,
                         "source.ripr.inspect",
+                        "copy_agent_verify_command",
                         COPY_AGENT_VERIFY_COMMAND,
                         context.diagnostic,
                         Some(context.snapshot),
@@ -678,6 +704,7 @@ fn push_gap_actions(
                 Some(command) => actions.push(copy_agent_loop_command_action(
                     AGENT_RECEIPT_COMMAND_TITLE,
                     COPY_AGENT_RECEIPT_COMMAND,
+                    "copy_agent_receipt_command",
                     gap_command_target(context.diagnostic, "gap_receipt", &command),
                     context.diagnostic,
                     Some(context.snapshot),
@@ -690,6 +717,7 @@ fn push_gap_actions(
                         && let Some(action) = disabled_action(
                             AGENT_RECEIPT_COMMAND_TITLE,
                             "source.ripr.inspect",
+                            "copy_agent_receipt_command",
                             COPY_AGENT_RECEIPT_COMMAND,
                             context.diagnostic,
                             Some(context.snapshot),
@@ -705,6 +733,7 @@ fn push_gap_actions(
         && let Some(action) = disabled_action(
             INSPECT_GAP_PACKET_TITLE,
             "source.ripr.inspect",
+            "copy_gap_repair_packet",
             COPY_CONTEXT_COMMAND,
             context.diagnostic,
             Some(context.snapshot),
@@ -720,6 +749,7 @@ fn push_gap_actions(
         actions.push(copy_context_action(
             COPY_STATIC_LIMIT_NOTE_TITLE,
             COPY_STATIC_LIMIT_NOTE_TITLE,
+            "copy_static_limit_note",
             target,
             context.diagnostic,
             Some(context.snapshot),
@@ -730,6 +760,7 @@ fn push_gap_actions(
 fn copy_context_action(
     title: &str,
     command_title: &str,
+    action_name: &'static str,
     target: LSPAny,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
@@ -745,6 +776,7 @@ fn copy_context_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.inspect",
+            action_name,
             COPY_CONTEXT_COMMAND,
             Some(diagnostic),
             snapshot,
@@ -779,6 +811,7 @@ const REFRESH_ANALYSIS_TITLE: &str = "Refresh Analysis - Saved Workspace Check";
 fn copy_agent_loop_command_action(
     title: &str,
     command: &str,
+    action_name: &'static str,
     target: LSPAny,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
@@ -794,6 +827,7 @@ fn copy_agent_loop_command_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.inspect",
+            action_name,
             command,
             Some(diagnostic),
             snapshot,
@@ -1812,6 +1846,7 @@ fn copy_targeted_test_brief_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.inspect",
+            "copy_targeted_test_brief",
             COPY_TARGETED_TEST_BRIEF_COMMAND,
             Some(diagnostic),
             snapshot,
@@ -1836,6 +1871,7 @@ fn copy_python_pytest_skeleton_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.inspect",
+            "copy_python_pytest_skeleton",
             COPY_TARGETED_TEST_BRIEF_COMMAND,
             Some(diagnostic),
             snapshot,
@@ -1860,6 +1896,7 @@ fn copy_python_repair_card_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.inspect",
+            "copy_python_repair_card",
             COPY_TARGETED_TEST_BRIEF_COMMAND,
             Some(diagnostic),
             snapshot,
@@ -1888,6 +1925,7 @@ fn copy_suggested_assertion_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.inspect",
+            "copy_suggested_assertion",
             COPY_SUGGESTED_ASSERTION_COMMAND,
             Some(diagnostic),
             snapshot,
@@ -1912,6 +1950,7 @@ fn open_related_test_action(
         }),
         data: Some(action_data_payload(
             "source.ripr.navigate",
+            "open_related_test",
             OPEN_RELATED_TEST_COMMAND,
             Some(diagnostic),
             snapshot,
@@ -2107,6 +2146,7 @@ mod tests {
             if disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
                 "source.ripr.inspect",
+                "copy_targeted_test_brief",
                 COPY_TARGETED_TEST_BRIEF_COMMAND,
                 &diagnostic,
                 None,
@@ -2124,6 +2164,7 @@ mod tests {
             let action = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
                 "source.ripr.inspect",
+                "copy_targeted_test_brief",
                 COPY_TARGETED_TEST_BRIEF_COMMAND,
                 &diagnostic,
                 None,

@@ -63,11 +63,14 @@ Code action data contract (#1892): every ripr code action carries a
 bounded, versioned `CodeAction.data` payload
 (`schema_version: "ripr-code-action-data-v1"`) with a deterministic
 fingerprinted `action_id` (action class + canonical addressed identity +
-command id — never title text), the action class and kind, the addressed
-identity fields (`diagnostic_id`, `canonical_gap_id`, `gap_id`, `seam_id`,
-`finding_id` as applicable), the snapshot `input_identity`, the
-`required_client_capability` (the client-command id, or `"server"` for
-server-executed commands), and `disabled_reason` only when disabled.
+command id + action name — never title text), the action class and kind,
+the stable snake_case `action_name` machine identity (which keeps
+constructors that share one command id on one diagnostic fingerprinting
+distinctly), the addressed identity fields (`diagnostic_id`,
+`canonical_gap_id`, `gap_id`, `seam_id`, `finding_id` as applicable), the
+snapshot `input_identity`, the `required_client_capability` (the
+client-command id, or `"server"` for server-executed commands), and
+`disabled_reason` only when disabled.
 Diagnostic-addressing actions attach the addressed diagnostic in
 `CodeAction.diagnostics`. The payload carries no absolute paths, no
 fix-instruction summaries, and no retrieval references — those belong to
@@ -135,11 +138,13 @@ real handlers. The capability is advertised as `capability_only`.
   commands. The `source.ripr.*` kind strings still appear as kind metadata
   for every client; they carry no negotiation requirement.
 - A standard LSP client that advertises `CodeAction.disabled` support (but
-  no `experimental.riprEditor`) instead receives those ripr-kind actions
-  inert (#1892): each carries its kind, the addressed diagnostic, a
-  versioned `data` payload naming `disabled_reason:
+  no `experimental.riprEditor`) instead receives the otherwise-suppressed
+  client-command actions inert (#1892): each carries its kind, the
+  addressed diagnostic, a versioned `data` payload naming `disabled_reason:
   "client_capability_missing"`, and no command or edit — so the action is
-  visible but cannot execute.
+  visible but cannot execute. Server-executed actions (e.g. Refresh
+  Analysis) stay active; only the client-command actions that the omission
+  path would have stripped are disabled.
 - A VS Code client that advertises `experimental.riprEditor` with
   `client_commands: ["ripr.copyContext"]` receives `source.ripr.inspect`
   code actions containing `ripr.copyContext` commands.

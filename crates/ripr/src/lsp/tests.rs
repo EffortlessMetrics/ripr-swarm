@@ -4379,6 +4379,66 @@ fn code_action_response_actions_carry_versioned_data_payloads() -> Result<(), St
 }
 
 #[test]
+fn gap_code_actions_carry_distinct_action_ids_and_names() -> Result<(), String> {
+    // #1892 review (action_id collisions): several constructors share one
+    // command id on one diagnostic — the copy_context sites all use
+    // COPY_CONTEXT_COMMAND, and the pytest-skeleton / repair-card pair both
+    // use COPY_TARGETED_TEST_BRIEF_COMMAND — so the stable action_name must
+    // keep every action_id in one response distinct.
+    let vscode = vscode_client_features()?;
+    let (_gap_root, gap_params, gap_snapshot) = gap_kind_parity_request()?;
+    let actions = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
+    let literals = code_action_literals(&actions)?;
+    if literals.len() < 4 {
+        return Err(format!(
+            "gap scenario should emit several actions, got {}",
+            literals.len()
+        ));
+    }
+    let shared_context_command = literals
+        .iter()
+        .filter(|action| {
+            action
+                .command
+                .as_ref()
+                .is_some_and(|command| command.command == COPY_CONTEXT_COMMAND)
+        })
+        .count();
+    if shared_context_command < 2 {
+        return Err(format!(
+            "gap scenario should resolve at least two copy_context actions, got {shared_context_command}"
+        ));
+    }
+    let mut action_ids = BTreeSet::new();
+    let mut action_names = BTreeSet::new();
+    for action in &literals {
+        let data = action
+            .data
+            .as_ref()
+            .ok_or_else(|| format!("action {} must carry data", action.title))?;
+        let name = data["action_name"]
+            .as_str()
+            .ok_or_else(|| format!("action {} must carry action_name", action.title))?;
+        if !action_names.insert(name.to_string()) {
+            return Err(format!(
+                "duplicate action_name {name} in one response (action {})",
+                action.title
+            ));
+        }
+        let action_id = data["action_id"]
+            .as_str()
+            .ok_or_else(|| format!("action {} must carry action_id", action.title))?;
+        if !action_ids.insert(action_id.to_string()) {
+            return Err(format!(
+                "duplicate action_id {action_id} in one response (action {})",
+                action.title
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn code_action_response_disabled_capable_client_receives_inert_client_command_actions()
 -> Result<(), String> {
     // Omit-vs-disabled policy (#1892, RIPR-SPEC-0129): a client advertising
@@ -4458,15 +4518,19 @@ fn code_action_response_disabled_actions_never_execute_across_scenarios() -> Res
     ];
     let mut disabled_count = 0usize;
     for (scenario, actions) in &scenarios {
+        let mut scenario_disabled_count = 0usize;
         for action in code_action_literals(actions)? {
             if action.disabled.is_some() {
                 assert_disabled_action_invariants(action)?;
-                disabled_count += 1;
+                scenario_disabled_count += 1;
             }
         }
-        if scenario == &"stale-gap" && disabled_count == 0 {
-            return Err("stale-gap scenario must emit a disabled action".to_string());
+        if scenario_disabled_count == 0 {
+            return Err(format!(
+                "{scenario} scenario must emit at least one disabled action"
+            ));
         }
+        disabled_count += scenario_disabled_count;
     }
     if disabled_count == 0 {
         return Err("no disabled actions were inspected".to_string());
