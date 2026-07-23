@@ -173,6 +173,18 @@ pub(super) struct RefreshTransaction {
     pub(super) pending_entered: Vec<Uri>,
 }
 
+/// Aborts a spawned deadline timer on drop (#1972): the explicit `drop` after
+/// the blocking await is the normal path, but if the refresh-worker future is
+/// itself dropped mid-await (shutdown, supersede-adjacent paths), the timer
+/// task must not outlive the attempt and fire into a dead token later.
+struct AbortTimerOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortTimerOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 impl Backend {
     pub(super) fn new(client: Client, root: PathBuf) -> Self {
         Self {
@@ -387,10 +399,10 @@ impl Backend {
         // timer is aborted as soon as the blocking await returns, either way.
         let deadline = request.config.refresh_deadline;
         let deadline_token = request.cancellation.clone();
-        let deadline_timer = tokio::spawn(async move {
+        let deadline_timer = AbortTimerOnDrop(tokio::spawn(async move {
             tokio::time::sleep(deadline).await;
             deadline_token.cancel(AnalysisAbortKind::DeadlineExceeded);
-        });
+        }));
         let diagnostics_result = tokio::task::spawn_blocking(move || {
             let _execution = match execution_gate.lock() {
                 Ok(guard) => guard,
@@ -407,7 +419,7 @@ impl Backend {
             )
         })
         .await;
-        deadline_timer.abort();
+        drop(deadline_timer);
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
