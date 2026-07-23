@@ -7,7 +7,7 @@
 //!
 //! #2303: every entry point accepts an optional cooperative deadline. When a
 //! deadline is set, the child is polled on a short interval; a git invocation
-//! that exceeds the deadline is killed and reaped, and the caller gets a
+//! that exceeds the deadline is terminated and reaped, and the caller gets a
 //! named, matchable error with the [`GIT_INVOCATION_TIMEOUT_PREFIX`] prefix.
 //! The poll loop also checks cooperative analysis cancellation each tick, so
 //! a hung git invocation honors an LSP refresh supersede instead of pinning
@@ -52,8 +52,8 @@ pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
 /// Run `git -C <root> <args...>` under an optional cooperative deadline and
 /// return trimmed stdout on success (#2303). Same success/failure contract
 /// as [`run_git`]; a deadline expiry returns the named
-/// [`GIT_INVOCATION_TIMEOUT_PREFIX`] error after the child is killed and
-/// reaped.
+/// [`GIT_INVOCATION_TIMEOUT_PREFIX`] error after the child is terminated
+/// and reaped.
 #[allow(
     dead_code,
     reason = "trimmed-stdout convenience wrapper — production callers (#1921 migration) need the raw-Output variant for their own exit-status/error-text contracts; exercised by this module's tests"
@@ -93,7 +93,7 @@ pub(crate) fn run_git_with_deadline(
 /// `Err` is reserved for invocation-level failures: spawn failure, wait
 /// failure, cooperative cancellation, a zero deadline (rejected before
 /// spawning), or deadline expiry (named [`GIT_INVOCATION_TIMEOUT_PREFIX`]
-/// error, child killed and reaped). A non-zero exit status is `Ok` so
+/// error, child terminated and reaped). A non-zero exit status is `Ok` so
 /// callers that probe (`rev-parse --verify --quiet`, `symbolic-ref --quiet`)
 /// keep their own status handling.
 pub(crate) fn run_git_output_with_deadline(
@@ -159,7 +159,7 @@ fn collect_output_with_deadline(
 }
 
 /// Outcome of the shared deadline-aware child wait (#2303). In every
-/// non-`Exited` arm the child has already been killed and reaped, so no
+/// non-`Exited` arm the child has already been terminated and reaped, so no
 /// orphan process holds a handle. `WaitFailed` carries the raw wait error so
 /// each caller wraps it in its own established message text.
 pub(crate) enum ChildWait {
@@ -338,7 +338,7 @@ mod tests {
         // (a leaked child would block the reader join for the full sleep).
         if elapsed >= Duration::from_secs(30) {
             return Err(format!(
-                "timeout path took {elapsed:?}; the hung child was not killed and reaped"
+                "timeout path took {elapsed:?}; the hung child was not terminated and reaped"
             ));
         }
         Ok(())
@@ -395,7 +395,7 @@ mod tests {
         }
         if elapsed >= Duration::from_secs(30) {
             return Err(format!(
-                "cancellation path took {elapsed:?}; the hung child was not killed and reaped"
+                "cancellation path took {elapsed:?}; the hung child was not terminated and reaped"
             ));
         }
         Ok(())

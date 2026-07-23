@@ -282,23 +282,13 @@ fn run_git_diff(
     extra_args: &[&str],
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
-    // Preserve the pre-#2303 contract: the old `.current_dir(root)` spawn
-    // FAILED when the root was missing or not a directory, producing the
-    // `failed to run git diff: ...` text that downstream wrappers pin;
-    // `git -C <root>` would instead run git and exit non-zero with
-    // different text.
-    if !root.is_dir() {
-        return Err(format!(
-            "failed to run git diff: {} is not an accessible directory",
-            root.display()
-        ));
-    }
-    // Delegate the spawn to the shared git authority (#1921, #2303). The
-    // named timeout and cancellation errors pass through unwrapped so the
-    // LSP refresh path can match them; spawn/wait failures keep the
-    // established `failed to run git diff` prefix (pinned by the
-    // context/explain invalid-root tests), and the non-zero-exit text below
-    // stays byte-identical.
+    // Delegate the spawn to the shared git authority (#1921, #2303), which
+    // spawns with `current_dir(root)`: a missing/unusable root fails the
+    // SPAWN, so the wrap arm below reproduces the established
+    // `failed to run git diff: ...` text the context/explain invalid-root
+    // contract pins. The named timeout and cancellation errors pass through
+    // unwrapped so the LSP refresh path can match them; the non-zero-exit
+    // text below stays byte-identical.
     let mut args: Vec<&str> = vec!["diff"];
     args.extend_from_slice(extra_args);
     args.push(range);

@@ -422,7 +422,7 @@ fn invoke_perl_lsp_producer(
             ))
         }
         crate::git::ChildWait::TimedOut(_) => {
-            // Timed out: the shared wait already killed + reaped the child.
+            // Timed out: the shared wait already terminated + reaped the child.
             // The `.tmp` is never renamed.
             Err(format!(
                 "Perl facts exporter timed out after {timeout_ms}ms (process terminated); no packet consumed"
@@ -430,12 +430,12 @@ fn invoke_perl_lsp_producer(
         }
         crate::git::ChildWait::Cancelled(cancelled) => {
             // Cooperative cancellation (#2303): the enclosing analysis was
-            // superseded or cancelled; the shared wait already killed +
+            // superseded or cancelled; the shared wait already terminated +
             // reaped the child. Propagate the named cancellation error.
             Err(cancelled)
         }
         crate::git::ChildWait::WaitFailed(err) => {
-            // The shared wait already killed + reaped the child.
+            // The shared wait already terminated + reaped the child.
             Err(format!("Perl facts exporter failed while waiting: {err}"))
         }
     }
