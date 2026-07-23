@@ -6098,6 +6098,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_non_alias_import_still_direct_owner_call",
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_namespace_import_unchanged_imported_owner_call",
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_keeps_mocked_function_owner_call_at_proximity",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity",
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_credits_unmocked_function_owner_call",
   "crates/ripr/src/analysis/language/typescript/tests.rs::classify_change_stays_weakly_exposed_when_test_mocks_owner_module",
 ]
