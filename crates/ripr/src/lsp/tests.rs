@@ -4454,6 +4454,54 @@ fn disabled_reason_of(action: &CodeAction) -> Option<&str> {
         .and_then(|reason| reason.as_str())
 }
 
+/// Retargets one action's addressed identity (#1751): drops the listed
+/// identity keys, inserts `insert_key = insert_value`, and recomputes the
+/// `action_id` fingerprint so the payload stays well-formed. The canonical
+/// identity after retargeting is `insert_value` (higher-precedence keys are
+/// the caller's responsibility to drop), and the command id comes from the
+/// attached command, mirroring the build-side fingerprint inputs.
+fn retarget_action_identity(
+    action: &CodeAction,
+    drop_keys: &[&str],
+    insert_key: &str,
+    insert_value: &str,
+) -> Result<CodeAction, String> {
+    let mut retargeted = action.clone();
+    let command_id = retargeted
+        .command
+        .as_ref()
+        .map(|command| command.command.clone())
+        .ok_or_else(|| "enabled action must carry a command".to_string())?;
+    let object = retargeted
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "action must carry a data object".to_string())?;
+    for key in drop_keys {
+        object.remove(*key);
+    }
+    object.insert(
+        insert_key.to_string(),
+        serde_json::Value::String(insert_value.to_string()),
+    );
+    let action_class = object
+        .get("action_class")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "payload must carry action_class".to_string())?;
+    let action_name = object
+        .get("action_name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "payload must carry action_name".to_string())?;
+    let fingerprint = crate::config::config_fingerprint(&format!(
+        "{action_class}|{insert_value}|{command_id}|{action_name}"
+    ));
+    object.insert(
+        "action_id".to_string(),
+        serde_json::Value::String(fingerprint),
+    );
+    Ok(retargeted)
+}
+
 #[test]
 fn code_action_resolve_returns_fresh_action_resolved() -> Result<(), String> {
     // #1751, RIPR-SPEC-0129: a well-formed action revalidated against the
@@ -4656,6 +4704,116 @@ fn code_action_resolve_rejects_tampered_or_versionless_payloads() -> Result<(), 
     payloadless.data = None;
     if resolve_action(payloadless, Some(&seam_snapshot), &vscode).is_ok() {
         return Err("a missing payload must be rejected".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn code_action_resolve_unknown_seam_or_finding_identity_yields_disabled_stale_snapshot()
+-> Result<(), String> {
+    // #1751: a fingerprint-valid payload pointing at a seam or finding the
+    // current snapshot does not carry resolves inert naming `stale_snapshot`
+    // — the addressed-artifact lookup is the discriminator, not the
+    // freshness identity (which is left fresh here).
+    let vscode = vscode_client_features()?;
+    let (seam_params, seam_snapshot) = seam_code_action_request()?;
+    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+    let action = code_action_literals(&actions)?
+        .into_iter()
+        .find(|action| {
+            action.command.is_some()
+                && action
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.get("seam_id"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+        })
+        .cloned()
+        .ok_or_else(|| "seam scenario must emit an enabled seam-addressed action".to_string())?;
+    let seam_retargeted = retarget_action_identity(
+        &action,
+        &["canonical_gap_id", "gap_id", "finding_id"],
+        "seam_id",
+        "seam:does-not-exist",
+    )?;
+    let resolved = resolve_action(seam_retargeted, Some(&seam_snapshot), &vscode)
+        .map_err(|err| format!("unknown-seam action was rejected instead of disabled: {err}"))?;
+    assert_disabled_action_invariants(&resolved)?;
+    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
+        return Err(format!(
+            "unknown seam must name stale_snapshot, got {:?}",
+            disabled_reason_of(&resolved)
+        ));
+    }
+
+    let finding_retargeted = retarget_action_identity(
+        &action,
+        &["canonical_gap_id", "gap_id", "seam_id"],
+        "finding_id",
+        "finding:does-not-exist",
+    )?;
+    let resolved = resolve_action(finding_retargeted, Some(&seam_snapshot), &vscode)
+        .map_err(|err| format!("unknown-finding action was rejected instead of disabled: {err}"))?;
+    assert_disabled_action_invariants(&resolved)?;
+    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
+        return Err(format!(
+            "unknown finding must name stale_snapshot, got {:?}",
+            disabled_reason_of(&resolved)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn code_action_resolve_rejects_class_kind_and_capability_disagreement() -> Result<(), String> {
+    // #1751: fail-closed parse and revalidation — an `action_class` that
+    // disagrees with `action_kind`, or a `required_client_capability` that
+    // disagrees with the attached command, is a protocol rejection, never a
+    // best-effort read.
+    let vscode = vscode_client_features()?;
+    let (seam_params, seam_snapshot) = seam_code_action_request()?;
+    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+    let action = first_enabled_action(&actions)?;
+
+    let mut class_tampered = action.clone();
+    let object = class_tampered
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "action must carry a data object".to_string())?;
+    let original_class = object
+        .get("action_class")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "payload must carry action_class".to_string())?
+        .to_string();
+    let flipped_class = if original_class == "inspect" {
+        "navigate"
+    } else {
+        "inspect"
+    };
+    object.insert(
+        "action_class".to_string(),
+        serde_json::Value::String(flipped_class.to_string()),
+    );
+    if resolve_action(class_tampered, Some(&seam_snapshot), &vscode).is_ok() {
+        return Err("an action_class/action_kind disagreement must be rejected".to_string());
+    }
+
+    let mut capability_tampered = action;
+    capability_tampered
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "action must carry a data object".to_string())?
+        .insert(
+            "required_client_capability".to_string(),
+            serde_json::Value::String("ripr.noSuchNegotiatedCommand".to_string()),
+        );
+    if resolve_action(capability_tampered, Some(&seam_snapshot), &vscode).is_ok() {
+        return Err(
+            "a required_client_capability/command disagreement must be rejected".to_string(),
+        );
     }
     Ok(())
 }

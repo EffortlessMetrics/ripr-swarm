@@ -206,11 +206,15 @@ real handlers. The capability is advertised as `capability_only`.
 - `tests.rs` resolve tests verify `codeAction/resolve` revalidation
   (#1751): a fresh action resolves enabled with its command attached, a
   stale `input_identity` or a missing addressed artifact disables with
-  `stale_snapshot`, an unadvertised client command disables with
-  `client_capability_missing`, the refresh action stays enabled without a
-  snapshot, tampered or versionless payloads are rejected, and the
-  trait-level handler returns a stable `InvalidParams` for a missing or
-  foreign payload.
+  `stale_snapshot`, a fingerprint-valid payload retargeted to an unknown
+  seam or finding identity disables with `stale_snapshot` via the
+  artifact lookup (freshness identity left fresh), an unadvertised client
+  command disables with `client_capability_missing`, the refresh action
+  stays enabled without a snapshot, tampered or versionless payloads are
+  rejected (`action_id`, `action_class`/`action_kind` disagreement,
+  `required_client_capability` disagreement with the attached command),
+  and the trait-level handler returns a stable `InvalidParams` for a
+  missing or foreign payload.
   `capabilities.rs::tests::initialize_result_advertises_code_action_resolve_provider`
   pins the advertisement.
 - `agent_protocol.rs` tests verify the fail-closed `supported_requests: []`

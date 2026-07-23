@@ -7135,6 +7135,8 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::code_action_resolve_without_snapshot_keeps_refresh_enabled",
   "crates/ripr/src/lsp/tests.rs::code_action_resolve_rejects_tampered_or_versionless_payloads",
   "crates/ripr/src/lsp/tests.rs::code_action_resolve_rejects_missing_data_with_stable_invalid_params",
+  "crates/ripr/src/lsp/tests.rs::code_action_resolve_unknown_seam_or_finding_identity_yields_disabled_stale_snapshot",
+  "crates/ripr/src/lsp/tests.rs::code_action_resolve_rejects_class_kind_and_capability_disagreement",
 ]
 fixtures = []
 code = [
