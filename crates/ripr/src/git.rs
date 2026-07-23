@@ -1,9 +1,9 @@
 //! Shared git invocation helper.
 //!
 //! All git subprocess spawns in the published crate should delegate to
-//! [`run_git`] / [`run_git_with_deadline`] / [`run_git_output_with_deadline`]
-//! so error formatting stays unified and the process-policy allowlist has a
-//! single canonical entry point.
+//! [`run_git`] / [`run_git_output_with_deadline`] so error formatting stays
+//! unified and the process-policy allowlist has a single canonical entry
+//! point.
 //!
 //! #2303: every entry point accepts an optional cooperative deadline. When a
 //! deadline is set, the child is polled on a short interval; a git invocation
@@ -46,24 +46,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
     reason = "trimmed-stdout convenience wrapper — production callers (#1921 migration) need the raw-Output variant for their own exit-status/error-text contracts; exercised by this module's tests"
 )]
 pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
-    run_git_with_deadline(root, args, None)
-}
-
-/// Run `git -C <root> <args...>` under an optional cooperative deadline and
-/// return trimmed stdout on success (#2303). Same success/failure contract
-/// as [`run_git`]; a deadline expiry returns the named
-/// [`GIT_INVOCATION_TIMEOUT_PREFIX`] error after the child is terminated
-/// and reaped.
-#[allow(
-    dead_code,
-    reason = "trimmed-stdout convenience wrapper — production callers (#1921 migration) need the raw-Output variant for their own exit-status/error-text contracts; exercised by this module's tests"
-)]
-pub(crate) fn run_git_with_deadline(
-    root: &Path,
-    args: &[&str],
-    timeout: Option<Duration>,
-) -> Result<String, String> {
-    let output = run_git_output_with_deadline(root, args, timeout)?;
+    let output = run_git_output_with_deadline(root, args, None)?;
     if output.status.success() {
         String::from_utf8(output.stdout)
             .map(|value| value.trim().to_string())
@@ -85,6 +68,15 @@ pub(crate) fn run_git_with_deadline(
             stderr.trim()
         ))
     }
+}
+
+/// Trimmed stdout of a successful invocation under a deadline, for tests
+/// that assert output parity against [`run_git`].
+#[cfg(test)]
+fn trimmed_stdout(output: &std::process::Output) -> Result<String, String> {
+    String::from_utf8(output.stdout.clone())
+        .map(|value| value.trim().to_string())
+        .map_err(|err| format!("non-UTF-8 stdout: {err}"))
 }
 
 /// Run `git -C <root> <args...>` under an optional cooperative deadline and
@@ -350,7 +342,7 @@ mod tests {
             return Ok(());
         }
         let root = std::env::current_dir().map_err(|err| err.to_string())?;
-        let result = run_git_with_deadline(&root, &["--version"], Some(Duration::ZERO));
+        let result = run_git_output_with_deadline(&root, &["--version"], Some(Duration::ZERO));
         let err = match result {
             Err(err) => err,
             Ok(_) => return Err("a zero deadline must fail before spawning".to_string()),
@@ -436,7 +428,11 @@ mod tests {
             return Ok(());
         }
         let root = std::env::current_dir().map_err(|err| err.to_string())?;
-        let bounded = run_git_with_deadline(&root, &["--version"], Some(Duration::from_secs(30)))?;
+        let bounded = trimmed_stdout(&run_git_output_with_deadline(
+            &root,
+            &["--version"],
+            Some(Duration::from_secs(30)),
+        )?)?;
         let unbounded = run_git(&root, &["--version"])?;
         if bounded != unbounded {
             return Err(format!("bounded {bounded:?} != unbounded {unbounded:?}"));
