@@ -140,7 +140,7 @@ real handlers. The capability is advertised as `capability_only`.
 - A client that forwards a command the server does not execute — an unknown
   command ID, or a client-registered command such as `ripr.copyContext` —
   receives a stable `InvalidParams` rejection naming the command
-  (`unsupported command `<id>`: not a server-executed ripr command`), never
+  (``unsupported command `<id>`: not a server-executed ripr command``), never
   a silent no-op (#1628).
 - A standard LSP client that advertises `CodeAction.disabled` support (but
   no `experimental.riprEditor`) instead receives the otherwise-suppressed

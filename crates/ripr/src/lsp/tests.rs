@@ -6231,12 +6231,12 @@ fn execute_command_rejects_unsupported_commands_with_stable_invalid_params() -> 
                     work_done_progress_params: Default::default(),
                 })
                 .await;
+            let expected_message =
+                format!("unsupported command `{command}`: not a server-executed ripr command");
             match outcome {
                 Err(err)
                     if err.code == tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
-                        && err.message.contains("unsupported command")
-                        && err.message.contains(command)
-                        && err.message.contains("not a server-executed ripr command") => {}
+                        && err.message == expected_message => {}
                 other => {
                     return Err(format!(
                         "expected stable InvalidParams rejection for {command}, got {other:?}"
