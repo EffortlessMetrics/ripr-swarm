@@ -41,19 +41,31 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
           test "$(git branch --show-current)" = "fix/validated-cli-fixture-head-2383"
           mapfile -t changed < <(git diff --name-only origin/main...HEAD)
+          printf 'temporary branch files:\n%s\n' "${changed[*]}"
           test "${#changed[@]}" -eq 2
           printf '%s\n' "${changed[@]}" | grep -Fxq .github/patches/2383.patch
           printf '%s\n' "${changed[@]}" | grep -Fxq .github/workflows/apply-cli-head-2383.yml
-      - name: Apply, format, and cage the reviewed Rust patch
+      - name: Check and apply the reviewed Rust patch
         shell: bash
         run: |
           set -euo pipefail
-          git apply --check .github/patches/2383.patch
-          git apply .github/patches/2383.patch
+          git apply --check --verbose .github/patches/2383.patch
+          git apply --verbose .github/patches/2383.patch
+          git status --short
+      - name: Format the patched Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
           cargo fmt --all
           cargo fmt --all -- --check
+      - name: Enforce diff hygiene and the one-file cage
+        shell: bash
+        run: |
+          set -euo pipefail
           git diff --check
+          git diff --stat
           mapfile -t changed < <(git diff --name-only)
+          printf 'working-tree files:\n%s\n' "${changed[*]}"
           test "${#changed[@]}" -eq 1
           test "${changed[0]}" = "crates/ripr/tests/cli_smoke.rs"
       - name: Prove concrete repository-head selection
