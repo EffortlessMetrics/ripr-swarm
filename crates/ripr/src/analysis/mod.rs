@@ -6,6 +6,7 @@ mod diff;
 mod extract;
 mod facts;
 mod language;
+mod path;
 mod pipeline;
 mod probes;
 pub(crate) mod repair_route;
@@ -25,6 +26,7 @@ pub(crate) use diff::{
     load_diff, load_diff_range, parse_unified_diff, resolve_base_commit,
     working_tree_has_tracked_changes,
 };
+pub(crate) use path::confine_path_to_root;
 pub(crate) use probes::{fingerprint_probe_id, normalize_expression};
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]

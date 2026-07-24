@@ -130,6 +130,15 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
     // to the 2nd+ occurrences (the first keeps its id as-is, i.e. ordinal 1).
     dedup_probe_ids(&mut probes);
 
+    // Confinement: drop any probe whose location escapes the workspace root.
+    // A diff can carry a crafted `+++ b/../../../escape.rs` marker (#2099);
+    // without this filter the escaped path reaches downstream consumers
+    // (LSP URI builders, SARIF/JSON output, the selector layer). Dropping the
+    // probe is fail-closed: the user's signal is "fewer probes than expected",
+    // never an escaped path.
+    probes
+        .retain(|probe| crate::analysis::confine_path_to_root(root, &probe.location.file).is_ok());
+
     probes
 }
 

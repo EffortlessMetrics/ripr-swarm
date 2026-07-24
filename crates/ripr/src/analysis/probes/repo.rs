@@ -50,6 +50,14 @@ pub fn probes_for_repo_file(root: &Path, path: &Path, index: &RustIndex) -> Vec<
         }
     }
 
+    // Confinement: drop any probe whose location escapes the workspace root
+    // (sibling guard to the diff-path filter in `probes/diff.rs`; see #2099).
+    // The repo path is filesystem-derived so this is defense-in-depth, but
+    // consistency avoids a class of bug where repo-mode probes are treated
+    // differently from diff-mode probes by downstream consumers.
+    probes
+        .retain(|probe| crate::analysis::confine_path_to_root(root, &probe.location.file).is_ok());
+
     probes
 }
 

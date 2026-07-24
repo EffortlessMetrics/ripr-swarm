@@ -217,12 +217,17 @@ pub(super) fn resolve_agent_brief_working_set(
             .map(|working_set| working_set.with_changed_owners(changed_owners))
         }
         crate::cli::agent::AgentBriefWorkingSet::Files(files) => {
-            Ok(AgentBriefResolvedWorkingSet::files(
-                files
-                    .iter()
-                    .map(|file| normalize_agent_brief_path(root, file))
-                    .collect(),
-            ))
+            // Confinement: drop `--files` entries that escape the workspace
+            // root (#2100). The companion `validate_agent_*_path` helpers
+            // already confine `--verify-json`, `--diff`, verify-snapshot,
+            // and brief-diff paths; `--files` entries were routed only
+            // through the prefix-strip normalizer and bypassed confinement.
+            let confined: Vec<PathBuf> = files
+                .iter()
+                .filter(|file| analysis::confine_path_to_root(root, file).is_ok())
+                .map(|file| normalize_agent_brief_path(root, file))
+                .collect();
+            Ok(AgentBriefResolvedWorkingSet::files(confined))
         }
         crate::cli::agent::AgentBriefWorkingSet::SeamId(seam_id) => {
             Ok(AgentBriefResolvedWorkingSet::seam_id(seam_id.clone()))
@@ -262,10 +267,20 @@ pub(super) fn agent_brief_lines_from_diff(root: &Path, diff_text: &str) -> Vec<A
     analysis::parse_unified_diff(diff_text)
         .into_iter()
         .flat_map(|file| {
+            // Confinement: drop paths that escape the workspace root before
+            // they reach the brief artifact (#2100). A crafted diff can carry
+            // `+++ b/../../../escape.rs`; without this filter the escaped
+            // path is embedded into the brief and flows to agent consumers.
+            // Fail-closed drop matches the probe-site filter in
+            // `analysis/probes/diff.rs`.
+            if analysis::confine_path_to_root(root, &file.path).is_err() {
+                return Vec::new();
+            }
             let path = normalize_agent_brief_path(root, &file.path);
             file.added_lines
                 .into_iter()
                 .map(move |line| AgentBriefLine::new(path.clone(), line.line))
+                .collect::<Vec<_>>()
         })
         .collect()
 }

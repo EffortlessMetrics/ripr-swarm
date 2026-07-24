@@ -977,4 +977,33 @@ deleted file mode 100644
             .wrapping_add(1442695040888963407);
         *seed
     }
+
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "Test asserts the confinement contract holds; the panic message records the failed invariant."
+    )]
+    fn parsed_traversal_path_is_confined_by_confine_path_to_root() {
+        // Integration guard for #2099: a crafted diff can carry a
+        // `+++ b/../../../escape.rs` marker. The parser itself faithfully
+        // records the path (it should not editorialize); confinement is the
+        // analysis layer's job (`analysis::confine_path_to_root`). This test
+        // pins the contract end-to-end: parse the crafted diff, then prove
+        // the confinement helper rejects the parsed path against any root.
+        let diff = "diff --git a/src/lib.rs b/../escape.rs\n--- a/src/lib.rs\n+++ b/../escape.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let files = parse_unified_diff(diff);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, PathBuf::from("../escape.rs"));
+
+        // Whatever root a downstream consumer supplies, the parsed path must
+        // be rejected by the confinement helper before it reaches file I/O.
+        let root = std::env::temp_dir();
+        let Err(err) = crate::analysis::confine_path_to_root(&root, &files[0].path) else {
+            panic!("parsed traversal path should be rejected by confinement");
+        };
+        assert!(
+            err.contains("must stay under root"),
+            "unexpected error: {err}"
+        );
+    }
 }
