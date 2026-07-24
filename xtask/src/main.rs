@@ -22,11 +22,23 @@ use ripr::output::start_here_state::{
 mod cache;
 mod command;
 mod dispatch;
+mod io_util;
 mod policy;
 mod repo_readiness;
 mod reports;
 mod run;
 mod verification_contracts;
+
+// Re-export the shared I/O helpers at the crate root so (a) bare names in
+// this file continue to resolve and (b) already-extracted modules
+// (`policy/doc_roles.rs`, `positioning_language.rs`, `product_copy.rs`) that
+// import `crate::{collect_files, normalize_path, read_text_lossy}` keep
+// compiling without touching them. Slice B1 of #2119.
+pub(crate) use io_util::{
+    collect_files, ensure_receipts_dir, ensure_reports_dir, normalize_path, normalize_slashes,
+    read_text_lossy, receipts_dir, redact_current_dir, reports_dir, should_skip_path,
+    write_receipt, write_report,
+};
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
@@ -67421,15 +67433,6 @@ fn check_supply_chain() -> Result<(), String> {
     }
 }
 
-fn redact_current_dir(text: &str) -> String {
-    let Ok(current_dir) = std::env::current_dir() else {
-        return text.to_string();
-    };
-    let current_dir = current_dir.display().to_string();
-    let slash_dir = current_dir.replace('\\', "/");
-    text.replace(&current_dir, ".").replace(&slash_dir, ".")
-}
-
 fn check_process_policy_impl() -> Result<(), String> {
     check_count_policy(
         "process policy",
@@ -67585,54 +67588,6 @@ fn shape_report_body(sorted: &[String]) -> String {
     }
     body.push_str("\nNext commands:\n\n```bash\ncargo xtask ci-fast\n```\n");
     body
-}
-
-fn ensure_reports_dir() -> Result<(), String> {
-    fs::create_dir_all(reports_dir()).map_err(|err| {
-        format!(
-            "failed to create {}: {err}\nrerun with `cargo xtask shape` after fixing directory permissions",
-            reports_dir().display()
-        )
-    })
-}
-
-fn ensure_receipts_dir() -> Result<(), String> {
-    fs::create_dir_all(receipts_dir()).map_err(|err| {
-        format!(
-            "failed to create {}: {err}\nrerun with `cargo xtask receipts` after fixing directory permissions",
-            receipts_dir().display()
-        )
-    })
-}
-
-fn write_report(file_name: &str, body: &str) -> Result<(), String> {
-    ensure_reports_dir()?;
-    let path = reports_dir().join(file_name);
-    fs::write(&path, body).map_err(|err| {
-        format!(
-            "failed to write {}: {err}\nrerun with `cargo xtask shape` after fixing file permissions",
-            path.display()
-        )
-    })
-}
-
-fn write_receipt(file_name: &str, body: &str) -> Result<(), String> {
-    ensure_receipts_dir()?;
-    let path = receipts_dir().join(file_name);
-    fs::write(&path, body).map_err(|err| {
-        format!(
-            "failed to write {}: {err}\nrerun with `cargo xtask receipts` after fixing file permissions",
-            path.display()
-        )
-    })
-}
-
-fn reports_dir() -> PathBuf {
-    Path::new("target").join("ripr").join("reports")
-}
-
-fn receipts_dir() -> PathBuf {
-    Path::new("target").join("ripr").join("receipts")
 }
 
 fn report_index_entries() -> Result<Vec<ReportIndexEntry>, String> {
@@ -70363,36 +70318,6 @@ fn has_markdown_heading(text: &str, heading: &str) -> bool {
     text.lines().any(|line| line.trim_end() == heading)
 }
 
-fn collect_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    collect_files_inner(root, root, &mut files)?;
-    Ok(files)
-}
-
-fn collect_files_inner(root: &Path, path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let normalized = normalize_path(path);
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    let relative_normalized = normalize_path(relative);
-    if should_skip_path(&relative_normalized) {
-        return Ok(());
-    }
-    let metadata =
-        fs::metadata(path).map_err(|err| format!("failed to inspect {normalized}: {err}"))?;
-    if metadata.is_file() {
-        files.push(path.to_path_buf());
-        return Ok(());
-    }
-    if metadata.is_dir() {
-        for entry in
-            fs::read_dir(path).map_err(|err| format!("failed to read {normalized}: {err}"))?
-        {
-            let entry = entry.map_err(|err| format!("failed to read {normalized}: {err}"))?;
-            collect_files_inner(root, &entry.path(), files)?;
-        }
-    }
-    Ok(())
-}
-
 fn tracked_files() -> Result<Vec<String>, String> {
     let output = run_output("git", &["ls-files"])?;
     Ok(output
@@ -70402,36 +70327,9 @@ fn tracked_files() -> Result<Vec<String>, String> {
         .collect())
 }
 
-fn should_skip_path(path: &str) -> bool {
-    path == ".git"
-        || path.starts_with(".git/")
-        || path == ".claude"
-        || path.starts_with(".claude/")
-        || path == "target"
-        || path.starts_with("target/")
-        || path.ends_with("/target")
-        || path.contains("/target/")
-        || path == ".ripr/release"
-        || path.starts_with(".ripr/release/")
-        || path.ends_with("/.vscode-test")
-        || path.contains("/.vscode-test/")
-        || path.ends_with("/node_modules")
-        || path.contains("/node_modules/")
-        || path.ends_with("/out")
-        || path.contains("/out/")
-        || path.ends_with("/dist")
-        || path.contains("/dist/")
-}
-
 fn is_static_language_candidate(path: &str) -> bool {
     let extensions = [".md", ".rs", ".txt", ".json", ".toml", ".yml", ".yaml"];
     extensions.iter().any(|extension| path.ends_with(extension))
-}
-
-fn read_text_lossy(path: &Path) -> Result<String, String> {
-    let bytes =
-        fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn guarded_allow_attribute_lints() -> BTreeSet<&'static str> {
@@ -70890,16 +70788,6 @@ fn write_local_context_json(violations: &[String]) -> Result<(), String> {
     }
     body.push_str("  ]\n}\n");
     write_report("local-context.json", &body)
-}
-
-fn normalize_path(path: &Path) -> String {
-    normalize_slashes(&path.to_string_lossy())
-        .trim_start_matches("./")
-        .to_string()
-}
-
-fn normalize_slashes(value: &str) -> String {
-    value.replace('\\', "/")
 }
 
 fn is_file_policy_candidate(path: &str) -> bool {
