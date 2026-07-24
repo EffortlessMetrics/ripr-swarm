@@ -1,0 +1,112 @@
+name: Debug 2362 Required Gates
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-2362-required-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'debug/2362-required-gates'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        id: fmt
+        continue-on-error: true
+        run: cargo fmt --check
+
+      - name: cargo check workspace all targets
+        id: check
+        continue-on-error: true
+        run: cargo check --workspace --all-targets
+
+      - name: cargo clippy workspace all targets
+        id: clippy
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test workspace
+        id: test
+        continue-on-error: true
+        run: cargo test --workspace
+
+      - name: cargo xtask precommit
+        id: precommit
+        continue-on-error: true
+        run: cargo xtask precommit
+
+      - name: evidence-promotion honesty
+        id: honesty
+        continue-on-error: true
+        run: cargo xtask check-evidence-promotion-honesty
+
+      - name: dependency policy
+        id: dependencies
+        continue-on-error: true
+        run: cargo xtask check-dependencies
+
+      - name: process policy
+        id: process
+        continue-on-error: true
+        run: cargo xtask check-process-policy
+
+      - name: network policy
+        id: network
+        continue-on-error: true
+        run: cargo xtask check-network-policy
+
+      - name: golden outputs
+        id: goldens
+        continue-on-error: true
+        run: cargo xtask goldens check
+
+      - name: fixture suite
+        id: fixtures
+        continue-on-error: true
+        run: cargo xtask fixtures
+
+      - name: Summarize exact outcomes
+        if: always()
+        env:
+          FMT: ${{ steps.fmt.outcome }}
+          CHECK: ${{ steps.check.outcome }}
+          CLIPPY: ${{ steps.clippy.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          PRECOMMIT: ${{ steps.precommit.outcome }}
+          HONESTY: ${{ steps.honesty.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          PROCESS: ${{ steps.process.outcome }}
+          NETWORK: ${{ steps.network.outcome }}
+          GOLDENS: ${{ steps.goldens.outcome }}
+          FIXTURES: ${{ steps.fixtures.outcome }}
+        run: |
+          printf '%-18s %s\n' \
+            fmt "$FMT" \
+            check "$CHECK" \
+            clippy "$CLIPPY" \
+            test "$TEST" \
+            precommit "$PRECOMMIT" \
+            honesty "$HONESTY" \
+            dependencies "$DEPENDENCIES" \
+            process "$PROCESS" \
+            network "$NETWORK" \
+            goldens "$GOLDENS" \
+            fixtures "$FIXTURES"
+          for outcome in "$FMT" "$CHECK" "$CLIPPY" "$TEST" "$PRECOMMIT" "$HONESTY" "$DEPENDENCIES" "$PROCESS" "$NETWORK" "$GOLDENS" "$FIXTURES"; do
+            test "$outcome" = success || exit 1
+          done
