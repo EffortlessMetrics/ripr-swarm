@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 60
     env:
       TARGET_BRANCH: fix/lsp-boundary-gap-git-fixtures-2371
-      EXPECTED_HEAD: c86807ecdbf359594ef88c0ff38b10b446139dca
+      EXPECTED_HEAD: 8c65e26eb8709d9bf5ee6d4ec1a1b3f8d398458d
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -34,150 +34,24 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
-      - name: Apply test-harness correction
+      - name: Apply signing-independent test commit
         run: |
-          set -o pipefail
-          python3 - <<'PY' 2>&1 | tee /tmp/operator-2371.log
+          python3 - <<'PY'
           from pathlib import Path
-          from textwrap import dedent
-
-          path = Path('crates/ripr/src/lsp/tests.rs')
-          text = path.read_text()
-
-          def replace_normalized(old: str, new: str, label: str) -> None:
-              global text
-              old = dedent(old)
-              new = dedent(new)
-              count = text.count(old)
-              print(f'{label}: matches={count}')
-              assert count == 1, f'{label}: expected one match, got {count}'
-              text = text.replace(old, new, 1)
-
-          def replace_exact(old: str, new: str, label: str) -> None:
-              global text
-              count = text.count(old)
-              print(f'{label}: matches={count}')
-              assert count == 1, f'{label}: expected one match, got {count}'
-              text = text.replace(old, new, 1)
-
-          replace_normalized(
-              '''
-              fn boundary_gap_fixture_root() -> PathBuf {
-                  Path::new(env!("CARGO_MANIFEST_DIR"))
-                      .join("../..")
-                      .join("fixtures/boundary_gap/input")
-              }
-              ''',
-              '''
-              fn boundary_gap_fixture_root() -> PathBuf {
-                  Path::new(env!("CARGO_MANIFEST_DIR"))
-                      .join("../..")
-                      .join("fixtures/boundary_gap/input")
-              }
-
-              /// A writable, independently committed copy for saved-workspace tests.
-              ///
-              /// The tracked fixture is suitable for static inventory checks, but a
-              /// saved-workspace analysis must not borrow `HEAD` from the enclosing
-              /// checkout: PR merge refs and other Git layouts can make that implicit
-              /// authority unavailable. Each caller gets a private repository with a
-              /// deterministic baseline commit instead.
-              fn boundary_gap_git_fixture_root(name: &str) -> Result<TempLspRoot, String> {
-                  let root = unique_lsp_test_root(name)?;
-                  copy_fixture_tree(&boundary_gap_fixture_root(), root.path())?;
-                  run_lsp_scope_git(root.path(), &["init", "-q"])?;
-                  run_lsp_scope_git(root.path(), &["add", "-A"])?;
-                  run_lsp_scope_git(
-                      root.path(),
-                      &[
-                          "-c",
-                          "user.email=ripr-test@example.com",
-                          "-c",
-                          "user.name=ripr-test",
-                          "commit",
-                          "-qm",
-                          "fixture baseline",
-                      ],
-                  )?;
-                  run_lsp_scope_git(root.path(), &["rev-parse", "--verify", "HEAD^{commit}"])?;
-                  Ok(root)
-              }
-              ''',
-              'helper',
-          )
-
-          replace_exact(
-              '        let repo_root =\n'
-              '            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");\n'
-              '        let root_uri = file_uri_for_path(&repo_root)?;\n',
-              '        let fixture = boundary_gap_git_fixture_root("framed-protocol-smoke")?;\n'
-              '        let repo_root = fixture.path().to_path_buf();\n'
-              '        let root_uri = file_uri_for_path(&repo_root)?;\n',
-              'framed smoke root',
-          )
-
-          replace_normalized(
-              '''
-              fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
-                  let fixture_root = boundary_gap_fixture_root();
-                  let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-
-                  let batches = workspace_diagnostic_batches_with_config(&fixture_root, &config)?;
-              ''',
-              '''
-              fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
-                  let fixture = boundary_gap_git_fixture_root("workspace-diagnostics")?;
-                  let fixture_root = fixture.path();
-                  let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-
-                  let batches = workspace_diagnostic_batches_with_config(fixture_root, &config)?;
-              ''',
-              'workspace diagnostics root',
-          )
-
-          replace_normalized(
-              '''
-              fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
-                  let fixture_root = boundary_gap_fixture_root();
-                  let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-              ''',
-              '''
-              fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
-                  let fixture = boundary_gap_git_fixture_root("explicit-rust-language")?;
-                  let fixture_root = fixture.path();
-                  let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-              ''',
-              'explicit Rust root',
-          )
-          replace_exact(
-              '    let default_projection = workspace_projection_contract(&fixture_root, &default_config)?;\n'
-              '    let rust_only_projection = workspace_projection_contract(&fixture_root, &rust_only_config)?;\n',
-              '    let default_projection = workspace_projection_contract(fixture_root, &default_config)?;\n'
-              '    let rust_only_projection = workspace_projection_contract(fixture_root, &rust_only_config)?;\n',
-              'explicit Rust projections',
-          )
-
-          replace_normalized(
-              '''
-              fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
-                  let fixture_root = boundary_gap_fixture_root();
-                  let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
-              ''',
-              '''
-              fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
-                  let fixture = boundary_gap_git_fixture_root("empty-languages")?;
-                  let fixture_root = fixture.path();
-                  let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
-              ''',
-              'empty languages root',
-          )
-          replace_exact(
-              '    let diagnostics = workspace_diagnostics_with_config(&fixture_root, &config, false)?;\n',
-              '    let diagnostics = workspace_diagnostics_with_config(fixture_root, &config, false)?;\n',
-              'empty languages diagnostics',
-          )
-
-          path.write_text(text)
+          p = Path('crates/ripr/src/lsp/tests.rs')
+          text = p.read_text()
+          old = '''            "-c",
+            "user.name=ripr-test",
+            "commit",
+'''
+          new = '''            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+'''
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --all
           git diff --check
@@ -194,13 +68,5 @@ jobs:
           git config user.name "RIPR release operator"
           git config user.email "release-operator@example.invalid"
           git add crates/ripr/src/lsp/tests.rs
-          git commit -m "test(lsp): isolate boundary-gap Git fixtures (#2371)"
+          git commit -m "test(lsp): disable signing for fixture baseline commits (#2371)"
           git push origin "HEAD:$TARGET_BRANCH"
-
-      - name: Retain patch transcript on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: operator-2371-failure
-          path: /tmp/operator-2371.log
-          if-no-files-found: warn
