@@ -1,0 +1,70 @@
+name: Qualification Fix Diagnostics
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/qualification-fix-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualification-fix-diagnostics
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'release/0.11-fix-validation-diagnostics'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Capture workspace test result
+        shell: bash
+        run: |
+          mkdir -p target/qualification-fix-diagnostics
+          set +e
+          cargo test --workspace > target/qualification-fix-diagnostics/cargo-test-workspace.log 2>&1
+          printf '%s\n' "$?" > target/qualification-fix-diagnostics/cargo-test-workspace.status
+          exit 0
+      - name: Prepare extension and server
+        shell: bash
+        run: |
+          mkdir -p target/qualification-fix-diagnostics
+          set +e
+          npm --prefix editors/vscode ci > target/qualification-fix-diagnostics/npm-ci.log 2>&1
+          printf '%s\n' "$?" > target/qualification-fix-diagnostics/npm-ci.status
+          npm --prefix editors/vscode run compile > target/qualification-fix-diagnostics/npm-compile.log 2>&1
+          printf '%s\n' "$?" > target/qualification-fix-diagnostics/npm-compile.status
+          npm --prefix editors/vscode run package > target/qualification-fix-diagnostics/npm-package.log 2>&1
+          printf '%s\n' "$?" > target/qualification-fix-diagnostics/npm-package.status
+          cargo build -p ripr --bin ripr > target/qualification-fix-diagnostics/server-build.log 2>&1
+          printf '%s\n' "$?" > target/qualification-fix-diagnostics/server-build.status
+          exit 0
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Capture live editor E2E result
+        shell: bash
+        env:
+          RIPR_TEST_SERVER_PATH: ${{ github.workspace }}/target/debug/ripr
+        run: |
+          set +e
+          xvfb-run -a npm --prefix editors/vscode run test:e2e > target/qualification-fix-diagnostics/vscode-e2e.log 2>&1
+          printf '%s\n' "$?" > target/qualification-fix-diagnostics/vscode-e2e.status
+          exit 0
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-fix-diagnostics
+          path: target/qualification-fix-diagnostics/
+          if-no-files-found: error
+          retention-days: 14
