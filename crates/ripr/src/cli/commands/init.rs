@@ -52,6 +52,20 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         // and the write. create_new fails if the path already exists,
         // including symlinks. (#1948)
         if options.force {
+            // The --force branch must not bypass the #1948 symlink guard:
+            // a pre-placed symlink (e.g. ripr.toml -> ~/.ssh/authorized_keys)
+            // would be followed by plain std::fs::write, clobbering the
+            // target. Refuse if the existing entry is a symlink; otherwise
+            // the path is a known regular file or non-existent and a
+            // truncate-write is safe. (#2101)
+            if let Ok(metadata) = std::fs::symlink_metadata(&config_path)
+                && metadata.file_type().is_symlink()
+            {
+                return Err(format!(
+                    "refusing to overwrite symlink at {} (remove the symlink first or point --root at a non-symlinked config path)",
+                    config_path.display()
+                ));
+            }
             std::fs::write(&config_path, generated_init_config())
                 .map_err(|err| format!("write {} failed: {err}", config_path.display()))?;
         } else {

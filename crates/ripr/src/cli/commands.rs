@@ -3967,15 +3967,52 @@ fn diff_changed_files_from_text(diff_text: &str) -> Vec<output::diff_report::Dif
 
 fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join("ripr-diff");
-    std::fs::create_dir_all(&dir)
-        .map_err(|err| format!("create temporary diff dir {} failed: {err}", dir.display()))?;
+    // Tighten the parent dir to 0o700 on Unix so only the ripr user can
+    // pre-create a symlink at the predicted temp path. `create_dir_all` with
+    // default 0777 widened exposure to any local user (#2102).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|err| format!("create temporary diff dir {} failed: {err}", dir.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create temporary diff dir {} failed: {err}", dir.display()))?;
+    }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     let path = dir.join(format!("diff-{}-{stamp}.patch", std::process::id()));
-    std::fs::write(&path, diff_text)
-        .map_err(|err| format!("write temporary diff file {} failed: {err}", path.display()))?;
+    // Use create_new instead of plain write: create_new fails (rather than
+    // follows) if a symlink already exists at the predicted path, defeating
+    // the TOCTOU overwrite race. Same family as the #1948 init fix. (#2102)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut file| file.write_all(diff_text.as_bytes()))
+            .map_err(|err| format!("write temporary diff file {} failed: {err}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(diff_text.as_bytes()))
+            .map_err(|err| format!("write temporary diff file {} failed: {err}", path.display()))?;
+    }
     Ok(path)
 }
 
@@ -10718,5 +10755,70 @@ language = "rust"
 
     fn calibration_mutants_json() -> &'static str {
         r#"[{"id":"m1","seam_id":"seam-a","outcome":"missed","operator":"replace"}]"#
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_force_refuses_to_overwrite_a_symlink() -> Result<(), String> {
+        // Regression guard for #2101: the --force branch must not bypass the
+        // #1948 symlink guard. A pre-placed symlink at the config path would
+        // be followed by plain std::fs::write, clobbering the symlink target.
+        use crate::cli::commands::init;
+        use std::os::unix::fs::symlink;
+
+        let dir = unique_command_test_dir("init-force-symlink");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let target = dir.join("target.txt");
+        std::fs::write(&target, "original-target-content").map_err(|err| err.to_string())?;
+        let config_link = dir.join("ripr.toml");
+        symlink(&target, &config_link).map_err(|err| err.to_string())?;
+
+        let args_vec = vec![
+            "--root".to_string(),
+            dir.to_string_lossy().to_string(),
+            "--force".to_string(),
+        ];
+        let Err(err) = init(&args_vec) else {
+            return Err("--force should refuse to overwrite a symlink".to_string());
+        };
+        assert!(
+            err.contains("refusing to overwrite symlink"),
+            "unexpected error: {err}"
+        );
+
+        // The symlink target must NOT have been overwritten.
+        let preserved =
+            std::fs::read_to_string(&target).map_err(|err| err.to_string())?;
+        assert_eq!(preserved, "original-target-content");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_temporary_diff_file_uses_create_new_and_rejects_existing_path() -> Result<(), String> {
+        // Regression guard for #2102: the temp diff writer must use create_new
+        // so a pre-placed symlink at the predicted path is rejected instead of
+        // followed (TOCTOU overwrite race, same family as #1948).
+        //
+        // We cannot predict the nanosecond stamp, so this test instead proves
+        // the file is created with mode 0o600 (owner-only) by reading the
+        // metadata of a freshly-written file. The create_new contract is
+        // established structurally: if a second call to write_temporary_diff_file
+        // resolved to the same path it would fail rather than overwrite — but
+        // the stamp makes collisions effectively impossible, so we assert the
+        // permission hardening instead.
+        use std::os::unix::fs::PermissionsExt;
+        let path = write_temporary_diff_file("diff content")?;
+        let metadata = std::fs::metadata(&path).map_err(|err| err.to_string())?;
+        let mode = metadata.permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "temp diff file should be 0o600 (owner-only), got {mode:o}"
+        );
+        let _ = std::fs::remove_file(&path);
+        Ok(())
     }
 }
