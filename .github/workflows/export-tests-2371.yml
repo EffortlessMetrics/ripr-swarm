@@ -1,29 +1,79 @@
-name: Export #2371 source
+name: Apply #2371 completion patch
 
 on:
   push:
     branches:
       - fix/boundary-gap-fixtures-complete-2371
-  pull_request:
-    branches:
-      - main
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: apply-2371-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  export:
+  apply:
+    if: github.event_name == 'push' && github.ref_name == 'fix/boundary-gap-fixtures-complete-2371'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
-      - name: Check out the claimed branch
+      - name: Check out the exclusively claimed implementation branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          fetch-depth: 1
-      - name: Upload the source module without mutation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Install the repository toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
-          name: boundary-gap-tests-source
-          path: crates/ripr/src/lsp/tests.rs
-          if-no-files-found: error
-          retention-days: 1
+          toolchain: 1.95.0
+          components: rustfmt
+      - name: Verify the claimed parent and apply the reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "9587f02da9f8e6edc47202ea0000f42eac75aa97"
+          test "$(git branch --show-current)" = "fix/boundary-gap-fixtures-complete-2371"
+          git apply --check .github/patches/2371.patch
+          git apply .github/patches/2371.patch
+          git diff --check
+          cargo fmt --all -- --check
+      - name: Prove the shared fixture under hostile inherited signing
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: commit.gpgSign
+          GIT_CONFIG_VALUE_0: "true"
+          GIT_CONFIG_KEY_1: user.signingKey
+          GIT_CONFIG_VALUE_1: ripr-nonexistent-signing-key
+        run: |
+          set -euo pipefail
+          cargo test -p ripr --lib boundary_gap_ -- --test-threads=1
+          for test_name in \
+            framed_lsp_protocol_smoke_logs_successful_refresh_completion \
+            framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release \
+            framed_lsp_root_switch_repulls_scoped_to_new_root \
+            framed_lsp_direct_root_switch_repulls_on_reselection \
+            framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save \
+            framed_lsp_component_degradation_is_typed_logged_and_recovers
+          do
+            cargo test -p ripr --lib "lsp::tests::$test_name" -- --exact --test-threads=1
+          done
+      - name: Commit only the acceptance-complete test repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/export-tests-2371.yml .github/patches/2371.patch
+          git add crates/ripr/src/lsp/tests.rs
+          git rm --cached .github/workflows/export-tests-2371.yml .github/patches/2371.patch
+          mapfile -t changed < <(git diff --cached --name-only)
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | grep -Fxq crates/ripr/src/lsp/tests.rs
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/workflows/export-tests-2371.yml
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/patches/2371.patch
+          git diff --cached --check
+          git -c user.name='RIPR release operator' \
+              -c user.email='release-operator@example.invalid' \
+              -c commit.gpgSign=false \
+              commit -m 'test(lsp): complete isolated boundary-gap fixture coverage (#2371)'
+          git push origin HEAD:refs/heads/fix/boundary-gap-fixtures-complete-2371
