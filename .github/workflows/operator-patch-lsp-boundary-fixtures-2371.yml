@@ -44,7 +44,7 @@ jobs:
           path = Path('crates/ripr/src/lsp/tests.rs')
           text = path.read_text()
 
-          def replace_once(old: str, new: str, label: str) -> None:
+          def replace_normalized(old: str, new: str, label: str) -> None:
               global text
               old = dedent(old)
               new = dedent(new)
@@ -53,7 +53,14 @@ jobs:
               assert count == 1, f'{label}: expected one match, got {count}'
               text = text.replace(old, new, 1)
 
-          replace_once(
+          def replace_exact(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              print(f'{label}: matches={count}')
+              assert count == 1, f'{label}: expected one match, got {count}'
+              text = text.replace(old, new, 1)
+
+          replace_normalized(
               '''
               fn boundary_gap_fixture_root() -> PathBuf {
                   Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -99,21 +106,17 @@ jobs:
               'helper',
           )
 
-          replace_once(
-              '''
-                      let repo_root =
-                          Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
-                      let root_uri = file_uri_for_path(&repo_root)?;
-              ''',
-              '''
-                      let fixture = boundary_gap_git_fixture_root("framed-protocol-smoke")?;
-                      let repo_root = fixture.path().to_path_buf();
-                      let root_uri = file_uri_for_path(&repo_root)?;
-              ''',
+          replace_exact(
+              '        let repo_root =\n'
+              '            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");\n'
+              '        let root_uri = file_uri_for_path(&repo_root)?;\n',
+              '        let fixture = boundary_gap_git_fixture_root("framed-protocol-smoke")?;\n'
+              '        let repo_root = fixture.path().to_path_buf();\n'
+              '        let root_uri = file_uri_for_path(&repo_root)?;\n',
               'framed smoke root',
           )
 
-          replace_once(
+          replace_normalized(
               '''
               fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
                   let fixture_root = boundary_gap_fixture_root();
@@ -132,7 +135,7 @@ jobs:
               'workspace diagnostics root',
           )
 
-          replace_once(
+          replace_normalized(
               '''
               fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
                   let fixture_root = boundary_gap_fixture_root();
@@ -146,19 +149,15 @@ jobs:
               ''',
               'explicit Rust root',
           )
-          replace_once(
-              '''
-                  let default_projection = workspace_projection_contract(&fixture_root, &default_config)?;
-                  let rust_only_projection = workspace_projection_contract(&fixture_root, &rust_only_config)?;
-              ''',
-              '''
-                  let default_projection = workspace_projection_contract(fixture_root, &default_config)?;
-                  let rust_only_projection = workspace_projection_contract(fixture_root, &rust_only_config)?;
-              ''',
+          replace_exact(
+              '    let default_projection = workspace_projection_contract(&fixture_root, &default_config)?;\n'
+              '    let rust_only_projection = workspace_projection_contract(&fixture_root, &rust_only_config)?;\n',
+              '    let default_projection = workspace_projection_contract(fixture_root, &default_config)?;\n'
+              '    let rust_only_projection = workspace_projection_contract(fixture_root, &rust_only_config)?;\n',
               'explicit Rust projections',
           )
 
-          replace_once(
+          replace_normalized(
               '''
               fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
                   let fixture_root = boundary_gap_fixture_root();
@@ -172,13 +171,9 @@ jobs:
               ''',
               'empty languages root',
           )
-          replace_once(
-              '''
-                  let diagnostics = workspace_diagnostics_with_config(&fixture_root, &config, false)?;
-              ''',
-              '''
-                  let diagnostics = workspace_diagnostics_with_config(fixture_root, &config, false)?;
-              ''',
+          replace_exact(
+              '    let diagnostics = workspace_diagnostics_with_config(&fixture_root, &config, false)?;\n',
+              '    let diagnostics = workspace_diagnostics_with_config(fixture_root, &config, false)?;\n',
               'empty languages diagnostics',
           )
 
