@@ -20,7 +20,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'fix/boundary-gap-fixtures-complete-2371'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check out the exclusively claimed implementation branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -33,17 +33,29 @@ jobs:
         with:
           toolchain: 1.95.0
           components: rustfmt
-      - name: Verify the claimed revision and apply the reviewed patch
+      - name: Verify the exclusive writer revision
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
-          test "$(git rev-parse HEAD^)" = "4b91a49d3a947f88737ede4bdec2ad93bf715966"
+          test "$(git rev-parse HEAD^)" = "8381f87aecfb8473c59581b31ba4bd6858e8b23d"
           test "$(git branch --show-current)" = "fix/boundary-gap-fixtures-complete-2371"
+      - name: Apply the reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
           git apply --check .github/patches/2371.patch
           git apply .github/patches/2371.patch
-          git diff --check
+      - name: Format and enforce the one-file implementation cage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
           cargo fmt --all -- --check
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "crates/ripr/src/lsp/tests.rs"
       - name: Prove the shared fixture under hostile inherited signing
         shell: bash
         env:
@@ -69,9 +81,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/export-tests-2371.yml .github/patches/2371.patch
           git add crates/ripr/src/lsp/tests.rs
-          git rm --cached .github/workflows/export-tests-2371.yml .github/patches/2371.patch
+          git rm .github/workflows/export-tests-2371.yml .github/patches/2371.patch
           mapfile -t changed < <(git diff --cached --name-only)
           test "${#changed[@]}" -eq 3
           printf '%s\n' "${changed[@]}" | grep -Fxq crates/ripr/src/lsp/tests.rs
