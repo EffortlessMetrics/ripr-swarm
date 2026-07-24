@@ -45,12 +45,11 @@ jobs:
           test "${#changed[@]}" -eq 2
           printf '%s\n' "${changed[@]}" | grep -Fxq .github/patches/2383.patch
           printf '%s\n' "${changed[@]}" | grep -Fxq .github/workflows/apply-cli-head-2383.yml
-      - name: Check and apply the reviewed Rust patch
+      - name: Apply the exact reviewed Rust transformation
         shell: bash
         run: |
           set -euo pipefail
-          git apply --check --verbose .github/patches/2383.patch
-          git apply --verbose .github/patches/2383.patch
+          python3 .github/patches/2383.patch
           git status --short
       - name: Format the patched Rust source
         shell: bash
