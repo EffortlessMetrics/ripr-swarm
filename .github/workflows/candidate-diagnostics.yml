@@ -1,0 +1,63 @@
+name: Candidate Qualification Diagnostics
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/candidate-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-diagnostics-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    name: Capture exact qualification failures
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Capture Perl feature commands
+        shell: bash
+        run: |
+          mkdir -p target/candidate-diagnostics
+          set +e
+          cargo check -p ripr --no-default-features --features lang-perl > target/candidate-diagnostics/perl-current.log 2>&1
+          printf '%s\n' "$?" > target/candidate-diagnostics/perl-current.status
+          cargo check -p ripr --no-default-features --features lang-rust,lang-perl > target/candidate-diagnostics/perl-corrected.log 2>&1
+          printf '%s\n' "$?" > target/candidate-diagnostics/perl-corrected.status
+          exit 0
+      - name: Prepare VS Code E2E
+        working-directory: editors/vscode
+        run: npm ci && npm run compile && npm run package
+      - name: Build local RIPR server
+        run: cargo build -p ripr --bin ripr
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Capture VS Code E2E failure
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          mkdir -p ../../target/candidate-diagnostics
+          set +e
+          xvfb-run -a npm run test:e2e > ../../target/candidate-diagnostics/vscode-e2e.log 2>&1
+          printf '%s\n' "$?" > ../../target/candidate-diagnostics/vscode-e2e.status
+          exit 0
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-qualification-diagnostics
+          path: target/candidate-diagnostics/
+          if-no-files-found: error
+          retention-days: 14
