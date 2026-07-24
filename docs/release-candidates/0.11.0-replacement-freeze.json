@@ -14,11 +14,12 @@
     "main_comparison_at_selection": "identical",
     "repository": "EffortlessMetrics/ripr-swarm"
   },
-  "source_parent_for_preflight": null,
+  "source_parent_for_preflight": "2b45cffe4353cc055ce201070555450f4c85d6ac",
   "source_parent_selection": {
-    "rule": "exact source main after EffortlessMetrics/ripr#1511 merges",
+    "rule": "exact source main after EffortlessMetrics/ripr#1511 merged",
     "audit_base_sha": "ec7dc6beaec8ad2efca4abd502f9253cdb4f939c",
-    "status": "pending_source_audit_merge"
+    "audit_merge_sha": "2b45cffe4353cc055ce201070555450f4c85d6ac",
+    "status": "selected"
   },
   "audit": {
     "source_pr": "EffortlessMetrics/ripr#1511",
@@ -93,8 +94,7 @@
   },
   "next_steps": [
     "record exact-candidate qualification on issue #2354",
-    "merge the source audit package after its required checks complete",
-    "refresh source ripr#1478 merge preflight against the replacement candidate",
+    "refresh source ripr#1478 merge preflight using source parent 2b45cffe4353cc055ce201070555450f4c85d6ac",
     "run source ripr#1507 editor integration proof against the selected tree",
     "construct the final direct two-parent join under ripr#1508",
     "merge promotion-only PR ripr#1465",
