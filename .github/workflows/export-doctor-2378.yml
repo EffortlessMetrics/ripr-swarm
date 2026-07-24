@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
-          test "$(git rev-parse HEAD^)" = "c1700e62007087d09d11e1e4393412d078f11732"
+          test "$(git rev-parse HEAD^)" = "84cddd8e3b3c20093a95de10f6974cfe64f1e798"
           test "$(git branch --show-current)" = "fix/doctor-timeout-atomic-shim-2378"
       - name: Apply and format the reviewed patch
         shell: bash
@@ -71,11 +71,22 @@ jobs:
               -- --exact --test-threads=8
           done
       - name: Run doctor tests under normal parallelism
+        id: doctor_parallel
         shell: bash
         run: |
-          set -euo pipefail
-          cargo test -p ripr --lib output::doctor::tests -- --test-threads=8
+          set -o pipefail
+          cargo test -p ripr --lib output::doctor::tests -- --test-threads=8 \
+            2>&1 | tee doctor-parallel.log
+      - name: Upload doctor parallel transcript
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: doctor-parallel-${{ github.run_id }}
+          path: doctor-parallel.log
+          if-no-files-found: warn
+          retention-days: 1
       - name: Commit only the doctor test-harness correction
+        if: steps.doctor_parallel.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
