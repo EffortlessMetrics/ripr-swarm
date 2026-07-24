@@ -10416,6 +10416,10 @@ fn boundary_gap_git_fixture_root(name: &str) -> Result<TempLspRoot, String> {
     let root = unique_lsp_test_root(name)?;
     copy_fixture_tree(&boundary_gap_fixture_root(), root.path())?;
     run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    // Do not inherit commit.gpgSign from the host environment: a
+    // signing-enabled host would fail the fixture baseline before the saved-
+    // workspace assertions run.
+    run_lsp_scope_git(root.path(), &["config", "commit.gpgSign", "false"])?;
     run_lsp_scope_git(root.path(), &["add", "-A"])?;
     run_lsp_scope_git(
         root.path(),
