@@ -1,0 +1,81 @@
+schema_version = "ripr-post-freeze-audit-v1"
+release_target = "0.11.0"
+audit_date = "2026-07-23"
+decision = "refreeze"
+
+[range]
+repository = "EffortlessMetrics/ripr-swarm"
+base_sha = "3a80c634f2157dee0e7f74fc72b7975f07699143"
+audit_head_sha = "c86807ecdbf359594ef88c0ff38b10b446139dca"
+ahead_by = 142
+behind_by = 0
+selection = "all commits reachable from audit_head_sha and not reachable from base_sha"
+verification_command = "git rev-list --reverse 3a80c634f2157dee0e7f74fc72b7975f07699143..c86807ecdbf359594ef88c0ff38b10b446139dca"
+default_disposition = "must_include_0_11"
+reason = "Use the exact audited tree; do not construct an unreviewed cherry-pick candidate."
+
+[candidate]
+sha = "c86807ecdbf359594ef88c0ff38b10b446139dca"
+freeze_ref = "freeze/source-sync-2026-07-23"
+old_sha = "3a80c634f2157dee0e7f74fc72b7975f07699143"
+old_freeze_ref = "freeze/source-sync-2026-07-21"
+source_parent_sha = "ec7dc6beaec8ad2efca4abd502f9253cdb4f939c"
+
+[source_authority]
+source_repository = "EffortlessMetrics/ripr"
+development_repository = "EffortlessMetrics/ripr-swarm"
+preserve_source_only_commits = ["9496353061b3d3fa9c7a2287b98243ba6d719ba5", "0b4e1edfeea3eb7fc54a367174975b0838e00193"]
+preserve_source_surfaces = ["staged 0.10.1 metadata", "release workflows", "release history", "package metadata", "marketplace and distribution authority", "source repository settings"]
+
+[[category]]
+id = "trust"
+issue = "EffortlessMetrics/ripr-swarm#2350"
+disposition = "must_include_0_11"
+anchor_prs = [2203, 2207, 2213, 2218, 2223, 2228, 2232, 2233, 2235, 2239, 2243, 2249, 2252, 2254, 2275, 2285, 2336]
+claim = "Producer-owned gate, command, artifact, movement, and receipt identity with explicit static-only boundaries."
+
+[[category]]
+id = "editor"
+issue = "EffortlessMetrics/ripr-swarm#2351"
+disposition = "must_include_0_11"
+anchor_prs = [2063, 2065, 2066, 2067, 2116, 2120, 2121, 2128, 2129, 2134, 2146, 2158, 2185, 2199, 2211, 2219, 2226, 2248, 2256, 2260, 2266, 2268, 2282, 2286, 2289, 2292, 2306, 2310, 2313, 2317, 2319, 2320, 2321]
+claim = "Current, bounded, negotiated, recoverable LSP and VS Code evidence."
+
+[[category]]
+id = "analyzer"
+issue = "EffortlessMetrics/ripr-swarm#2352"
+disposition = "must_include_0_11"
+anchor_prs = [1689, 1690, 2050, 2139, 2142, 2154, 2158, 2200, 2212, 2217, 2250, 2270, 2272, 2278, 2279, 2280, 2307, 2308, 2322]
+claim = "Security, scope, identity, and evidence-honesty fixes shared by CLI, gate, editor, and receipt consumers."
+
+[[category]]
+id = "operations"
+issue = "EffortlessMetrics/ripr-swarm#2353"
+disposition = "mixed_included"
+structural_no_semantic_delta_prs = [2184, 2187, 2209, 2210, 2216, 2220, 2221, 2259, 2264, 2271, 2283, 2284, 2287, 2290, 2291, 2311, 2315]
+release_infrastructure_only_prs = [2051, 2201, 2204, 2246, 2255, 2265, 2267, 2309, 2318, 2323]
+must_include_prs = [1691, 2055, 2056, 2263, 2276]
+reason = "Include the integrated audited tree; pure moves add no product claim but current code and checks depend on their wiring."
+
+[[deferred]]
+issue = "EffortlessMetrics/ripr-swarm#2332"
+disposition = "safe_defer_post_0_11"
+release_nonclaim = "RIPR does not control verification-command execution in 0.11.0."
+
+[[deferred]]
+issue = "EffortlessMetrics/ripr-swarm#2333"
+disposition = "safe_defer_post_0_11"
+release_nonclaim = "RepairReceiptV2 is not part of 0.11.0."
+
+[[deferred]]
+issue = "EffortlessMetrics/ripr-swarm#2334"
+disposition = "safe_defer_post_0_11"
+release_nonclaim = "The end-to-end execution and receipt closeout remains post-0.11 work."
+
+[replacement]
+stale_source_pr = "EffortlessMetrics/ripr#1506"
+preflight_issue = "EffortlessMetrics/ripr#1478"
+source_editor_proof_issue = "EffortlessMetrics/ripr#1507"
+final_join_issue = "EffortlessMetrics/ripr#1508"
+source_promotion_issue = "EffortlessMetrics/ripr#1465"
+metadata_issue = "EffortlessMetrics/ripr#1466"
