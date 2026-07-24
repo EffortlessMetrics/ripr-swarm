@@ -29,134 +29,163 @@ jobs:
       - name: Guard exact target head
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
       - name: Apply test-harness correction
         run: |
-          python3 - <<'PY'
+          set -o pipefail
+          python3 - <<'PY' 2>&1 | tee /tmp/operator-2371.log
           from pathlib import Path
+          from textwrap import dedent
 
           path = Path('crates/ripr/src/lsp/tests.rs')
           text = path.read_text()
 
-          helper_anchor = '''fn boundary_gap_fixture_root() -> PathBuf {
-              Path::new(env!("CARGO_MANIFEST_DIR"))
-                  .join("../..")
-                  .join("fixtures/boundary_gap/input")
-          }
-          '''
-          helper = '''fn boundary_gap_fixture_root() -> PathBuf {
-              Path::new(env!("CARGO_MANIFEST_DIR"))
-                  .join("../..")
-                  .join("fixtures/boundary_gap/input")
-          }
-
-          /// A writable, independently committed copy for saved-workspace tests.
-          ///
-          /// The tracked fixture is suitable for static inventory checks, but a
-          /// saved-workspace analysis must not borrow `HEAD` from the enclosing
-          /// checkout: PR merge refs and other Git layouts can make that implicit
-          /// authority unavailable. Each caller gets a private repository with a
-          /// deterministic baseline commit instead.
-          fn boundary_gap_git_fixture_root(name: &str) -> Result<TempLspRoot, String> {
-              let root = unique_lsp_test_root(name)?;
-              copy_fixture_tree(&boundary_gap_fixture_root(), root.path())?;
-              run_lsp_scope_git(root.path(), &["init", "-q"])?;
-              run_lsp_scope_git(root.path(), &["add", "-A"])?;
-              run_lsp_scope_git(
-                  root.path(),
-                  &[
-                      "-c",
-                      "user.email=ripr-test@example.com",
-                      "-c",
-                      "user.name=ripr-test",
-                      "commit",
-                      "-qm",
-                      "fixture baseline",
-                  ],
-              )?;
-              run_lsp_scope_git(root.path(), &["rev-parse", "--verify", "HEAD^{commit}"])?;
-              Ok(root)
-          }
-          '''
-          assert text.count(helper_anchor) == 1
-          text = text.replace(helper_anchor, helper, 1)
-
-          old = '''        let repo_root =
-              Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
-          let root_uri = file_uri_for_path(&repo_root)?;
-          '''
-          new = '''        let fixture = boundary_gap_git_fixture_root("framed-protocol-smoke")?;
-          let repo_root = fixture.path().to_path_buf();
-          let root_uri = file_uri_for_path(&repo_root)?;
-          '''
-          assert text.count(old) == 1
-          text = text.replace(old, new, 1)
-
-          replacements = [
-              (
-                  '''fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
-              let fixture_root = boundary_gap_fixture_root();
-              let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-
-              let batches = workspace_diagnostic_batches_with_config(&fixture_root, &config)?;
-          ''',
-                  '''fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
-              let fixture = boundary_gap_git_fixture_root("workspace-diagnostics")?;
-              let fixture_root = fixture.path();
-              let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-
-              let batches = workspace_diagnostic_batches_with_config(fixture_root, &config)?;
-          ''',
-              ),
-              (
-                  '''fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
-              let fixture_root = boundary_gap_fixture_root();
-              let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-          ''',
-                  '''fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
-              let fixture = boundary_gap_git_fixture_root("explicit-rust-language")?;
-              let fixture_root = fixture.path();
-              let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-          ''',
-              ),
-              (
-                  '''    let default_projection = workspace_projection_contract(&fixture_root, &default_config)?;
-              let rust_only_projection = workspace_projection_contract(&fixture_root, &rust_only_config)?;
-          ''',
-                  '''    let default_projection = workspace_projection_contract(fixture_root, &default_config)?;
-              let rust_only_projection = workspace_projection_contract(fixture_root, &rust_only_config)?;
-          ''',
-              ),
-              (
-                  '''fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
-              let fixture_root = boundary_gap_fixture_root();
-              let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
-          ''',
-                  '''fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
-              let fixture = boundary_gap_git_fixture_root("empty-languages")?;
-              let fixture_root = fixture.path();
-              let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
-          ''',
-              ),
-              (
-                  '''    let diagnostics = workspace_diagnostics_with_config(&fixture_root, &config, false)?;
-          ''',
-                  '''    let diagnostics = workspace_diagnostics_with_config(fixture_root, &config, false)?;
-          ''',
-              ),
-          ]
-          for old, new in replacements:
-              assert text.count(old) == 1, old
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              old = dedent(old)
+              new = dedent(new)
+              count = text.count(old)
+              print(f'{label}: matches={count}')
+              assert count == 1, f'{label}: expected one match, got {count}'
               text = text.replace(old, new, 1)
+
+          replace_once(
+              '''
+              fn boundary_gap_fixture_root() -> PathBuf {
+                  Path::new(env!("CARGO_MANIFEST_DIR"))
+                      .join("../..")
+                      .join("fixtures/boundary_gap/input")
+              }
+              ''',
+              '''
+              fn boundary_gap_fixture_root() -> PathBuf {
+                  Path::new(env!("CARGO_MANIFEST_DIR"))
+                      .join("../..")
+                      .join("fixtures/boundary_gap/input")
+              }
+
+              /// A writable, independently committed copy for saved-workspace tests.
+              ///
+              /// The tracked fixture is suitable for static inventory checks, but a
+              /// saved-workspace analysis must not borrow `HEAD` from the enclosing
+              /// checkout: PR merge refs and other Git layouts can make that implicit
+              /// authority unavailable. Each caller gets a private repository with a
+              /// deterministic baseline commit instead.
+              fn boundary_gap_git_fixture_root(name: &str) -> Result<TempLspRoot, String> {
+                  let root = unique_lsp_test_root(name)?;
+                  copy_fixture_tree(&boundary_gap_fixture_root(), root.path())?;
+                  run_lsp_scope_git(root.path(), &["init", "-q"])?;
+                  run_lsp_scope_git(root.path(), &["add", "-A"])?;
+                  run_lsp_scope_git(
+                      root.path(),
+                      &[
+                          "-c",
+                          "user.email=ripr-test@example.com",
+                          "-c",
+                          "user.name=ripr-test",
+                          "commit",
+                          "-qm",
+                          "fixture baseline",
+                      ],
+                  )?;
+                  run_lsp_scope_git(root.path(), &["rev-parse", "--verify", "HEAD^{commit}"])?;
+                  Ok(root)
+              }
+              ''',
+              'helper',
+          )
+
+          replace_once(
+              '''
+                      let repo_root =
+                          Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
+                      let root_uri = file_uri_for_path(&repo_root)?;
+              ''',
+              '''
+                      let fixture = boundary_gap_git_fixture_root("framed-protocol-smoke")?;
+                      let repo_root = fixture.path().to_path_buf();
+                      let root_uri = file_uri_for_path(&repo_root)?;
+              ''',
+              'framed smoke root',
+          )
+
+          replace_once(
+              '''
+              fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
+                  let fixture_root = boundary_gap_fixture_root();
+                  let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+
+                  let batches = workspace_diagnostic_batches_with_config(&fixture_root, &config)?;
+              ''',
+              '''
+              fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
+                  let fixture = boundary_gap_git_fixture_root("workspace-diagnostics")?;
+                  let fixture_root = fixture.path();
+                  let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+
+                  let batches = workspace_diagnostic_batches_with_config(fixture_root, &config)?;
+              ''',
+              'workspace diagnostics root',
+          )
+
+          replace_once(
+              '''
+              fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
+                  let fixture_root = boundary_gap_fixture_root();
+                  let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+              ''',
+              '''
+              fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
+                  let fixture = boundary_gap_git_fixture_root("explicit-rust-language")?;
+                  let fixture_root = fixture.path();
+                  let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+              ''',
+              'explicit Rust root',
+          )
+          replace_once(
+              '''
+                  let default_projection = workspace_projection_contract(&fixture_root, &default_config)?;
+                  let rust_only_projection = workspace_projection_contract(&fixture_root, &rust_only_config)?;
+              ''',
+              '''
+                  let default_projection = workspace_projection_contract(fixture_root, &default_config)?;
+                  let rust_only_projection = workspace_projection_contract(fixture_root, &rust_only_config)?;
+              ''',
+              'explicit Rust projections',
+          )
+
+          replace_once(
+              '''
+              fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
+                  let fixture_root = boundary_gap_fixture_root();
+                  let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
+              ''',
+              '''
+              fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
+                  let fixture = boundary_gap_git_fixture_root("empty-languages")?;
+                  let fixture_root = fixture.path();
+                  let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
+              ''',
+              'empty languages root',
+          )
+          replace_once(
+              '''
+                  let diagnostics = workspace_diagnostics_with_config(&fixture_root, &config, false)?;
+              ''',
+              '''
+                  let diagnostics = workspace_diagnostics_with_config(fixture_root, &config, false)?;
+              ''',
+              'empty languages diagnostics',
+          )
 
           path.write_text(text)
           PY
           cargo fmt --all
           git diff --check
-
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
-        with:
-          toolchain: 1.95.0
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
       - name: Verify focused and full library suites
         run: |
@@ -172,3 +201,11 @@ jobs:
           git add crates/ripr/src/lsp/tests.rs
           git commit -m "test(lsp): isolate boundary-gap Git fixtures (#2371)"
           git push origin "HEAD:$TARGET_BRANCH"
+
+      - name: Retain patch transcript on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operator-2371-failure
+          path: /tmp/operator-2371.log
+          if-no-files-found: warn
