@@ -92,6 +92,7 @@ jobs:
           name: validated-cli-head-2383-${{ github.run_id }}
           path: .validated/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
 
   commit:
