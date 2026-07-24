@@ -1,0 +1,40 @@
+name: Apply 0.11 Qualification Fixes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/apply-0.11-qualification-fixes.yml
+      - scripts/apply_0_11_qualification_fixes.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-0.11-qualification-fixes
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'release/0.11-qualification-patcher'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: release/0.11-qualification-patcher
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply reviewed qualification fixes
+        run: python3 scripts/apply_0_11_qualification_fixes.py
+      - name: Remove disposable patcher files
+        run: git rm .github/workflows/apply-0.11-qualification-fixes.yml scripts/apply_0_11_qualification_fixes.py
+      - name: Commit and fast-forward supplemental candidate branch
+        run: |
+          git config user.name 'RIPR Qualification Patcher'
+          git config user.email 'ripr-qualification-patcher@example.invalid'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(vscode): make the live extension harness trustworthy and path-correct (#2369)'
+          git push origin HEAD:refs/heads/fix/0.11-qualification-blockers-v2
