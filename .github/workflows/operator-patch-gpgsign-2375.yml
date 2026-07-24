@@ -1,0 +1,72 @@
+name: Operator Patch GPG Sign 2375
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: operator-patch-gpgsign-2375
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    if: github.head_ref == 'operator/patch-gpgsign-2375'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TARGET_BRANCH: fix/lsp-boundary-gap-git-fixtures-2371
+      EXPECTED_HEAD: 8c65e26eb8709d9bf5ee6d4ec1a1b3f8d398458d
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/lsp-boundary-gap-git-fixtures-2371
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Guard exact target head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Add commit signing override
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('crates/ripr/src/lsp/tests.rs')
+          text = p.read_text()
+          old = '''            "-c",
+            "user.name=ripr-test",
+            "commit",
+'''
+          new = '''            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+'''
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --all
+          git diff --check
+
+      - name: Verify regression and policy suites
+        run: |
+          cargo test -p ripr boundary_gap_lsp_ -- --test-threads=1
+          cargo test -p ripr framed_lsp_protocol_smoke_logs_successful_refresh_completion -- --test-threads=1
+          cargo test -p ripr --lib
+          cargo xtask precommit
+
+      - name: Commit and push target branch
+        run: |
+          git config user.name "RIPR release operator"
+          git config user.email "release-operator@example.invalid"
+          git add crates/ripr/src/lsp/tests.rs
+          git commit -m "test(lsp): disable signing for fixture baseline commits (#2371)"
+          git push origin "HEAD:$TARGET_BRANCH"
