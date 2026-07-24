@@ -41,7 +41,7 @@ Receipt command:
 `ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json`
 
 Agent packet command:
-`ripr agent packet --root fixtures/first_successful_pr/python-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json`
+`ripr agent packet --root fixtures/first_successful_pr/python-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold" --json > target/ripr/workflow/agent-packet.json`
 
 ## Artifacts
 

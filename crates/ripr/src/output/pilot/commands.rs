@@ -37,7 +37,7 @@ impl PilotCommands {
             "ripr pilot --root {} --out {} --mode {} --max-seams {} --timeout-ms {}",
             loop_commands::shell_path(context.root),
             loop_commands::shell_path(&out_dir),
-            context.mode.as_str(),
+            loop_commands::shell_arg(context.mode.as_str()),
             context.max_seams,
             retry_timeout_ms
         );

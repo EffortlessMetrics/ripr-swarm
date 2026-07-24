@@ -196,6 +196,14 @@ pub(crate) fn shell_path(path: &Path) -> String {
     shell_arg(&display_path(path))
 }
 
+/// Render `value` as a single bash-safe argv token for an advisory command string.
+///
+/// Tokens whose every character is in the safe set `[a-zA-Z0-9][./\\_:-]` pass
+/// through unquoted. Any other character triggers a double-quoted form in which
+/// `\`, `"`, `$`, backtick, and `!` are backslash-escaped so no shell expansion
+/// remains inside the quotes. Without the `$`/backtick/`!` escapes, a value
+/// such as `$(cmd)` or `` `cmd` `` would still execute as command substitution
+/// even when wrapped in double quotes (#2347).
 pub(crate) fn shell_arg(value: &str) -> String {
     if value
         .chars()
@@ -203,7 +211,15 @@ pub(crate) fn shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$")
+            .replace('`', "\\`")
+            .replace('!', "\\!")
+    )
 }
 
 fn append_redirect(command: String, out_path: Option<&str>) -> String {
@@ -345,6 +361,52 @@ mod tests {
                 Some("target/ripr/work flow/receipt.json"),
             ),
             "ripr agent receipt --root \"repo root\" --verify-json \"target/ripr/work flow/verify.json\" --seam-id \"seam a\" --json --out \"target/ripr/work flow/receipt.json\""
+        );
+    }
+
+    #[test]
+    fn shell_arg_passes_safe_tokens_unquoted() {
+        // Every character in the safe set passes through unchanged.
+        assert_eq!(shell_arg("a-b_c.d/e:f\\g"), "a-b_c.d/e:f\\g");
+        assert_eq!(shell_arg("origin/main"), "origin/main");
+        assert_eq!(shell_arg("target/ripr/workflow"), "target/ripr/workflow");
+    }
+
+    #[test]
+    fn shell_arg_quotes_spaces_with_double_quotes() {
+        // Pre-existing behavior: spaces trigger the double-quote path.
+        // This test pins the shape so the metacharacter escapes below cannot
+        // silently migrate the helper to single-quote style.
+        assert_eq!(shell_arg("repo root"), "\"repo root\"");
+    }
+
+    #[test]
+    fn shell_arg_escapes_bash_metacharacters_in_quote_path() {
+        // Regression for #2347: inside double quotes bash still expands $VAR,
+        // $(cmd), `cmd`, and (interactively) !history. Each must be backslash-
+        // escaped so the quoted token is inert when an agent copies the
+        // advisory command into a shell.
+        assert_eq!(shell_arg("$(whoami)"), "\"\\$(whoami)\"");
+        assert_eq!(shell_arg("a`b`c"), "\"a\\`b\\`c\"");
+        assert_eq!(shell_arg("with!bang"), "\"with\\!bang\"");
+        // Backslash and double-quote are in the safe set, so a value made only
+        // of safe characters passes through unquoted (existing behavior). The
+        // escapes below only fire when a non-safe character triggers the quote
+        // path; pair them with a space to exercise that path.
+        assert_eq!(shell_arg("a\\b"), "a\\b");
+        assert_eq!(shell_arg("a\"b"), "\"a\\\"b\"");
+        assert_eq!(shell_arg("a\\b c"), "\"a\\\\b c\"");
+        // A gap-id containing `>`/`=` triggers quoting so the `>` cannot be
+        // parsed as a redirect; the metacharacters themselves are not special
+        // inside double quotes and need no escape, but the wrapping is the fix.
+        assert_eq!(
+            shell_arg("gap:pr:amount>=threshold"),
+            "\"gap:pr:amount>=threshold\""
+        );
+        // Compound: space triggers quoting, $ and backtick are escaped inside.
+        assert_eq!(
+            shell_arg("$(curl evil)/repo root"),
+            "\"\\$(curl evil)/repo root\""
         );
     }
 }
