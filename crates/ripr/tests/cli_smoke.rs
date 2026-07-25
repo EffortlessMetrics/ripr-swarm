@@ -54,13 +54,20 @@ fn bounded_command_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).chars().take(512).collect()
 }
 
+fn strip_optional_git_line_ending(bytes: &[u8]) -> &[u8] {
+    bytes
+        .strip_suffix(b"\r\n")
+        .or_else(|| bytes.strip_suffix(b"\n"))
+        .unwrap_or(bytes)
+}
+
 fn select_fixture_repository_head(
     git_succeeded: bool,
     stdout: &[u8],
     stderr: &[u8],
     actions_fallback: Option<&str>,
 ) -> Result<String, String> {
-    let candidate = String::from_utf8_lossy(stdout).trim().to_string();
+    let candidate = String::from_utf8_lossy(strip_optional_git_line_ending(stdout)).to_string();
     if git_succeeded {
         if is_concrete_commit_id(&candidate) {
             return Ok(candidate.to_ascii_lowercase());
@@ -477,6 +484,42 @@ fn fixture_repository_head_does_not_replace_malformed_success_output_with_fallba
     };
     if !error.contains("non-concrete repository HEAD `HEAD`") {
         return Err(format!("unexpected non-concrete HEAD error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_repository_head_accepts_only_an_optional_git_line_ending() -> Result<(), String> {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    for stdout in [
+        commit.to_string(),
+        format!("{commit}\n"),
+        format!("{commit}\r\n"),
+    ] {
+        let actual = select_fixture_repository_head(true, stdout.as_bytes(), b"", None)?;
+        if actual != commit {
+            return Err(format!(
+                "optional line ending changed commit identity: {actual}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_repository_head_rejects_whitespace_padded_success_output() -> Result<(), String> {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    for stdout in [
+        format!(" {commit}\n"),
+        format!("{commit} \n"),
+        format!("{commit}\n\n"),
+    ] {
+        let result = select_fixture_repository_head(true, stdout.as_bytes(), b"", None);
+        if result.is_ok() {
+            return Err(format!(
+                "whitespace-padded commit became authority: {stdout:?}"
+            ));
+        }
     }
     Ok(())
 }
