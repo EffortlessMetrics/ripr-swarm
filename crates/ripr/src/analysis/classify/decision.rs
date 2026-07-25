@@ -532,6 +532,86 @@ mod tests {
         );
     }
 
+    // #2450: the Exposed branch is the single over-credit guard. These tests
+    // pin the contract that Exposed requires all of discriminate+infect+
+    // propagate == Yes, and that any stage not-Yes downgrades to WeaklyExposed
+    // (never Exposed). A regression here is the cardinal sin per AGENTS.md.
+
+    #[test]
+    fn classify_emits_exposed_only_when_all_discriminate_infect_propagate_are_yes() {
+        // All stages Yes → Exposed (the only path to Exposed).
+        let all_yes = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+        );
+        assert_eq!(all_yes, ExposureClass::Exposed);
+
+        // discriminate=Weak (not Yes) → WeaklyExposed, NOT Exposed.
+        // This is the "strong oracle but weak discrimination" case — the
+        // cardinal-sin guard: reach + strong oracle must NOT credit as Exposed.
+        let weak_discrim = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Weak),
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+        );
+        assert_eq!(
+            weak_discrim,
+            ExposureClass::WeaklyExposed,
+            "Weak discrimination must not credit as Exposed (over-credit guard)"
+        );
+
+        // infect=Unknown → InfectionUnknown (never reaches the Exposed check).
+        let unknown_infect = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::Unknown),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+        );
+        assert_eq!(unknown_infect, ExposureClass::InfectionUnknown);
+
+        // propagate=Unknown → PropagationUnknown (never reaches the Exposed check).
+        let unknown_prop = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Unknown),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+        );
+        assert_eq!(unknown_prop, ExposureClass::PropagationUnknown);
+    }
+
+    #[test]
+    fn classify_strong_oracle_on_wrong_sink_does_not_credit_as_exposed() {
+        // A "strong" oracle that observes a DIFFERENT sink than the changed one
+        // should produce observe/discriminate stages that are not both Yes.
+        // The classifier never sees "wrong sink" directly — it sees the stage
+        // states the callers produce. This test pins that observe=Yes but
+        // discriminate=No (the wrong-sink case) yields WeaklyExposed, not Exposed.
+        let wrong_sink = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::No),
+            &probe(ProbeFamily::ErrorPath, "Err(InvalidCurrency)"),
+        );
+        assert_eq!(
+            wrong_sink,
+            ExposureClass::WeaklyExposed,
+            "observe=Yes but discriminate=No (wrong sink) must not credit as Exposed"
+        );
+    }
+
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "stage")
     }
