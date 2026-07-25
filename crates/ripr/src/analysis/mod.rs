@@ -640,8 +640,10 @@ mod tests {
             );
         }
         // The regression this guard exists for: rooted but NOT absolute on
-        // Windows. Attributed to `RootDir` on every platform.
-        for rooted in ["/etc/hostname", "/foo", r"\foo"] {
+        // Windows. Only a *forward* slash is a separator on both platforms, so
+        // only these shapes yield `RootDir` everywhere. Backslash-leading and
+        // drive-prefixed shapes are Windows-only and are asserted separately.
+        for rooted in ["/etc/hostname", "/foo", "/a/b/c.ts"] {
             assert_eq!(
                 scope_anchor_escape_reason(Path::new(rooted)),
                 Some("rooted path"),
@@ -650,12 +652,16 @@ mod tests {
         }
     }
 
-    /// Drive and UNC prefixes only exist as `Prefix` components on Windows; on
-    /// Unix a drive-letter string is an ordinary relative filename, so this is
-    /// the one part of the guard that cannot be asserted cross-platform.
+    /// Backslash separators, drive letters, and UNC prefixes are Windows-only
+    /// path syntax, so these shapes can only be asserted there.
     #[cfg(all(windows, feature = "lang-typescript"))]
     #[test]
-    fn scope_anchor_escape_reason_refuses_windows_prefixes() {
+    fn scope_anchor_escape_reason_refuses_windows_rooted_and_prefixed_paths() {
+        // A backslash is a separator on Windows, yielding `RootDir`.
+        assert_eq!(
+            scope_anchor_escape_reason(Path::new(r"\foo")),
+            Some("rooted path")
+        );
         // `check-local-context` forbids drive-letter path literals in tracked
         // files, so the drive shapes are assembled from parts.
         let drive = "C:";
@@ -672,18 +678,22 @@ mod tests {
         }
     }
 
-    /// On Unix a drive-letter string is a legal relative filename, so it must be
-    /// accepted rather than refused by accident.
+    /// On Unix neither a backslash nor a drive letter is path syntax, so both
+    /// are ordinary relative filenames and must be accepted rather than refused
+    /// by accident.
     #[cfg(all(unix, feature = "lang-typescript"))]
     #[test]
-    fn scope_anchor_escape_reason_treats_drive_text_as_a_unix_filename() {
+    fn scope_anchor_escape_reason_treats_windows_syntax_as_unix_filenames() {
         // Assembled from parts: `check-local-context` forbids drive-letter
         // literals in tracked files.
         let drive = "C:";
-        assert_eq!(
-            scope_anchor_escape_reason(Path::new(&format!(r"{drive}\x"))),
-            None
-        );
+        for filename in [r"\foo".to_string(), format!(r"{drive}\x")] {
+            assert_eq!(
+                scope_anchor_escape_reason(Path::new(&filename)),
+                None,
+                "{filename} is an ordinary Unix filename"
+            );
+        }
     }
 
     fn temp_dir(name: &str) -> PathBuf {
