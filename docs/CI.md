@@ -300,9 +300,12 @@ and single-platform CI was the root cause enabling both.
 
 `.github/workflows/windows-advisory.yml` (#2442) closes the gap:
 
-- **Scope.** `cargo test --workspace`. No `cargo xtask` gates, no goldens, and
-  no blessing — a Windows lane that blessed or checked goldens would
-  institutionalize the #2337 drift it exists to catch.
+- **Scope.** `cargo test --workspace`, twice. No test or golden `cargo xtask`
+  gates and no blessing — a Windows lane that blessed or checked goldens would
+  institutionalize the #2337 drift it exists to catch. There is one required
+  `cargo xtask` step, `windows-advisory-summary`, which validates the two run
+  logs and their captured exit statuses; it is evidence validation, not a test
+  gate, and it fails the job when the evidence is missing or unusable.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -314,11 +317,11 @@ and single-platform CI was the root cause enabling both.
   does. A lane that reports success while proving nothing is exactly the
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
-  pull requests labelled `windows-ci` or `full-ci`.
+  pull requests labeled `windows-ci` or `full-ci`.
 
 Promotion to required is gated on #2430 and on stability across repeated runs on
 hardware that reproduces the failures — the hosted runner does not reproduce the
-#2419 parallel-load class at all, so green runs there prove nothing about it.
+parallel-load class in #2419 at all, so green runs there prove nothing about it.
 Promoting a lane that is already red converts a useful signal into background
 noise reviewers learn to skip, which is the false-confidence failure mode in
 reverse.
