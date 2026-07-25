@@ -1077,7 +1077,18 @@ fn compat_file_uri(path: &Path) -> Result<String, String> {
     } else {
         format!("/{text}")
     };
-    Ok(format!("file://{}", absolute.replace(' ', "%20")))
+    // The production encoder is `lsp::uri::file_uri_for_path`, but it is
+    // `pub(super)` within the `lsp` module and so unreachable from this
+    // integration-test binary; widening the crate's internal surface for a
+    // fixture is not worth it. Encode the characters that would otherwise change
+    // the URI's meaning. `%` must be encoded first, or the escapes introduced
+    // below would themselves be re-encoded.
+    let encoded = absolute
+        .replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('#', "%23")
+        .replace('?', "%3F");
+    Ok(format!("file://{encoded}"))
 }
 
 /// Process-local digest of the committed fixture contents. `DefaultHasher`
