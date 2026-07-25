@@ -3060,7 +3060,16 @@ fn diff_changed_files_from_text(diff_text: &str) -> Vec<output::diff_report::Dif
                 .map(|line| line.line)
                 .collect::<Vec<_>>();
             output::diff_report::DiffChangedFile {
-                path: file.path.display().to_string(),
+                // The diff JSON is a portable contract, so this path must use
+                // forward slashes on every host. `ChangedFile.path` is a
+                // `PathBuf` rebuilt component-by-component by the #2099
+                // confinement guard, and `PathBuf::push` uses the platform
+                // separator — so on Windows it arrives here as `src\lib.rs`
+                // even though git emitted `src/lib.rs`. Normalizing at this
+                // output boundary keeps the internal path native for
+                // filesystem joins while the emitted contract stays portable,
+                // matching how preview-language advisories render paths.
+                path: file.path.to_string_lossy().replace('\\', "/"),
                 added_count: added_lines.len(),
                 removed_count: removed_lines.len(),
                 added_lines,
@@ -3233,6 +3242,36 @@ mod tests {
 
     pub(super) fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    /// The diff JSON path is a portable contract and must never carry a host
+    /// separator.
+    ///
+    /// This is asserted on the rendered string rather than on the internal
+    /// `PathBuf`, because the internal value is deliberately platform-native for
+    /// filesystem joins. The #2099 confinement guard rebuilds the path with
+    /// `PathBuf::push`, which uses the platform separator, so on Windows a diff
+    /// that git emitted as `src/lib.rs` reached the renderer as `src\lib.rs`.
+    #[test]
+    fn diff_changed_file_paths_are_emitted_with_forward_slashes() {
+        let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-old\n+new\n";
+        let files = diff_changed_files_from_text(diff);
+        assert_eq!(files.len(), 1, "expected one changed file: {files:?}");
+        assert_eq!(files[0].path, "src/lib.rs");
+        assert!(
+            !files[0].path.contains('\\'),
+            "diff JSON paths must not carry a host separator: {}",
+            files[0].path
+        );
+    }
+
+    /// A nested path exercises more than one separator boundary.
+    #[test]
+    fn diff_changed_file_paths_normalize_every_separator() {
+        let diff = "--- a/crates/ripr/src/lib.rs\n+++ b/crates/ripr/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let files = diff_changed_files_from_text(diff);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "crates/ripr/src/lib.rs");
     }
 
     pub(super) fn unique_command_test_dir(label: &str) -> PathBuf {
