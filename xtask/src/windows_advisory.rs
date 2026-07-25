@@ -21,9 +21,11 @@
 //!
 //! Test failures are advisory: the lane does not gate merges on them. Failure to
 //! *produce trustworthy evidence* is different, and this command exits non-zero
-//! for it — a missing log, a missing exit status, or an unreadable file. A lane
-//! that reported success while its own evidence was absent would be the exact
-//! false-confidence condition it exists to prevent.
+//! for it — a missing log, a missing exit status, an unreadable file, or a zero
+//! exit status over a log that does not show a test run ([`RunState::
+//! IncompleteEvidence`]). A lane that reported success while its own evidence was
+//! absent would be the exact false-confidence condition it exists to prevent,
+//! and a `0` in a status file is not on its own evidence that anything ran.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -42,11 +44,20 @@ pub(crate) enum TestObservation {
 /// inferred from log prose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RunState {
+    /// Exit status zero **and** the log demonstrates tests actually ran.
     CompletedClean,
-    CompletedWithTestFailures,
+    /// Non-zero exit with at least one parsed test failure. Deliberately not
+    /// called "completed": tests were observed failing, but a later package
+    /// could still have died in compile or harness, so normal completion of the
+    /// whole workspace run is not claimed.
+    NonZeroWithObservedTestFailures,
     /// Non-zero exit with no parsed test failure: compile, link, harness, or
     /// runner problem. Not a product verdict.
     CompileOrHarnessFailure,
+    /// Status says success but the log does not show a test run — empty,
+    /// truncated, or not a `cargo test` log. A zero status alone is not evidence
+    /// that anything executed.
+    IncompleteEvidence,
     LogMissing,
     StatusMissing,
 }
@@ -55,16 +66,24 @@ impl RunState {
     fn label(self) -> &'static str {
         match self {
             Self::CompletedClean => "completed_clean",
-            Self::CompletedWithTestFailures => "completed_with_test_failures",
+            Self::NonZeroWithObservedTestFailures => "nonzero_with_observed_test_failures",
             Self::CompileOrHarnessFailure => "compile_or_harness_failure",
+            Self::IncompleteEvidence => "incomplete_evidence",
             Self::LogMissing => "log_missing",
             Self::StatusMissing => "status_missing",
         }
     }
 
     /// Whether this run produced evidence that can be compared at all.
+    ///
+    /// `IncompleteEvidence` is unusable on purpose: treating a zero status over
+    /// an unrecognised log as a clean run is the same false-confidence error as
+    /// treating an absent test as a passing one.
     fn is_usable(self) -> bool {
-        !matches!(self, Self::LogMissing | Self::StatusMissing)
+        !matches!(
+            self,
+            Self::LogMissing | Self::StatusMissing | Self::IncompleteEvidence
+        )
     }
 }
 
@@ -232,12 +251,21 @@ fn load_run(log: &Path, status: &Path) -> RunOutcome {
     };
     let mut outcome = parse_log(&text);
     outcome.exit_status = Some(exit_status);
+    // A zero status is not, by itself, evidence that tests ran. Require the log
+    // to show at least one test target and at least one `test result:` summary
+    // before calling a run clean; otherwise an empty, truncated, or non-test log
+    // beside a `0` status would be reported as a clean workspace run.
+    let demonstrates_a_test_run = !outcome.targets.is_empty() && !outcome.results.is_empty();
     outcome.state = if exit_status == 0 {
-        RunState::CompletedClean
+        if demonstrates_a_test_run {
+            RunState::CompletedClean
+        } else {
+            RunState::IncompleteEvidence
+        }
     } else if outcome.failed.is_empty() {
         RunState::CompileOrHarnessFailure
     } else {
-        RunState::CompletedWithTestFailures
+        RunState::NonZeroWithObservedTestFailures
     };
     outcome
 }
@@ -299,6 +327,12 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
 ///
 /// Both outcomes are collected: knowing a test was observed *passing* is what
 /// separates a flake from a test that was never reached.
+///
+/// Names containing spaces are accepted. A doctest is reported as
+/// `test src/lib.rs - foo::bar (line 12) ... ok`, so rejecting spaces would have
+/// silently dropped every doctest from the observation model — a doctest could
+/// fail in one run and simply be absent from the verdict. The surrounding
+/// `test ` / ` ... ok` shape is specific enough on its own.
 fn test_result_line(line: &str) -> Option<(String, bool)> {
     let rest = line.strip_prefix("test ")?;
     let (name, failed) = if let Some(name) = rest.strip_suffix(" ... FAILED") {
@@ -309,7 +343,7 @@ fn test_result_line(line: &str) -> Option<(String, bool)> {
         return None;
     };
     let name = name.trim();
-    (!name.is_empty() && !name.contains(' ')).then(|| (name.to_string(), failed))
+    (!name.is_empty()).then(|| (name.to_string(), failed))
 }
 
 /// `Running unittests src\lib.rs (target\debug\deps\ripr-abc.exe)` -> the
@@ -342,7 +376,7 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
     out.push('\n');
 
     if !first.state.is_usable() || !second.state.is_usable() {
-        out.push_str("**Evidence failure.** At least one run did not produce a usable log and exit status, so no verdict can be derived. This is reported as a workflow failure, not as a pass — a lane that goes green without evidence is worse than no lane.\n\n");
+        out.push_str("**Evidence failure.** At least one run did not produce a usable log and exit status, so no verdict can be derived. This is reported as a workflow failure, not as a pass — a lane that goes green without evidence is worse than no lane. A zero exit status over a log that does not show a test run counts as `incomplete_evidence`, not as clean.\n\n");
     }
     if first.state == RunState::CompileOrHarnessFailure
         || second.state == RunState::CompileOrHarnessFailure
@@ -481,7 +515,7 @@ mod tests {
     /// observed passing, so it cannot be called a flake.
     #[test]
     fn absence_is_masked_unknown_not_unstable() {
-        let first = outcome(RunState::CompletedWithTestFailures, &["x::y"], &[]);
+        let first = outcome(RunState::NonZeroWithObservedTestFailures, &["x::y"], &[]);
         let second = outcome(RunState::CompletedClean, &[], &[]); // never reported x::y
         assert_eq!(
             classify(first.observe("x::y"), second.observe("x::y")),
@@ -495,7 +529,7 @@ mod tests {
     /// Only an explicitly observed pass on the other side makes a failure a flake.
     #[test]
     fn observed_pass_on_the_other_side_is_unstable() {
-        let first = outcome(RunState::CompletedWithTestFailures, &["x::y"], &[]);
+        let first = outcome(RunState::NonZeroWithObservedTestFailures, &["x::y"], &[]);
         let second = outcome(RunState::CompletedClean, &[], &["x::y"]);
         assert_eq!(
             classify(first.observe("x::y"), second.observe("x::y")),
@@ -508,7 +542,7 @@ mod tests {
 
     #[test]
     fn failing_twice_is_reported_as_repeated_not_deterministic() {
-        let both = outcome(RunState::CompletedWithTestFailures, &["x::y"], &[]);
+        let both = outcome(RunState::NonZeroWithObservedTestFailures, &["x::y"], &[]);
         assert_eq!(
             classify(both.observe("x::y"), both.observe("x::y")),
             Some(Verdict::RepeatedFailure)
@@ -546,18 +580,108 @@ mod tests {
     fn run_state_labels_are_stable_wire_strings() {
         assert_eq!(RunState::CompletedClean.label(), "completed_clean");
         assert_eq!(
-            RunState::CompletedWithTestFailures.label(),
-            "completed_with_test_failures"
+            RunState::NonZeroWithObservedTestFailures.label(),
+            "nonzero_with_observed_test_failures"
         );
         assert_eq!(
             RunState::CompileOrHarnessFailure.label(),
             "compile_or_harness_failure"
         );
+        assert_eq!(RunState::IncompleteEvidence.label(), "incomplete_evidence");
         assert_eq!(RunState::LogMissing.label(), "log_missing");
         assert_eq!(RunState::StatusMissing.label(), "status_missing");
-        assert!(RunState::CompletedWithTestFailures.is_usable());
+        assert!(RunState::NonZeroWithObservedTestFailures.is_usable());
+        assert!(RunState::CompletedClean.is_usable());
         assert!(!RunState::LogMissing.is_usable());
         assert!(!RunState::StatusMissing.is_usable());
+        assert!(
+            !RunState::IncompleteEvidence.is_usable(),
+            "a zero status over an unrecognised log is not comparable evidence"
+        );
+    }
+
+    /// A zero exit status is not evidence that tests ran. An empty, truncated, or
+    /// non-`cargo test` log beside a `0` status must not be reported as clean —
+    /// that is the same false-confidence error as treating an absent test as a
+    /// passing one, in a different place.
+    #[test]
+    fn zero_status_over_an_empty_log_is_incomplete_evidence_not_clean() {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-winadv-incomplete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let cleanup = |dir: &std::path::Path| {
+            let _ = std::fs::remove_dir_all(dir);
+        };
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let log = dir.join("empty.log");
+        let status = dir.join("empty.status");
+        if std::fs::write(&log, "").is_err() || std::fs::write(&status, "0\n").is_err() {
+            cleanup(&dir);
+            return;
+        }
+        let outcome = load_run(&log, &status);
+        assert_eq!(outcome.state, RunState::IncompleteEvidence);
+        assert_eq!(outcome.exit_status, Some(0));
+
+        // Prose that is not a cargo test log is equally unusable.
+        let noise = dir.join("noise.log");
+        if std::fs::write(&noise, "some unrelated output\nnothing to see\n").is_ok() {
+            assert_eq!(
+                load_run(&noise, &status).state,
+                RunState::IncompleteEvidence
+            );
+        }
+
+        // A real log with targets and result lines is clean.
+        let real = dir.join("real.log");
+        if std::fs::write(&real, REAL_RUNNER_LOG).is_ok() {
+            assert_eq!(load_run(&real, &status).state, RunState::CompletedClean);
+        }
+
+        let rendered = render(
+            &RunOutcome {
+                state: RunState::IncompleteEvidence,
+                exit_status: Some(0),
+                failed: BTreeSet::new(),
+                passed: BTreeSet::new(),
+                targets: Vec::new(),
+                results: Vec::new(),
+            },
+            &outcome,
+        );
+        assert!(rendered.contains("**Evidence failure.**"), "{rendered}");
+        assert!(
+            !rendered.contains("No test failed in either run."),
+            "an unusable pair must not claim a clean result: {rendered}"
+        );
+        cleanup(&dir);
+    }
+
+    /// Doctest names contain spaces. Rejecting them would drop every doctest
+    /// from the observation model, so a doctest could fail in one run and be
+    /// silently absent from the verdict.
+    #[test]
+    fn doctest_names_containing_spaces_are_observed() {
+        let parsed = parse_log(
+            "test src/lib.rs - foo::bar (line 12) ... ok\ntest src/lib.rs - baz::qux (line 30) ... FAILED\n",
+        );
+        assert!(
+            parsed.passed.contains("src/lib.rs - foo::bar (line 12)"),
+            "{:?}",
+            parsed.passed
+        );
+        assert!(
+            parsed.failed.contains("src/lib.rs - baz::qux (line 30)"),
+            "{:?}",
+            parsed.failed
+        );
     }
 
     #[test]
