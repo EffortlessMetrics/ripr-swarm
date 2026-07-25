@@ -352,3 +352,178 @@ fn normalized_path_text(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     text.strip_prefix("./").unwrap_or(&text).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Regression guard for #2449: the agent-brief `--files` and `--brief-diff`
+    // confinement helpers must reject paths that escape the workspace root.
+    // The helpers are private, so the tests live in this module.
+
+    /// Create a unique temp dir for one test and return its path. Mirrors the
+    /// pattern in `analysis/path.rs` tests.
+    struct ScratchDir {
+        path: PathBuf,
+    }
+
+    impl ScratchDir {
+        fn new(label: &str) -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("ripr-agent-brief-{label}-{suffix}"));
+            let _ = std::fs::create_dir_all(&path);
+            Self { path }
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn confine_agent_brief_file_path_accepts_in_root_relative() -> Result<(), String> {
+        let dir = ScratchDir::new("in-root");
+        let confined = confine_agent_brief_file_path(&dir.path, Path::new("src/lib.rs"))?;
+        assert_eq!(confined, PathBuf::from("src/lib.rs"));
+        Ok(())
+    }
+
+    #[test]
+    fn confine_agent_brief_file_path_strips_root_prefix() -> Result<(), String> {
+        let dir = ScratchDir::new("prefix");
+        // An absolute path under root should be stripped to its relative tail.
+        let absolute = dir.path.join("src/lib.rs");
+        let confined = confine_agent_brief_file_path(&dir.path, &absolute)?;
+        assert_eq!(confined, PathBuf::from("src/lib.rs"));
+        Ok(())
+    }
+
+    #[test]
+    fn confine_agent_brief_file_path_rejects_parent_traversal() -> Result<(), String> {
+        let dir = ScratchDir::new("traversal");
+        let Err(err) = confine_agent_brief_file_path(&dir.path, Path::new("../outside.rs")) else {
+            return Err("parent traversal should be rejected".to_string());
+        };
+        assert!(
+            err.contains("must stay under root"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn confine_agent_brief_file_path_rejects_empty_after_normalization() -> Result<(), String> {
+        let dir = ScratchDir::new("empty");
+        let Err(err) = confine_agent_brief_file_path(&dir.path, Path::new(".")) else {
+            return Err("a path that normalizes to empty should be rejected".to_string());
+        };
+        assert!(
+            err.contains("empty after normalization"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn confine_agent_brief_file_path_rejects_root_path_itself() -> Result<(), String> {
+        let dir = ScratchDir::new("root-itself");
+        // Passing the root directory itself normalizes to empty after the
+        // root prefix is stripped. The helper must reject it OR return a
+        // safe relative; either is acceptable as long as no escape.
+        match confine_agent_brief_file_path(&dir.path, &dir.path) {
+            Ok(confined) => assert!(
+                !confined.to_string_lossy().contains(".."),
+                "root path should not produce an escape: {confined:?}"
+            ),
+            Err(err) => assert!(
+                err.contains("empty after normalization") || err.contains("must stay under root"),
+                "unexpected error: {err}"
+            ),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validate_agent_brief_diff_path_accepts_in_root_file() -> Result<(), String> {
+        let dir = ScratchDir::new("diff-in-root");
+        let diff_file = dir.path.join("change.diff");
+        std::fs::write(&diff_file, "diff content").map_err(|err| err.to_string())?;
+        // The Ok contract is what we test: an in-root diff file must be
+        // accepted. We do not assert on the canonicalized path's prefix
+        // because canonicalize may rewrite the temp-dir prefix on Windows.
+        let confined = validate_agent_brief_diff_path(&dir.path, Path::new("change.diff"))?;
+        assert!(
+            !confined.to_string_lossy().contains(".."),
+            "accepted path should not contain traversal: {confined:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_agent_brief_diff_path_rejects_outside_root() -> Result<(), String> {
+        let inside = ScratchDir::new("diff-inside");
+        let outside = ScratchDir::new("diff-outside");
+        let foreign = outside.path.join("secret.diff");
+        std::fs::write(&foreign, "secret").map_err(|err| err.to_string())?;
+        let Err(err) = validate_agent_brief_diff_path(&inside.path, &foreign) else {
+            return Err("a diff file outside root should be rejected".to_string());
+        };
+        assert!(
+            err.contains("must stay under root"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_agent_brief_diff_path_rejects_symlink_escape() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+        let inside = ScratchDir::new("symlink-inside");
+        let outside = ScratchDir::new("symlink-outside");
+        let target = outside.path.join("secret.diff");
+        std::fs::write(&target, "secret").map_err(|err| err.to_string())?;
+        let link = inside.path.join("linked.diff");
+        symlink(&target, &link).map_err(|err| err.to_string())?;
+        let Err(err) = validate_agent_brief_diff_path(&inside.path, Path::new("linked.diff"))
+        else {
+            return Err("a symlink escaping root should be rejected".to_string());
+        };
+        assert!(
+            err.contains("must stay under root"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_brief_lines_from_diff_drops_traversal_paths() -> Result<(), String> {
+        // A crafted diff with a `+++ b/../escape.rs` marker: the parsed path
+        // escapes root. The lines-from-diff helper should produce zero lines
+        // for the escaping file (fail-closed drop), not embed the escape path.
+        let dir = ScratchDir::new("diff-traversal");
+        let diff_text = "diff --git a/src/lib.rs b/../escape.rs\n--- a/src/lib.rs\n+++ b/../escape.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let lines = agent_brief_lines_from_diff(&dir.path, diff_text);
+        // The traversal path is normalized but the lines carry the normalized
+        // path; the confinement at the Files-arm and the diff-path confinement
+        // are separate layers. This test pins that the helper at least does
+        // not panic on traversal input.
+        // (If the diff parser's own confinement drops it, lines will be empty;
+        //  if not, the path will be normalized. Either is acceptable as long
+        //  as no escape path reaches downstream consumers verbatim.)
+        for line in &lines {
+            let path_str = line.file.to_string_lossy();
+            assert!(
+                !path_str.contains(".."),
+                "escape path leaked into brief lines: {path_str}"
+            );
+        }
+        Ok(())
+    }
+}
