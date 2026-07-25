@@ -250,15 +250,20 @@ fn load_run(log: &Path, status: &Path) -> RunOutcome {
 /// run reported no targets while parsing every failure correctly.
 fn strip_ansi(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars();
+    let mut chars = line.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '\u{1b}' {
             out.push(ch);
             continue;
         }
-        if chars.next() != Some('[') {
+        // Peek rather than consume: an ESC that does not introduce a CSI
+        // sequence must not swallow the character after it. Consuming
+        // unconditionally silently deleted real text — an ESC followed by `X`
+        // lost both.
+        if chars.peek() != Some(&'[') {
             continue;
         }
+        let _ = chars.next();
         for next in chars.by_ref() {
             if next.is_ascii_alphabetic() {
                 break;
@@ -562,6 +567,22 @@ mod tests {
             "     Running unittests src/lib.rs"
         );
         assert_eq!(strip_ansi("plain text"), "plain text");
+    }
+
+    /// An ESC that does not introduce a CSI sequence must drop only the ESC.
+    /// Consuming the next character unconditionally deleted real text, which
+    /// could silently truncate a test name.
+    #[test]
+    fn strip_ansi_keeps_the_character_after_a_lone_escape() {
+        assert_eq!(strip_ansi("a\u{1b}Xb"), "aXb");
+        assert_eq!(strip_ansi("\u{1b}"), "");
+        assert_eq!(strip_ansi("test some::name\u{1b}"), "test some::name");
+        // The pathological case this protects: a stray ESC before the shape the
+        // parser matches on.
+        assert_eq!(
+            strip_ansi("test \u{1b}some::name ... FAILED"),
+            "test some::name ... FAILED"
+        );
     }
 
     /// A line beginning `Running ` without a parenthesised binary is not a test
