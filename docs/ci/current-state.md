@@ -1,6 +1,6 @@
 # CI Current State
 
-This document records the current (as of 2026-05-24) implementation state of
+This document records the current (as of 2026-07-25) implementation state of
 the CI economics system. It is the honest answer to "what actually runs today?"
 as distinct from the target design in `docs/CI.md`.
 
@@ -11,6 +11,8 @@ as distinct from the target design in `docs/CI.md`.
 - PR synchronize events cancel previous runs (correct).
 - Cache saves happen only on `main` (correct).
 - Release-surface checks gate on push/main or explicit labels (correct).
+- The Windows workspace smoke preserves an in-progress run
+  (`cancel-in-progress: false`); later revisions may replace only queued work.
 
 ### Policy gates (all blocking on relevant PRs)
 
@@ -41,6 +43,12 @@ as distinct from the target design in `docs/CI.md`.
 - `ripr` self-dogfood (advisory only; not a gate).
 - Coverage via `cargo-llvm-cov` (advisory; Codecov status is informational).
 - Test Analytics.
+- `Windows Workspace Smoke (advisory)` runs `cargo test --workspace
+  --no-fail-fast` on `windows-latest` for Rust, Cargo, xtask, fixture, and lane
+  changes. A red run is visible and retains its transcript but is not a branch
+  protection requirement. This is the minimum cross-platform regression net
+  established by #2393; it is not a claim that every Linux policy or release
+  lane also runs on Windows.
 
 ### On-demand lanes (label or main)
 
@@ -57,6 +65,7 @@ as distinct from the target design in `docs/CI.md`.
 | No numeric PR Plan (`ci-plan.json`) | PR 11 | Structural PR Plan exists; no numeric LEM forecast before lanes run. |
 | No `ci-actuals.json` emission | PR 12 | No forecast→actuals loop. |
 | VS Code lane is not path-gated or wired to the `vscode` label | PR 13 | `full-ci` is currently the only PR label that runs the legacy VS Code CI job. |
+| Windows proof is workspace-test-only | #2393 follow-up | Platform-specific tests run continuously, but the full Linux policy/release matrix is not duplicated on Windows. |
 | `ripr` self-dogfood is advisory but no LEM tracking | PR 14 | Cannot measure cost of self-verification. |
 | No soft budget guard | PR 15 | No warning when PRs exceed budget bands. |
 | `indexing_slicing` / `string_slice` are not active | PR 07 | Missing per-call receipts for parser/diff bounded indexing and slicing. |
