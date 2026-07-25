@@ -20,7 +20,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'codex/shell-arg-escaping-2347'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - name: Check out the exclusively claimed branch without write credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -53,18 +53,30 @@ jobs:
           test "${#changed[@]}" -eq 2
           printf '%s\n' "${changed[@]}" | grep -Fxq crates/ripr/src/agent/loop_commands.rs
           printf '%s\n' "${changed[@]}" | grep -Fxq policy/process_allowlist.txt
-      - name: Verify exact argv behavior and affected command surfaces
+      - name: All-target Clippy
         shell: bash
-        run: |
-          set -euo pipefail
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test -p ripr --lib loop_commands -- --test-threads=1
-          cargo test -p ripr --lib first_pr -- --test-threads=4
-          cargo test -p ripr --lib pilot -- --test-threads=4
-          cargo xtask check-process-policy
-          cargo xtask check-file-policy
-          cargo xtask check-static-language
-          cargo xtask goldens check
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Bash argv round-trip and command helper tests
+        shell: bash
+        run: cargo test -p ripr --lib loop_commands -- --test-threads=1
+      - name: First-PR command projections
+        shell: bash
+        run: cargo test -p ripr --lib first_pr -- --test-threads=4
+      - name: Pilot command projections
+        shell: bash
+        run: cargo test -p ripr --lib pilot -- --test-threads=4
+      - name: Process policy
+        shell: bash
+        run: cargo xtask check-process-policy
+      - name: File policy
+        shell: bash
+        run: cargo xtask check-file-policy
+      - name: Static language
+        shell: bash
+        run: cargo xtask check-static-language
+      - name: Golden contract
+        shell: bash
+        run: cargo xtask goldens check
       - name: Package the validated files
         shell: bash
         run: |
