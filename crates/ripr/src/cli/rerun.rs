@@ -1840,8 +1840,8 @@ mod tests {
         write_file(
             &ledger_path,
             &format!(
-                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/discount.ts","line":2,"owner":"applyDiscount"}},"evidence_ids":["{}"],"verification_commands":["npm test -- tests/discount.test.ts"],"receipt_command":"ripr outcome --before before.json --after after.json --format json"}}]}}"#,
-                root.display(),
+                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":{},"records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/discount.ts","line":2,"owner":"applyDiscount"}},"evidence_ids":["{}"],"verification_commands":["npm test -- tests/discount.test.ts"],"receipt_command":"ripr outcome --before before.json --after after.json --format json"}}]}}"#,
+                json_string_token(&root.display().to_string()),
                 canonical_gap_id,
                 finding.id
             ),
@@ -1892,8 +1892,8 @@ mod tests {
             write_file(
                 &ledger_path,
                 &format!(
-                    r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"{}","line":2,"owner":"applyDiscount"}},"evidence_ids":["{}"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
-                    root.display(),
+                    r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":{},"records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"{}","line":2,"owner":"applyDiscount"}},"evidence_ids":["{}"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                    json_string_token(&root.display().to_string()),
                     canonical_gap_id,
                     source,
                     finding.id
@@ -1947,8 +1947,8 @@ mod tests {
         write_file(
             &ledger_path,
             &format!(
-                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/discount.ts","line":2,"owner":"applyDiscount"}},"evidence_ids":["stale-evidence"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
-                root.display(),
+                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":{},"records":[{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/discount.ts","line":2,"owner":"applyDiscount"}},"evidence_ids":["stale-evidence"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                json_string_token(&root.display().to_string()),
                 canonical_gap_id
             ),
         )?;
@@ -2008,8 +2008,8 @@ mod tests {
         write_file(
             &ledger_path,
             &format!(
-                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"gap:typescript:typescript_preview:aaaaaaaa","language":"typescript","anchor":{{"file":"src/multi.ts","line":1,"owner":"alpha"}},"evidence_ids":["a"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}},{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/multi.ts","line":1,"owner":"beta"}},"evidence_ids":["b"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
-                root.display(),
+                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":{},"records":[{{"canonical_gap_id":"gap:typescript:typescript_preview:aaaaaaaa","language":"typescript","anchor":{{"file":"src/multi.ts","line":1,"owner":"alpha"}},"evidence_ids":["a"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}},{{"canonical_gap_id":"{}","language":"typescript","anchor":{{"file":"src/multi.ts","line":1,"owner":"beta"}},"evidence_ids":["b"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                json_string_token(&root.display().to_string()),
                 beta_gap_id
             ),
         )?;
@@ -2082,8 +2082,8 @@ mod tests {
         write_file(
             &ledger_path,
             &format!(
-                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":"{}","records":[{{"canonical_gap_id":"gap:typescript:missing","language":"typescript","anchor":{{"file":"src/other.ts","line":1,"owner":"other"}},"evidence_ids":["missing"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
-                root.display()
+                r#"{{"schema_version":"ripr-gap-decision-ledger-v1","root":{},"records":[{{"canonical_gap_id":"gap:typescript:missing","language":"typescript","anchor":{{"file":"src/other.ts","line":1,"owner":"other"}},"evidence_ids":["missing"],"verification_commands":["npm test"],"receipt_command":"ripr outcome --before b.json --after a.json --format json"}}]}}"#,
+                json_string_token(&root.display().to_string())
             ),
         )?;
         let report = rerun_gap(&root, &config, "gap:typescript:missing", &ledger_path)?;
@@ -2112,6 +2112,22 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// Render `value` as a quoted JSON string token (including the surrounding
+    /// double quotes) using `serde_json` as the escaping authority. Hand-rolled
+    /// `format!(r#"...{path}..."#)` sites break on Windows where `Path::display`
+    /// emits backslashes that form invalid JSON escapes (`\U`, `\T`, ...); this
+    /// helper routes every interpolated path through the real JSON encoder so
+    /// the fixture parses on both platforms (#2390).
+    #[cfg(feature = "lang-typescript")]
+    fn json_string_token(value: &str) -> String {
+        // serde_json::to_string on a &str cannot fail (a &str is always valid
+        // UTF-8 with no non-string type). Match to satisfy clippy::unwrap_used.
+        match serde_json::to_string(value) {
+            Ok(token) => token,
+            Err(_) => "\"<unrepresentable path>\"".to_string(),
+        }
     }
 
     #[cfg(feature = "lang-typescript")]
