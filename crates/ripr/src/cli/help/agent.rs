@@ -106,20 +106,25 @@ Options:
   --cancel-after-ms N  Optional bounded cancellation request.
   --json               Required machine-readable output.
 
-Only the exact direct, no-network, no-write `ripr agent verify` route from the
-packet is executable, and only when the packet's typed `command_specs.verify`
-is reproducible from its own `verification_commands`. The command uses the
-current ripr binary, a bounded timeout, output caps, and repository currentness
-checks.
+Only the exact direct, no-network, no-write `ripr agent verify` route is
+executable. Authority is layered: the packet's typed `command_specs.verify` must
+be reproducible from its own `verification_commands`, so the route you read is
+the route that runs; and both `--before` and `--after` must pass repo-exposure
+provenance validation, after which the canonical route is recomputed from those
+validated artifacts and must match the packet. The packet chooses which
+producer artifacts to compare; it never authors the command.
 
-The child environment is reduced to a disclosed platform floor (PATH plus
-platform essentials); ambient credentials are dropped. Only the owned child is
-terminated -- descendant containment rests on the single-leaf-route boundary.
+The command uses the current ripr binary, a bounded timeout, output caps, and
+repository currentness checks. The child environment is reduced to a disclosed
+platform floor (PATH plus platform essentials); ambient credentials are dropped,
+though HOME is passed through so host Git configuration still applies. Only the
+owned child is terminated.
 
-Every outcome, including refusals, is typed JSON on stdout. Exit status is 0
-when a bounded observation was committed and nonzero when it was not. It records
-process evidence only; it does not issue receipts, run mutation testing, prove
-adequacy, or grant gate or merge authority.
+Every parsed attempt, including refusals, emits typed JSON on stdout; usage
+errors stay on stderr. Exit status is 0 when a bounded observation was committed
+-- including an observed command failure -- and nonzero when none was. It
+records process evidence only; it does not issue receipts, run mutation testing,
+prove adequacy, or grant gate or merge authority.
 "#;
 pub(super) const AGENT_RECEIPT_HELP: &str = r#"Write a provenance receipt with bounded next-action guidance for one change.
 

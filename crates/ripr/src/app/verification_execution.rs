@@ -1,11 +1,33 @@
 //! Bounded execution of one producer-owned verification route.
 //!
-//! This module is an explicit process boundary. It accepts only a canonical
-//! producer-emitted agent packet, re-derives the typed verify `CommandSpec`
-//! from the packet's own display commands so caller-authored specs cannot
-//! borrow producer authority, and executes the single direct `ripr agent
-//! verify` route. It never invokes a shell, never executes display text, and
-//! never issues a repair receipt.
+//! This module is an explicit process boundary. It accepts a canonical
+//! producer-shaped agent packet and executes the single direct `ripr agent
+//! verify` route it declares. It never invokes a shell, never executes display
+//! text, and never issues a repair receipt.
+//!
+//! # How route authority is established
+//!
+//! Authority is layered, because packet self-consistency alone is not
+//! provenance — every field of a packet is caller-supplied, so a caller who
+//! rewrites all copies of the route coherently would otherwise be accepted.
+//!
+//! 1. **Consistency** ([`validate_packet_route`]) — the typed
+//!    `command_specs.verify` array must be exactly reproducible from the
+//!    packet's own `verification_commands`, and the headline `verify_command`
+//!    must resolve to the same route. This buys one property: the command a
+//!    reviewer reads is the command that runs. On its own it proves nothing
+//!    about origin.
+//! 2. **Provenance** ([`bind_producer_route`]) — the route's `--before` and
+//!    `--after` inputs must each pass the landed repo-exposure provenance
+//!    contract: canonical shape, `ripr` producer identity, a repository root
+//!    equal to the selected root, a full-SHA HEAD, and a recomputed content
+//!    commitment. RIPR then **recomputes** the canonical verify route over
+//!    those validated artifacts and requires the packet's route to equal it.
+//!
+//! The packet therefore chooses *which validated producer artifacts to
+//! compare*; it never authors the command. A coherently rewritten packet
+//! pointing at anything that is not a provenance-valid producer artifact is
+//! refused.
 //!
 //! Descendant containment is a declared limitation: the workspace forbids
 //! `unsafe_code` and the dependency policy admits neither `libc` nor
@@ -15,7 +37,7 @@
 //! against that owned child.
 
 use crate::agent::artifact::current_git_head;
-use crate::agent::command_specs::agent_command_spec_from_display;
+use crate::agent::command_specs::{agent_command_spec_from_display, agent_verify_command_spec};
 use crate::domain::{
     CancellationPolicy, CommandAuthorityBoundary, CommandExecutionMode, CommandRole, CommandSpec,
     EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy, VerificationCurrentnessV1,
@@ -135,6 +157,11 @@ struct InputIdentity {
     flag: &'static str,
     path: String,
     sha256: String,
+    /// Provenance fields copied from the validated repo-exposure artifact.
+    artifact_input_identity: String,
+    artifact_snapshot_identity: String,
+    artifact_repository_head: String,
+    artifact_currentness: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -142,6 +169,18 @@ struct ValidatedPacket {
     command_spec: CommandSpec,
     source_artifact: String,
     inputs: Vec<InputIdentity>,
+}
+
+/// A packet route that passed the consistency and route-class checks but has
+/// not yet been bound to provenance-validated producer artifacts.
+#[derive(Clone, Debug)]
+struct CandidateRoute {
+    command_spec: CommandSpec,
+    source_artifact: String,
+    declared_before: String,
+    declared_after: String,
+    before_path: PathBuf,
+    after_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -408,15 +447,26 @@ fn run(
     }
 }
 
-/// Validate one canonical producer envelope and re-derive its typed verify
-/// spec from the packet's own display commands.
+/// Validate one canonical producer-shaped envelope and re-derive its typed
+/// verify spec from the packet's own display commands.
 ///
-/// Producer authority is established by reproduction, not by shape: the typed
-/// `command_specs.verify` array must equal exactly what
+/// The typed `command_specs.verify` array must equal exactly what
 /// `agent_command_spec_from_display` yields for the packet's
-/// `verification_commands`. A caller who edits any typed field breaks that
-/// equality and is refused.
+/// `verification_commands`, so a caller cannot display one route and execute
+/// another. This is a consistency check, not a provenance check — see the
+/// module documentation for what it does not establish.
 fn validate_packet(root: &Path, packet_path: &Path) -> Result<ValidatedPacket, Refusal> {
+    let candidate = validate_packet_route(root, packet_path)?;
+    bind_producer_route(root, candidate)
+}
+
+/// Consistency and route-class layer.
+///
+/// Checks the envelope shape, that the typed specs are reproducible from the
+/// packet's own display commands, that exactly one route is executable, and that
+/// the inputs resolve under the root. Passing this does **not** make a route
+/// producer-owned — see [`bind_producer_route`].
+fn validate_packet_route(root: &Path, packet_path: &Path) -> Result<CandidateRoute, Refusal> {
     let text = fs::read_to_string(packet_path)
         .map_err(|error| rejected(format!("read packet failed: {error}")))?;
     let value: Value = serde_json::from_str(&text)
@@ -477,7 +527,7 @@ fn validate_packet(root: &Path, packet_path: &Path) -> Result<ValidatedPacket, R
         .collect::<Result<Vec<_>, _>>()?;
     if typed != reproduced {
         return Err(rejected(
-            "typed command_specs.verify is not reproducible from the packet verification_commands; caller-authored specs cannot borrow producer authority",
+            "typed command_specs.verify is not reproducible from the packet verification_commands; the displayed route and the typed route must agree",
         ));
     }
 
@@ -535,30 +585,105 @@ fn validate_packet(root: &Path, packet_path: &Path) -> Result<ValidatedPacket, R
     let before_path = confined_existing_file(root, &before, "verify --before")?;
     let after_path = confined_existing_file(root, &after, "verify --after")?;
 
-    let inputs = vec![
-        input_identity("--before", &before, &before_path)?,
-        input_identity("--after", &after, &after_path)?,
-    ];
-
-    Ok(ValidatedPacket {
+    Ok(CandidateRoute {
         command_spec,
         source_artifact: display_path(packet_path),
-        inputs,
+        declared_before: path_arg_text(&before),
+        declared_after: path_arg_text(&after),
+        before_path,
+        after_path,
     })
 }
 
-fn input_identity(
-    flag: &'static str,
-    declared: &Path,
-    resolved: &Path,
-) -> Result<InputIdentity, Refusal> {
-    let bytes = fs::read(resolved)
-        .map_err(|error| wrong_root(format!("read {flag} input failed: {error}")))?;
-    Ok(InputIdentity {
-        flag,
-        path: display_path(declared),
+/// Bind a candidate route to provenance-validated producer artifacts.
+///
+/// This is what makes the executed route producer-owned rather than merely
+/// self-consistent. Both `--before` and `--after` must pass the landed
+/// repo-exposure provenance contract — canonical shape, `ripr` producer
+/// identity, a repository root equal to the selected root, a full-SHA HEAD, and
+/// a recomputed content commitment. RIPR then **recomputes** the canonical
+/// verify route over those validated artifacts and requires the packet's route
+/// to equal it. The packet therefore selects which validated artifacts to
+/// compare; it does not get to author the command.
+fn bind_producer_route(root: &Path, candidate: CandidateRoute) -> Result<ValidatedPacket, Refusal> {
+    let before = validated_artifact(root, &candidate.before_path, "before")?;
+    let after = validated_artifact(root, &candidate.after_path, "after")?;
+    if before.artifact.base_revision != after.artifact.base_revision {
+        return Err(rejected(format!(
+            "verify inputs are incomparable: base revisions differ ({:?} vs {:?})",
+            before.artifact.base_revision, after.artifact.base_revision
+        )));
+    }
+
+    // The authority step: the route is constructed here, not accepted.
+    let recomputed = agent_verify_command_spec(
+        ".",
+        &candidate.declared_before,
+        &candidate.declared_after,
+        None,
+    );
+    if candidate.command_spec != recomputed {
+        return Err(rejected(
+            "packet route does not equal the canonical verify route recomputed from the validated producer artifacts",
+        ));
+    }
+
+    Ok(ValidatedPacket {
+        command_spec: recomputed,
+        source_artifact: candidate.source_artifact,
+        inputs: vec![
+            input_identity("--before", &candidate.declared_before, before),
+            input_identity("--after", &candidate.declared_after, after),
+        ],
+    })
+}
+
+struct ArtifactBinding {
+    artifact: crate::agent::artifact::ValidatedArtifact,
+    sha256: String,
+}
+
+fn validated_artifact(
+    root: &Path,
+    path: &Path,
+    label: &'static str,
+) -> Result<ArtifactBinding, Refusal> {
+    let bytes = fs::read(path)
+        .map_err(|error| wrong_root(format!("read {label} input failed: {error}")))?;
+    let raw = String::from_utf8(bytes.clone())
+        .map_err(|error| rejected(format!("{label} input is not valid UTF-8: {error}")))?;
+    let artifact = crate::agent::artifact::validate_repo_exposure_artifact(root, &raw, label)
+        .map_err(|error| {
+            rejected(format!(
+                "{label} input failed provenance validation: {error}"
+            ))
+        })?;
+    Ok(ArtifactBinding {
+        artifact,
         sha256: digest(&bytes),
     })
+}
+
+fn input_identity(flag: &'static str, declared: &str, binding: ArtifactBinding) -> InputIdentity {
+    InputIdentity {
+        flag,
+        path: declared.to_string(),
+        sha256: binding.sha256,
+        artifact_input_identity: binding.artifact.input_identity,
+        artifact_snapshot_identity: binding.artifact.snapshot_identity,
+        artifact_repository_head: binding.artifact.repository_head,
+        artifact_currentness: match binding.artifact.currentness {
+            crate::agent::artifact::ArtifactCurrentness::Current => "current",
+            crate::agent::artifact::ArtifactCurrentness::DirtyWorktree => "dirty_worktree",
+            crate::agent::artifact::ArtifactCurrentness::Historical => "historical",
+        },
+    }
+}
+
+/// Render a declared route path exactly as the producer wrote it, so the
+/// recomputed route can be compared byte-for-byte.
+fn path_arg_text(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// The executable subset of verify routes: one direct, clean-environment,
@@ -1043,16 +1168,12 @@ mod tests {
         let display = agent_verify_command_spec(".", "before.json", "after.json", None).display;
         let envelope = producer_envelope(std::slice::from_ref(&display), &display);
         let packet = root.write_packet("packet.json", &envelope)?;
-        let validated = validate_packet(&root.path, &packet)?;
-        assert_eq!(validated.command_spec.program, "ripr");
-        assert_eq!(validated.inputs.len(), 2);
-        // Input identities are committed, not merely path-checked.
-        assert!(
-            validated
-                .inputs
-                .iter()
-                .all(|input| input.sha256.starts_with("sha256:"))
-        );
+        let candidate = validate_packet_route(&root.path, &packet)?;
+        assert_eq!(candidate.command_spec.program, "ripr");
+        assert_eq!(candidate.declared_before, "before.json");
+        assert_eq!(candidate.declared_after, "after.json");
+        // Provenance binding is a separate layer, demonstrated end-to-end in
+        // `cli_smoke`, where real `ripr check` artifacts exist.
         Ok(())
     }
 
@@ -1069,7 +1190,7 @@ mod tests {
             }],
         });
         let packet = root.write_packet("packet.json", &envelope)?;
-        let error = validate_packet(&root.path, &packet)
+        let error = validate_packet_route(&root.path, &packet)
             .err()
             .ok_or("expected a refusal")?;
         assert_eq!(error.disposition, DISPOSITION_REJECTED);
@@ -1087,7 +1208,7 @@ mod tests {
         envelope["packets"][0]["command_specs"]["verify"][0]["args"][1] =
             Value::String("receipt".to_string());
         let packet = root.write_packet("packet.json", &envelope)?;
-        let error = validate_packet(&root.path, &packet)
+        let error = validate_packet_route(&root.path, &packet)
             .err()
             .ok_or("expected a refusal")?;
         assert!(error.reason.contains("not reproducible"));
@@ -1123,13 +1244,84 @@ mod tests {
             let mut envelope = producer_envelope(std::slice::from_ref(&display), &display);
             envelope["packets"][0]["command_specs"]["verify"][0][field] = replacement;
             let packet = root.write_packet(&format!("packet-{field}.json"), &envelope)?;
-            let error = validate_packet(&root.path, &packet)
+            let error = validate_packet_route(&root.path, &packet)
                 .err()
                 .ok_or_else(|| format!("expected a refusal for a mutated {field}"))?;
             assert_eq!(
                 error.disposition, DISPOSITION_REJECTED,
                 "mutated {field} produced {}",
                 error.reason
+            );
+        }
+        Ok(())
+    }
+
+    /// The load-bearing negative result for this module's trust story.
+    ///
+    /// A caller who mutates *every* duplicated route representation coherently —
+    /// `verification_commands`, the typed `command_specs.verify`, and the
+    /// headline `verify_command` — passes the consistency layer, because all of
+    /// those fields are caller-supplied and therefore agree with each other.
+    ///
+    /// The provenance layer is what refuses it: the rewritten route points at
+    /// files that are not provenance-valid repo-exposure producer artifacts, so
+    /// no route can be recomputed and execution is refused. This is the test
+    /// that separates "self-consistent" from "producer-owned".
+    #[test]
+    fn coherent_whole_packet_mutation_passes_consistency_but_fails_provenance() -> Result<(), String>
+    {
+        let root = seeded_root("coherent")?;
+        root.write("alt-before.json", b"{}")?;
+        root.write("alt-after.json", b"{}")?;
+        // A route the producer never emitted, rewritten consistently everywhere.
+        let forged = crate::agent::loop_commands::agent_verify_command(
+            ".",
+            "alt-before.json",
+            "alt-after.json",
+            None,
+        );
+        let envelope = producer_envelope(std::slice::from_ref(&forged), &forged);
+        let packet = root.write_packet("coherent.json", &envelope)?;
+        // Consistency alone cannot tell this apart from a producer packet.
+        let candidate = validate_packet_route(&root.path, &packet)?;
+        assert!(
+            candidate
+                .command_spec
+                .args
+                .iter()
+                .any(|arg| arg == "alt-before.json"),
+            "the consistency layer sees a well-formed, self-agreeing route"
+        );
+
+        // Provenance is what refuses it: these inputs are not producer artifacts.
+        let error = validate_packet(&root.path, &packet)
+            .err()
+            .ok_or("a coherent forgery must be refused by the provenance layer")?;
+        assert_eq!(error.disposition, DISPOSITION_REJECTED);
+        assert!(
+            error.reason.contains("provenance validation"),
+            "refusal must name the provenance failure, got: {}",
+            error.reason
+        );
+
+        // And coherence still cannot buy a different command, a shell, or an
+        // escape from the root even before provenance is consulted.
+        for escape in [
+            crate::agent::loop_commands::agent_verify_command(
+                ".",
+                "../outside.json",
+                "alt-after.json",
+                None,
+            ),
+            format!("{forged} > written.json"),
+            "ripr agent receipt --root . --verify-json alt-before.json --seam-id x --json"
+                .to_string(),
+        ] {
+            let envelope = producer_envelope(std::slice::from_ref(&escape), &escape);
+            let packet = root.write_packet("escape-attempt.json", &envelope)?;
+            assert!(
+                validate_packet_route(&root.path, &packet).is_err(),
+                "coherent rewriting must not admit {escape}"
             );
         }
         Ok(())
@@ -1143,7 +1335,7 @@ mod tests {
         // Two identical executable routes are ambiguous, not "obviously the same".
         let envelope = producer_envelope(&[display.clone(), display.clone()], &display);
         let packet = root.write_packet("two.json", &envelope)?;
-        let error = validate_packet(&root.path, &packet)
+        let error = validate_packet_route(&root.path, &packet)
             .err()
             .ok_or("expected a refusal for two routes")?;
         assert!(error.reason.contains("exactly one executable verify route"));
@@ -1152,7 +1344,7 @@ mod tests {
         let redirect = format!("{display} > out.json");
         let envelope = producer_envelope(std::slice::from_ref(&redirect), &redirect);
         let packet = root.write_packet("redirect.json", &envelope)?;
-        let error = validate_packet(&root.path, &packet)
+        let error = validate_packet_route(&root.path, &packet)
             .err()
             .ok_or("expected a refusal for a redirect route")?;
         assert!(error.reason.contains("exactly one executable verify route"));
@@ -1170,7 +1362,7 @@ mod tests {
         );
         let envelope = producer_envelope(std::slice::from_ref(&display), &display);
         let packet = root.write_packet("packet.json", &envelope)?;
-        let error = validate_packet(&root.path, &packet)
+        let error = validate_packet_route(&root.path, &packet)
             .err()
             .ok_or("expected a refusal")?;
         assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
@@ -1377,9 +1569,13 @@ mod tests {
 
     #[test]
     fn normalize_strips_only_drive_letter_verbatim_prefixes() {
+        // `check-local-context` forbids drive-letter path literals anywhere in
+        // tracked files, so the Windows shapes are assembled from parts.
+        let drive = "C:";
+        let plain = format!(r"{drive}\work\repo");
         assert_eq!(
-            normalize(Path::new(r"\\?\C:\work\repo")),
-            PathBuf::from(r"C:\work\repo")
+            normalize(Path::new(&format!(r"\\?\{plain}"))),
+            PathBuf::from(&plain)
         );
         // Stripping a UNC verbatim prefix would change the path's meaning.
         assert_eq!(

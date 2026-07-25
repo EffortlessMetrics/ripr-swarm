@@ -6292,13 +6292,34 @@ envelope containing exactly one packet, and executes only the direct,
 no-network, no-write `ripr agent verify` route. The current ripr executable is
 used; shell text is never interpreted.
 
-Producer authority is established by reproduction, not by shape. The packet's
-typed `command_specs.verify` is an **array**, and it must equal exactly what
-RIPR derives from that packet's own `verification_commands`. A caller who edits
-any typed field breaks that equality and is refused, so a caller-authored spec
-cannot borrow producer authority. Exactly one of the reproduced routes must be
-executable; zero and more-than-one are both refused rather than guessed. The
-packet's headline `verify_command` must resolve to that same route.
+The packet's typed `command_specs.verify` is an **array**, and it must equal
+exactly what RIPR derives from that packet's own `verification_commands`. The
+headline `verify_command` must resolve to the same route. Exactly one of the
+reproduced routes must be executable; zero and more-than-one are both refused
+rather than guessed.
+
+### How route authority is established
+
+Authority is layered, because packet self-consistency alone is not provenance —
+every field of a packet is caller-supplied.
+
+1. **Consistency.** The typed specs must be reproducible from the packet's own
+   display commands, and the headline must resolve to the same route. This buys
+   one property: the command a reviewer reads is the command that runs. On its
+   own it proves nothing about origin — a caller who coherently rewrites every
+   copy of the route would pass this layer.
+2. **Provenance.** The route's `--before` and `--after` inputs must each pass the
+   repo-exposure provenance contract: canonical shape, `ripr` producer identity,
+   the exact `ripr check --format repo-exposure-json` producer command, a
+   repository root equal to the selected root, a full-SHA HEAD, and a
+   **recomputed content commitment**. Their base revisions must agree. RIPR then
+   **recomputes** the canonical verify route over those validated artifacts and
+   requires the packet's route to equal it.
+
+The packet therefore chooses *which validated producer artifacts to compare*; it
+never authors the command. A coherently rewritten packet naming anything that is
+not a provenance-valid producer artifact is refused with
+`verification_rejected_policy` and no process starts.
 
 The operation requires `--authorize`, bounds process lifetime and stdout/stderr
 separately, refuses to overwrite an existing result, and checks repository HEAD
@@ -6306,8 +6327,12 @@ and worktree state before and after execution. `--before` and `--after` inputs
 must resolve under `--root`, and their content digests are committed alongside
 the result.
 
-Every terminal state — including refusals — is emitted as typed JSON on stdout
-with a `disposition` field. The exit status distinguishes only whether RIPR
+Every successfully parsed execution attempt — including authorization and
+execution refusals — emits one typed JSON terminal result on stdout with a
+`disposition` field. Usage errors (a missing `--packet`, `--result-json`, or
+`--json`, or a malformed `--cancel-after-ms`) remain plain usage errors on
+stderr and produce no disposition. The exit status distinguishes only whether
+RIPR
 committed a bounded observation: `0` when it did (including
 `verification_executed_fail`, which is a successful observation of a failing
 command), nonzero when it could not. Dispositions are
@@ -6332,6 +6357,12 @@ crosses the boundary (`PATH`, Windows `SystemRoot`/`SystemDrive`/`windir`/
 floor is disclosed by name in the response `preflight.environment_floor`;
 values are never emitted. Tokens and cloud credentials are dropped.
 
+Because `HOME` is in the floor, host global Git configuration can influence the
+child's Git behavior. "Clean" here means no ambient credential or application
+variables — not behavioural independence from host Git configuration. Disabling
+global and system Git configuration for the child is a possible future
+tightening, not a current guarantee.
+
 ### Declared limitations
 
 - **Descendant containment.** Only the owned child is terminated. The workspace
@@ -6340,10 +6371,14 @@ values are never emitted. Tokens and cloud credentials are dropped.
   authority boundary compensates structurally: the only executable route is one
   leaf `ripr agent verify` invocation, which spawns no long-lived descendants.
   The posture is disclosed as `descendant_containment` in the response.
-- **`verification_timed_out`** is reachable only for a route whose declared
-  `timeout_ms` elapses. Current producers emit a fixed 120s timeout, so this
-  disposition is not reachable end-to-end through today's producer;
-  `--cancel-after-ms` is the deterministic bounded-termination path.
+- **`verification_executed_fail`**, **`verification_timed_out`**, and
+  **`verification_command_not_found`** are mapped and unit-tested but are not
+  reachable end-to-end today. The only executable route is `ripr agent verify`
+  over two provenance-valid artifacts, and that command always exits 0 well
+  inside its 120s timeout. Reaching these states needs a fallible typed route
+  (for example a `cargo test` route) in the command catalog, which this surface
+  deliberately does not add. `--cancel-after-ms` is the deterministic
+  bounded-termination path that *is* reachable.
 - **`verification_command_not_found`** covers failure to start the resolved ripr
   executable, not a `PATH` lookup, because the route is executed via the current
   executable rather than by program name.

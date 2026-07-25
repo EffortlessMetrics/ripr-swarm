@@ -6526,6 +6526,7 @@ tests = [
   "crates/ripr/src/app/verification_execution.rs::tests::rejects_caller_authored_typed_spec_not_reproducible_from_displays",
   "crates/ripr/src/app/verification_execution.rs::tests::rejects_every_caller_mutated_typed_field",
   "crates/ripr/src/app/verification_execution.rs::tests::rejects_ambiguous_and_empty_executable_route_sets",
+  "crates/ripr/src/app/verification_execution.rs::tests::coherent_whole_packet_mutation_passes_consistency_but_fails_provenance",
   "crates/ripr/src/app/verification_execution.rs::tests::rejects_inputs_outside_the_selected_root",
   "crates/ripr/src/app/verification_execution.rs::tests::unauthorized_execution_is_refused_with_a_public_disposition",
   "crates/ripr/src/app/verification_execution.rs::tests::every_process_disposition_maps_to_its_public_token",
@@ -6540,6 +6541,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_verify_execute_refusals_are_typed_dispositions",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_execute_reports_result_write_failure",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_execute_cancellation_is_a_single_terminal_result",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_execute_refuses_a_tampered_input_before_executing",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_execute_refuses_a_coherent_whole_packet_forgery",
+  "crates/ripr/tests/verification_result.rs::serialized_result_conforms_to_the_published_schema",
 ]
 fixtures = [
   "fixtures/assurance_vocabulary",

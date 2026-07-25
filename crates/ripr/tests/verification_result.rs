@@ -30,7 +30,8 @@ fn serialized_result_conforms_to_the_published_schema() -> Result<(), String> {
         .pointer("/$defs/execution_result")
         .ok_or("schema must define $defs/execution_result")?;
 
-    let serialized = serde_json::to_value(execution_result()).map_err(|error| error.to_string())?;
+    let serialized =
+        serde_json::to_value(execution_result()?).map_err(|error| error.to_string())?;
     let object = serialized
         .as_object()
         .ok_or("a serialized result must be a JSON object")?;
@@ -95,14 +96,16 @@ fn serialized_result_conforms_to_the_published_schema() -> Result<(), String> {
 
 /// One fully populated v1 result, shared by the round-trip and schema
 /// conformance tests so both judge the same serialized shape.
-fn execution_result() -> VerificationExecutionResultV1 {
-    VerificationExecutionResultV1 {
+fn execution_result() -> Result<VerificationExecutionResultV1, String> {
+    Ok(VerificationExecutionResultV1 {
         schema_version: VerificationExecutionResultV1::SCHEMA_VERSION.to_string(),
         root_identity: ROOT.to_string(),
         head_before: HEAD.to_string(),
         head_after: HEAD.to_string(),
+        // A compatibility fixture must never substitute a placeholder for a
+        // failed real commitment; propagate the digest error instead.
         command_spec_sha256: command_spec_sha256(&command_spec())
-            .unwrap_or_else(|_| ZERO_DIGEST.to_string()),
+            .map_err(|error| error.to_string())?,
         process_disposition: VerificationProcessDispositionV1::Completed,
         exit_status: Some(0),
         stdout_sha256: ZERO_DIGEST.to_string(),
@@ -115,7 +118,7 @@ fn execution_result() -> VerificationExecutionResultV1 {
         stdout_truncated: false,
         stderr_truncated: false,
         cancellation_requested: false,
-    }
+    })
 }
 
 const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -151,7 +154,7 @@ fn command_spec() -> CommandSpec {
 #[test]
 fn verification_result_round_trips_and_validates_against_exact_context() -> Result<(), String> {
     let spec = command_spec();
-    let result = execution_result();
+    let result = execution_result()?;
     let encoded = serde_json::to_string(&result).map_err(|error| error.to_string())?;
     let decoded: VerificationExecutionResultV1 =
         serde_json::from_str(&encoded).map_err(|error| error.to_string())?;

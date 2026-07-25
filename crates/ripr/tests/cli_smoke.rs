@@ -7848,6 +7848,115 @@ fn agent_verify_execute_reports_result_write_failure() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// A tampered input is refused by provenance *before* any process starts.
+///
+/// This is the end-to-end half of the producer-binding contract: the route in
+/// the packet is unchanged and internally consistent, but one of the artifacts
+/// it names is no longer a valid `ripr` repo-exposure artifact, so no route can
+/// be recomputed and nothing is executed.
+///
+/// It also records a real limitation. The only executable route is
+/// `ripr agent verify` over two provenance-valid artifacts, and that command
+/// always exits 0 — so `verification_executed_fail` is mapped and unit-tested
+/// but not reachable end-to-end today. Reaching it needs a fallible typed route
+/// (for example a `cargo test` route) in the command catalog, which this change
+/// deliberately does not add.
+#[test]
+fn agent_verify_execute_refuses_a_tampered_input_before_executing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, _) = producer_verify_packet("verify-execute-tampered")?;
+    std::fs::write(root.join("after.json"), "not-a-repo-exposure-artifact")?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "agent",
+            "verify-execute",
+            "--root",
+            ".",
+            "--packet",
+            "packet.json",
+            "--result-json",
+            "result.json",
+            "--authorize",
+            "--json",
+        ],
+    )?;
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        parsed["disposition"], "verification_rejected_policy",
+        "a tampered artifact must be refused, not executed: {parsed}"
+    );
+    let reason = parsed["reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains("provenance validation"),
+        "refusal must name provenance: {reason}"
+    );
+    assert_eq!(
+        parsed["executed"], false,
+        "no process may start once provenance fails"
+    );
+    assert_eq!(parsed["result_committed"], false);
+    assert!(!output.status.success());
+    assert!(
+        !root.join("result.json").exists(),
+        "a refusal must not leave a result behind"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// A coherently rewritten packet cannot buy execution.
+///
+/// Every route representation is rewritten consistently to name files that are
+/// not producer artifacts. Consistency checks pass; provenance refuses. This is
+/// the end-to-end counterpart of the unit-level forgery test.
+#[test]
+fn agent_verify_execute_refuses_a_coherent_whole_packet_forgery()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, packet) = producer_verify_packet("verify-execute-forgery")?;
+    std::fs::write(root.join("alt-before.json"), "{}")?;
+    std::fs::write(root.join("alt-after.json"), "{}")?;
+    let forged_route =
+        "ripr agent verify --root . --before alt-before.json --after alt-after.json --json";
+    let mut forged = packet.clone();
+    forged["packets"][0]["verify_command"] = serde_json::Value::String(forged_route.to_string());
+    forged["packets"][0]["verification_commands"] = serde_json::json!([forged_route]);
+    let spec = &mut forged["packets"][0]["command_specs"]["verify"][0];
+    spec["args"][5] = serde_json::Value::String("alt-before.json".to_string());
+    spec["args"][7] = serde_json::Value::String("alt-after.json".to_string());
+    spec["human_display"] = serde_json::Value::String(forged_route.to_string());
+    std::fs::write(
+        root.join("forged.json"),
+        serde_json::to_vec_pretty(&forged)?,
+    )?;
+
+    let (parsed, succeeded) = verify_execute_disposition(
+        &root,
+        &[
+            "agent",
+            "verify-execute",
+            "--root",
+            ".",
+            "--packet",
+            "forged.json",
+            "--result-json",
+            "forged-result.json",
+            "--authorize",
+            "--json",
+        ],
+    )?;
+    assert_eq!(
+        parsed["disposition"], "verification_rejected_policy",
+        "a coherent forgery must be refused: {parsed}"
+    );
+    assert_eq!(parsed["executed"], false);
+    assert!(!succeeded);
+    assert!(!root.join("forged-result.json").exists());
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
 /// Cancellation yields exactly one terminal disposition and no exit status.
 #[test]
 fn agent_verify_execute_cancellation_is_a_single_terminal_result()

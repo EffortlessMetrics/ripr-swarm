@@ -125,11 +125,30 @@ the child. It does not mean an empty environment block: the verify route invokes
 real repository and would report a false negative instead. The floor is fixed in
 code and disclosed by name — never by value — in the emitted preflight.
 
-Producer authority is established by reproduction. The typed
-`command_specs.verify` array must equal exactly what the same derivation applied
-to the packet's own `verification_commands` yields, so an edited typed spec is
-refused rather than trusted. Exactly one reproduced route must be executable;
-zero or several are refused rather than resolved by preference.
+The typed `command_specs.verify` array must equal exactly what the same
+derivation applied to the packet's own `verification_commands` yields, and the
+headline `verify_command` must resolve to that route. Exactly one reproduced
+route must be executable; zero or several are refused rather than resolved by
+preference.
+
+That check establishes display/typed agreement only — the command a reviewer
+reads is the command that runs. It is not provenance, because every compared
+field is caller-supplied and a coherent rewrite of all of them would pass it.
+
+Producer ownership is established by a second, independent layer. Both `--before`
+and `--after` must pass the landed repo-exposure provenance contract: canonical
+shape, `ripr` producer identity, the exact producer command, a repository root
+equal to the selected root, a full-SHA HEAD, and a recomputed content
+commitment; their base revisions must agree. The canonical verify route is then
+**recomputed** over those validated artifacts, and the packet's route must equal
+the recomputation. The packet selects which validated producer artifacts to
+compare; it never authors the command. A coherent whole-packet rewrite naming
+non-producer files is refused before any process starts.
+
+The child also inherits `HOME`, so host global Git configuration can influence
+the child's Git behavior. A clean environment here means no ambient credential
+or application variables — not behavioural independence from host Git
+configuration. That is a declared limitation, not a claim.
 
 Descendant containment is a declared limitation, not a claim. The workspace
 forbids `unsafe_code` and the dependency policy admits no process-group or
