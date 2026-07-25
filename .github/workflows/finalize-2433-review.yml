@@ -1,0 +1,135 @@
+name: Finalize #2433 redirect-proof review repair
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-2433-review-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/advisory-command-bash-argv-2347'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact reviewed PR revision without write credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust 1.95.0
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+          components: rustfmt,clippy
+      - name: Apply and cage the one-file review repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python3 .github/patches/2433-review.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "crates/ripr/src/agent/loop_commands.rs"
+          rm \
+            .github/patches/2433-review.py \
+            .github/workflows/finalize-2433-review.yml
+      - name: Prove the repaired oracle and unchanged command surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test -p ripr --lib loop_commands -- --test-threads=1
+          cargo test -p ripr --lib first_pr -- --test-threads=4
+          cargo xtask goldens check
+          cargo xtask check-process-policy
+      - name: Package the exact validated Rust file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validated/crates/ripr/src/agent
+          cp crates/ripr/src/agent/loop_commands.rs validated/crates/ripr/src/agent/loop_commands.rs
+          (
+            cd validated
+            sha256sum crates/ripr/src/agent/loop_commands.rs > SHA256SUMS
+          )
+      - name: Upload the validated Rust file
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: validated-2433-review-${{ github.run_id }}
+          path: validated/
+          if-no-files-found: error
+          retention-days: 2
+
+  commit:
+    needs: validate
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/advisory-command-bash-argv-2347'
+    # Narrowly required to push the SHA-verified one-file review repair.
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact validated PR revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify the branch did not move during validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          git fetch --no-tags origin refs/heads/fix/advisory-command-bash-argv-2347
+          test "$(git rev-parse FETCH_HEAD)" = "${{ github.event.pull_request.head.sha }}"
+      - name: Download the validated Rust file
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: validated-2433-review-${{ github.run_id }}
+          path: validated
+      - name: Verify, copy, and commit the clean review result
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd validated
+            sha256sum -c SHA256SUMS
+          )
+          cp validated/crates/ripr/src/agent/loop_commands.rs crates/ripr/src/agent/loop_commands.rs
+          rm -rf validated
+          git add crates/ripr/src/agent/loop_commands.rs
+          git rm \
+            .github/patches/2433-review.py \
+            .github/workflows/finalize-2433-review.yml
+          git diff --cached --check
+          git diff --cached --name-only | sort > actual-files.txt
+          cat > expected-files.txt <<'FILES'
+          .github/patches/2433-review.py
+          .github/workflows/finalize-2433-review.yml
+          crates/ripr/src/agent/loop_commands.rs
+          FILES
+          sort -o expected-files.txt expected-files.txt
+          diff -u expected-files.txt actual-files.txt
+          rm actual-files.txt expected-files.txt
+          git -c user.name='EffortlessSteven' \
+              -c user.email='git@effortlesssteven.com' \
+              -c commit.gpgSign=false \
+              commit -m 'test(agent): make redirect confinement proof exact (#2347)'
+          git push origin HEAD:refs/heads/fix/advisory-command-bash-argv-2347
