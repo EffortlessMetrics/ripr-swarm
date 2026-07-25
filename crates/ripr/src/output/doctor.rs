@@ -677,7 +677,7 @@ mod tests {
     /// real verdict — a timeout, a non-zero exit, a tool that genuinely did not
     /// execute — is never retried into a pass.
     #[cfg(unix)]
-    fn probe_published_tool(tool: &str, timeout: std::time::Duration) -> (DoctorStatus, String) {
+    fn probe_published_tool(tool: &str, timeout: Duration) -> (DoctorStatus, String) {
         let mut launch_attempt = 0usize;
         loop {
             launch_attempt += 1;
@@ -687,7 +687,7 @@ mod tests {
             if launch_attempt >= 3 || !retryable_launch_failure {
                 break result;
             }
-            std::thread::sleep(std::time::Duration::from_millis(25));
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -706,7 +706,7 @@ mod tests {
         // sibling below, so it needs the same bounded launch retry. Without it
         // the test failed intermittently on CI with `ExecutableFileBusy` while
         // proving nothing about the publication contract it exists to check.
-        let (status, evidence) = probe_published_tool(shim_text, std::time::Duration::from_secs(1));
+        let (status, evidence) = probe_published_tool(shim_text, Duration::from_secs(1));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         if status != DoctorStatus::Pass {
             return Err(format!(
@@ -740,8 +740,7 @@ mod tests {
             // exec contention now lives in `probe_published_tool`, shared with
             // the atomic-publication test (#2441); a real timeout result is
             // still never retried.
-            let (status, evidence) =
-                probe_published_tool(shim_text, std::time::Duration::from_millis(250));
+            let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
             let elapsed = start.elapsed();
 
             std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
