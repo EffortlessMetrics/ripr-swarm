@@ -154,23 +154,113 @@ fn classify(first: TestObservation, second: TestObservation) -> Option<Verdict> 
     }
 }
 
-pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    let run1_log = flag_value(args, "--run1")?;
-    let run1_status = flag_value(args, "--run1-status")?;
-    let run2_log = flag_value(args, "--run2")?;
-    let run2_status = flag_value(args, "--run2-status")?;
-    // All four inputs must be distinct. Two runs sharing a log would report every
-    // failure as reproduced; two runs sharing a *status* would give one run the
-    // other's exit code, so a clean run could be labelled a harness failure —
-    // both are wrong verdicts rather than errors. A log path used as a status
-    // path is equally incoherent.
-    let paths = [&run1_log, &run1_status, &run2_log, &run2_status];
+/// The four artifact roles this command consumes.
+#[derive(Debug, PartialEq, Eq)]
+struct Inputs {
+    run1_log: String,
+    run1_status: String,
+    run2_log: String,
+    run2_status: String,
+}
+
+/// Parse the argument list exhaustively.
+///
+/// Written as a single typed pass rather than repeated positional scanning so
+/// that an unrecognised flag or a stray positional is refused rather than
+/// ignored. Silently tolerating an extra argument is how a caller ends up
+/// believing it supplied four independent artifacts when it did not.
+fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
+    let mut run1_log: Option<String> = None;
+    let mut run1_status: Option<String> = None;
+    let mut run2_log: Option<String> = None;
+    let mut run2_status: Option<String> = None;
+
+    let mut index = 0usize;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let slot = match flag {
+            "--run1" => &mut run1_log,
+            "--run1-status" => &mut run1_status,
+            "--run2" => &mut run2_log,
+            "--run2-status" => &mut run2_status,
+            other => {
+                return Err(format!(
+                    "windows-advisory-summary got unexpected argument {other:?}; expected only --run1, --run1-status, --run2, --run2-status"
+                ));
+            }
+        };
+        if slot.is_some() {
+            return Err(format!(
+                "windows-advisory-summary got {flag} more than once; pass it once"
+            ));
+        }
+        index += 1;
+        let value = args
+            .get(index)
+            .ok_or_else(|| format!("windows-advisory-summary requires a value for {flag}"))?;
+        if value.starts_with('-') {
+            return Err(format!(
+                "windows-advisory-summary got {flag} followed by {value}, which looks like a flag rather than a path"
+            ));
+        }
+        *slot = Some(value.clone());
+        index += 1;
+    }
+
+    let missing = [
+        ("--run1", &run1_log),
+        ("--run1-status", &run1_status),
+        ("--run2", &run2_log),
+        ("--run2-status", &run2_status),
+    ]
+    .into_iter()
+    .filter_map(|(flag, slot)| slot.is_none().then_some(flag))
+    .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "windows-advisory-summary is missing {}",
+            missing
+                .iter()
+                .map(|flag| format!("{flag} <path>"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let inputs = Inputs {
+        run1_log: run1_log.unwrap_or_default(),
+        run1_status: run1_status.unwrap_or_default(),
+        run2_log: run2_log.unwrap_or_default(),
+        run2_status: run2_status.unwrap_or_default(),
+    };
+
+    // All four roles must be distinct artifacts. Two runs sharing a log would
+    // report every failure as reproduced; two runs sharing a *status* would give
+    // one run the other's exit code, so a clean run could be labelled a harness
+    // failure — both are wrong verdicts rather than errors. A log reused as a
+    // status file is equally incoherent.
+    let paths = [
+        &inputs.run1_log,
+        &inputs.run1_status,
+        &inputs.run2_log,
+        &inputs.run2_status,
+    ];
     let distinct: BTreeSet<&&String> = paths.iter().collect();
     if distinct.len() != paths.len() {
         return Err(format!(
-            "windows-advisory-summary requires four distinct paths; got --run1 {run1_log}, --run1-status {run1_status}, --run2 {run2_log}, --run2-status {run2_status}"
+            "windows-advisory-summary requires four distinct paths; got --run1 {}, --run1-status {}, --run2 {}, --run2-status {}",
+            inputs.run1_log, inputs.run1_status, inputs.run2_log, inputs.run2_status
         ));
     }
+    Ok(inputs)
+}
+
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
+    let Inputs {
+        run1_log,
+        run1_status,
+        run2_log,
+        run2_status,
+    } = parse_inputs(args)?;
 
     let first = load_run(Path::new(&run1_log), Path::new(&run1_status));
     let second = load_run(Path::new(&run2_log), Path::new(&run2_status));
@@ -192,35 +282,6 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             unusable.join("; ")
         ))
     }
-}
-
-/// Read one flag's value, rejecting a value that is itself a flag.
-///
-/// `--run1 --run2 path` would otherwise silently consume `--run2` as run 1's
-/// path and then fail to find `--run2`, or worse, compare a log against itself.
-fn flag_value(args: &[String], flag: &str) -> Result<String, String> {
-    let occurrences = args.iter().filter(|arg| arg.as_str() == flag).count();
-    if occurrences == 0 {
-        return Err(format!("windows-advisory-summary requires {flag} <path>"));
-    }
-    if occurrences > 1 {
-        return Err(format!(
-            "windows-advisory-summary got {flag} {occurrences} times; pass it once"
-        ));
-    }
-    let index = args
-        .iter()
-        .position(|arg| arg == flag)
-        .ok_or_else(|| format!("windows-advisory-summary requires {flag} <path>"))?;
-    let value = args
-        .get(index + 1)
-        .ok_or_else(|| format!("windows-advisory-summary requires a value for {flag}"))?;
-    if value.starts_with('-') {
-        return Err(format!(
-            "windows-advisory-summary got {flag} followed by {value}, which looks like a flag rather than a path"
-        ));
-    }
-    Ok(value.clone())
 }
 
 fn load_run(log: &Path, status: &Path) -> RunOutcome {
@@ -778,33 +839,88 @@ mod tests {
         assert!(parsed.passed.is_empty(), "{:?}", parsed.passed);
     }
 
-    /// Argument validation, asserted on error values so the operator-facing
-    /// message is pinned and no panic-family call is needed.
+    fn argv(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn complete_argv() -> Vec<String> {
+        argv(&[
+            "--run1",
+            "1.log",
+            "--run1-status",
+            "1.status",
+            "--run2",
+            "2.log",
+            "--run2-status",
+            "2.status",
+        ])
+    }
+
+    /// The whole argument list is validated, asserted on error values so the
+    /// operator-facing message is pinned and no panic-family call is needed.
     #[test]
-    fn flag_value_rejects_missing_duplicate_and_flag_shaped_values() {
-        let args = |values: &[&str]| -> Vec<String> {
-            values.iter().map(|value| (*value).to_string()).collect()
-        };
+    fn parse_inputs_accepts_exactly_four_distinct_roles() {
         assert_eq!(
-            flag_value(&[], "--run1"),
-            Err("windows-advisory-summary requires --run1 <path>".to_string())
+            parse_inputs(&complete_argv()),
+            Ok(Inputs {
+                run1_log: "1.log".to_string(),
+                run1_status: "1.status".to_string(),
+                run2_log: "2.log".to_string(),
+                run2_status: "2.status".to_string(),
+            })
         );
+    }
+
+    #[test]
+    fn parse_inputs_rejects_every_malformed_argument_shape() {
+        // Missing entirely: every absent role is named with its expected value.
         assert_eq!(
-            flag_value(&args(&["--run1"]), "--run1"),
+            parse_inputs(&[]),
+            Err("windows-advisory-summary is missing --run1 <path>, --run1-status <path>, --run2 <path>, --run2-status <path>".to_string())
+        );
+        // A partial invocation names only what is actually absent.
+        assert_eq!(
+            parse_inputs(&argv(&["--run1", "1.log", "--run2", "2.log"])),
+            Err(
+                "windows-advisory-summary is missing --run1-status <path>, --run2-status <path>"
+                    .to_string()
+            )
+        );
+        // Missing final value.
+        assert_eq!(
+            parse_inputs(&argv(&["--run1"])),
             Err("windows-advisory-summary requires a value for --run1".to_string())
         );
-        // The Gemini finding: a flag consumed as a path.
+        // A flag consumed as a path (the Gemini finding).
         assert_eq!(
-            flag_value(&args(&["--run1", "--run2", "b.log"]), "--run1"),
+            parse_inputs(&argv(&["--run1", "--run2", "b.log"])),
             Err("windows-advisory-summary got --run1 followed by --run2, which looks like a flag rather than a path".to_string())
         );
+        // Duplicated flag.
         assert_eq!(
-            flag_value(&args(&["--run1", "a.log", "--run1", "b.log"]), "--run1"),
-            Err("windows-advisory-summary got --run1 2 times; pass it once".to_string())
+            parse_inputs(&argv(&["--run1", "a.log", "--run1", "b.log"])),
+            Err("windows-advisory-summary got --run1 more than once; pass it once".to_string())
         );
-        assert_eq!(
-            flag_value(&args(&["--run1", "a.log"]), "--run1"),
-            Ok("a.log".to_string())
+        // An unknown flag must be refused, not ignored.
+        let mut unknown = complete_argv();
+        unknown.push("--verbose".to_string());
+        assert!(
+            parse_inputs(&unknown)
+                .err()
+                .unwrap_or_default()
+                .contains("unexpected argument \"--verbose\""),
+            "an unknown flag must be refused"
+        );
+        // A stray positional must be refused too: silently ignoring it is how a
+        // caller believes it supplied something the command never read.
+        let mut positional = complete_argv();
+        positional.push("extra.log".to_string());
+        assert!(
+            parse_inputs(&positional)
+                .err()
+                .unwrap_or_default()
+                .contains("unexpected argument \"extra.log\""),
+            "a stray positional must be refused"
         );
     }
 }
