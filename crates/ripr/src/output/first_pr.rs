@@ -203,7 +203,9 @@ fn validate_current_preflight_recovery(
     }
     Err(format!(
         "first-pr start-here packet is stale for current root/git preflight; rerun `ripr first-pr --root {} --base {} --head {}` before relying on it",
-        options.root, options.base, options.head
+        shell_arg(&options.root),
+        shell_arg(&options.base),
+        shell_arg(&options.head)
     ))
 }
 
@@ -262,7 +264,9 @@ fn render_start_here_packet_with_selection(
             check_output,
             Some(format!(
                 "ripr check --root {} --base {} --json > {}",
-                options.root, options.base, check_output
+                shell_arg(&options.root),
+                shell_arg(&options.base),
+                shell_arg(check_output)
             )),
         ));
     }
@@ -281,10 +285,10 @@ fn render_start_here_packet_with_selection(
             &options.first_action,
             Some(format!(
                 "ripr first-action --root {} --gap-ledger {} --out {} --out-md {}",
-                options.root,
-                options.gap_ledger,
-                options.first_action,
-                with_extension(&options.first_action, "md")
+                shell_arg(&options.root),
+                shell_arg(&options.gap_ledger),
+                shell_arg(&options.first_action),
+                shell_arg(&with_extension(&options.first_action, "md"))
             )),
         ),
         artifact_status(
@@ -294,11 +298,11 @@ fn render_start_here_packet_with_selection(
             &options.review_comments,
             Some(format!(
                 "ripr review-comments --root {} --base {} --head {} --gap-ledger {} --out {}",
-                options.root,
-                options.base,
-                options.head,
-                options.gap_ledger,
-                options.review_comments
+                shell_arg(&options.root),
+                shell_arg(&options.base),
+                shell_arg(&options.head),
+                shell_arg(&options.gap_ledger),
+                shell_arg(&options.review_comments)
             )),
         ),
         artifact_status(
@@ -309,7 +313,9 @@ fn render_start_here_packet_with_selection(
             selection.agent_packet_command().or_else(|| {
                 Some(format!(
                     "ripr agent packet --root {} --gap-ledger {} --gap-id <gap-id> --json > {}",
-                    options.root, options.gap_ledger, options.agent_packet
+                    shell_arg(&options.root),
+                    shell_arg(&options.gap_ledger),
+                    shell_arg(&options.agent_packet)
                 ))
             }),
         ),
@@ -320,9 +326,9 @@ fn render_start_here_packet_with_selection(
             &options.gate_decision,
             Some(format!(
                 "ripr gate evaluate --gap-ledger {} --out {} --out-md {}",
-                options.gap_ledger,
-                options.gate_decision,
-                with_extension(&options.gate_decision, "md")
+                shell_arg(&options.gap_ledger),
+                shell_arg(&options.gate_decision),
+                shell_arg(&with_extension(&options.gate_decision, "md"))
             )),
         ),
     ]);
@@ -576,7 +582,10 @@ fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight
             &options.head,
             Some(format!(
                 "Check --head `{}` or fetch the branch, then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                options.head, options.root, options.base, options.head
+                options.head,
+                shell_arg(&options.root),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )),
         );
     }
@@ -745,7 +754,9 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 format!("No file diff was found for `{range}`."),
                 Some(format!(
                     "Choose a head with changes or rerun after committing PR work: `ripr first-pr --root {} --base {} --head {}`.",
-                    options.root, options.base, options.head
+                    shell_arg(&options.root),
+                    shell_arg(&options.base),
+                    shell_arg(&options.head)
                 )),
             ));
         }
@@ -767,7 +778,9 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 ),
                 Some(format!(
                     "Check --base and --head, then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                    options.root, options.base, options.head
+                    shell_arg(&options.root),
+                    shell_arg(&options.base),
+                    shell_arg(&options.head)
                 )),
             ));
         }
@@ -881,14 +894,19 @@ fn missing_base_command(options: &FirstPrOptions) -> String {
         .filter(|branch| !branch.trim().is_empty())
         .map(|branch| {
             format!(
-                "git fetch origin {branch}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                options.root, options.base, options.head
+                "git fetch origin {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                shell_arg(branch),
+                shell_arg(&options.root),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )
         })
         .unwrap_or_else(|| {
             format!(
                 "Fetch or choose a local base ref, then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                options.root, options.base, options.head
+                shell_arg(&options.root),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )
         })
 }
@@ -1616,7 +1634,10 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         agent_packet_command: format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
-            options.root, options.gap_ledger, gap_id, options.agent_packet
+            shell_arg(&options.root),
+            shell_arg(&options.gap_ledger),
+            shell_arg(&gap_id),
+            shell_arg(&options.agent_packet)
         ),
     }
 }
@@ -1921,8 +1942,9 @@ fn uses_check_output_gap_ledger(root: &Path) -> bool {
 
 fn regenerate_repo_exposure_gap_ledger_command(out: &str) -> String {
     format!(
-        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out {out} --out-md {}",
-        with_extension(out, "md")
+        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out {} --out-md {}",
+        shell_arg(out),
+        shell_arg(&with_extension(out, "md"))
     )
 }
 
@@ -2819,7 +2841,7 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["next_command"],
-            "git -C . rev-parse --verify \"missing-head^{commit}\""
+            "git -C . rev-parse --verify 'missing-head^{commit}'"
         );
         cleanup(&repo)
     }
@@ -3140,7 +3162,7 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["agent_packet_command"],
-            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json"
+            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > target/ripr/workflow/agent-packet.json"
         );
         assert!(repo.join(DEFAULT_GAP_LEDGER).is_file());
         assert!(

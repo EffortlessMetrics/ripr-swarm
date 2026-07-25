@@ -196,14 +196,23 @@ pub(crate) fn shell_path(path: &Path) -> String {
     shell_arg(&display_path(path))
 }
 
+/// Render `value` as one complete Bash argv token for advisory command text.
+///
+/// Non-empty `[A-Za-z0-9./_:-]` values remain readable without quotes. Every
+/// other value uses Bash's single-quote form, with embedded single quotes
+/// represented by the standard `'\''` splice. Single quotes are the only Bash
+/// quoting form with no interpretation inside, so `$`, backticks, `!`,
+/// backslashes, newlines, redirect characters, and empty values all round-trip
+/// without expansion or token loss.
 pub(crate) fn shell_arg(value: &str) -> String {
-    if value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '\\' | '_' | '-' | ':'))
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
     {
         return value.to_string();
     }
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn append_redirect(command: String, out_path: Option<&str>) -> String {
@@ -301,7 +310,7 @@ mod tests {
 
     #[test]
     fn command_args_quote_spaces_without_touching_plain_tokens() {
-        assert_eq!(shell_arg("repo root"), "\"repo root\"");
+        assert_eq!(shell_arg("repo root"), "'repo root'");
         assert_eq!(shell_arg("target/ripr/workflow"), "target/ripr/workflow");
         assert_eq!(
             workflow_artifact_path(Path::new("target/ripr/workflow"), "workflow.json"),
@@ -309,15 +318,15 @@ mod tests {
         );
         assert_eq!(
             agent_seam_packets_command(".", "draft mode", "target/ripr/workflow/packets.json"),
-            "ripr check --root . --mode \"draft mode\" --format agent-seam-packets-json > target/ripr/workflow/packets.json"
+            "ripr check --root . --mode 'draft mode' --format agent-seam-packets-json > target/ripr/workflow/packets.json"
         );
         assert_eq!(
             agent_start_command("repo root", "seam a", "target/ripr/work flow"),
-            "ripr agent start --root \"repo root\" --seam-id \"seam a\" --out \"target/ripr/work flow\""
+            "ripr agent start --root 'repo root' --seam-id 'seam a' --out 'target/ripr/work flow'"
         );
         assert_eq!(
             check_repo_exposure_command("repo root", "draft", "target/ripr/work flow/before.json"),
-            "ripr check --root \"repo root\" --mode draft --format repo-exposure-json > \"target/ripr/work flow/before.json\""
+            "ripr check --root 'repo root' --mode draft --format repo-exposure-json > 'target/ripr/work flow/before.json'"
         );
         assert_eq!(
             check_repo_exposure_command_with_base(
@@ -326,7 +335,7 @@ mod tests {
                 "draft",
                 "target/ripr/work flow/before.json",
             ),
-            "ripr check --root \"repo root\" --base \"origin/main with space\" --mode draft --format repo-exposure-json > \"target/ripr/work flow/before.json\""
+            "ripr check --root 'repo root' --base 'origin/main with space' --mode draft --format repo-exposure-json > 'target/ripr/work flow/before.json'"
         );
         assert_eq!(
             agent_verify_command(
@@ -335,7 +344,7 @@ mod tests {
                 "target/ripr/work flow/after.json",
                 Some("target/ripr/work flow/verify.json"),
             ),
-            "ripr agent verify --root \"repo root\" --before \"target/ripr/work flow/before.json\" --after \"target/ripr/work flow/after.json\" --json > \"target/ripr/work flow/verify.json\""
+            "ripr agent verify --root 'repo root' --before 'target/ripr/work flow/before.json' --after 'target/ripr/work flow/after.json' --json > 'target/ripr/work flow/verify.json'"
         );
         assert_eq!(
             agent_receipt_command(
@@ -344,7 +353,116 @@ mod tests {
                 "seam a",
                 Some("target/ripr/work flow/receipt.json"),
             ),
-            "ripr agent receipt --root \"repo root\" --verify-json \"target/ripr/work flow/verify.json\" --seam-id \"seam a\" --json --out \"target/ripr/work flow/receipt.json\""
+            "ripr agent receipt --root 'repo root' --verify-json 'target/ripr/work flow/verify.json' --seam-id 'seam a' --json --out 'target/ripr/work flow/receipt.json'"
         );
+    }
+
+    #[test]
+    fn shell_arg_is_total_for_empty_backslash_quotes_and_metacharacters() {
+        assert_eq!(shell_arg(""), "''");
+        assert_eq!(shell_arg("plain/path:one-two"), "plain/path:one-two");
+        assert_eq!(shell_arg("a\\b"), "'a\\b'");
+        assert_eq!(shell_arg("a'b"), "'a'\\''b'");
+        assert_eq!(shell_arg("$HOME"), "'$HOME'");
+        assert_eq!(shell_arg("`id`"), "'`id`'");
+        assert_eq!(shell_arg("with!bang"), "'with!bang'");
+        assert_eq!(
+            shell_arg("gap:pr:amount>=threshold"),
+            "'gap:pr:amount>=threshold'"
+        );
+    }
+
+    #[cfg(unix)]
+    fn run_bash(
+        script: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<std::process::Output, String> {
+        let mut command = std::process::Command::new("bash");
+        command
+            .args(["--noprofile", "--norc", "-c", script])
+            .env_remove("BASH_ENV")
+            .env_remove("ENV");
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        command
+            .output()
+            .map_err(|err| format!("run Bash argv proof failed: {err}"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_arg_round_trips_hostile_values_through_real_bash() -> Result<(), String> {
+        for value in [
+            "",
+            "plain",
+            "repo root",
+            "a\\b",
+            "a'b",
+            "a\"b",
+            "$HOME",
+            "$(printf injected)",
+            "`printf injected`",
+            "with!bang",
+            "gap:pr:amount>=threshold",
+            "line\nbreak",
+        ] {
+            let script = format!("set -- {}; printf '%s' \"$1\"", shell_arg(value));
+            let output = run_bash(&script, None)?;
+            if !output.status.success() {
+                return Err(format!(
+                    "Bash rejected shell_arg({value:?}): {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            if output.stdout != value.as_bytes() {
+                return Err(format!(
+                    "shell_arg did not round-trip: input={value:?} output={:?} token={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    shell_arg(value)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn redirect_shaped_gap_id_cannot_open_a_second_redirect() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("system clock before UNIX_EPOCH: {err}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-shell-arg-redirect-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root)
+            .map_err(|err| format!("create redirect proof root failed: {err}"))?;
+        let value = "gap:pr:amount>=threshold";
+        let script = format!("printf '%s' {} > result.txt", shell_arg(value));
+        let output = run_bash(&script, Some(&root))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Bash rejected redirect proof: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let actual = std::fs::read(root.join("result.txt"))
+            .map_err(|err| format!("read redirect proof result failed: {err}"))?;
+        if actual != value.as_bytes() {
+            return Err(format!(
+                "redirect proof changed the gap id: {:?}",
+                String::from_utf8_lossy(&actual)
+            ));
+        }
+        if root.join("threshold").exists() {
+            return Err(
+                "redirect-shaped gap id created an unintended `threshold` file".to_string(),
+            );
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove redirect proof root failed: {err}"))?;
+        Ok(())
     }
 }

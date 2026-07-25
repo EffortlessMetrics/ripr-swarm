@@ -23,6 +23,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Advisory command strings rendered into first-pr start-here packets, agent
+  workflow manifests, and preflight recovery messages now escape the full bash
+  metacharacter set inside double quotes. The `shell_arg` helper previously
+  escaped only `\` and `"`, leaving `$`, backtick, and `!` live inside the
+  quoted form; in addition, thirteen `format!` sites in `first_pr.rs` bypassed
+  the helper entirely and interpolated paths, refs, and gap-ids raw. The
+  highest-impact case was a `>`-containing gap-id rendered unquoted into an
+  agent-packet command, where bash would parse the `>` as a redirect and
+  truncate a sibling file. The helper now backslash-escapes `$`, backtick, and
+  `!` in the quote path, and every advisory command builder routes its
+  interpolated values through it. The `python-preview-gap` start-here fixture
+  is re-blessed so its gap-id renders double-quoted, reflecting the corrected
+  (redirect-safe) shape. These commands remain advisory text for humans and
+  agents; ripr does not execute them (#2347).
+
 - Rust equality-boundary analysis now credits exact, source-ordered direct
   field assignments from same-file literal constants and bounded `+/-` integer
   offsets. Other owners, fields, similarly named constants, helper-only writes,
