@@ -72,12 +72,24 @@ pub(crate) fn targeted_typescript_findings_for_scope(
     use diff::{ChangedFile, ChangedLine};
     use language::{LanguageAdapter, TypeScriptAdapter};
 
-    // Ledger-supplied anchors are untrusted input: reject absolute paths and
+    // Ledger-supplied anchors are untrusted input: reject rooted paths and
     // parent traversal so a crafted rerun scope cannot read outside `root`.
+    //
+    // `is_absolute()` alone is not sufficient. On Windows a path needs a drive
+    // or UNC prefix to be absolute, so a Unix-style `/etc/hostname` reports
+    // `is_absolute() == false`, slips past the guard, and is silently joined to
+    // the root as `<drive-of-root>/etc/hostname` — outside the workspace.
+    // Rejecting `RootDir` and `Prefix` components catches that on every
+    // platform, and is what makes the guard mean "root-relative".
     if file.is_absolute()
-        || file
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || file.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
     {
         return Err(format!(
             "TypeScript rerun scope {} escapes the workspace root",
