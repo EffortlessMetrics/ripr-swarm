@@ -1,0 +1,69 @@
+schema_version = "2.0"
+id = "ripr.slice.verification-command-execution.v1"
+generation = 1
+
+source_issue = "issue:2332"
+design_reference = "RIPR-SPEC-0135#verification-command-execution"
+change_class = "security_contract_change"
+
+claim_boundary = """
+Executes exactly one producer-owned direct ripr agent verify route after explicit
+authorization. Producer authority is established by reproducing the typed verify
+spec from the packet's own verification_commands, so a caller-edited spec is
+refused. The runner bounds process lifetime and output, reduces the child
+environment to a disclosed platform floor, forbids network and shell execution,
+rechecks repository currentness, and emits VerificationExecutionResultV1 process
+evidence. It does not issue receipts, decide gates, or prove mutation adequacy.
+
+Declared limitation: only the owned child is terminated. No process-group or
+job-object substrate is available under the workspace unsafe_code and dependency
+policy, so descendant containment rests on the authority boundary admitting only
+one leaf verify route.
+"""
+
+non_goals = [
+  "arbitrary user commands",
+  "shell execution",
+  "receipt issuance",
+  "gate authority",
+  "runtime mutation confirmation",
+  "production edits or test generation",
+]
+
+return_conditions = [
+  "Return to root if caller-controlled command fields can replace the producer-owned route.",
+  "Return to root if process output, timeouts, or repository movement are not disclosed in the result.",
+  "Return to root if execution can occur without explicit authorization or can issue a receipt.",
+  "Return to root if the executable route set widens beyond one leaf verify route before a process-group or job-object containment substrate exists.",
+  "Return to root if the child environment admits any variable outside the disclosed platform floor, or if a floor value is emitted in output.",
+]
+
+owned_seams = [
+  "seam:ripr:agent:command-runner",
+  "seam:ripr:contract:verification-execution",
+]
+
+shared_seams = [
+  "seam:ripr:domain:command-spec",
+  "seam:ripr:domain:verification-execution-result",
+  "seam:ripr:agent:artifact-provenance",
+]
+
+forbidden_seams = [
+  "seam:ripr:agent:receipt-issuer",
+  "seam:ripr:output:gate-authority",
+  "seam:ripr:analysis:runtime-mutation",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0135#verification-command-execution"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
