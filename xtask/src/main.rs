@@ -1245,11 +1245,97 @@ fn vscode_test_server_path() -> Result<PathBuf, String> {
     Ok(target_dir.join("debug").join(binary))
 }
 
+/// Stage the live extension-host workspace as its own git repository whose
+/// `HEAD` holds the boundary-gap fixture's pre-change state and whose working
+/// tree holds the change.
+///
+/// `fixtures/boundary_gap/input` is committed in this repository with the
+/// change already applied, so pointing the extension host straight at it makes
+/// `git diff HEAD` empty. An empty diff means no changed surface, no probes,
+/// and no seam diagnostics, so the live smoke tests wait out their timeout on a
+/// server that is behaving correctly. Staging a private copy also keeps the
+/// extension host from writing test residue into the tracked fixture.
+///
+/// The fixture's own `diff.patch` is the authority for the base state: it is
+/// applied in reverse to produce the base commit, then forward to produce the
+/// change commit. Both states are committed because `check` diffs the base
+/// revision against `HEAD`; leaving the change in the working tree only earns
+/// an `unanalyzed_working_tree` report. The extension host therefore points
+/// `ripr.baseRef` at `HEAD~1`.
 fn vscode_test_workspace_path() -> Result<PathBuf, String> {
-    Ok(repo_root()?
-        .join("fixtures")
-        .join("boundary_gap")
-        .join("input"))
+    let root = repo_root()?;
+    let fixture = root.join("fixtures").join("boundary_gap");
+    let patch = fixture.join("diff.patch");
+    let staged = root
+        .join("target")
+        .join("ripr")
+        .join("vscode-test-workspace");
+
+    if staged.exists() {
+        std::fs::remove_dir_all(&staged)
+            .map_err(|err| format!("failed to clear {}: {err}", staged.display()))?;
+    }
+    copy_tree_excluding_target(&fixture.join("input"), &staged)?;
+
+    let patch_arg = path_to_utf8(&patch, "boundary gap diff patch")?;
+    let git = Path::new("git");
+    run_in_dir(git, &["init", "--quiet"], &staged)?;
+    run_in_dir(git, &["apply", "--reverse", patch_arg], &staged)?;
+    commit_staged_workspace(&staged, "boundary gap base state")?;
+    run_in_dir(git, &["apply", patch_arg], &staged)?;
+    commit_staged_workspace(&staged, "boundary gap changed state")?;
+
+    Ok(staged)
+}
+
+fn commit_staged_workspace(staged: &Path, message: &str) -> Result<(), String> {
+    let git = Path::new("git");
+    run_in_dir(git, &["add", "--all"], staged)?;
+    run_in_dir(
+        git,
+        &[
+            "-c",
+            "user.name=RIPR live extension harness",
+            "-c",
+            "user.email=ripr-live-harness@example.invalid",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "--quiet",
+            "--message",
+            message,
+        ],
+        staged,
+    )
+    .map(|_| ())
+}
+
+/// Copy the fixture workspace, skipping the `target/` analysis cache so the
+/// staged repository starts from tracked fixture content only.
+fn copy_tree_excluding_target(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(destination)
+        .map_err(|err| format!("failed to create {}: {err}", destination.display()))?;
+    let entries = std::fs::read_dir(source)
+        .map_err(|err| format!("failed to read {}: {err}", source.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("failed to read {}: {err}", source.display()))?;
+        let name = entry.file_name();
+        if name == std::ffi::OsStr::new("target") {
+            continue;
+        }
+        let from = entry.path();
+        let to = destination.join(&name);
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("failed to stat {}: {err}", from.display()))?;
+        if file_type.is_dir() {
+            copy_tree_excluding_target(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)
+                .map_err(|err| format!("failed to copy {}: {err}", from.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn repo_root() -> Result<PathBuf, String> {

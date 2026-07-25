@@ -53,8 +53,12 @@ async function main() {
         `${JSON.stringify({
           'ripr.server.path': testServerPath,
           'ripr.server.autoDownload': false,
-          'ripr.baseRef': 'HEAD',
-          'ripr.check.mode': 'instant',
+          // The harness stages a two-commit workspace: HEAD~1 is the fixture's
+          // base state and HEAD carries the change. `instant` skips test-path
+          // analysis, which classifies the seam `no_static_path` and never
+          // reaches the weakly-gripped diagnostic the smoke tests assert.
+          'ripr.baseRef': 'HEAD~1',
+          'ripr.check.mode': 'fast',
           'security.workspace.trust.enabled': false,
         }, null, 2)}\n`
       );
