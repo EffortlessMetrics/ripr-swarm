@@ -62,12 +62,42 @@ fn parse_log_file(path: &Path) -> RunOutcome {
     }
 }
 
+/// Remove ANSI SGR escape sequences from one line.
+///
+/// CI sets `CARGO_TERM_COLOR: always`, so cargo's own progress lines arrive as
+/// `\x1b[1m\x1b[92m     Running\x1b[0m unittests src\lib.rs (...)`. Matching a
+/// prefix like `Running ` against that fails, which is how the first real lane
+/// run reported "no targets" while parsing every failure correctly. libtest's
+/// own lines happen to be uncolored, but stripping unconditionally keeps the
+/// parser from depending on that.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        // Consume `[` plus parameter bytes up to and including the final byte.
+        if chars.next() != Some('[') {
+            continue;
+        }
+        for next in chars.by_ref() {
+            if next.is_ascii_alphabetic() {
+                break;
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn parse_log(text: &str) -> RunOutcome {
     let mut outcome = RunOutcome {
         available: true,
         ..RunOutcome::default()
     };
-    for line in text.lines() {
+    for raw_line in text.lines() {
+        let line = strip_ansi(raw_line);
         let trimmed = line.trim();
         if let Some(name) = failed_test_name(trimmed) {
             outcome.failed.insert(name);
@@ -224,6 +254,50 @@ test cli::rerun::tests::beta ... FAILED
 test lsp::tests::gamma ... FAILED
 test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1s
 ";
+
+    /// Real bytes from the first Windows lane run (#2393). The `Running` lines
+    /// are ANSI-coloured because CI sets `CARGO_TERM_COLOR: always`; the libtest
+    /// lines are not. Against synthetic uncoloured fixtures the parser looked
+    /// correct and reported "no targets" on the real thing, so this fixture is
+    /// copied verbatim rather than hand-written.
+    const REAL_RUNNER_LOG: &str = concat!(
+        "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src\\lib.rs (target\\debug\\deps\\ripr-b675962642118180.exe)\n",
+        "test result: ok. 3777 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.15s\n",
+        "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m tests\\lsp_lifecycle.rs (target\\debug\\deps\\lsp_lifecycle-d7f865dad16cc0c7.exe)\n",
+        "test compat_journey_collect_workspace_status_over_real_wire ... FAILED\n",
+        "test result: FAILED. 25 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.30s\n",
+    );
+
+    #[test]
+    fn parses_ansi_coloured_runner_output() {
+        let outcome = parse_log(REAL_RUNNER_LOG);
+        assert_eq!(
+            outcome.targets,
+            vec![
+                "src/lib.rs".to_string(),
+                "tests/lsp_lifecycle.rs".to_string()
+            ],
+            "ANSI-coloured `Running` lines must still yield targets"
+        );
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(
+            outcome
+                .failed
+                .contains("compat_journey_collect_workspace_status_over_real_wire")
+        );
+        assert_eq!(outcome.results.len(), 2);
+        assert!(!outcome.build_failed);
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_sequences_and_keeps_text() {
+        assert_eq!(
+            strip_ansi("\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src/lib.rs"),
+            "     Running unittests src/lib.rs"
+        );
+        assert_eq!(strip_ansi("plain text"), "plain text");
+        assert_eq!(strip_ansi(""), "");
+    }
 
     #[test]
     fn parses_failures_targets_and_totals() {
