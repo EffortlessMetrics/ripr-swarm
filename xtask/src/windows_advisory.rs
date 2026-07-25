@@ -182,6 +182,41 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
 mod tests {
     use super::*;
 
+    /// The gate must catch the exact YAML bug that shipped in this lane's first
+    /// revision: a plain-scalar `run:` whose ` #` was read as a comment, cutting
+    /// the `printf` mid-string and leaving an unterminated quote.
+    #[test]
+    fn plain_scalar_comment_gate_catches_the_shipped_bug() {
+        let broken = "    steps:\n      - name: Summarize\n        run: printf 'see #2393 done\\n' >> \"$GITHUB_STEP_SUMMARY\"\n";
+        let found = crate::workflow_plain_scalar_comment_violations("wf.yml", broken);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("block scalar"), "{found:?}");
+
+        // A block scalar carries the same text safely.
+        let fixed = "    steps:\n      - name: Summarize\n        run: |\n          printf 'see #2393 done\\n' >> \"$GITHUB_STEP_SUMMARY\"\n";
+        assert!(
+            crate::workflow_plain_scalar_comment_violations("wf.yml", fixed).is_empty(),
+            "a block scalar has no comment rule and must not be flagged"
+        );
+    }
+
+    /// `#` without a preceding space is not a comment, and a quoted scalar
+    /// carries its own delimiters — neither should be flagged.
+    #[test]
+    fn plain_scalar_comment_gate_does_not_flag_safe_shapes() {
+        for safe in [
+            "        run: cargo xtask check-workflows\n",
+            "        run: printf '## Heading\\n'\n",
+            "        run: \"echo a # b\"\n",
+            "        run: cargo test --workspace -- --test-threads=1\n",
+        ] {
+            assert!(
+                crate::workflow_plain_scalar_comment_violations("wf.yml", safe).is_empty(),
+                "false positive on {safe:?}"
+            );
+        }
+    }
+
     const RUN_WITH_TWO_FAILURES: &str = "\
      Running unittests src\\lib.rs (target\\debug\\deps\\ripr-abc.exe)
 test cli::rerun::tests::alpha ... ok
