@@ -1,0 +1,132 @@
+name: Finalize #2447 LSP full-refresh timeout
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-2447-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'test/lsp-full-refresh-timeout-2447'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exclusively claimed branch without write credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: test/lsp-full-refresh-timeout-2447
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust 1.95.0
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+          components: rustfmt,clippy
+      - name: Apply and cage the test-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/patches/2447.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "crates/ripr/tests/lsp_lifecycle.rs"
+          rm \
+            .github/patches/2447.py \
+            .github/workflows/finalize-2447-lsp-refresh-timeout.yml
+      - name: Verify focused and complete lifecycle contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test -p ripr --test lsp_lifecycle \
+            compat_journey_collect_workspace_status_over_real_wire -- --exact
+          cargo test -p ripr --test lsp_lifecycle
+      - name: Package the validated Rust file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validated/crates/ripr/tests
+          cp crates/ripr/tests/lsp_lifecycle.rs validated/crates/ripr/tests/lsp_lifecycle.rs
+          (
+            cd validated
+            sha256sum crates/ripr/tests/lsp_lifecycle.rs > SHA256SUMS
+          )
+      - name: Upload the validated Rust file
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: validated-final-2447-${{ github.run_id }}
+          path: validated/
+          if-no-files-found: error
+          retention-days: 2
+
+  commit:
+    needs: validate
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'test/lsp-full-refresh-timeout-2447'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the unchanged claimed branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: test/lsp-full-refresh-timeout-2447
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify that validation still names the live revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(git branch --show-current)" = "test/lsp-full-refresh-timeout-2447"
+      - name: Download the validated Rust file
+        uses: actions/download-artifact@v8
+        with:
+          name: validated-final-2447-${{ github.run_id }}
+          path: validated
+      - name: Verify and commit the one-file result
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd validated
+            sha256sum -c SHA256SUMS
+          )
+          cp validated/crates/ripr/tests/lsp_lifecycle.rs crates/ripr/tests/lsp_lifecycle.rs
+          rm -rf validated
+          git add crates/ripr/tests/lsp_lifecycle.rs
+          git rm \
+            .github/patches/2447.py \
+            .github/workflows/finalize-2447-lsp-refresh-timeout.yml
+          git diff --cached --check
+          git diff --cached --name-only | sort > actual-files.txt
+          cat > expected-files.txt <<'FILES'
+          .github/patches/2447.py
+          .github/workflows/finalize-2447-lsp-refresh-timeout.yml
+          crates/ripr/tests/lsp_lifecycle.rs
+          FILES
+          sort -o expected-files.txt expected-files.txt
+          diff -u expected-files.txt actual-files.txt
+          rm actual-files.txt expected-files.txt
+          git -c user.name='EffortlessSteven' \
+              -c user.email='git@effortlesssteven.com' \
+              -c commit.gpgSign=false \
+              commit -m 'test(lsp): bound explicit full-refresh wire proof (#2447)'
+          git push origin HEAD:refs/heads/test/lsp-full-refresh-timeout-2447
