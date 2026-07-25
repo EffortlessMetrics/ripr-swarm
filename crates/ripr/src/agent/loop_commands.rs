@@ -443,7 +443,13 @@ mod tests {
             // before bash ever sees it — that path tests the host, not the
             // encoder. A file reaches bash byte for byte, which is also how
             // these advisory strings are really used.
-            let script = format!("printf '%s\\n' {}\n", shell_arg(value));
+            // `set --` binds the encoded token to the positional parameters, so
+            // `$#` reports how many arguments bash actually parsed. `$1` is then
+            // printed with no trailing newline, giving the exact bytes.
+            let script = format!(
+                "set -- {}\nprintf '%s\\n' \"$#\"\nprintf '%s' \"$1\"\n",
+                shell_arg(value)
+            );
             let script_path = dir.join("round-trip.sh");
             std::fs::write(&script_path, script.as_bytes())
                 .map_err(|err| format!("{label}: write script: {err}"))?;
@@ -458,10 +464,21 @@ mod tests {
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
-            let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-            // Exactly one argument: one trailing newline, and no interior line
-            // that would indicate the token split.
-            let received = stdout.strip_suffix('\n').unwrap_or(&stdout);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // The argument count is printed first and checked separately. It has
+            // to be: a value split across two argv entries prints exactly the
+            // same bytes as one argv entry containing a newline, so comparing
+            // the bytes alone cannot tell a token split from the
+            // `line one\nline two` case.
+            let (count, received) = stdout
+                .split_once('\n')
+                .ok_or_else(|| format!("{label}: bash printed no argument count"))?;
+            if count.trim_end_matches('\r') != "1" {
+                return Err(format!(
+                    "{label}: encoded value produced {count} arguments, expected exactly 1 \
+                     (script {script:?})"
+                ));
+            }
             if received != value {
                 return Err(format!(
                     "{label}: bash received {received:?} for script {script:?}, expected {value:?}"
@@ -491,7 +508,10 @@ mod tests {
         // a plausible redirect on the shell under test.
         let victim_display = victim.display().to_string().replace('\\', "/");
         let hostile_id = format!("gap:pr:1 > {victim_display}");
-        let script = format!("printf '%s\\n' {}\n", shell_arg(&hostile_id));
+        let script = format!(
+            "set -- {}\nprintf '%s\\n' \"$#\"\nprintf '%s' \"$1\"\n",
+            shell_arg(&hostile_id)
+        );
         let script_path = dir.join("redirect.sh");
         std::fs::write(&script_path, script.as_bytes())
             .map_err(|err| format!("write script: {err}"))?;
@@ -500,11 +520,19 @@ mod tests {
             .output()
             .map_err(|err| format!("failed to run bash: {err}"))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-        let received = stdout.strip_suffix('\n').unwrap_or(&stdout).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (count, received) = stdout
+            .split_once('\n')
+            .map(|(count, rest)| (count.trim_end_matches('\r').to_string(), rest.to_string()))
+            .unwrap_or_else(|| (String::new(), stdout.to_string()));
         let contents =
             std::fs::read_to_string(&victim).map_err(|err| format!("read victim file: {err}"))?;
 
+        if count != "1" {
+            return Err(format!(
+                "redirect-shaped id produced {count} arguments, expected exactly 1"
+            ));
+        }
         if contents != "original contents" {
             return Err(format!(
                 "redirect-shaped id truncated an unintended file; contents now {contents:?}"
