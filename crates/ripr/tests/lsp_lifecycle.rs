@@ -1067,9 +1067,10 @@ fn compat_file_uri(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("fixture root is not UTF-8: {}", path.display()))?;
     // A `file:` URI always uses forward slashes and an absolute path that begins
     // with `/`. On Unix the path already satisfies both, so `file://` + `/home/x`
-    // yields a valid `file:///home/x`. On Windows the path is `H:\work\x`, which
-    // would produce `file://H:\work\x` — the server rejects it at the backslash
-    // (index 9) with `Invalid params`, so the whole session fails to initialize.
+    // yields a valid `file:///home/x`. A Windows path starts with a drive letter
+    // and uses backslashes, so concatenating it directly produces a URI whose
+    // first backslash the server rejects as `Invalid params` — the whole session
+    // then fails to initialize.
     let text = text.replace('\\', "/");
     let absolute = if text.starts_with('/') {
         text
