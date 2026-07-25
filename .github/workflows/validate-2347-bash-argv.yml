@@ -1,18 +1,17 @@
-name: Validate #2347 complete Bash argv encoder
+name: Finalize #2347 complete Bash argv encoder
 
 on:
   pull_request:
     branches:
       - main
     types:
-      - opened
       - synchronize
 
 permissions:
   contents: read
 
 concurrency:
-  group: validate-2347-${{ github.event.pull_request.head.ref }}
+  group: finalize-2347-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -34,7 +33,7 @@ jobs:
         with:
           toolchain: 1.95.0
           components: rustfmt,clippy
-      - name: Import the already-reviewed call-site routing from obsolete PR #2386
+      - name: Import reviewed call-site routing and build the final candidate
         shell: bash
         run: |
           set -euo pipefail
@@ -49,15 +48,8 @@ jobs:
           do
             git show "${old}:${file}" > "${file}"
           done
-      - name: Apply the total encoder and align pinned receipts
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 .github/patches/2347.py
           python3 .github/patches/2347-expectations.py
-          # The TypeScript preview receipt is producer-authored in the gap
-          # ledger, not synthesized by first_pr. Preserve that evidence byte-for-
-          # byte instead of imposing the new encoder's presentation on it.
           for file in \
             fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.json \
             fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.md
@@ -71,104 +63,152 @@ jobs:
             .github/patches/2347.py \
             .github/patches/2347-expectations.py \
             .github/workflows/validate-2347-bash-argv.yml
-      - name: All-target Clippy
-        id: clippy
-        continue-on-error: true
+      - name: Verify the full acceptance denominator
         shell: bash
-        run: set -o pipefail; cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee 01-clippy.log
-      - name: Encoder and real Bash proofs
-        id: loop
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo test -p ripr --lib loop_commands -- --test-threads=1 2>&1 | tee 02-loop.log
-      - name: First-PR projections
-        id: first_pr
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo test -p ripr --lib first_pr -- --test-threads=4 2>&1 | tee 03-first-pr.log
-      - name: Pilot projections
-        id: pilot
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo test -p ripr --lib pilot -- --test-threads=4 2>&1 | tee 04-pilot.log
-      - name: Full library expectation inventory
-        id: library
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo test -p ripr --lib 2>&1 | tee 05-library.log
-      - name: Golden contract
-        id: goldens
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo xtask goldens check 2>&1 | tee 06-goldens.log
-      - name: Process policy
-        id: process
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo xtask check-process-policy 2>&1 | tee 07-process.log
-      - name: File policy
-        id: files
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo xtask check-file-policy 2>&1 | tee 08-files.log
-      - name: Static language
-        id: static
-        continue-on-error: true
-        shell: bash
-        run: set -o pipefail; cargo xtask check-static-language 2>&1 | tee 09-static.log
-      - name: Retain the exact candidate patch and outcome matrix
-        if: always()
-        shell: bash
-        env:
-          CLIPPY: ${{ steps.clippy.outcome }}
-          LOOP: ${{ steps.loop.outcome }}
-          FIRST_PR: ${{ steps.first_pr.outcome }}
-          PILOT: ${{ steps.pilot.outcome }}
-          LIBRARY: ${{ steps.library.outcome }}
-          GOLDENS: ${{ steps.goldens.outcome }}
-          PROCESS: ${{ steps.process.outcome }}
-          FILES: ${{ steps.files.outcome }}
-          STATIC: ${{ steps.static.outcome }}
         run: |
           set -euo pipefail
-          mkdir -p validation-2347
-          git diff --binary origin/main -- > validation-2347/candidate.patch
-          git diff --stat origin/main -- > validation-2347/diff-stat.txt
-          printf '%s\n' \
-            "clippy=${CLIPPY}" \
-            "loop=${LOOP}" \
-            "first_pr=${FIRST_PR}" \
-            "pilot=${PILOT}" \
-            "library=${LIBRARY}" \
-            "goldens=${GOLDENS}" \
-            "process=${PROCESS}" \
-            "files=${FILES}" \
-            "static=${STATIC}" \
-            > validation-2347/outcomes.txt
-          cp ./*.log validation-2347/ 2>/dev/null || true
-      - name: Upload validation packet
-        if: always()
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test -p ripr --lib loop_commands -- --test-threads=1
+          cargo test -p ripr --lib first_pr -- --test-threads=4
+          cargo test -p ripr --lib pilot -- --test-threads=4
+          cargo test -p ripr --lib
+          cargo xtask goldens check
+          cargo xtask check-process-policy
+          cargo xtask check-file-policy
+          cargo xtask check-static-language
+      - name: Package the exact validated implementation tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validated-tree
+          cat > validated-tree/FILES <<'FILES'
+          CHANGELOG.md
+          crates/ripr/src/agent/loop_commands.rs
+          crates/ripr/src/app/agent_status.rs
+          crates/ripr/src/lsp/tests.rs
+          crates/ripr/src/output/first_pr.rs
+          crates/ripr/src/output/pilot/commands.rs
+          crates/ripr/src/output/receipt_write.rs
+          fixtures/boundary_gap/expected/llm-work-loop/path-with-spaces/review-summary.json
+          fixtures/first_successful_pr/boundary-gap/expected/start-here.json
+          fixtures/first_successful_pr/boundary-gap/expected/start-here.md
+          fixtures/first_successful_pr/output-contract-gap/expected/start-here.json
+          fixtures/first_successful_pr/output-contract-gap/expected/start-here.md
+          fixtures/first_successful_pr/python-preview-gap/expected/start-here.json
+          fixtures/first_successful_pr/python-preview-gap/expected/start-here.md
+          policy/process_allowlist.txt
+          FILES
+          while IFS= read -r file
+          do
+            mkdir -p "validated-tree/$(dirname "$file")"
+            cp "$file" "validated-tree/$file"
+          done < validated-tree/FILES
+          (
+            cd validated-tree
+            while IFS= read -r file
+            do
+              sha256sum "$file"
+            done < FILES > SHA256SUMS
+          )
+          git diff --binary origin/main -- > validated-tree/candidate.patch
+          git diff --stat origin/main -- > validated-tree/diff-stat.txt
+      - name: Upload the validated implementation tree
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: validate-2347-${{ github.run_id }}
-          path: validation-2347/
+          name: validated-final-2347-${{ github.run_id }}
+          path: validated-tree/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 2
-      - name: Fail until every acceptance surface is green
-        if: always()
+
+  commit:
+    needs: validate
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/advisory-command-bash-argv-2347'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the unchanged claimed branch for the bounded write
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/advisory-command-bash-argv-2347
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify that the validated revision is still live
         shell: bash
-        env:
-          CLIPPY: ${{ steps.clippy.outcome }}
-          LOOP: ${{ steps.loop.outcome }}
-          FIRST_PR: ${{ steps.first_pr.outcome }}
-          PILOT: ${{ steps.pilot.outcome }}
-          LIBRARY: ${{ steps.library.outcome }}
-          GOLDENS: ${{ steps.goldens.outcome }}
-          PROCESS: ${{ steps.process.outcome }}
-          FILES: ${{ steps.files.outcome }}
-          STATIC: ${{ steps.static.outcome }}
         run: |
-          for outcome in "$CLIPPY" "$LOOP" "$FIRST_PR" "$PILOT" "$LIBRARY" "$GOLDENS" "$PROCESS" "$FILES" "$STATIC"
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(git branch --show-current)" = "fix/advisory-command-bash-argv-2347"
+      - name: Download the validated implementation tree
+        uses: actions/download-artifact@v8
+        with:
+          name: validated-final-2347-${{ github.run_id }}
+          path: validated-tree
+      - name: Verify, copy, cage, and commit the clean result
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd validated-tree
+            sha256sum -c SHA256SUMS
+          )
+          while IFS= read -r file
           do
-            test "$outcome" = success || exit 1
-          done
+            mkdir -p "$(dirname "$file")"
+            cp "validated-tree/$file" "$file"
+          done < validated-tree/FILES
+          rm -rf validated-tree
+          git add \
+            CHANGELOG.md \
+            crates/ripr/src/agent/loop_commands.rs \
+            crates/ripr/src/app/agent_status.rs \
+            crates/ripr/src/lsp/tests.rs \
+            crates/ripr/src/output/first_pr.rs \
+            crates/ripr/src/output/pilot/commands.rs \
+            crates/ripr/src/output/receipt_write.rs \
+            fixtures/boundary_gap/expected/llm-work-loop/path-with-spaces/review-summary.json \
+            fixtures/first_successful_pr/boundary-gap/expected/start-here.json \
+            fixtures/first_successful_pr/boundary-gap/expected/start-here.md \
+            fixtures/first_successful_pr/output-contract-gap/expected/start-here.json \
+            fixtures/first_successful_pr/output-contract-gap/expected/start-here.md \
+            fixtures/first_successful_pr/python-preview-gap/expected/start-here.json \
+            fixtures/first_successful_pr/python-preview-gap/expected/start-here.md \
+            policy/process_allowlist.txt
+          git rm \
+            .github/patches/2347.py \
+            .github/patches/2347-expectations.py \
+            .github/workflows/validate-2347-bash-argv.yml
+          git diff --cached --check
+          git diff --cached --name-only | sort > actual-files.txt
+          cat > expected-files.txt <<'FILES'
+          .github/patches/2347-expectations.py
+          .github/patches/2347.py
+          .github/workflows/validate-2347-bash-argv.yml
+          CHANGELOG.md
+          crates/ripr/src/agent/loop_commands.rs
+          crates/ripr/src/app/agent_status.rs
+          crates/ripr/src/lsp/tests.rs
+          crates/ripr/src/output/first_pr.rs
+          crates/ripr/src/output/pilot/commands.rs
+          crates/ripr/src/output/receipt_write.rs
+          fixtures/boundary_gap/expected/llm-work-loop/path-with-spaces/review-summary.json
+          fixtures/first_successful_pr/boundary-gap/expected/start-here.json
+          fixtures/first_successful_pr/boundary-gap/expected/start-here.md
+          fixtures/first_successful_pr/output-contract-gap/expected/start-here.json
+          fixtures/first_successful_pr/output-contract-gap/expected/start-here.md
+          fixtures/first_successful_pr/python-preview-gap/expected/start-here.json
+          fixtures/first_successful_pr/python-preview-gap/expected/start-here.md
+          policy/process_allowlist.txt
+          FILES
+          sort -o expected-files.txt expected-files.txt
+          diff -u expected-files.txt actual-files.txt
+          rm actual-files.txt expected-files.txt
+          git -c user.name='EffortlessSteven' \
+              -c user.email='git@effortlesssteven.com' \
+              -c commit.gpgSign=false \
+              commit -m 'security(agent): make advisory command argv round-trip through Bash (#2347)'
+          git push origin HEAD:refs/heads/fix/advisory-command-bash-argv-2347
