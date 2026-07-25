@@ -49,15 +49,19 @@ jobs:
           do
             git show "${old}:${file}" > "${file}"
           done
-      - name: Apply the total encoder and its behavioral proofs
+      - name: Apply the total encoder and align pinned receipts
         shell: bash
         run: |
           set -euo pipefail
           python3 .github/patches/2347.py
+          python3 .github/patches/2347-expectations.py
           cargo fmt --all
           cargo fmt --all -- --check
           git diff --check
-          rm .github/patches/2347.py .github/workflows/validate-2347-bash-argv.yml
+          rm \
+            .github/patches/2347.py \
+            .github/patches/2347-expectations.py \
+            .github/workflows/validate-2347-bash-argv.yml
       - name: All-target Clippy
         id: clippy
         continue-on-error: true
