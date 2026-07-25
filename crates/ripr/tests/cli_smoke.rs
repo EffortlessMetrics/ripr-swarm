@@ -421,7 +421,9 @@ fn concrete_fixture_repository_head_matches_a_committed_fixture()
         )
         .into());
     }
-    let expected = String::from_utf8(expected.stdout)?.trim().to_string();
+    let expected = String::from_utf8(expected.stdout)?
+        .trim()
+        .to_ascii_lowercase();
     std::fs::remove_dir_all(&root)?;
     if actual != expected {
         return Err(format!("fixture HEAD mismatch: actual={actual} expected={expected}").into());
