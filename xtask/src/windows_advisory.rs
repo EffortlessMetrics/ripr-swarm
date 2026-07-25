@@ -159,8 +159,17 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let run1_status = flag_value(args, "--run1-status")?;
     let run2_log = flag_value(args, "--run2")?;
     let run2_status = flag_value(args, "--run2-status")?;
-    if run1_log == run2_log {
-        return Err("windows-advisory-summary requires two distinct run logs".to_string());
+    // All four inputs must be distinct. Two runs sharing a log would report every
+    // failure as reproduced; two runs sharing a *status* would give one run the
+    // other's exit code, so a clean run could be labelled a harness failure —
+    // both are wrong verdicts rather than errors. A log path used as a status
+    // path is equally incoherent.
+    let paths = [&run1_log, &run1_status, &run2_log, &run2_status];
+    let distinct: BTreeSet<&&String> = paths.iter().collect();
+    if distinct.len() != paths.len() {
+        return Err(format!(
+            "windows-advisory-summary requires four distinct paths; got --run1 {run1_log}, --run1-status {run1_status}, --run2 {run2_log}, --run2-status {run2_status}"
+        ));
     }
 
     let first = load_run(Path::new(&run1_log), Path::new(&run1_status));
@@ -662,6 +671,47 @@ mod tests {
             "an unusable pair must not claim a clean result: {rendered}"
         );
         cleanup(&dir);
+    }
+
+    /// Sharing a status file between runs would hand one run the other's exit
+    /// code, so a clean run could be labelled a harness failure — a wrong
+    /// verdict, not an error. All four paths must be distinct.
+    #[test]
+    fn duplicate_paths_are_rejected_including_status_paths() {
+        let args = |values: &[&str]| -> Vec<String> {
+            values.iter().map(|value| (*value).to_string()).collect()
+        };
+        let shared_status = args(&[
+            "--run1",
+            "a.log",
+            "--run1-status",
+            "x.status",
+            "--run2",
+            "b.log",
+            "--run2-status",
+            "x.status",
+        ]);
+        let error = run(&shared_status).err().unwrap_or_default();
+        assert!(
+            error.contains("four distinct paths"),
+            "shared status paths must be refused: {error}"
+        );
+
+        let shared_log = args(&[
+            "--run1",
+            "a.log",
+            "--run1-status",
+            "1.status",
+            "--run2",
+            "a.log",
+            "--run2-status",
+            "2.status",
+        ]);
+        let error = run(&shared_log).err().unwrap_or_default();
+        assert!(
+            error.contains("four distinct paths"),
+            "shared logs must be refused: {error}"
+        );
     }
 
     /// Doctest names contain spaces. Rejecting them would drop every doctest
