@@ -55,6 +55,15 @@ jobs:
           set -euo pipefail
           python3 .github/patches/2347.py
           python3 .github/patches/2347-expectations.py
+          # The TypeScript preview receipt is producer-authored in the gap
+          # ledger, not synthesized by first_pr. Preserve that evidence byte-for-
+          # byte instead of imposing the new encoder's presentation on it.
+          for file in \
+            fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.json \
+            fixtures/first_successful_pr/typescript-preview-gap/expected/start-here.md
+          do
+            git show "origin/main:${file}" > "${file}"
+          done
           cargo fmt --all
           cargo fmt --all -- --check
           git diff --check
