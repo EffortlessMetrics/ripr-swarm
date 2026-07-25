@@ -1,0 +1,126 @@
+name: Apply #2392 TypeScript rerun confinement repair
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-2392-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/typescript-rerun-rootdir-2392'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out the exclusively claimed branch without write credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/typescript-rerun-rootdir-2392
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust 1.95.0
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+          components: rustfmt,clippy
+      - name: Verify the claimed temporary branch delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(git branch --show-current)" = "fix/typescript-rerun-rootdir-2392"
+          mapfile -t changed < <(git diff --name-only origin/main...HEAD)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/patches/2392.py
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/workflows/apply-2392-root-confinement.yml
+      - name: Apply and cage the production repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/patches/2392.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "crates/ripr/src/analysis/mod.rs"
+      - name: Verify the path guard and affected TypeScript rerun behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test -p ripr --lib typescript_rerun_scope_confinement_rejects_rooted_and_parent_paths -- --exact --test-threads=1
+          cargo test -p ripr --lib typescript_rerun_scope_rejects_root_escaping_anchors -- --test-threads=1
+          cargo test -p ripr --lib typescript_rerun -- --test-threads=4
+      - name: Package the validated Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validated
+          cp crates/ripr/src/analysis/mod.rs validated/mod.rs
+          (cd validated && sha256sum mod.rs > SHA256SUMS)
+      - name: Upload the validated source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: validated-analysis-2392-${{ github.run_id }}
+          path: validated/
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    needs: validate
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/typescript-rerun-rootdir-2392'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the unchanged claimed branch for the bounded write
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/typescript-rerun-rootdir-2392
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify that validation still names the live branch revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+      - name: Download the validated source
+        uses: actions/download-artifact@v8
+        with:
+          name: validated-analysis-2392-${{ github.run_id }}
+          path: validated
+      - name: Verify, commit, and remove temporary machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd validated && sha256sum -c SHA256SUMS)
+          cp validated/mod.rs crates/ripr/src/analysis/mod.rs
+          rm -rf validated
+          git add crates/ripr/src/analysis/mod.rs
+          git rm .github/patches/2392.py .github/workflows/apply-2392-root-confinement.yml
+          mapfile -t changed < <(git diff --cached --name-only)
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | grep -Fxq crates/ripr/src/analysis/mod.rs
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/patches/2392.py
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/workflows/apply-2392-root-confinement.yml
+          git diff --cached --check
+          git -c user.name='RIPR release operator' \
+              -c user.email='release-operator@example.invalid' \
+              -c commit.gpgSign=false \
+              commit -m 'fix(analysis): reject rooted TypeScript rerun scopes (#2392)'
+          git push origin HEAD:refs/heads/fix/typescript-rerun-rootdir-2392
