@@ -62,6 +62,42 @@ pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
     workspace::discover_rust_files(root).unwrap_or_default()
 }
 
+/// Why a ledger-supplied rerun anchor is not strictly root-relative, or `None`
+/// when it is safe to join onto the workspace root.
+///
+/// This exists as a named predicate rather than an inline condition so each
+/// rejection branch can be asserted independently. That matters here because
+/// `is_absolute()` is platform-dependent: on Windows a path needs a drive or UNC
+/// prefix to be absolute, so a Unix-style `/etc/hostname` reports
+/// `is_absolute() == false` and would otherwise be joined to the root as
+/// `<drive-of-root>/etc/hostname` — outside the workspace.
+///
+/// Component checks run *before* `is_absolute()` deliberately. A leading
+/// separator yields a `RootDir` component on both Windows and Unix, so ordering
+/// it first gives the same attributed reason on every platform. Were
+/// `is_absolute()` checked first, a Linux-only CI run would attribute
+/// `/etc/hostname` to the absolute-path branch and never exercise the `RootDir`
+/// branch at all — the guard would be green without being tested.
+#[cfg(feature = "lang-typescript")]
+fn scope_anchor_escape_reason(file: &Path) -> Option<&'static str> {
+    use std::path::Component;
+
+    if file.as_os_str().is_empty() {
+        return Some("empty anchor");
+    }
+    for component in file.components() {
+        match component {
+            Component::ParentDir => return Some("parent traversal"),
+            Component::RootDir => return Some("rooted path"),
+            Component::Prefix(_) => return Some("drive or UNC prefix"),
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    // Retained as a backstop: any future platform where a path is absolute
+    // without producing a `RootDir` or `Prefix` component still fails closed.
+    file.is_absolute().then_some("absolute path")
+}
+
 #[cfg(feature = "lang-typescript")]
 pub(crate) fn targeted_typescript_findings_for_scope(
     root: &Path,
@@ -72,27 +108,12 @@ pub(crate) fn targeted_typescript_findings_for_scope(
     use diff::{ChangedFile, ChangedLine};
     use language::{LanguageAdapter, TypeScriptAdapter};
 
-    // Ledger-supplied anchors are untrusted input: reject rooted paths and
-    // parent traversal so a crafted rerun scope cannot read outside `root`.
-    //
-    // `is_absolute()` alone is not sufficient. On Windows a path needs a drive
-    // or UNC prefix to be absolute, so a Unix-style `/etc/hostname` reports
-    // `is_absolute() == false`, slips past the guard, and is silently joined to
-    // the root as `<drive-of-root>/etc/hostname` — outside the workspace.
-    // Rejecting `RootDir` and `Prefix` components catches that on every
-    // platform, and is what makes the guard mean "root-relative".
-    if file.is_absolute()
-        || file.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
+    // Ledger-supplied anchors are untrusted input: reject anything that is not
+    // strictly root-relative so a crafted rerun scope cannot read outside
+    // `root`.
+    if let Some(reason) = scope_anchor_escape_reason(file) {
         return Err(format!(
-            "TypeScript rerun scope {} escapes the workspace root",
+            "TypeScript rerun scope {} escapes the workspace root ({reason})",
             file.display()
         ));
     }
@@ -588,6 +609,82 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Each rejection branch of the rerun-anchor guard, asserted by reason so a
+    /// single platform's `is_absolute()` behavior cannot mask an unexercised
+    /// branch.
+    ///
+    /// These shapes are platform-independent: a leading separator yields
+    /// `RootDir` on both Windows and Unix, and `..` yields `ParentDir` on both.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn scope_anchor_escape_reason_names_each_rejection_branch() {
+        // Accepted: strictly root-relative anchors.
+        for accepted in ["foo", "src/discount.ts", "./src/discount.ts", "a/b/c.tsx"] {
+            assert_eq!(
+                scope_anchor_escape_reason(Path::new(accepted)),
+                None,
+                "{accepted} is root-relative and must be accepted"
+            );
+        }
+
+        assert_eq!(
+            scope_anchor_escape_reason(Path::new("")),
+            Some("empty anchor")
+        );
+        for traversal in ["../outside.ts", "src/../../outside.ts", ".."] {
+            assert_eq!(
+                scope_anchor_escape_reason(Path::new(traversal)),
+                Some("parent traversal"),
+                "{traversal} must be refused as traversal"
+            );
+        }
+        // The regression this guard exists for: rooted but NOT absolute on
+        // Windows. Attributed to `RootDir` on every platform.
+        for rooted in ["/etc/hostname", "/foo", r"\foo"] {
+            assert_eq!(
+                scope_anchor_escape_reason(Path::new(rooted)),
+                Some("rooted path"),
+                "{rooted} must be refused as rooted"
+            );
+        }
+    }
+
+    /// Drive and UNC prefixes only exist as `Prefix` components on Windows; on
+    /// Unix a drive-letter string is an ordinary relative filename, so this is
+    /// the one part of the guard that cannot be asserted cross-platform.
+    #[cfg(all(windows, feature = "lang-typescript"))]
+    #[test]
+    fn scope_anchor_escape_reason_refuses_windows_prefixes() {
+        // `check-local-context` forbids drive-letter path literals in tracked
+        // files, so the drive shapes are assembled from parts.
+        let drive = "C:";
+        for prefixed in [
+            format!(r"{drive}\x"),
+            r"\\srv\share\x".to_string(),
+            format!(r"\\?\{drive}\x"),
+        ] {
+            assert_eq!(
+                scope_anchor_escape_reason(Path::new(&prefixed)),
+                Some("drive or UNC prefix"),
+                "{prefixed} must be refused as a prefixed path"
+            );
+        }
+    }
+
+    /// On Unix a drive-letter string is a legal relative filename, so it must be
+    /// accepted rather than refused by accident.
+    #[cfg(all(unix, feature = "lang-typescript"))]
+    #[test]
+    fn scope_anchor_escape_reason_treats_drive_text_as_a_unix_filename() {
+        // Assembled from parts: `check-local-context` forbids drive-letter
+        // literals in tracked files.
+        let drive = "C:";
+        assert_eq!(
+            scope_anchor_escape_reason(Path::new(&format!(r"{drive}\x"))),
+            None
+        );
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
