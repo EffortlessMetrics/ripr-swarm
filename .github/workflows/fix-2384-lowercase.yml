@@ -43,14 +43,11 @@ jobs:
           path = Path('crates/ripr/tests/cli_smoke.rs')
           text = path.read_text(encoding='utf-8')
           old = 'let expected = String::from_utf8(expected.stdout)?.trim().to_string();'
-          new = '''let expected = String::from_utf8(expected.stdout)?
-              .trim()
-              .to_ascii_lowercase();'''
+          new = 'let expected = String::from_utf8(expected.stdout)?.trim().to_ascii_lowercase();'
           if text.count(old) != 1:
               raise SystemExit(f'expected exactly one normalization site, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
-          rustfmt crates/ripr/tests/cli_smoke.rs
           git diff --check
       - name: Commit the correction and remove this workflow
         shell: bash
