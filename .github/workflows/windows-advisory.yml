@@ -94,10 +94,14 @@ jobs:
         run: |
           printf '## Windows advisory lane\n\nAdvisory only: this lane never fails and is not a required check (issue 2393).\n\n### Environment\n\n```\n%s\n```\n' "$(cat target/windows-env.log 2>/dev/null || echo unavailable)" >> "$GITHUB_STEP_SUMMARY" || true
 
+      # The verdict is written to a file as well as to the step summary. A step
+      # summary is not retrievable through the API, so a verdict that lived only
+      # there could not be cited as evidence later — only the raw logs could,
+      # which defeats the point of computing a verdict at all.
       - name: Summarize failures and repeated-run stability
         shell: bash
         run: |
-          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run2 target/windows-run2.log >> "$GITHUB_STEP_SUMMARY" || true
+          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run2 target/windows-run2.log | tee target/windows-verdict.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload advisory logs
         if: always()
@@ -105,6 +109,7 @@ jobs:
         with:
           name: ripr-windows-advisory
           path: |
+            target/windows-verdict.md
             target/windows-env.log
             target/windows-run1.log
             target/windows-run2.log
