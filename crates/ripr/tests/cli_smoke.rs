@@ -70,10 +70,10 @@ fn select_fixture_repository_head(
         ));
     }
 
-    if let Some(fallback) = actions_fallback {
-        if is_concrete_commit_id(fallback) {
-            return Ok(fallback.to_ascii_lowercase());
-        }
+    if let Some(fallback) = actions_fallback
+        && is_concrete_commit_id(fallback)
+    {
+        return Ok(fallback.to_ascii_lowercase());
     }
 
     Err(format!(
