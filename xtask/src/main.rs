@@ -35,6 +35,7 @@ mod reports;
 mod ripr_swarm;
 mod run;
 mod verification_contracts;
+mod windows_advisory;
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
