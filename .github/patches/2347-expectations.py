@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def replace_count(path: str, old: str, new: str, expected: int, label: str) -> None:
@@ -80,3 +81,34 @@ replace_count(
     1,
     "Python Markdown agent-packet command",
 )
+
+# Every first-PR fixture renders receipt commands through the same `shell_arg`
+# authority. Migrate the remaining corpus rather than waiting for the fixture
+# loop to stop at one directory per run.
+fixture_root = Path("fixtures/first_successful_pr")
+json_changes = 0
+markdown_changes = 0
+for path in fixture_root.glob("*/expected/start-here.json"):
+    text = path.read_text(encoding="utf-8")
+    text, count = re.subn(
+        r'--verify-command \\\"([^\"]+)\\\"',
+        lambda match: f"--verify-command '{match.group(1)}'",
+        text,
+    )
+    if count:
+        json_changes += count
+        path.write_text(text, encoding="utf-8")
+for path in fixture_root.glob("*/expected/start-here.md"):
+    text = path.read_text(encoding="utf-8")
+    text, count = re.subn(
+        r'--verify-command \"([^\"]+)\"',
+        lambda match: f"--verify-command '{match.group(1)}'",
+        text,
+    )
+    if count:
+        markdown_changes += count
+        path.write_text(text, encoding="utf-8")
+if json_changes == 0 or markdown_changes == 0:
+    raise SystemExit(
+        "first-PR receipt corpus migration found no remaining JSON or Markdown double-quoted commands"
+    )
