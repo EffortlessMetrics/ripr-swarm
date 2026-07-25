@@ -1,0 +1,131 @@
+name: Diagnose #2384 final required gates
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.ref == 'debug/2384-final-required-gates'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out the diagnostic branch without write credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Replace the diagnostic tree with the exact final #2384 merge tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach 3a73ccc2b7641cd6e3ba819050cd43c8f4163ca7
+          git clean -ffdx
+          test "$(git rev-parse HEAD)" = "3a73ccc2b7641cd6e3ba819050cd43c8f4163ca7"
+          test -z "$(git status --short)"
+      - name: Install Rust 1.95.0
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+          components: rustfmt,clippy
+      - name: cargo fmt --check
+        id: fmt
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo fmt --check 2>&1 | tee 01-fmt.log
+      - name: cargo check --workspace --all-targets
+        id: check
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo check --workspace --all-targets 2>&1 | tee 02-check.log
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        id: clippy
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee 03-clippy.log
+      - name: cargo test --workspace
+        id: test
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo test --workspace 2>&1 | tee 04-test.log
+      - name: cargo xtask precommit
+        id: precommit
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask precommit 2>&1 | tee 05-precommit.log
+      - name: cargo xtask check-evidence-promotion-honesty
+        id: evidence
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask check-evidence-promotion-honesty 2>&1 | tee 06-evidence.log
+      - name: cargo xtask check-dependencies
+        id: dependencies
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask check-dependencies 2>&1 | tee 07-dependencies.log
+      - name: cargo xtask check-process-policy
+        id: process
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask check-process-policy 2>&1 | tee 08-process.log
+      - name: cargo xtask check-network-policy
+        id: network
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask check-network-policy 2>&1 | tee 09-network.log
+      - name: cargo xtask goldens check
+        id: goldens
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask goldens check 2>&1 | tee 10-goldens.log
+      - name: cargo xtask fixtures
+        id: fixtures
+        continue-on-error: true
+        shell: bash
+        run: set -o pipefail; cargo xtask fixtures 2>&1 | tee 11-fixtures.log
+      - name: Write exact command outcome matrix
+        if: always()
+        shell: bash
+        env:
+          FMT: ${{ steps.fmt.outcome }}
+          CHECK: ${{ steps.check.outcome }}
+          CLIPPY: ${{ steps.clippy.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          PRECOMMIT: ${{ steps.precommit.outcome }}
+          EVIDENCE: ${{ steps.evidence.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          PROCESS: ${{ steps.process.outcome }}
+          NETWORK: ${{ steps.network.outcome }}
+          GOLDENS: ${{ steps.goldens.outcome }}
+          FIXTURES: ${{ steps.fixtures.outcome }}
+        run: |
+          {
+            printf 'target_commit=3a73ccc2b7641cd6e3ba819050cd43c8f4163ca7\n'
+            printf 'fmt=%s\n' "$FMT"
+            printf 'check=%s\n' "$CHECK"
+            printf 'clippy=%s\n' "$CLIPPY"
+            printf 'test=%s\n' "$TEST"
+            printf 'precommit=%s\n' "$PRECOMMIT"
+            printf 'evidence=%s\n' "$EVIDENCE"
+            printf 'dependencies=%s\n' "$DEPENDENCIES"
+            printf 'process=%s\n' "$PROCESS"
+            printf 'network=%s\n' "$NETWORK"
+            printf 'goldens=%s\n' "$GOLDENS"
+            printf 'fixtures=%s\n' "$FIXTURES"
+          } | tee outcome-matrix.txt
+      - name: Upload diagnostic transcripts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: diagnose-2384-final-${{ github.run_id }}
+          path: |
+            *.log
+            outcome-matrix.txt
+          if-no-files-found: error
+          retention-days: 1
