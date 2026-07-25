@@ -49,7 +49,7 @@ impl ContextPacket {
                 id: finding.probe.id.0.clone(),
                 family: finding.probe.family.as_str().to_string(),
                 delta: finding.probe.delta.as_str().to_string(),
-                file: crate::output::path::display_path(&finding.probe.location.file),
+                file: finding.probe.location.file.display().to_string(),
                 line: finding.probe.location.line,
                 changed_expression: finding.probe.expression.clone(),
             },
