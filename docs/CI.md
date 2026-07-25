@@ -317,10 +317,15 @@ Baseline measured on `7b7d1322` before the lane landed: 3781 library tests and
 150 CLI smoke tests passed on Windows, with a single failure in
 `lsp_lifecycle::compat_journey_collect_workspace_status_over_real_wire`
 (`ripr.refresh` exceeding the 15s harness response budget). The earlier count of
-14 was reduced by the fixes in #2417, #2416, and #2431. Whether that last
-failure is universal to Windows or specific to one developer host is exactly
-what this lane exists to answer — it should not be guessed at from a single
-machine.
+14 was reduced by the fixes in #2417, #2416, and #2431.
+
+The lane's first run answered the question the baseline could not. A clean
+`windows-latest` runner reproduced that failure exactly — same test, same
+`timed out waiting for response id 3` — so it is a real Windows failure and not
+an artifact of one developer host. That is the lane working as intended: a
+platform question that could not be settled from a single machine was settled
+by one CI run. The failure is tracked separately; the lane stays advisory until
+it is fixed.
 
 ### Cheaper Signal First
 
