@@ -43,15 +43,19 @@ jobs:
       - name: Install extension dependencies
         working-directory: editors/vscode
         run: npm ci
-      - name: Apply the corrected two-journey implementation
+      - name: Apply the corrected two-journey implementation and compile fixtures
         shell: bash
         run: |
           set -euo pipefail
           python3 .github/patches/2423.py
+          python3 .github/patches/2423-compile.py
           cargo fmt --all
           cargo fmt --all -- --check
           git diff --check
-          rm .github/patches/2423.py .github/workflows/validate-2423-editor-journeys.yml
+          rm \
+            .github/patches/2423.py \
+            .github/patches/2423-compile.py \
+            .github/workflows/validate-2423-editor-journeys.yml
       - name: TypeScript compile
         id: compile
         continue-on-error: true
