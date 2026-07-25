@@ -32,6 +32,7 @@ suite('Extension Smoke', () => {
   test('commands are registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('ripr.restartServer'));
+    assert.ok(commands.includes('ripr.refreshDiagnostics'));
     assert.ok(commands.includes('ripr.selectWorkspaceRoot'));
     assert.ok(commands.includes('ripr.showOutput'));
     assert.ok(commands.includes('ripr.showStatus'));
@@ -302,23 +303,72 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('defaults-first check mode is draft', () => {
+  test('defaults-first editor profile is draft, actionable, and seam-capable on explicit refresh', () => {
     const config = vscode.workspace.getConfiguration('ripr');
     assert.strictEqual(config.inspect('check.mode')?.defaultValue, 'draft');
+    assert.strictEqual(config.inspect('diagnosticProfile')?.defaultValue, 'actionable');
+    assert.strictEqual(config.inspect('seamDiagnostics')?.defaultValue, true);
   });
 
-  test('real server surfaces seam diagnostic, hover provider, and agent actions', async function (this: Mocha.Context) {
+  test('real server default interactive path surfaces an actionable diff finding', async function (this: Mocha.Context) {
     this.timeout(75000);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
       this.skip();
     }
 
+    const config = vscode.workspace.getConfiguration('ripr');
+    await config.update('diagnosticProfile', 'actionable', vscode.ConfigurationTarget.Global);
+    await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
     const uri = workspaceFileUri('src/lib.rs');
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     const document = await vscode.workspace.openTextDocument(uri);
     assert.strictEqual(document.languageId, 'rust');
     await vscode.window.showTextDocument(document);
     await vscode.commands.executeCommand('ripr.restartServer');
+
+    const diagnostic = await waitForDiagnostic(
+      uri,
+      (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'weakly_exposed',
+      60000
+    );
+    const hoverPosition = new vscode.Position(
+      diagnostic.range.start.line,
+      diagnostic.range.start.character + 1
+    );
+    const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
+      text.includes('**ripr** `weakly_exposed`') &&
+      text.includes('## Discriminator witness') &&
+      text.includes('amount == discount_threshold') &&
+      text.includes('tests/pricing.rs')
+    );
+    assert.ok(hoverText.includes('**Fix instruction:** fix site ready'), hoverText);
+
+    const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+      'vscode.executeCodeActionProvider',
+      uri,
+      diagnostic.range
+    );
+    assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
+    assertCommandAction(actions, 'Write targeted test: copy brief', 'ripr.copyTargetedTestBrief');
+    assertCommandAction(actions, 'Write targeted test: open best related test', 'ripr.openRelatedTest');
+  });
+
+  test('real server explicit full refresh surfaces seam diagnostic, hover, and agent actions', async function (this: Mocha.Context) {
+    this.timeout(75000);
+    if (!process.env.RIPR_TEST_SERVER_PATH) {
+      this.skip();
+    }
+
+    const config = vscode.workspace.getConfiguration('ripr');
+    await config.update('diagnosticProfile', 'full', vscode.ConfigurationTarget.Global);
+    await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
+    const uri = workspaceFileUri('src/lib.rs');
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    const document = await vscode.workspace.openTextDocument(uri);
+    assert.strictEqual(document.languageId, 'rust');
+    await vscode.window.showTextDocument(document);
+    await vscode.commands.executeCommand('ripr.restartServer');
+    await vscode.commands.executeCommand('ripr.refreshDiagnostics');
 
     const diagnostic = await waitForDiagnostic(
       uri,
@@ -468,7 +518,11 @@ suite('Extension Smoke', () => {
       const document = await vscode.workspace.openTextDocument(uri);
       assert.strictEqual(document.languageId, 'typescript');
       await vscode.window.showTextDocument(document);
+      const config = vscode.workspace.getConfiguration('ripr');
+      await config.update('diagnosticProfile', 'full', vscode.ConfigurationTarget.Global);
+      await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
       await vscode.commands.executeCommand('ripr.restartServer');
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
 
       const diagnostic = await waitForDiagnostic(
         uri,
@@ -568,6 +622,9 @@ suite('Extension Smoke', () => {
       );
       assert.strictEqual(activeEditor.selection.active.line, 3);
     } finally {
+      const config = vscode.workspace.getConfiguration('ripr');
+      await config.update('diagnosticProfile', 'actionable', vscode.ConfigurationTarget.Global);
+      await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
       await cleanupEditorGapSmokeFiles();
       await vscode.commands.executeCommand('ripr.restartServer');
     }
@@ -3922,6 +3979,8 @@ function createControllerTestContext(options: ControllerTestOptions) {
       downloadBaseUrl: '',
       checkMode: 'draft',
       baseRef: 'origin/main',
+      diagnosticProfile: 'actionable',
+      seamDiagnostics: true,
       traceServer: 'off'
     }),
     workspaceRootState: () => configuredWorkspaceRootState,
@@ -4108,8 +4167,10 @@ async function configureTestServer(): Promise<void> {
   const config = vscode.workspace.getConfiguration('ripr');
   await config.update('server.path', testServerPath, vscode.ConfigurationTarget.Global);
   await config.update('server.autoDownload', false, vscode.ConfigurationTarget.Global);
-  await config.update('baseRef', 'HEAD', vscode.ConfigurationTarget.Global);
-  await config.update('check.mode', 'instant', vscode.ConfigurationTarget.Global);
+  await config.update('baseRef', 'HEAD~1', vscode.ConfigurationTarget.Global);
+  await config.update('check.mode', 'fast', vscode.ConfigurationTarget.Global);
+  await config.update('diagnosticProfile', 'actionable', vscode.ConfigurationTarget.Global);
+  await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
 }
 
 function workspaceFileUri(relativePath: string): vscode.Uri {
@@ -4135,8 +4196,6 @@ async function removeWorkspacePath(relativePath: string): Promise<void> {
 async function cleanupEditorGapSmokeFiles(): Promise<void> {
   await Promise.all([
     removeWorkspacePath('ripr.toml'),
-    removeWorkspacePath('src/pricing.ts'),
-    removeWorkspacePath('tests/pricing.test.ts'),
     removeWorkspacePath('target/ripr/reports/gap-decision-ledger.json')
   ]);
 }
@@ -4309,7 +4368,7 @@ async function waitForDiagnostic(
     ?.map((folder) => folder.uri.fsPath)
     .join(', ') ?? '<none>';
   throw new Error([
-    'timed out waiting for ripr seam diagnostic.',
+    'timed out waiting for the expected ripr diagnostic.',
     `Workspace folders: ${workspaceFolders}`,
     `Target URI: ${uri.toString()}`,
     `Current URI diagnostics:\n${currentUriDiagnostics}`,

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 export type TraceSetting = 'off' | 'messages' | 'verbose';
+export type DiagnosticProfileSetting = 'actionable' | 'full';
 
 export interface RiprConfig {
   enabled: boolean;
@@ -11,6 +12,8 @@ export interface RiprConfig {
   downloadBaseUrl: string;
   checkMode: 'instant' | 'draft' | 'fast' | 'deep' | 'ready';
   baseRef: string;
+  diagnosticProfile: DiagnosticProfileSetting;
+  seamDiagnostics: boolean;
   traceServer: TraceSetting;
 }
 
@@ -25,6 +28,8 @@ export function getConfig(): RiprConfig {
     downloadBaseUrl: config.get<string>('server.downloadBaseUrl', ''),
     checkMode: config.get<'instant' | 'draft' | 'fast' | 'deep' | 'ready'>('check.mode', 'draft'),
     baseRef: config.get<string>('baseRef', 'origin/main'),
+    diagnosticProfile: config.get<DiagnosticProfileSetting>('diagnosticProfile', 'actionable'),
+    seamDiagnostics: config.get<boolean>('seamDiagnostics', true),
     traceServer: config.get<TraceSetting>('trace.server', 'off')
   };
 }

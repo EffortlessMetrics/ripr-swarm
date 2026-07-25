@@ -12,6 +12,8 @@ const enabledConfig: RiprConfig = {
   downloadBaseUrl: 'https://sentinel.invalid/ripr',
   checkMode: 'draft',
   baseRef: 'origin/main',
+  diagnosticProfile: 'actionable',
+  seamDiagnostics: true,
   traceServer: 'off'
 };
 

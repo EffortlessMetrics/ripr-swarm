@@ -81,6 +81,8 @@ suite('Workspace Trust Start Failure Recovery', () => {
       downloadBaseUrl: 'https://sentinel.invalid/ripr',
       checkMode: 'draft',
       baseRef: 'origin/main',
+      diagnosticProfile: 'actionable',
+      seamDiagnostics: true,
       traceServer: 'off'
     };
     const runtime: RiprClientRuntime = {

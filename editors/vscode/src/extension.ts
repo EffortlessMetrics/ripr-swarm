@@ -48,6 +48,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     output,
     status,
     vscode.commands.registerCommand('ripr.restartServer', async () => controller?.restart()),
+    vscode.commands.registerCommand('ripr.refreshDiagnostics', async () =>
+      controller?.refreshDiagnostics()
+    ),
     // No matching `onCommand:ripr.selectWorkspaceRoot` entry in package.json
     // `activationEvents`: since VS Code 1.74 a contributed command activates
     // its extension automatically, and engines.vscode is ^1.90.0. The
@@ -213,7 +216,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         event.affectsConfiguration('ripr.enabled') ||
         event.affectsConfiguration('ripr.server') ||
         event.affectsConfiguration('ripr.check') ||
-        event.affectsConfiguration('ripr.baseRef')
+        event.affectsConfiguration('ripr.baseRef') ||
+        event.affectsConfiguration('ripr.diagnosticProfile') ||
+        event.affectsConfiguration('ripr.seamDiagnostics')
       ) {
         await controller?.restart();
         return;

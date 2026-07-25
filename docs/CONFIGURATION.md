@@ -44,7 +44,7 @@ need to run it.
 | --- | --- |
 | Analysis | Normal/default scans use `draft` mode and include unchanged tests as static evidence. |
 | Oracles | Snapshot and mock-expectation oracles are `medium`; broad error checks are `weak`. |
-| Seam diagnostics | Saved-workspace LSP seam diagnostics are on, with explicit config or initialization options allowed to disable them. |
+| Editor diagnostics | Saved-workspace open/save uses the `actionable` diff-finding profile. Seam diagnostics are enabled as a capability but the full seam inventory is deferred until `ripr: Refresh Full Diagnostics`; explicit config or initialization options may disable it. |
 | Report caps | Context packets and collect-context commands include up to `5` related tests by default. |
 | Suppressions | Badge renderers look for `.ripr/suppressions.toml`; a missing file is normal. |
 | Badges | Repo badges count configured-visible unresolved seam gaps and stay advisory unless an explicit failure policy is selected. |
@@ -61,6 +61,14 @@ Operator mode vocabulary maps to concrete analysis modes:
 | PR fast scan | `fast` | Same package-local scope as `draft` for now. |
 | Deep static scan | `deep` | All Rust files in the workspace. |
 | Ready preflight | `ready` | All Rust files in the workspace before separate mutation confirmation. |
+
+The VS Code client also sends `diagnosticProfile` (`actionable` by default, or
+`full`) and `seamDiagnostics` (`true` by default) as LSP initialization options.
+Those values control what may be projected, not when the expensive seam inventory
+runs. Ordinary `didOpen`/`didSave` refreshes remain `seams_deferred`; the explicit
+`ripr: Refresh Full Diagnostics` command invokes the server's non-deferred
+`ripr.refresh` route. A full profile alone does not put the full seam walk back on
+every editor save.
 
 Repo-scoped public signals intentionally filter out repository automation and
 non-production trees so badges and repo seam reports describe the package

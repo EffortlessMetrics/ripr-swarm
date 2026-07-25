@@ -73,6 +73,9 @@ The editor path should not require report-format knowledge:
    `no-actionable-seam` and `first-useful-action` remain stable in the JSON
    contract.)
 4. Let the saved-workspace analysis refresh or run `ripr: Restart Server`.
+   Ordinary open/save publishes the bounded diff-finding profile and reports
+   seam inventory as deferred. Run `ripr: Refresh Full Diagnostics` only when
+   you need the explicit full repository seam inventory.
 5. Open the Problems panel and hover a ripr-flagged change to inspect evidence.
 6. Use `Copy Current Repair Packet`, `Copy Repo Gap Map`,
    `Copy Targeted Test Brief`, the agent copy commands, or
@@ -119,12 +122,18 @@ see [Static limits](STATIC_LIMITS.md).
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.
   Defaults to `origin/main`.
+- `ripr.diagnosticProfile`: `actionable` (default) publishes only findings with
+  producer-backed missing-discriminator and fix-site evidence; `full` permits
+  the complete diagnostic projection.
+- `ripr.seamDiagnostics`: allows seam diagnostics when the `full` profile and
+  explicit full refresh are selected. Defaults to `true`; ordinary open/save
+  still defers the expensive seam inventory.
 - `ripr.trace.server`: language-server trace setting.
 
-The extension passes `ripr.check.mode` and `ripr.baseRef` to the language server
-as initialization options. Changing enabled, server, check, base-ref, or trace
-settings restarts the client so the next diagnostic refresh uses the new
-configuration.
+The extension passes check mode, base ref, diagnostic profile, and seam enablement
+to the language server as initialization options. Changing enabled, server,
+check, base-ref, diagnostic-profile, seam, or trace settings restarts the client
+so the next diagnostic refresh uses the new configuration.
 
 ## Status and Staleness
 
@@ -229,6 +238,7 @@ quieter.
 ## Commands
 
 - `ripr: Restart Server`
+- `ripr: Refresh Full Diagnostics`
 - `ripr: Show Status`
 - `ripr: Show Output`
 - `ripr: Start Current Repair`

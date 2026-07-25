@@ -69,6 +69,7 @@ const RIPR_CLIENT_COMMANDS: readonly string[] = [
   'ripr.openReport',
   'ripr.openSettings',
   'ripr.restartServer',
+  'ripr.refreshDiagnostics',
   'ripr.selectWorkspaceRoot',
   'ripr.showOutput',
   'ripr.showReceiptStatus',
@@ -489,7 +490,9 @@ export class RiprClientController {
       initializationOptions: {
         baseRef: config.baseRef,
         checkMode: config.checkMode,
-        includeUnchangedTests: true
+        includeUnchangedTests: true,
+        diagnosticProfile: config.diagnosticProfile,
+        seamDiagnostics: config.seamDiagnostics
       },
       outputChannel: this.output,
       revealOutputChannelOn: RevealOutputChannelOn.Never,
@@ -570,6 +573,22 @@ export class RiprClientController {
   async restart(): Promise<void> {
     await this.stop();
     await this.start();
+  }
+
+  /** Request the explicit non-deferred seam inventory from the running server. */
+  async refreshDiagnostics(): Promise<void> {
+    if (!this.client) {
+      this.output.appendLine('ripr full diagnostic refresh was requested without a running server.');
+      await this.runtime.showWarningMessage(
+        'ripr server is not running. Run ripr: Restart Server before requesting full diagnostics.'
+      );
+      return;
+    }
+    this.output.appendLine('Requesting explicit full ripr diagnostics (including seam inventory).');
+    await this.client.sendRequest('workspace/executeCommand', {
+      command: 'ripr.refresh',
+      arguments: []
+    });
   }
 
   /**

@@ -53,8 +53,10 @@ async function main() {
         `${JSON.stringify({
           'ripr.server.path': testServerPath,
           'ripr.server.autoDownload': false,
-          'ripr.baseRef': 'HEAD',
-          'ripr.check.mode': 'instant',
+          'ripr.baseRef': 'HEAD~1',
+          'ripr.check.mode': 'fast',
+          'ripr.diagnosticProfile': 'actionable',
+          'ripr.seamDiagnostics': true,
           'security.workspace.trust.enabled': false,
         }, null, 2)}\n`
       );

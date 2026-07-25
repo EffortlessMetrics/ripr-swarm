@@ -170,6 +170,22 @@
           "default": "origin/main",
           "description": "Git base ref used by ripr editor diagnostics and context commands."
         },
+        "ripr.diagnosticProfile": {
+          "type": "string",
+          "enum": [
+            "actionable",
+            "full"
+          ],
+          "default": "actionable",
+          "description": "Diagnostic visibility profile. Actionable is the defaults-first interactive profile; full is required before the explicit full seam refresh can publish seam diagnostics.",
+          "scope": "resource"
+        },
+        "ripr.seamDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow seam diagnostics when the full profile and explicit full refresh are selected. Ordinary open/save still defers the expensive seam inventory.",
+          "scope": "resource"
+        },
         "ripr.gitTimeoutMs": {
           "type": "number",
           "default": 30000,
@@ -196,6 +212,10 @@
       {
         "command": "ripr.restartServer",
         "title": "ripr: Restart Server"
+      },
+      {
+        "command": "ripr.refreshDiagnostics",
+        "title": "ripr: Refresh Full Diagnostics"
       },
       {
         "command": "ripr.selectWorkspaceRoot",

@@ -1247,10 +1247,157 @@ fn vscode_test_server_path() -> Result<PathBuf, String> {
 }
 
 fn vscode_test_workspace_path() -> Result<PathBuf, String> {
-    Ok(repo_root()?
-        .join("fixtures")
-        .join("boundary_gap")
-        .join("input"))
+    let root = repo_root()?;
+    let fixture = root.join("fixtures").join("boundary_gap");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("system clock before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    let canonical_repo = fs::canonicalize(&root)
+        .map_err(|err| format!("failed to canonicalize {}: {err}", root.display()))?;
+    let mut staging_base = std::env::var_os("RUNNER_TEMP")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    fs::create_dir_all(&staging_base).map_err(|err| {
+        format!(
+            "failed to create VS Code staging base {}: {err}",
+            staging_base.display()
+        )
+    })?;
+    let mut canonical_staging_base = fs::canonicalize(&staging_base).map_err(|err| {
+        format!(
+            "failed to canonicalize VS Code staging base {}: {err}",
+            staging_base.display()
+        )
+    })?;
+    if canonical_staging_base.starts_with(&canonical_repo) {
+        let parent = root.parent().ok_or_else(|| {
+            format!(
+                "repository root {} has no parent for external staging",
+                root.display()
+            )
+        })?;
+        staging_base = parent.join(".ripr-vscode-live-workspaces");
+        fs::create_dir_all(&staging_base).map_err(|err| {
+            format!(
+                "failed to create external VS Code staging base {}: {err}",
+                staging_base.display()
+            )
+        })?;
+        canonical_staging_base = fs::canonicalize(&staging_base).map_err(|err| {
+            format!(
+                "failed to canonicalize external VS Code staging base {}: {err}",
+                staging_base.display()
+            )
+        })?;
+    }
+    if canonical_staging_base.starts_with(&canonical_repo) {
+        return Err(format!(
+            "VS Code live workspace staging base {} is inside repository {}",
+            canonical_staging_base.display(),
+            canonical_repo.display()
+        ));
+    }
+    let staged = strip_windows_verbatim_prefix(&canonical_staging_base).join(format!(
+        "ripr-vscode-live-workspace-{}-{stamp}",
+        std::process::id()
+    ));
+    copy_vscode_test_tree(&fixture.join("input"), &staged)?;
+    write_vscode_preview_sources(&staged)?;
+
+    let git = Path::new("git");
+    run_in_dir(git, &["init", "--quiet"], &staged)?;
+    let exclude = staged.join(".git/info/exclude");
+    fs::write(&exclude, "target/\nripr.toml\n")
+        .map_err(|err| format!("failed to write {}: {err}", exclude.display()))?;
+    let patch = path_to_utf8(&fixture.join("diff.patch"), "boundary-gap patch")?.to_string();
+    run_in_dir(git, &["apply", "--reverse", &patch], &staged)?;
+    commit_vscode_test_workspace(&staged, "boundary gap base state")?;
+    run_in_dir(git, &["apply", &patch], &staged)?;
+    commit_vscode_test_workspace(&staged, "boundary gap changed state")?;
+    Ok(staged)
+}
+
+/// Drop the Windows extended-length (`\\?\`) prefix that `fs::canonicalize`
+/// returns.
+///
+/// The staged path becomes the extension host's workspace root, and VS Code
+/// renders a verbatim path as `file://%3F/c%3A/...` — a URI whose *host* is
+/// `%3F`. No document URI ever matches that, so every live diagnostic assertion
+/// times out against a server that is behaving correctly. Canonicalization is
+/// still what proves the staging base sits outside the repository; only the
+/// path handed to the editor needs the prefix removed.
+fn strip_windows_verbatim_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path.to_path_buf(),
+    }
+}
+
+fn commit_vscode_test_workspace(root: &Path, message: &str) -> Result<(), String> {
+    let git = Path::new("git");
+    run_in_dir(git, &["add", "--all"], root)?;
+    run_in_dir(
+        git,
+        &[
+            "-c",
+            "user.name=RIPR live extension harness",
+            "-c",
+            "user.email=ripr-live-harness@example.invalid",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "--quiet",
+            "--message",
+            message,
+        ],
+        root,
+    )
+    .map(|_| ())
+}
+
+fn copy_vscode_test_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|err| format!("failed to create {}: {err}", destination.display()))?;
+    for entry in
+        fs::read_dir(source).map_err(|err| format!("failed to read {}: {err}", source.display()))?
+    {
+        let entry = entry.map_err(|err| format!("failed to read {}: {err}", source.display()))?;
+        if entry.file_name() == std::ffi::OsStr::new("target") {
+            continue;
+        }
+        let from = entry.path();
+        let to = destination.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .map_err(|err| format!("failed to stat {}: {err}", from.display()))?;
+        if kind.is_dir() {
+            copy_vscode_test_tree(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)
+                .map_err(|err| format!("failed to copy {}: {err}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn write_vscode_preview_sources(root: &Path) -> Result<(), String> {
+    fs::create_dir_all(root.join("tests"))
+        .map_err(|err| format!("failed to create TypeScript test directory: {err}"))?;
+    fs::write(
+        root.join("src/pricing.ts"),
+        "export function discountedTotal(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )
+    .map_err(|err| format!("failed to write TypeScript smoke source: {err}"))?;
+    fs::write(
+        root.join("tests/pricing.test.ts"),
+        "import { discountedTotal } from '../src/pricing';\n\ntest('discount threshold boundary', () => {\n  expect(discountedTotal(50, 100)).toBe(50);\n});\n",
+    )
+    .map_err(|err| format!("failed to write TypeScript smoke test: {err}"))
 }
 
 fn repo_root() -> Result<PathBuf, String> {
