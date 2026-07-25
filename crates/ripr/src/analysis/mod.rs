@@ -63,6 +63,19 @@ pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
 }
 
 #[cfg(feature = "lang-typescript")]
+fn typescript_rerun_scope_escapes_workspace(file: &Path) -> bool {
+    file.is_absolute()
+        || file.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+                    | std::path::Component::ParentDir
+            )
+        })
+}
+
+#[cfg(feature = "lang-typescript")]
 pub(crate) fn targeted_typescript_findings_for_scope(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -74,11 +87,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
 
     // Ledger-supplied anchors are untrusted input: reject absolute paths and
     // parent traversal so a crafted rerun scope cannot read outside `root`.
-    if file.is_absolute()
-        || file
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
+    if typescript_rerun_scope_escapes_workspace(file) {
         return Err(format!(
             "TypeScript rerun scope {} escapes the workspace root",
             file.display()
@@ -149,6 +158,47 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         }],
     )?;
     Ok(result.findings)
+}
+
+#[cfg(all(test, feature = "lang-typescript"))]
+#[test]
+fn typescript_rerun_scope_confinement_rejects_rooted_and_parent_paths() -> Result<(), String> {
+    for path in [
+        Path::new("../outside.ts"),
+        Path::new("src/../../outside.ts"),
+        Path::new("/etc/hostname"),
+    ] {
+        if !typescript_rerun_scope_escapes_workspace(path) {
+            return Err(format!(
+                "escaping TypeScript rerun path was accepted: {}",
+                path.display()
+            ));
+        }
+    }
+
+    #[cfg(windows)]
+    for path in [
+        Path::new(r"\Windows\System32"),
+        Path::new(r"C:\Windows\System32"),
+        Path::new(r"C:outside.ts"),
+    ] {
+        if !typescript_rerun_scope_escapes_workspace(path) {
+            return Err(format!(
+                "Windows rooted or prefixed rerun path was accepted: {}",
+                path.display()
+            ));
+        }
+    }
+
+    for path in [Path::new("src/discount.ts"), Path::new("./src/discount.ts")] {
+        if typescript_rerun_scope_escapes_workspace(path) {
+            return Err(format!(
+                "contained TypeScript rerun path was rejected: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
