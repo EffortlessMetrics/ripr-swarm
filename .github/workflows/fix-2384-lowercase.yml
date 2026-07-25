@@ -1,0 +1,78 @@
+name: Fix #2384 expected SHA normalization
+
+on:
+  push:
+    branches:
+      - fix/validated-cli-fixture-head-2383
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-2384-lowercase
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.ref_name == 'fix/validated-cli-fixture-head-2383'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out the exclusively claimed branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/validated-cli-fixture-head-2383
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify the branch revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD^)" = "1afea7f210b6a5f77a44e5ddd4411eb03a8a5e71"
+          test "$(git branch --show-current)" = "fix/validated-cli-fixture-head-2383"
+      - name: Install Rust 1.95.0
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.95.0
+          components: rustfmt,clippy
+      - name: Normalize the expected commit ID in the regression test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/ripr/tests/cli_smoke.rs')
+          text = path.read_text(encoding='utf-8')
+          old = 'let expected = String::from_utf8(expected.stdout)?.trim().to_string();'
+          new = 'let expected = String::from_utf8(expected.stdout)?\n        .trim()\n        .to_ascii_lowercase();'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one normalization site, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff --check
+      - name: Verify the addressed review seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test -p ripr --test cli_smoke concrete_fixture_repository_head_matches_a_committed_fixture -- --exact --test-threads=1
+          cargo test -p ripr --test cli_smoke editor_agent_loop_fixture_outputs_match_expected -- --exact --test-threads=1
+      - name: Commit the reviewed correction and remove this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add crates/ripr/tests/cli_smoke.rs
+          git rm .github/workflows/fix-2384-lowercase.yml
+          mapfile -t changed < <(git diff --cached --name-only)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | grep -Fxq crates/ripr/tests/cli_smoke.rs
+          printf '%s\n' "${changed[@]}" | grep -Fxq .github/workflows/fix-2384-lowercase.yml
+          git diff --cached --check
+          git -c user.name='RIPR release operator' \
+              -c user.email='release-operator@example.invalid' \
+              -c commit.gpgSign=false \
+              commit -m 'test(cli): normalize expected fixture commit IDs (#2383)'
+          git push origin HEAD:refs/heads/fix/validated-cli-fixture-head-2383
