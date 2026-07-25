@@ -1,65 +1,245 @@
-//! Summary for the advisory Windows lane (#2393).
+//! Verdict for the advisory Windows lane (#2393).
 //!
-//! The lane runs `cargo test --workspace` twice and hands both logs here. This
-//! module turns them into a reviewer-readable verdict rather than leaving a
-//! wall of log for someone to interpret.
+//! The lane runs `cargo test --workspace --no-fail-fast` twice and hands both
+//! logs plus both captured exit statuses here.
 //!
-//! Two distinctions carry the value:
+//! # Absence is not a pass
 //!
-//! - **Deterministic vs unstable.** A test failing in both runs is a platform
-//!   defect; failing in one is a flake. Conflating them is exactly how a
-//!   deterministic failure got mis-filed as intermittent in #2419, so the
-//!   summary never reports a bare failure list.
-//! - **Infrastructure vs semantic.** A compile or toolchain failure is not a
-//!   test result, and must not be read as "Windows is broken" in the product
-//!   sense.
+//! The load-bearing rule is that a test missing from a log has **not** been
+//! observed passing. `cargo test` can stop before later binaries, a run can die
+//! mid-way, and a filter can exclude a name — so "failed in run 1, absent in
+//! run 2" cannot be read as "passed in run 2, therefore flaky". Each test gets a
+//! three-state observation per run ([`TestObservation`]) and the verdict is
+//! derived from the pair, with an explicit `masked_unknown` outcome when one side
+//! never observed the test at all.
 //!
-//! It also reports which test targets executed, because `cargo test` stops
-//! after the first failing target: a clean-looking later target may simply
-//! never have run.
+//! Verdicts are deliberately named for what two samples establish:
+//! `repeated_failure` (reproduced in both samples) rather than "deterministic
+//! defect", because a shared race can reproduce twice.
+//!
+//! # Missing evidence is a failure, not a pass
+//!
+//! Test failures are advisory: the lane does not gate merges on them. Failure to
+//! *produce trustworthy evidence* is different, and this command exits non-zero
+//! for it — a missing log, a missing exit status, or an unreadable file. A lane
+//! that reported success while its own evidence was absent would be the exact
+//! false-confidence condition it exists to prevent.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// One parsed `cargo test` run.
-#[derive(Debug, Default, PartialEq, Eq)]
+/// What one run observed about one test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TestObservation {
+    Failed,
+    ObservedPass,
+    /// The run never reported this test: masked by an earlier target, filtered,
+    /// or the run ended first. Never treated as a pass.
+    NotObserved,
+}
+
+/// How one run terminated, derived from its captured exit status rather than
+/// inferred from log prose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunState {
+    CompletedClean,
+    CompletedWithTestFailures,
+    /// Non-zero exit with no parsed test failure: compile, link, harness, or
+    /// runner problem. Not a product verdict.
+    CompileOrHarnessFailure,
+    LogMissing,
+    StatusMissing,
+}
+
+impl RunState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CompletedClean => "completed_clean",
+            Self::CompletedWithTestFailures => "completed_with_test_failures",
+            Self::CompileOrHarnessFailure => "compile_or_harness_failure",
+            Self::LogMissing => "log_missing",
+            Self::StatusMissing => "status_missing",
+        }
+    }
+
+    /// Whether this run produced evidence that can be compared at all.
+    fn is_usable(self) -> bool {
+        !matches!(self, Self::LogMissing | Self::StatusMissing)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RunOutcome {
-    /// Log was readable.
-    pub(crate) available: bool,
-    /// Test names reported as `... FAILED`.
+    pub(crate) state: RunState,
+    pub(crate) exit_status: Option<i32>,
     pub(crate) failed: BTreeSet<String>,
-    /// Test binaries the run actually reached.
+    pub(crate) passed: BTreeSet<String>,
     pub(crate) targets: Vec<String>,
-    /// Compilation or toolchain failure rather than a test result.
-    pub(crate) build_failed: bool,
-    /// `test result:` summary lines, in order.
     pub(crate) results: Vec<String>,
 }
 
-pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    let run1 = flag_value(args, "--run1")?;
-    let run2 = flag_value(args, "--run2")?;
-    let first = parse_log_file(Path::new(&run1));
-    let second = parse_log_file(Path::new(&run2));
-    print!("{}", render(&first, &second));
-    Ok(())
+impl RunOutcome {
+    fn missing(state: RunState) -> Self {
+        Self {
+            state,
+            exit_status: None,
+            failed: BTreeSet::new(),
+            passed: BTreeSet::new(),
+            targets: Vec::new(),
+            results: Vec::new(),
+        }
+    }
+
+    fn observe(&self, name: &str) -> TestObservation {
+        if self.failed.contains(name) {
+            TestObservation::Failed
+        } else if self.passed.contains(name) {
+            TestObservation::ObservedPass
+        } else {
+            TestObservation::NotObserved
+        }
+    }
 }
 
+/// What two samples establish about one test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verdict {
+    /// Failed in both samples. Reproduced twice — not yet demonstrated to be
+    /// deterministic, since a shared race can also reproduce twice.
+    RepeatedFailure,
+    /// Failed in one sample and observed passing in the other.
+    Unstable,
+    /// Failed in one sample and never observed in the other. Cannot be
+    /// classified without a run that actually reached it.
+    MaskedUnknown,
+}
+
+impl Verdict {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RepeatedFailure => "repeated_failure",
+            Self::Unstable => "unstable",
+            Self::MaskedUnknown => "masked_unknown",
+        }
+    }
+}
+
+fn classify(first: TestObservation, second: TestObservation) -> Option<Verdict> {
+    use TestObservation::{Failed, NotObserved, ObservedPass};
+    match (first, second) {
+        (Failed, Failed) => Some(Verdict::RepeatedFailure),
+        (Failed, ObservedPass) | (ObservedPass, Failed) => Some(Verdict::Unstable),
+        (Failed, NotObserved) | (NotObserved, Failed) => Some(Verdict::MaskedUnknown),
+        // Nothing failed anywhere: not reported.
+        _ => None,
+    }
+}
+
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
+    let run1_log = flag_value(args, "--run1")?;
+    let run1_status = flag_value(args, "--run1-status")?;
+    let run2_log = flag_value(args, "--run2")?;
+    let run2_status = flag_value(args, "--run2-status")?;
+    if run1_log == run2_log {
+        return Err("windows-advisory-summary requires two distinct run logs".to_string());
+    }
+
+    let first = load_run(Path::new(&run1_log), Path::new(&run1_status));
+    let second = load_run(Path::new(&run2_log), Path::new(&run2_status));
+    print!("{}", render(&first, &second));
+
+    // Advisory applies to test outcomes, not to evidence. A run whose log or
+    // status is missing means this lane cannot be trusted, so fail loudly.
+    let mut unusable = Vec::new();
+    for (label, outcome) in [("run 1", &first), ("run 2", &second)] {
+        if !outcome.state.is_usable() {
+            unusable.push(format!("{label} is {}", outcome.state.label()));
+        }
+    }
+    if unusable.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "windows-advisory-summary could not produce trustworthy evidence: {}",
+            unusable.join("; ")
+        ))
+    }
+}
+
+/// Read one flag's value, rejecting a value that is itself a flag.
+///
+/// `--run1 --run2 path` would otherwise silently consume `--run2` as run 1's
+/// path and then fail to find `--run2`, or worse, compare a log against itself.
 fn flag_value(args: &[String], flag: &str) -> Result<String, String> {
+    let occurrences = args.iter().filter(|arg| arg.as_str() == flag).count();
+    if occurrences == 0 {
+        return Err(format!("windows-advisory-summary requires {flag} <path>"));
+    }
+    if occurrences > 1 {
+        return Err(format!(
+            "windows-advisory-summary got {flag} {occurrences} times; pass it once"
+        ));
+    }
     let index = args
         .iter()
         .position(|arg| arg == flag)
         .ok_or_else(|| format!("windows-advisory-summary requires {flag} <path>"))?;
-    args.get(index + 1)
-        .cloned()
-        .ok_or_else(|| format!("windows-advisory-summary requires a value for {flag}"))
+    let value = args
+        .get(index + 1)
+        .ok_or_else(|| format!("windows-advisory-summary requires a value for {flag}"))?;
+    if value.starts_with('-') {
+        return Err(format!(
+            "windows-advisory-summary got {flag} followed by {value}, which looks like a flag rather than a path"
+        ));
+    }
+    Ok(value.clone())
 }
 
-fn parse_log_file(path: &Path) -> RunOutcome {
-    match std::fs::read_to_string(path) {
-        Ok(text) => parse_log(&text),
-        Err(_) => RunOutcome::default(),
-    }
+fn load_run(log: &Path, status: &Path) -> RunOutcome {
+    let text = match std::fs::read_to_string(log) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!(
+                "windows-advisory-summary: read {} failed: {error}",
+                log.display()
+            );
+            return RunOutcome::missing(RunState::LogMissing);
+        }
+    };
+    let exit_status = match std::fs::read_to_string(status) {
+        Ok(raw) => match raw.trim().parse::<i32>() {
+            Ok(code) => Some(code),
+            Err(error) => {
+                eprintln!(
+                    "windows-advisory-summary: {} is not an integer exit status: {error}",
+                    status.display()
+                );
+                None
+            }
+        },
+        Err(error) => {
+            eprintln!(
+                "windows-advisory-summary: read {} failed: {error}",
+                status.display()
+            );
+            None
+        }
+    };
+    let Some(exit_status) = exit_status else {
+        let mut outcome = parse_log(&text);
+        outcome.state = RunState::StatusMissing;
+        return outcome;
+    };
+    let mut outcome = parse_log(&text);
+    outcome.exit_status = Some(exit_status);
+    outcome.state = if exit_status == 0 {
+        RunState::CompletedClean
+    } else if outcome.failed.is_empty() {
+        RunState::CompileOrHarnessFailure
+    } else {
+        RunState::CompletedWithTestFailures
+    };
+    outcome
 }
 
 /// Remove ANSI SGR escape sequences from one line.
@@ -67,9 +247,7 @@ fn parse_log_file(path: &Path) -> RunOutcome {
 /// CI sets `CARGO_TERM_COLOR: always`, so cargo's own progress lines arrive as
 /// `\x1b[1m\x1b[92m     Running\x1b[0m unittests src\lib.rs (...)`. Matching a
 /// prefix like `Running ` against that fails, which is how the first real lane
-/// run reported "no targets" while parsing every failure correctly. libtest's
-/// own lines happen to be uncolored, but stripping unconditionally keeps the
-/// parser from depending on that.
+/// run reported no targets while parsing every failure correctly.
 fn strip_ansi(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars();
@@ -78,7 +256,6 @@ fn strip_ansi(line: &str) -> String {
             out.push(ch);
             continue;
         }
-        // Consume `[` plus parameter bytes up to and including the final byte.
         if chars.next() != Some('[') {
             continue;
         }
@@ -92,15 +269,16 @@ fn strip_ansi(line: &str) -> String {
 }
 
 pub(crate) fn parse_log(text: &str) -> RunOutcome {
-    let mut outcome = RunOutcome {
-        available: true,
-        ..RunOutcome::default()
-    };
+    let mut outcome = RunOutcome::missing(RunState::StatusMissing);
     for raw_line in text.lines() {
         let line = strip_ansi(raw_line);
         let trimmed = line.trim();
-        if let Some(name) = failed_test_name(trimmed) {
-            outcome.failed.insert(name);
+        if let Some((name, failed)) = test_result_line(trimmed) {
+            if failed {
+                outcome.failed.insert(name);
+            } else {
+                outcome.passed.insert(name);
+            }
         }
         if let Some(target) = running_target(trimmed) {
             outcome.targets.push(target);
@@ -108,85 +286,115 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
         if trimmed.starts_with("test result:") {
             outcome.results.push(trimmed.to_string());
         }
-        if trimmed.starts_with("error: could not compile")
-            || trimmed.starts_with("error: linking with")
-            || trimmed.starts_with("error: failed to run custom build command")
-        {
-            outcome.build_failed = true;
-        }
     }
     outcome
 }
 
-/// `test some::path ... FAILED` -> `some::path`.
-fn failed_test_name(line: &str) -> Option<String> {
+/// `test some::path ... FAILED` / `... ok` -> (name, failed).
+///
+/// Both outcomes are collected: knowing a test was observed *passing* is what
+/// separates a flake from a test that was never reached.
+fn test_result_line(line: &str) -> Option<(String, bool)> {
     let rest = line.strip_prefix("test ")?;
-    let name = rest.strip_suffix(" ... FAILED")?;
+    let (name, failed) = if let Some(name) = rest.strip_suffix(" ... FAILED") {
+        (name, true)
+    } else if let Some(name) = rest.strip_suffix(" ... ok") {
+        (name, false)
+    } else {
+        return None;
+    };
     let name = name.trim();
-    (!name.is_empty() && !name.contains(' ')).then(|| name.to_string())
+    (!name.is_empty() && !name.contains(' ')).then(|| (name.to_string(), failed))
 }
 
 /// `Running unittests src\lib.rs (target\debug\deps\ripr-abc.exe)` -> the
 /// source path, which identifies the target more stably than the hashed binary.
+///
+/// The ` (` requirement matters: other lines can begin with `Running ` (build
+/// scripts, custom commands), and only a cargo test-target line carries the
+/// binary in parentheses.
 fn running_target(line: &str) -> Option<String> {
     let rest = line
         .strip_prefix("Running unittests ")
         .or_else(|| line.strip_prefix("Running "))?;
-    let path = rest.split(" (").next()?.trim();
+    let (path, _binary) = rest.split_once(" (")?;
+    let path = path.trim();
     (!path.is_empty()).then(|| path.replace('\\', "/"))
 }
 
 fn render(first: &RunOutcome, second: &RunOutcome) -> String {
-    let mut out = String::from("### Result\n\n");
-
-    if !first.available && !second.available {
-        out.push_str("No run log was readable, so this lane produced no signal. Treat as **unknown**, not as a pass.\n");
-        return out;
+    let mut out = String::from("### Run states\n\n");
+    for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
+        let status = match outcome.exit_status {
+            Some(code) => format!("cargo exit {code}"),
+            None => "cargo exit unknown".to_string(),
+        };
+        out.push_str(&format!(
+            "- {label}: `{}` ({status})\n",
+            outcome.state.label()
+        ));
     }
-    if first.build_failed || second.build_failed {
-        out.push_str("**Infrastructure failure:** the workspace did not compile on Windows. This is a build or toolchain problem, not a test verdict — do not read it as a product regression.\n\n");
+    out.push('\n');
+
+    if !first.state.is_usable() || !second.state.is_usable() {
+        out.push_str("**Evidence failure.** At least one run did not produce a usable log and exit status, so no verdict can be derived. This is reported as a workflow failure, not as a pass — a lane that goes green without evidence is worse than no lane.\n\n");
     }
-
-    let deterministic: Vec<&String> = first.failed.intersection(&second.failed).collect();
-    let unstable: Vec<&String> = first.failed.symmetric_difference(&second.failed).collect();
-
-    if deterministic.is_empty()
-        && unstable.is_empty()
-        && !first.build_failed
-        && !second.build_failed
+    if first.state == RunState::CompileOrHarnessFailure
+        || second.state == RunState::CompileOrHarnessFailure
     {
-        out.push_str("No test failures in either run.\n\n");
+        out.push_str("**Infrastructure failure.** A run exited non-zero with no parsed test failure, which indicates a compile, link, harness, or runner problem rather than a product regression.\n\n");
     }
 
-    if !deterministic.is_empty() {
-        out.push_str(&format!(
-            "**Deterministic failures ({}).** Failed in both runs — platform defects, not flakes:\n\n",
-            deterministic.len()
-        ));
-        for name in &deterministic {
-            out.push_str(&format!("- `{name}`\n"));
+    out.push_str("### Verdicts\n\n");
+    let mut verdicts: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    let candidates: BTreeSet<&String> = first.failed.iter().chain(second.failed.iter()).collect();
+    for name in candidates {
+        if let Some(verdict) = classify(first.observe(name), second.observe(name)) {
+            verdicts
+                .entry(verdict.label())
+                .or_default()
+                .push(name.clone());
         }
-        out.push('\n');
     }
 
-    if !unstable.is_empty() {
+    if verdicts.is_empty() {
+        if first.state.is_usable() && second.state.is_usable() {
+            out.push_str("No test failed in either run.\n\n");
+        } else {
+            out.push_str("No verdict: see the evidence failure above.\n\n");
+        }
+    }
+
+    for (label, explanation) in [
+        (
+            "repeated_failure",
+            "Failed in both runs. Reproduced twice; a shared race can also reproduce twice, so this is not yet demonstrated to be deterministic.",
+        ),
+        (
+            "unstable",
+            "Failed in one run and observed passing in the other. Confirm in isolation before filing as a defect.",
+        ),
+        (
+            "masked_unknown",
+            "Failed in one run and never observed in the other, so it cannot be classified. A test absent from a log was not observed passing.",
+        ),
+    ] {
+        let Some(names) = verdicts.get(label) else {
+            continue;
+        };
         out.push_str(&format!(
-            "**Unstable ({}).** Failed in exactly one of two runs — treat as a load-dependent flake and confirm in isolation before filing as a defect:\n\n",
-            unstable.len()
+            "**{label} ({})** — {explanation}\n\n",
+            names.len()
         ));
-        for name in &unstable {
+        for name in names {
             out.push_str(&format!("- `{name}`\n"));
         }
         out.push('\n');
     }
 
     out.push_str("### Targets reached\n\n");
-    out.push_str("`cargo test` stops after the first failing target, so a target absent here did not run and its state is unknown.\n\n");
+    out.push_str("Recorded because a compile or harness failure can still stop a run before later targets. With `--no-fail-fast` an ordinary test failure no longer hides them.\n\n");
     for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
-        if !outcome.available {
-            out.push_str(&format!("- {label}: log unavailable\n"));
-            continue;
-        }
         let targets = if outcome.targets.is_empty() {
             "none reported".to_string()
         } else {
@@ -202,9 +410,14 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
             out.push_str(&format!("- {label}: no `test result:` line\n"));
             continue;
         }
-        out.push_str(&format!("- {label}: {}\n", outcome.results.join(" | ")));
+        out.push_str(&format!(
+            "- {label}: observed {} pass, {} fail across {} target result line(s)\n",
+            outcome.passed.len(),
+            outcome.failed.len(),
+            outcome.results.len()
+        ));
     }
-    out.push_str("\nThis lane is advisory and never fails; it is not a required check (#2393).\n");
+    out.push_str("\nTest outcomes here are advisory and do not gate merges (#2393). Missing evidence is not advisory and fails this lane.\n");
     out
 }
 
@@ -212,81 +425,134 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
 mod tests {
     use super::*;
 
-    /// The gate must catch the exact YAML bug that shipped in this lane's first
-    /// revision: a plain-scalar `run:` whose ` #` was read as a comment, cutting
-    /// the `printf` mid-string and leaving an unterminated quote.
-    #[test]
-    fn plain_scalar_comment_gate_catches_the_shipped_bug() {
-        let broken = "    steps:\n      - name: Summarize\n        run: printf 'see #2393 done\\n' >> \"$GITHUB_STEP_SUMMARY\"\n";
-        let found = crate::workflow_plain_scalar_comment_violations("wf.yml", broken);
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].contains("block scalar"), "{found:?}");
-
-        // A block scalar carries the same text safely.
-        let fixed = "    steps:\n      - name: Summarize\n        run: |\n          printf 'see #2393 done\\n' >> \"$GITHUB_STEP_SUMMARY\"\n";
-        assert!(
-            crate::workflow_plain_scalar_comment_violations("wf.yml", fixed).is_empty(),
-            "a block scalar has no comment rule and must not be flagged"
-        );
-    }
-
-    /// `#` without a preceding space is not a comment, and a quoted scalar
-    /// carries its own delimiters — neither should be flagged.
-    #[test]
-    fn plain_scalar_comment_gate_does_not_flag_safe_shapes() {
-        for safe in [
-            "        run: cargo xtask check-workflows\n",
-            "        run: printf '## Heading\\n'\n",
-            "        run: \"echo a # b\"\n",
-            "        run: cargo test --workspace -- --test-threads=1\n",
-        ] {
-            assert!(
-                crate::workflow_plain_scalar_comment_violations("wf.yml", safe).is_empty(),
-                "false positive on {safe:?}"
-            );
-        }
-    }
-
-    const RUN_WITH_TWO_FAILURES: &str = "\
-     Running unittests src\\lib.rs (target\\debug\\deps\\ripr-abc.exe)
-test cli::rerun::tests::alpha ... ok
-test cli::rerun::tests::beta ... FAILED
-test lsp::tests::gamma ... FAILED
-test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1s
-";
-
-    /// Real bytes from the first Windows lane run (#2393). The `Running` lines
-    /// are ANSI-coloured because CI sets `CARGO_TERM_COLOR: always`; the libtest
-    /// lines are not. Against synthetic uncoloured fixtures the parser looked
-    /// correct and reported "no targets" on the real thing, so this fixture is
-    /// copied verbatim rather than hand-written.
+    /// Real bytes from a Windows lane run (#2393): cargo's `Running` lines are
+    /// ANSI-coloured because CI sets `CARGO_TERM_COLOR: always`, libtest's are
+    /// not. Copied verbatim, because synthetic uncoloured fixtures hid a parser
+    /// gap that only real runner output exposed.
     const REAL_RUNNER_LOG: &str = concat!(
         "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src\\lib.rs (target\\debug\\deps\\ripr-b675962642118180.exe)\n",
+        "test some::alpha ... ok\n",
         "test result: ok. 3777 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.15s\n",
         "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m tests\\lsp_lifecycle.rs (target\\debug\\deps\\lsp_lifecycle-d7f865dad16cc0c7.exe)\n",
         "test compat_journey_collect_workspace_status_over_real_wire ... FAILED\n",
         "test result: FAILED. 25 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.30s\n",
     );
 
+    fn outcome(state: RunState, failed: &[&str], passed: &[&str]) -> RunOutcome {
+        RunOutcome {
+            state,
+            exit_status: Some(if failed.is_empty() { 0 } else { 101 }),
+            failed: failed.iter().map(|name| (*name).to_string()).collect(),
+            passed: passed.iter().map(|name| (*name).to_string()).collect(),
+            targets: vec!["src/lib.rs".to_string()],
+            results: vec!["test result: FAILED. 1 passed; 1 failed".to_string()],
+        }
+    }
+
     #[test]
-    fn parses_ansi_coloured_runner_output() {
-        let outcome = parse_log(REAL_RUNNER_LOG);
+    fn parses_ansi_coloured_runner_output_including_passes() {
+        let parsed = parse_log(REAL_RUNNER_LOG);
         assert_eq!(
-            outcome.targets,
+            parsed.targets,
             vec![
                 "src/lib.rs".to_string(),
                 "tests/lsp_lifecycle.rs".to_string()
-            ],
-            "ANSI-coloured `Running` lines must still yield targets"
+            ]
         );
-        assert_eq!(outcome.failed.len(), 1);
         assert!(
-            outcome
+            parsed
                 .failed
                 .contains("compat_journey_collect_workspace_status_over_real_wire")
         );
-        assert_eq!(outcome.results.len(), 2);
-        assert!(!outcome.build_failed);
+        assert!(
+            parsed.passed.contains("some::alpha"),
+            "observed passes must be collected too: {:?}",
+            parsed.passed
+        );
+        assert_eq!(parsed.results.len(), 2);
+    }
+
+    /// The rule this module exists for: a test absent from one run has not been
+    /// observed passing, so it cannot be called a flake.
+    #[test]
+    fn absence_is_masked_unknown_not_unstable() {
+        let first = outcome(RunState::CompletedWithTestFailures, &["x::y"], &[]);
+        let second = outcome(RunState::CompletedClean, &[], &[]); // never reported x::y
+        assert_eq!(
+            classify(first.observe("x::y"), second.observe("x::y")),
+            Some(Verdict::MaskedUnknown)
+        );
+        let rendered = render(&first, &second);
+        assert!(rendered.contains("masked_unknown (1)"), "{rendered}");
+        assert!(!rendered.contains("unstable ("), "{rendered}");
+    }
+
+    /// Only an explicitly observed pass on the other side makes a failure a flake.
+    #[test]
+    fn observed_pass_on_the_other_side_is_unstable() {
+        let first = outcome(RunState::CompletedWithTestFailures, &["x::y"], &[]);
+        let second = outcome(RunState::CompletedClean, &[], &["x::y"]);
+        assert_eq!(
+            classify(first.observe("x::y"), second.observe("x::y")),
+            Some(Verdict::Unstable)
+        );
+        let rendered = render(&first, &second);
+        assert!(rendered.contains("unstable (1)"), "{rendered}");
+        assert!(!rendered.contains("masked_unknown ("), "{rendered}");
+    }
+
+    #[test]
+    fn failing_twice_is_reported_as_repeated_not_deterministic() {
+        let both = outcome(RunState::CompletedWithTestFailures, &["x::y"], &[]);
+        assert_eq!(
+            classify(both.observe("x::y"), both.observe("x::y")),
+            Some(Verdict::RepeatedFailure)
+        );
+        let rendered = render(&both, &both);
+        assert!(rendered.contains("repeated_failure (1)"), "{rendered}");
+        assert!(
+            !rendered.contains("deterministic platform defect"),
+            "two samples do not establish determinism: {rendered}"
+        );
+    }
+
+    #[test]
+    fn non_zero_exit_without_parsed_failures_is_infrastructure() {
+        let mut broken = outcome(RunState::CompileOrHarnessFailure, &[], &[]);
+        broken.exit_status = Some(101);
+        let clean = outcome(RunState::CompletedClean, &[], &["x::y"]);
+        let rendered = render(&broken, &clean);
+        assert!(rendered.contains("Infrastructure failure"), "{rendered}");
+    }
+
+    #[test]
+    fn missing_evidence_renders_an_evidence_failure_and_no_pass_claim() {
+        let missing = RunOutcome::missing(RunState::LogMissing);
+        let clean = outcome(RunState::CompletedClean, &[], &["x::y"]);
+        let rendered = render(&missing, &clean);
+        assert!(rendered.contains("**Evidence failure.**"), "{rendered}");
+        assert!(
+            !rendered.contains("No test failed in either run."),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_state_labels_are_stable_wire_strings() {
+        assert_eq!(RunState::CompletedClean.label(), "completed_clean");
+        assert_eq!(
+            RunState::CompletedWithTestFailures.label(),
+            "completed_with_test_failures"
+        );
+        assert_eq!(
+            RunState::CompileOrHarnessFailure.label(),
+            "compile_or_harness_failure"
+        );
+        assert_eq!(RunState::LogMissing.label(), "log_missing");
+        assert_eq!(RunState::StatusMissing.label(), "status_missing");
+        assert!(RunState::CompletedWithTestFailures.is_usable());
+        assert!(!RunState::LogMissing.is_usable());
+        assert!(!RunState::StatusMissing.is_usable());
     }
 
     #[test]
@@ -296,104 +562,53 @@ test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out;
             "     Running unittests src/lib.rs"
         );
         assert_eq!(strip_ansi("plain text"), "plain text");
-        assert_eq!(strip_ansi(""), "");
     }
 
+    /// A line beginning `Running ` without a parenthesised binary is not a test
+    /// target — build scripts and custom commands can produce one.
     #[test]
-    fn parses_failures_targets_and_totals() {
-        let outcome = parse_log(RUN_WITH_TWO_FAILURES);
-        assert!(outcome.available);
-        assert!(!outcome.build_failed);
-        assert_eq!(outcome.targets, vec!["src/lib.rs".to_string()]);
-        assert_eq!(outcome.failed.len(), 2);
-        assert!(outcome.failed.contains("cli::rerun::tests::beta"));
-        assert!(outcome.failed.contains("lsp::tests::gamma"));
-        assert_eq!(outcome.results.len(), 1);
-    }
-
-    /// The distinction this command exists for: the same failure in both runs is
-    /// a defect; a failure in one run is a flake. Reporting them together as
-    /// "failures" is what mis-filed a deterministic failure as intermittent.
-    #[test]
-    fn separates_deterministic_failures_from_unstable_ones() {
-        let first = parse_log(RUN_WITH_TWO_FAILURES);
-        let second = parse_log(
-            "test cli::rerun::tests::beta ... FAILED\ntest result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1s\n",
-        );
-        let rendered = render(&first, &second);
-        assert!(
-            rendered.contains("**Deterministic failures (1)")
-                && rendered.contains("`cli::rerun::tests::beta`"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("**Unstable (1)") && rendered.contains("`lsp::tests::gamma`"),
-            "{rendered}"
-        );
-    }
-
-    #[test]
-    fn reports_a_clean_pair_of_runs_without_failure_sections() {
-        let clean = parse_log(
-            "     Running unittests src\\lib.rs (target\\debug\\deps\\ripr-abc.exe)\ntest result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1s\n",
-        );
-        let rendered = render(&clean, &clean);
-        assert!(
-            rendered.contains("No test failures in either run."),
-            "{rendered}"
-        );
-        assert!(!rendered.contains("Deterministic failures"), "{rendered}");
-        assert!(!rendered.contains("Unstable ("), "{rendered}");
-    }
-
-    /// A build failure must not read as a product verdict.
-    #[test]
-    fn names_a_build_failure_as_infrastructure() {
-        let broken =
-            parse_log("error: could not compile `ripr` (lib test) due to 2 previous errors\n");
-        assert!(broken.build_failed);
-        let rendered = render(&broken, &broken);
-        assert!(rendered.contains("Infrastructure failure"), "{rendered}");
-    }
-
-    /// An absent log is unknown, never a pass. A lane that silently reports
-    /// success when it produced no signal is the failure mode this lane exists
-    /// to prevent.
-    #[test]
-    fn missing_logs_report_unknown_rather_than_pass() {
-        let missing = RunOutcome::default();
-        let rendered = render(&missing, &missing);
-        assert!(rendered.contains("**unknown**"), "{rendered}");
-        assert!(!rendered.contains("No test failures"), "{rendered}");
-    }
-
-    #[test]
-    fn ignores_lines_that_only_resemble_a_failure_report() {
-        let outcome = parse_log(
-            "test result: FAILED. 1 passed; 1 failed; 0 ignored\ntest some::name ... ok\nfailures:\n    some::name\n",
-        );
-        assert!(
-            outcome.failed.is_empty(),
-            "only `... FAILED` lines name a failing test, got {:?}",
-            outcome.failed
-        );
-    }
-
-    /// Asserted on the error value rather than `is_err`, so the message a CI
-    /// operator sees is pinned too — and without reaching for the panic-family
-    /// `unwrap_err` that clippy would otherwise suggest.
-    #[test]
-    fn flag_value_requires_a_path() {
+    fn running_target_requires_a_parenthesised_binary() {
         assert_eq!(
-            flag_value(&["--run1".to_string()], "--run1"),
+            running_target("Running unittests src/lib.rs (target/debug/deps/a-1.exe)"),
+            Some("src/lib.rs".to_string())
+        );
+        assert_eq!(running_target("Running a custom build command"), None);
+        assert_eq!(running_target("Running"), None);
+    }
+
+    #[test]
+    fn ignores_lines_that_only_resemble_a_test_result() {
+        let parsed = parse_log("failures:\n    some::name\ntest result: FAILED. 1 failed\n");
+        assert!(parsed.failed.is_empty(), "{:?}", parsed.failed);
+        assert!(parsed.passed.is_empty(), "{:?}", parsed.passed);
+    }
+
+    /// Argument validation, asserted on error values so the operator-facing
+    /// message is pinned and no panic-family call is needed.
+    #[test]
+    fn flag_value_rejects_missing_duplicate_and_flag_shaped_values() {
+        let args = |values: &[&str]| -> Vec<String> {
+            values.iter().map(|value| (*value).to_string()).collect()
+        };
+        assert_eq!(
+            flag_value(&[], "--run1"),
+            Err("windows-advisory-summary requires --run1 <path>".to_string())
+        );
+        assert_eq!(
+            flag_value(&args(&["--run1"]), "--run1"),
             Err("windows-advisory-summary requires a value for --run1".to_string())
         );
+        // The Gemini finding: a flag consumed as a path.
         assert_eq!(
-            flag_value(&[], "--run2"),
-            Err("windows-advisory-summary requires --run2 <path>".to_string())
+            flag_value(&args(&["--run1", "--run2", "b.log"]), "--run1"),
+            Err("windows-advisory-summary got --run1 followed by --run2, which looks like a flag rather than a path".to_string())
         );
         assert_eq!(
-            flag_value(&["--run1".to_string(), "a.log".to_string()], "--run1"),
+            flag_value(&args(&["--run1", "a.log", "--run1", "b.log"]), "--run1"),
+            Err("windows-advisory-summary got --run1 2 times; pass it once".to_string())
+        );
+        assert_eq!(
+            flag_value(&args(&["--run1", "a.log"]), "--run1"),
             Ok("a.log".to_string())
         );
     }

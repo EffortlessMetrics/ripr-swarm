@@ -26,12 +26,22 @@ concurrency:
 # This lane exists so that class of defect has a standing signal instead of
 # depending on a manual investigation.
 #
-# It is **advisory and never fails.** It is not a required check, and it must
-# not be promoted to required until #2419 (two `framed_lsp_*` parallel-load
-# flakes) and #2430 (`compat_journey` refresh timeout) are resolved and the
-# lane demonstrates stability across repeated runs. A required lane that fails
-# intermittently would erode trust in CI rather than add to it — the same
-# false-confidence failure mode this lane exists to prevent.
+# The contract is narrower than "never fails", which the lane's own first run
+# disproved by being broken:
+#
+#   - **Test outcomes are advisory.** A failing test does not fail this job and
+#     does not gate merges. Known failures (#2419, #2430) will show up as
+#     verdicts in the summary while the job stays green.
+#   - **Evidence generation is not advisory.** A missing log, a missing captured
+#     exit status, a summarizer crash, or a broken workflow fails the job. A lane
+#     that reports success while proving nothing is the false-confidence
+#     condition it exists to prevent.
+#
+# It is not a required check, and must not be promoted to required until #2419
+# and #2430 are resolved and the lane shows stability across repeated runs on
+# hardware that can actually reproduce them — the hosted runner does not
+# reproduce the #2419 flakes at all, so green runs there prove nothing about
+# them.
 #
 # Triggers:
 #   - schedule: a daily standing signal independent of PR traffic.
@@ -39,16 +49,15 @@ concurrency:
 #     touching path handling, fixtures, or process/IO code.
 #   - workflow_dispatch: manual run.
 #
-# The suite runs **twice** on purpose. A single run cannot separate a
-# deterministic platform failure from a parallel-load flake, and conflating the
-# two is exactly the mistake that mis-filed a deterministic failure as
-# intermittent in #2419. Two runs at default parallelism make the distinction
-# visible in the summary: failing in both is deterministic, failing in one is
-# not.
+# The suite runs **twice** on purpose, because one sample cannot separate a
+# reproducible failure from a load-dependent flake.
 #
-# Note on interpreting the logs: `cargo test` stops after the first failing
-# test target, so a failure in an early target hides every later one. The
-# summary reports which targets actually ran for that reason.
+# Two samples still do not license a bare failed/flaky split. A test missing
+# from a run has not been observed passing — it may have been masked, filtered,
+# or never reached — so the summarizer tracks three states per run (failed,
+# observed pass, not observed) and reports `masked_unknown` rather than guessing.
+# Failing twice is reported as `repeated_failure`, not "deterministic", since a
+# shared race can also reproduce twice.
 
 jobs:
   windows-advisory:
@@ -79,15 +88,21 @@ jobs:
         run: |
           mkdir -p target && { rustc -Vv; cargo -V; echo "checkout_root=$PWD"; echo "cores=$(nproc 2>/dev/null || echo unknown)"; echo "parallel_mode=default"; } 2>&1 | tee target/windows-env.log
 
+      # `--no-fail-fast` keeps cargo going after one target fails, so a routine
+      # test failure no longer hides every later target — the masking this lane
+      # exists to expose. The real cargo exit status is captured from
+      # PIPESTATUS[0] into a file rather than inferred from log prose, which
+      # cannot distinguish a compile failure from a test failure reliably. The
+      # step itself exits 0 because test outcomes are advisory.
       - name: Run workspace tests (advisory, run 1)
         shell: bash
         run: |
-          mkdir -p target && cargo test --workspace 2>&1 | tee target/windows-run1.log || true
+          mkdir -p target; set +e; cargo test --workspace --no-fail-fast 2>&1 | tee target/windows-run1.log; printf '%s\n' "${PIPESTATUS[0]}" > target/windows-run1.status; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         shell: bash
         run: |
-          mkdir -p target && cargo test --workspace 2>&1 | tee target/windows-run2.log || true
+          mkdir -p target; set +e; cargo test --workspace --no-fail-fast 2>&1 | tee target/windows-run2.log; printf '%s\n' "${PIPESTATUS[0]}" > target/windows-run2.status; exit 0
 
       - name: Summarize environment
         shell: bash
@@ -98,10 +113,16 @@ jobs:
       # summary is not retrievable through the API, so a verdict that lived only
       # there could not be cited as evidence later — only the raw logs could,
       # which defeats the point of computing a verdict at all.
-      - name: Summarize failures and repeated-run stability
+      #
+      # Deliberately NOT suffixed with `|| true`. Test outcomes are advisory;
+      # the lane's ability to produce trustworthy evidence is not. A missing log,
+      # a missing exit status, or a summarizer crash fails this step and therefore
+      # the job — otherwise the lane could report success while proving nothing,
+      # which is the false-confidence condition it exists to prevent.
+      - name: Summarize verdicts and repeated-run stability
         shell: bash
         run: |
-          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run2 target/windows-run2.log | tee target/windows-verdict.md >> "$GITHUB_STEP_SUMMARY" || true
+          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status | tee target/windows-verdict.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload advisory logs
         if: always()
@@ -113,4 +134,6 @@ jobs:
             target/windows-env.log
             target/windows-run1.log
             target/windows-run2.log
+            target/windows-run1.status
+            target/windows-run2.status
           if-no-files-found: ignore
