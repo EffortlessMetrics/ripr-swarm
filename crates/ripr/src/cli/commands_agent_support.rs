@@ -431,16 +431,24 @@ mod tests {
     }
 
     #[test]
-    fn confine_agent_brief_file_path_rejects_root_path_itself() -> Result<(), String> {
-        let dir = ScratchDir::new("root-itself");
-        // Passing the root directory itself normalizes to empty after the
-        // root prefix is stripped. The helper must reject it OR return a
-        // safe relative; either is acceptable as long as no escape.
-        match confine_agent_brief_file_path(&dir.path, &dir.path) {
-            Ok(confined) => assert!(
-                !confined.to_string_lossy().contains(".."),
-                "root path should not produce an escape: {confined:?}"
-            ),
+    fn confine_agent_brief_file_path_root_path_normalizes_to_safe_relative() -> Result<(), String> {
+        let dir = ScratchDir::new("root-normalize");
+        // Passing the root directory itself: the root prefix is stripped,
+        // leaving a safe non-traversal relative (or rejected as empty).
+        // The contract under test is: no escape path reaches downstream.
+        let result = confine_agent_brief_file_path(&dir.path, &dir.path);
+        match result {
+            Ok(confined) => {
+                let path = confined.to_string_lossy();
+                assert!(
+                    !path.contains(".."),
+                    "root path should not produce an escape: {path}"
+                );
+                assert!(
+                    !path.is_empty(),
+                    "root path should not normalize to empty without an error"
+                );
+            }
             Err(err) => assert!(
                 err.contains("empty after normalization") || err.contains("must stay under root"),
                 "unexpected error: {err}"
@@ -503,20 +511,16 @@ mod tests {
     }
 
     #[test]
-    fn agent_brief_lines_from_diff_drops_traversal_paths() -> Result<(), String> {
-        // A crafted diff with a `+++ b/../escape.rs` marker: the parsed path
-        // escapes root. The lines-from-diff helper should produce zero lines
-        // for the escaping file (fail-closed drop), not embed the escape path.
+    fn agent_brief_lines_from_diff_does_not_embed_traversal_paths() -> Result<(), String> {
+        // A crafted diff with a `+++ b/../escape.rs` marker. The diff parser's
+        // confinement (parse_new_path_marker → confine_to_relative_path)
+        // strips the `..` component, so the file survives as `escape.rs`.
+        // The lines-from-diff helper then normalizes that safe path. This test
+        // pins that no `..` traversal component reaches the brief lines,
+        // regardless of whether the parser keeps or drops the file.
         let dir = ScratchDir::new("diff-traversal");
         let diff_text = "diff --git a/src/lib.rs b/../escape.rs\n--- a/src/lib.rs\n+++ b/../escape.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
         let lines = agent_brief_lines_from_diff(&dir.path, diff_text);
-        // The traversal path is normalized but the lines carry the normalized
-        // path; the confinement at the Files-arm and the diff-path confinement
-        // are separate layers. This test pins that the helper at least does
-        // not panic on traversal input.
-        // (If the diff parser's own confinement drops it, lines will be empty;
-        //  if not, the path will be normalized. Either is acceptable as long
-        //  as no escape path reaches downstream consumers verbatim.)
         for line in &lines {
             let path_str = line.file.to_string_lossy();
             assert!(
