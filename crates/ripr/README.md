@@ -145,7 +145,9 @@ ripr doctor
 # Analyze the current Git diff against origin/main
 ripr check --base origin/main
 
-# Analyze the bundled sample diff (shipped under examples/sample/)
+# The following examples use the bundled sample diff. If you installed
+# ripr from source, run them from the crate directory (crates/ripr/).
+# If you installed via cargo install ripr, substitute your own --diff path.
 ripr check --diff examples/sample/example.diff
 
 # Emit stable JSON for tools and agents
