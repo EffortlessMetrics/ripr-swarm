@@ -550,9 +550,9 @@ mod tests {
         );
         assert_eq!(all_yes, ExposureClass::Exposed);
 
-        // discriminate=Weak (not Yes) → WeaklyExposed, NOT Exposed.
-        // This is the "strong oracle but weak discrimination" case — the
-        // cardinal-sin guard: reach + strong oracle must NOT credit as Exposed.
+        // discriminate=Weak with infect=Yes + propagate=Yes at the FINAL guard
+        // → WeaklyExposed, NOT Exposed. This is the cardinal-sin guard: all
+        // stages Yes except discrimination → must not credit as Exposed.
         let weak_discrim = classify(
             &stage(StageState::Yes),
             &stage(StageState::Yes),
@@ -565,6 +565,38 @@ mod tests {
             weak_discrim,
             ExposureClass::WeaklyExposed,
             "Weak discrimination must not credit as Exposed (over-credit guard)"
+        );
+
+        // infect=No (not Unknown) at the final guard → WeaklyExposed.
+        // infect=No means infection is resolved as "not happening", so the
+        // all-Yes Exposed check fails on the infect arm specifically.
+        let no_infect = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::No),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+        );
+        assert_eq!(
+            no_infect,
+            ExposureClass::WeaklyExposed,
+            "infect=No at the final guard must yield WeaklyExposed, not Exposed"
+        );
+
+        // propagate=No (not Unknown) at the final guard → WeaklyExposed.
+        let no_propagate = classify(
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &stage(StageState::No),
+            &stage(StageState::Yes),
+            &stage(StageState::Yes),
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+        );
+        assert_eq!(
+            no_propagate,
+            ExposureClass::WeaklyExposed,
+            "propagate=No at the final guard must yield WeaklyExposed, not Exposed"
         );
 
         // infect=Unknown → InfectionUnknown (never reaches the Exposed check).
