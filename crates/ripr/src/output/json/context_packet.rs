@@ -30,7 +30,7 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
         &mut out,
         2,
         "file",
-        &crate::output::path::display_path(std::path::Path::new(&packet.probe.file)),
+        &crate::output::path::display_path_text(&packet.probe.file),
         true,
     );
     number_field(&mut out, 2, "line", packet.probe.line, true);
