@@ -1,5 +1,5 @@
 pub async fn fetch_limit(capacity: i32, threshold: i32) -> i32 {
-    if capacity >= threshold { capacity - 10 } else { capacity }
+    if capacity > threshold { capacity - 10 } else { capacity }
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ NOTE fixtures/rust_async_fn_owner/input/src/lib.rs:2
 
 Changed
   before: if capacity >= threshold { capacity - 10 } else { capacity }
-  after:  if capacity > threshold { capacity - 10 } else { capacity }
+  after:  capacity > threshold
 
 Probe
   family: predicate

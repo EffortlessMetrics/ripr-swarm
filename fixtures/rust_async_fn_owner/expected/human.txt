@@ -9,7 +9,7 @@ Start here:
   Safe next action: inspect the named static limitation before treating this as repair-ready.
   File: fixtures/rust_async_fn_owner/input/src/lib.rs:2
   Static exposure: propagation_unknown (note, confidence 0.66)
-  Changed behavior: if capacity > threshold { capacity - 10 } else { capacity }
+  Changed behavior: capacity > threshold
   Missing discriminator: Missing discriminator value: capacity == threshold
   Related test: src/lib.rs:10 above_threshold_gets_reduced
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
