@@ -19,6 +19,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => super::precommit(),
+        XtaskCommand::CheckFast => super::check_fast(),
         XtaskCommand::CheckPr => super::check_pr(),
         XtaskCommand::Fixtures(name) => super::reports::fixtures(name.as_ref()),
         XtaskCommand::Goldens(args) => super::reports::goldens(&args),
