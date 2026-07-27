@@ -275,8 +275,13 @@ fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'st
             "install python3 (e.g. apt install python3)",
         ));
         // Reuse the shared framework detector (#2183 review) — no parallel
-        // marker list.
-        if analysis::detect_python_test_framework(root) == Some("pytest") {
+        // marker list. Gate the call so --no-default-features compiles (#2418).
+        #[cfg(feature = "lang-python")]
+        let pytest_detected = analysis::detect_python_test_framework(root) == Some("pytest");
+        #[cfg(not(feature = "lang-python"))]
+        let pytest_detected =
+            root.join("pytest.ini").exists() || root.join("pyproject.toml").exists();
+        if pytest_detected {
             probes.push((
                 "python",
                 "pytest",
