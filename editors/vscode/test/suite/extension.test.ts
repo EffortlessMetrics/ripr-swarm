@@ -32,6 +32,7 @@ suite('Extension Smoke', () => {
   test('commands are registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('ripr.restartServer'));
+    assert.ok(commands.includes('ripr.refreshDiagnostics'));
     assert.ok(commands.includes('ripr.selectWorkspaceRoot'));
     assert.ok(commands.includes('ripr.showOutput'));
     assert.ok(commands.includes('ripr.showStatus'));
@@ -581,6 +582,36 @@ suite('Extension Smoke', () => {
       await vscode.commands.executeCommand('ripr.restartServer');
     } catch {
       // Expected: server resolution fails in test environment.
+    }
+  });
+
+  test('refreshDiagnostics forwards to the server refresh command', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      await context.controller.refreshDiagnostics();
+
+      assert.deepStrictEqual(context.client.requests, [{
+        method: 'workspace/executeCommand',
+        params: {
+          command: 'ripr.refresh',
+          arguments: []
+        }
+      }]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('refreshDiagnostics reports when no server is running', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.refreshDiagnostics();
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.ok(context.infoMessages.at(-1)?.includes('requires a running server'));
+    } finally {
+      await context.dispose();
     }
   });
 
