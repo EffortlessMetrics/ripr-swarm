@@ -16,7 +16,15 @@
 
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+/// Grace period for draining stdout/stderr after a timed process-tree kill.
+///
+/// A descendant can briefly retain an inherited pipe handle after the parent
+/// is terminated. The bounded drain keeps a Windows timeout from blocking the
+/// LSP worker indefinitely while still allowing normal output to finish.
+const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 
 /// Named, matchable prefix for git invocation timeout errors (#2303). The
 /// LSP refresh path matches this prefix to convert a diff-load timeout into
@@ -126,6 +134,7 @@ fn collect_output_with_deadline(
         ));
     }
     let mut child = command
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -134,10 +143,9 @@ fn collect_output_with_deadline(
     let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
 
     let wait = poll_child(&mut child, timeout, describe);
-    // After exit or kill+reap the pipes reach EOF and the readers finish;
-    // join them so the collected output is complete in every outcome.
-    let stdout = join_pipe_reader(stdout_reader);
-    let stderr = join_pipe_reader(stderr_reader);
+    let timed_out = !matches!(&wait, ChildWait::Exited(_));
+    let stdout = drain_pipe_reader(stdout_reader, timed_out, "stdout", describe)?;
+    let stderr = drain_pipe_reader(stderr_reader, timed_out, "stderr", describe)?;
 
     match wait {
         ChildWait::Exited(status) => Ok(Output {
@@ -177,13 +185,11 @@ pub(crate) fn poll_child(
             Ok(Some(status)) => return ChildWait::Exited(status),
             Ok(None) => {
                 if let Err(cancelled) = crate::analysis::cancellation::checkpoint() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    terminate_child_tree(child);
                     return ChildWait::Cancelled(cancelled);
                 }
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    terminate_child_tree(child);
                     let timeout_ms = timeout.map_or(0, |limit| limit.as_millis());
                     return ChildWait::TimedOut(format!(
                         "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
@@ -192,8 +198,7 @@ pub(crate) fn poll_child(
                 std::thread::sleep(POLL_INTERVAL);
             }
             Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_child_tree(child);
                 return ChildWait::WaitFailed(err.to_string());
             }
         }
@@ -204,18 +209,57 @@ pub(crate) fn poll_child(
 /// never deadlocks against a full OS pipe buffer.
 fn spawn_pipe_reader(
     mut pipe: impl std::io::Read + Send + 'static,
-) -> std::thread::JoinHandle<Vec<u8>> {
-    std::thread::spawn(move || {
+) -> (std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
+    let (sender, receiver) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
         let mut buffer = Vec::new();
         let _ = pipe.read_to_end(&mut buffer);
-        buffer
-    })
+        let _ = sender.send(buffer);
+    });
+    (handle, receiver)
 }
 
-fn join_pipe_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
-    handle
-        .and_then(|handle| handle.join().ok())
-        .unwrap_or_default()
+fn drain_pipe_reader(
+    reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
+    timed_out: bool,
+    stream_name: &str,
+    describe: &str,
+) -> Result<Vec<u8>, String> {
+    let Some((handle, receiver)) = reader else {
+        return Ok(Vec::new());
+    };
+    match receiver.recv_timeout(POST_KILL_DRAIN_GRACE) {
+        Ok(buffer) => {
+            let _ = handle.join();
+            Ok(buffer)
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) if timed_out => {
+            // The process was already terminated and reaped. Dropping the
+            // handle detaches a reader whose pipe write-end escaped with a
+            // descendant; the timeout path must not wait for that OS handle.
+            Ok(Vec::new())
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "{stream_name} pipe did not drain after {describe} completed"
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
+            "{stream_name} pipe reader failed while collecting {describe}"
+        )),
+    }
+}
+
+fn terminate_child_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", pid.as_str(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(test)]
@@ -331,6 +375,43 @@ mod tests {
         if elapsed >= Duration::from_secs(30) {
             return Err(format!(
                 "timeout path took {elapsed:?}; the hung child was not terminated and reaped"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn deadline_kills_pipe_inheriting_descendants_without_blocking_the_reader() -> Result<(), String>
+    {
+        if reexec_harness() {
+            return Ok(());
+        }
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') -NoNewWindow -PassThru; Wait-Process -Id $p.Id",
+        ]);
+        let started = Instant::now();
+        let result = collect_output_with_deadline(
+            &mut command,
+            Some(Duration::from_secs(5)),
+            "pipe-inheriting-descendant",
+        );
+        let elapsed = started.elapsed();
+        let err = match result {
+            Err(err) => err,
+            Ok(_) => {
+                return Err("a descendant-holding invocation must fail with a timeout".to_string());
+            }
+        };
+        if !is_git_invocation_timeout(&err) {
+            return Err(format!("expected the named timeout error, got: {err}"));
+        }
+        if elapsed >= Duration::from_secs(20) {
+            return Err(format!(
+                "pipe-inheriting timeout took {elapsed:?}; reader drain was not bounded"
             ));
         }
         Ok(())

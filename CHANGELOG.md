@@ -30,6 +30,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Windows LSP refreshes now isolate shared Git subprocesses from the JSON-RPC
+  server stdin and terminate timed-out process trees with bounded pipe draining.
+  Explicit refreshes therefore return trustworthy results within the ordinary
+  compatibility budget instead of hanging on inherited descendant handles
+  (#2430).
+
 - `ripr check --diff <path>` now discloses when the diff input contains no
   parseable file changes (0 hunks, 0 files). Previously a non-diff file (a
   log, a source file, random text) silently produced "0 probe(s)" with exit
