@@ -907,6 +907,34 @@ mod tests {
     }
 
     #[test]
+    fn doctor_rustc_probe_rejects_incomplete_version_components() -> Result<(), String> {
+        for output in [
+            "",
+            "rustc",
+            "rustc ",
+            "rustc 1",
+            "rustc 1.95",
+            "rustc x.95.0",
+            "rustc 1.x.0",
+            "rustc 1.95.x",
+        ] {
+            let result = doctor_tool_check_success("rustc", output.as_bytes());
+            if result.status != DoctorStatus::Fail {
+                return Err(format!(
+                    "incomplete rustc version unexpectedly passed doctor: {output:?}"
+                ));
+            }
+            if !result.evidence.contains("could not be parsed") {
+                return Err(format!(
+                    "incomplete rustc evidence was not actionable: {}",
+                    result.evidence
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn doctor_rustc_probe_accepts_msrv_newer_and_prerelease_versions() -> Result<(), String> {
         for output in [
             "rustc 1.95.0 (minimum-toolchain)",
