@@ -1529,9 +1529,8 @@ fn non_empty_reason(value: &str) -> Result<String, String> {
 
 fn reason_contains_spec_id(reason: &str) -> bool {
     reason.split_whitespace().any(|word| {
-        let token = word.trim_matches(|character: char| {
-            !character.is_ascii_alphanumeric() && character != '-'
-        });
+        let token = word
+            .trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '-');
         token.starts_with("RIPR-SPEC-")
             && token.len() == "RIPR-SPEC-0000".len()
             && token[10..].bytes().all(|byte| byte.is_ascii_digit())
