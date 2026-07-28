@@ -238,11 +238,11 @@ fn drain_pipe_reader(
         Some(deadline) => receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())),
         None => receiver
             .recv()
-            .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+            .map_err(|_receive_error| mpsc::RecvTimeoutError::Disconnected),
     };
     match received {
         Ok(buffer) => {
-            handle.join().map_err(|_| {
+            handle.join().map_err(|_panic_payload| {
                 format!("{stream_name} pipe reader panicked while collecting {describe}")
             })?;
             Ok(buffer)
