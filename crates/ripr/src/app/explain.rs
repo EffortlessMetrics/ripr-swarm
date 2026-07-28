@@ -29,10 +29,13 @@ pub fn explain_finding_with_config(
     selector: &str,
     config: &RiprConfig,
 ) -> Result<String, String> {
+    let navigation = super::finding_navigation(&input, None);
     let output = check_workspace_with_config(input, config)?;
     match select_finding(&output.findings, selector) {
         Some(finding) => Ok(output::human::render_finding_with_context_command(
-            finding, config,
+            finding,
+            config,
+            &navigation.context_command(selector),
         )),
         None => Err(format!(
             "no finding matched {selector:?}; run `ripr check --json` to list available finding ids"
@@ -54,6 +57,7 @@ pub(crate) fn explain_finding_from_artifact(
     artifact_path: &Path,
     asserted_base: Option<&str>,
 ) -> Result<String, String> {
+    let navigation = super::finding_navigation(&input, Some(artifact_path));
     let findings = super::check_artifact::load_findings_for_reuse(
         artifact_path,
         &input,
@@ -62,7 +66,9 @@ pub(crate) fn explain_finding_from_artifact(
     )?;
     match select_finding(&findings, selector) {
         Some(finding) => Ok(output::human::render_finding_with_context_command(
-            finding, config,
+            finding,
+            config,
+            &navigation.context_command(selector),
         )),
         None => Err(format!(
             "no finding matched {selector:?}; run `ripr check --json` to list available finding ids"
@@ -143,8 +149,14 @@ mod tests {
         assert!(rendered.contains("Static exposure"));
         assert!(rendered.contains("no_static_path"));
         assert!(rendered.contains("InvoiceError::InvalidCurrency"));
+        let root = crate::agent::loop_commands::shell_arg(&sample_root().display().to_string());
+        let diff = crate::agent::loop_commands::shell_arg(
+            &sample_root().join("example.diff").display().to_string(),
+        );
         assert!(rendered.contains(
-            "Next: ripr context --at probe:crates_ripr_examples_sample_src_lib.rs:error_path:a776c683"
+            &format!(
+                "Next: ripr context --root {root} --diff {diff} --at probe:crates_ripr_examples_sample_src_lib.rs:error_path:a776c683"
+            )
         ));
         Ok(())
     }

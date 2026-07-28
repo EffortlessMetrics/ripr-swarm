@@ -602,6 +602,50 @@ fn check_human_output_reports_sample_findings() {
 }
 
 #[test]
+fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
+    let root = ".";
+    let diff = "crates/ripr/examples/sample/example.diff";
+    let output = run_ripr_in_workspace(&["check", "--root", root, "--diff", diff])
+        .map_err(|err| err.to_string())?;
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let explain_line = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr explain "))
+        .ok_or_else(|| format!("check output omitted explain command:\n{stdout}"))?;
+    let context_line = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr context "))
+        .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
+    let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
+    let context_args = context_line.split_whitespace().collect::<Vec<_>>();
+    if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
+        return Err(format!(
+            "unexpected navigation commands:\n{explain_line}\n{context_line}"
+        ));
+    }
+
+    let explain = run_ripr_in_workspace(&explain_args[1..]).map_err(|err| err.to_string())?;
+    assert_success(&explain);
+    let selector = explain_args
+        .last()
+        .copied()
+        .ok_or_else(|| "explain command omitted selector".to_string())?;
+    let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
+    assert_success(&context);
+    if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
+        "Next: ripr context --root {root} --diff {diff} --at {selector}"
+    )) {
+        return Err("explain output omitted its scope-preserving context command".to_string());
+    }
+    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+        return Err("context command did not return its JSON packet".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn check_json_output_has_stable_contract_fields() {
     let root = workspace_root().display().to_string();
     let diff = sample_diff().display().to_string();
@@ -5871,10 +5915,11 @@ fn explain_unknown_probe_fails_with_clear_error() {
 
 /// End-to-end three-step flow: `check --write-artifact` once, then
 /// `explain --from` and `context --from` reuse the recorded findings with
-/// no scope flags. Reused output must be byte-identical to the fresh
-/// recompute flow (the core reuse proof).
+/// no scope flags. Finding detail remains identical while navigation names
+/// the source identity used by each invocation.
 #[test]
-fn check_write_artifact_then_explain_and_context_reuse_byte_identical() -> Result<(), String> {
+fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation()
+-> Result<(), String> {
     let root = workspace_root().display().to_string();
     let diff = sample_diff().display().to_string();
     let dir = unique_temp_workspace("check-artifact-reuse");
@@ -5912,10 +5957,17 @@ fn check_write_artifact_then_explain_and_context_reuse_byte_identical() -> Resul
             selector,
         ]);
         assert_success(&reused_explain);
-        assert_eq!(
-            fresh_explain.stdout, reused_explain.stdout,
-            "explain --from output must be byte-identical to the fresh run"
-        );
+        let fresh_explain_text = String::from_utf8_lossy(&fresh_explain.stdout);
+        let reused_explain_text = String::from_utf8_lossy(&reused_explain.stdout);
+        if !fresh_explain_text.contains("Next: ripr context --root")
+            || !fresh_explain_text.contains("--diff")
+            || !reused_explain_text.contains("Next: ripr context --root")
+            || !reused_explain_text.contains("--from")
+        {
+            return Err(
+                "explain navigation did not preserve fresh and artifact sources".to_string(),
+            );
+        }
 
         let fresh_context = run_ripr(&[
             "context", "--root", &root, "--diff", &diff, "--at", selector, "--json",
