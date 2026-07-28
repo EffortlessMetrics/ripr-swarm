@@ -348,6 +348,39 @@ mod tests {
         }
     }
 
+    /// #2583 review: `option_section` and `help_text_for` each decide, on
+    /// their own, which commands share a help body. If a new sibling is added
+    /// to `help_text_for` but not to `option_section`, that command silently
+    /// mines the whole shared body again — reintroducing exactly the
+    /// sibling-flag leak this PR fixes, with no failing test.
+    ///
+    /// Binding the two by construction is a larger refactor; this pins the
+    /// invariant instead: every command that shares a help body with another
+    /// command must have an options section, and every command with an options
+    /// section must be one that shares a help body.
+    #[test]
+    fn every_shared_help_body_command_has_an_options_section() {
+        let mut bodies: Vec<(&'static str, &'static str)> = Vec::new();
+        for command in help::registered_command_paths() {
+            if let Some(help_text) = help::help_text_for(command) {
+                bodies.push((command, help_text));
+            }
+        }
+        for (command, help_text) in &bodies {
+            let shares_body = bodies
+                .iter()
+                .any(|(other, other_text)| other != command && other_text == help_text);
+            assert_eq!(
+                shares_body,
+                option_section(command).is_some(),
+                "{command:?}: shares a help body with a sibling = {shares_body}, \
+                 but option_section is {:?}. These must agree, or scoped \
+                 suggestions silently fall back to the whole shared body.",
+                option_section(command)
+            );
+        }
+    }
+
     /// #2583 review: sweep every registered command against every flag its
     /// help body mentions anywhere — including the sibling sections a shared
     /// body carries — and assert none of them is ever answered with itself.
