@@ -181,14 +181,13 @@ mod tests {
         print_agent_brief_help, print_agent_help, print_agent_packet_help,
         print_agent_receipt_help, print_agent_repair_help, print_agent_review_summary_help,
         print_agent_start_help, print_agent_status_help, print_agent_verify_help,
-        print_assistant_loop_help,
-        print_baseline_help, print_calibrate_help, print_check_help, print_context_help,
-        print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
-        print_explain_help, print_first_action_help, print_gate_help, print_help, print_init_help,
-        print_lsp_help, print_outcome_help, print_pilot_help, print_policy_help,
-        print_pr_comments_help, print_pr_ledger_help, print_pr_review_help, print_reports_help,
-        print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
-        print_swarm_queue_help, print_zero_help,
+        print_assistant_loop_help, print_baseline_help, print_calibrate_help, print_check_help,
+        print_context_help, print_coverage_grip_help, print_diff_help, print_doctor_help,
+        print_evidence_health_help, print_explain_help, print_first_action_help, print_gate_help,
+        print_help, print_init_help, print_lsp_help, print_outcome_help, print_pilot_help,
+        print_policy_help, print_pr_comments_help, print_pr_ledger_help, print_pr_review_help,
+        print_reports_help, print_rerun_help, print_review_comments_help, print_swarm_help,
+        print_swarm_ingest_help, print_swarm_queue_help, print_zero_help,
     };
 
     #[test]
