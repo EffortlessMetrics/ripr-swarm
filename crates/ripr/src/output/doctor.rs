@@ -23,6 +23,62 @@ use std::time::{Duration, Instant};
 /// the probed tools.
 pub(crate) const DOCTOR_TOOLS: [&str; 3] = ["git", "cargo", "rustc"];
 
+const MINIMUM_RUSTC_VERSION: RustcVersion = RustcVersion {
+    major: 1,
+    minor: 95,
+    patch: 0,
+};
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RustcVersion {
+    major: u32,
+    minor: u32,
+    patch: u32,
+}
+
+impl std::fmt::Display for RustcVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+fn parse_rustc_version(output: &str) -> Option<RustcVersion> {
+    let version_token = output
+        .trim_start()
+        .strip_prefix("rustc ")?
+        .split_whitespace()
+        .next()?;
+    let mut components = version_token.split('.');
+    let major = components.next()?.parse().ok()?;
+    let minor = components.next()?.parse().ok()?;
+    let patch = components
+        .next()?
+        .split(|character| character == '-' || character == '+')
+        .next()?
+        .parse()
+        .ok()?;
+    Some(RustcVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
+fn validate_rustc_version(output: &str) -> Result<(), String> {
+    let version = parse_rustc_version(output).ok_or_else(|| {
+        format!(
+            "rustc version could not be parsed from `{}`; install Rust {MINIMUM_RUSTC_VERSION}+",
+            output.trim()
+        )
+    })?;
+    if version < MINIMUM_RUSTC_VERSION {
+        return Err(format!(
+            "rustc {version} is below the minimum supported Rust version {MINIMUM_RUSTC_VERSION}; run `rustup update stable` or install Rust {MINIMUM_RUSTC_VERSION}+"
+        ));
+    }
+    Ok(())
+}
+
 /// How long a tool probe may run before it is terminated (#2183 review): a
 /// broken or malicious shim must not hang `ripr doctor` forever.
 ///
@@ -271,10 +327,9 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
         .current_dir(std::env::temp_dir())
         .env("YARN_IGNORE_PATH", "1");
     match run_doctor_tool(command, DOCTOR_TOOL_TIMEOUT) {
-        Ok(output) if output.status.success() => (
-            DoctorStatus::Pass,
-            String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        ),
+        Ok(output) if output.status.success() => {
+            doctor_tool_check_success(tool, &output.stdout).into_public()
+        }
         Err(DoctorToolRunError::TimedOut) => (
             DoctorStatus::Fail,
             format!("{tool} timed out after {}s", DOCTOR_TOOL_TIMEOUT.as_secs()),
@@ -300,14 +355,23 @@ fn doctor_tool_check_with_timeout_result(tool: &str, timeout: Duration) -> Docto
     let mut command = doctor_tool_command(tool);
     command.arg("--version");
     match run_doctor_tool(command, timeout) {
-        Ok(output) if output.status.success() => {
-            DoctorToolCheckResult::pass(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
+        Ok(output) if output.status.success() => doctor_tool_check_success(tool, &output.stdout),
         Err(DoctorToolRunError::TimedOut) => {
             DoctorToolCheckResult::failure(doctor_timeout_evidence(tool, timeout))
         }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
         _ => DoctorToolCheckResult::failure(format!("{tool} not available")),
+    }
+}
+
+fn doctor_tool_check_success(tool: &str, stdout: &[u8]) -> DoctorToolCheckResult {
+    let evidence = String::from_utf8_lossy(stdout).trim().to_string();
+    if tool != "rustc" {
+        return DoctorToolCheckResult::pass(evidence);
+    }
+    match validate_rustc_version(&evidence) {
+        Ok(()) => DoctorToolCheckResult::pass(evidence),
+        Err(error) => DoctorToolCheckResult::failure(error),
     }
 }
 
@@ -816,6 +880,53 @@ mod tests {
             evidence.ends_with("not available"),
             "unexpected evidence for missing tool: {evidence:?}"
         );
+    }
+
+    #[test]
+    fn doctor_rustc_probe_fails_below_msrv_and_on_malformed_output() -> Result<(), String> {
+        let below = doctor_tool_check_success("rustc", b"rustc 1.94.0 (old-toolchain)\n");
+        if below.status != DoctorStatus::Fail {
+            return Err("rustc below MSRV unexpectedly passed doctor".to_string());
+        }
+        if !below
+            .evidence
+            .contains("below the minimum supported Rust version 1.95.0")
+        {
+            return Err(format!(
+                "below-MSRV evidence was not actionable: {}",
+                below.evidence
+            ));
+        }
+
+        let malformed = doctor_tool_check_success("rustc", b"rustc unknown\n");
+        if malformed.status != DoctorStatus::Fail {
+            return Err("malformed rustc version unexpectedly passed doctor".to_string());
+        }
+        if !malformed.evidence.contains("could not be parsed") {
+            return Err(format!(
+                "malformed rustc evidence was not actionable: {}",
+                malformed.evidence
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_rustc_probe_accepts_msrv_newer_and_prerelease_versions() -> Result<(), String> {
+        for output in [
+            "rustc 1.95.0 (minimum-toolchain)",
+            "rustc 1.96.1 (newer-toolchain)",
+            "rustc 1.95.0-nightly (nightly-toolchain)",
+        ] {
+            let result = doctor_tool_check_success("rustc", output.as_bytes());
+            if result.status != DoctorStatus::Pass {
+                return Err(format!(
+                    "supported rustc version unexpectedly failed doctor: {output} -> {}",
+                    result.evidence
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]
