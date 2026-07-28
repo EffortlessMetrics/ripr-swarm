@@ -105,8 +105,6 @@ cargo xtask check-spec-format
 cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-support-tiers
-cargo xtask check-goals
-cargo xtask goals next
 cargo xtask repo-contract-report
 ```
 

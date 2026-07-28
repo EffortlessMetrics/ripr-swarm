@@ -546,7 +546,6 @@ cargo xtask check-output-contracts
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
-cargo xtask check-campaign
 cargo xtask check-pr-shape
 cargo xtask check-supply-chain
 ```
@@ -587,7 +586,6 @@ cargo xtask check-output-contracts
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
-cargo xtask check-campaign
 cargo xtask check-pr-shape
 cargo xtask check-supply-chain
 ```
@@ -844,17 +842,21 @@ new local work:
 cargo xtask pr-triage-report
 ```
 
-If no PR is waiting, read the active execution state:
+If no PR is waiting, reconcile the live work state from GitHub and the
+local worktree (the `.ripr/goals/` scheduler was deleted in #1701):
 
 ```bash
-cargo xtask goals next
+gh issue list --state open --limit 20
+gh pr list --state open
+git status --short
+git log --oneline -10
 ```
 
-When the command reports ready work, follow the named work item and keep the PR
-inside the scoped PR contract. When it reports only blocked work, do not infer
-ready work from chat history. Resolve the named blocker, record an accepted
-bounded blocker in the manifest, or choose a separate high-leverage cleanup that
-does not claim the blocked campaign is complete.
+When the issue graph reports ready work, follow the named work item and keep
+the PR inside the scoped PR contract. When it reports only blocked work, do
+not infer ready work from chat history. Resolve the named blocker, record an
+accepted bounded blocker in the issue, or choose a separate high-leverage
+cleanup that does not claim the blocked campaign is complete.
 
 For repo-ops automation, use the current mechanical front doors instead of old
 campaign queue names:
