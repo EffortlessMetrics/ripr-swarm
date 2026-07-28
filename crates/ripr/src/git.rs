@@ -225,10 +225,26 @@ fn drain_pipe_reader(
     stream_name: &str,
     describe: &str,
 ) -> Result<Vec<u8>, String> {
+    drain_pipe_reader_with_grace(
+        reader,
+        timed_out,
+        stream_name,
+        describe,
+        POST_KILL_DRAIN_GRACE,
+    )
+}
+
+fn drain_pipe_reader_with_grace(
+    reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
+    timed_out: bool,
+    stream_name: &str,
+    describe: &str,
+    grace: Duration,
+) -> Result<Vec<u8>, String> {
     let Some((handle, receiver)) = reader else {
         return Ok(Vec::new());
     };
-    match receiver.recv_timeout(POST_KILL_DRAIN_GRACE) {
+    match receiver.recv_timeout(grace) {
         Ok(buffer) => {
             let _ = handle.join();
             Ok(buffer)
@@ -377,6 +393,85 @@ mod tests {
                 "timeout path took {elapsed:?}; the hung child was not terminated and reaped"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn drain_pipe_reader_reports_bounded_edge_states() -> Result<(), String> {
+        let empty = drain_pipe_reader_with_grace(None, false, "stdout", "empty", Duration::ZERO)?;
+        if !empty.is_empty() {
+            return Err("missing pipe reader should produce empty output".to_string());
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        let handle = std::thread::spawn(|| {});
+        let disconnected = drain_pipe_reader_with_grace(
+            Some((handle, receiver)),
+            false,
+            "stderr",
+            "disconnected",
+            Duration::ZERO,
+        );
+        match disconnected {
+            Err(message) if message.contains("reader failed") => {}
+            Ok(output) => {
+                return Err(format!(
+                    "disconnected reader should return an error, got output: {output:?}"
+                ));
+            }
+            Err(message) => {
+                return Err(format!(
+                    "disconnected reader returned the wrong error: {message}"
+                ));
+            }
+        }
+
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (output_sender, output_receiver) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = release_receiver.recv();
+        });
+        let timed_out = drain_pipe_reader_with_grace(
+            Some((handle, output_receiver)),
+            true,
+            "stdout",
+            "timed-out",
+            Duration::ZERO,
+        )?;
+        if !timed_out.is_empty() {
+            return Err("timed-out reader should return empty output".to_string());
+        }
+        let _ = release_sender.send(());
+        drop(output_sender);
+
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (output_sender, output_receiver) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = release_receiver.recv();
+        });
+        let completed = drain_pipe_reader_with_grace(
+            Some((handle, output_receiver)),
+            false,
+            "stderr",
+            "completed-timeout",
+            Duration::ZERO,
+        );
+        match completed {
+            Err(message) if message.contains("did not drain") => {}
+            Ok(output) => {
+                return Err(format!(
+                    "completed reader timeout should be an error, got output: {output:?}"
+                ));
+            }
+            Err(message) => {
+                return Err(format!(
+                    "completed reader returned the wrong error: {message}"
+                ));
+            }
+        }
+        let _ = release_sender.send(());
+        drop(output_sender);
         Ok(())
     }
 
