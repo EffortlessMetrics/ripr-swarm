@@ -76,7 +76,7 @@ fn check_dependency_suppression_expiry_text(text: &str, today: &str) -> Result<(
 
 fn is_iso_date(value: &str) -> bool {
     let bytes = value.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+    if bytes.len() != 10 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
         return false;
     }
     let Some(year) = parse_digits(bytes, 0, 4) else {
@@ -88,14 +88,15 @@ fn is_iso_date(value: &str) -> bool {
     let Some(day) = parse_digits(bytes, 8, 10) else {
         return false;
     };
-    if year == 0 || !(1..=12).contains(&month) {
+    if year == 0 {
         return false;
     }
     let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
         2 if is_leap_year(year) => 29,
         2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
+        _ => return false,
     };
     (1..=days_in_month).contains(&day)
 }
@@ -106,7 +107,7 @@ fn is_leap_year(year: u16) -> bool {
 
 fn parse_digits(bytes: &[u8], start: usize, end: usize) -> Option<u16> {
     let mut value = 0u16;
-    for &byte in &bytes[start..end] {
+    for &byte in bytes.get(start..end)? {
         if !byte.is_ascii_digit() {
             return None;
         }
@@ -209,8 +210,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_calendar_invalid_expiry_date() {
-        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-02-29\n]\n";
+    fn rejects_an_impossible_calendar_date() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-02-31\n]\n";
         let result = check_dependency_suppression_expiry_text(text, "2026-01-01");
         assert!(
             result
