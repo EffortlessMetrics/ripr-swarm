@@ -179,8 +179,9 @@ mod tests {
         POLICY_HELP, PR_COMMENTS_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP, REPORTS_HELP, RERUN_HELP,
         REVIEW_COMMENTS_HELP, SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP,
         print_agent_brief_help, print_agent_help, print_agent_packet_help,
-        print_agent_receipt_help, print_agent_review_summary_help, print_agent_start_help,
-        print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
+        print_agent_receipt_help, print_agent_repair_help, print_agent_review_summary_help,
+        print_agent_start_help, print_agent_status_help, print_agent_verify_help,
+        print_assistant_loop_help,
         print_baseline_help, print_calibrate_help, print_check_help, print_context_help,
         print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
         print_explain_help, print_first_action_help, print_gate_help, print_help, print_init_help,
@@ -460,6 +461,7 @@ mod tests {
         print_agent_receipt_help();
         print_agent_status_help();
         print_agent_review_summary_help();
+        print_agent_repair_help();
         print_swarm_help();
         print_swarm_queue_help();
         print_swarm_ingest_help();

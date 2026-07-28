@@ -184,7 +184,9 @@ mod tests {
         );
         assert_eq!(
             parse_format("xml"),
-            Err("unknown format \"xml\"; expected `human` or `json`".to_string())
+            Err(
+                "unknown format \"xml\"; run `ripr check --help` for supported formats".to_string()
+            )
         );
     }
 
