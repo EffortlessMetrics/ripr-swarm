@@ -423,12 +423,14 @@ fn run(
         claim_boundary: CLAIM_BOUNDARY,
     };
 
-    // Commit first, then report what was committed, so `result_committed` is a
-    // fact rather than an intention.
+    // Commit first, then report what was committed. Set `result_committed`
+    // before serializing so the artifact on disk and the stdout render agree
+    // (#2396 review: serializing with `false` then flipping to `true` for
+    // stdout contradicts the committed file).
+    response.result_committed = true;
     let committed = atomic_write(&result_path, render(&response).as_bytes());
     match committed {
         Ok(()) => {
-            response.result_committed = true;
             Ok(ExecutionOutcome {
                 rendered: render(&response),
                 disposition,
@@ -436,6 +438,7 @@ fn run(
             })
         }
         Err(reason) => {
+            response.result_committed = false;
             response.disposition = DISPOSITION_WRITE_FAILED;
             response.reason = Some(reason.as_str());
             Ok(ExecutionOutcome {
