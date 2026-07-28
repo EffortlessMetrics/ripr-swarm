@@ -6256,8 +6256,9 @@ fn check_worktree_write_artifact_then_explain_reuse_and_drift_fails_closed() -> 
 }
 
 /// An artifact written with a CLI-only non-default `--mode` is consumable
-/// when the same flag is passed on the reuse side (byte-identical), and
-/// fails closed naming `mode` when it is not.
+/// when the same flag is passed on the reuse side, and fails closed naming
+/// `mode` when it is not. Finding detail remains equivalent while navigation
+/// names the source identity used by each invocation.
 #[test]
 fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), String> {
     let root = workspace_root().display().to_string();
@@ -6296,10 +6297,26 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
         selector,
     ]);
     assert_success(&reused);
+    let fresh_text = String::from_utf8_lossy(&fresh.stdout);
+    let reused_text = String::from_utf8_lossy(&reused.stdout);
+    let fresh_detail = fresh_text
+        .lines()
+        .filter(|line| !line.starts_with("Next: ripr context "))
+        .collect::<Vec<_>>();
+    let reused_detail = reused_text
+        .lines()
+        .filter(|line| !line.starts_with("Next: ripr context "))
+        .collect::<Vec<_>>();
     assert_eq!(
-        fresh.stdout, reused.stdout,
-        "explain --from --mode ready must be byte-identical to the fresh ready run"
+        fresh_detail, reused_detail,
+        "explain --from --mode ready must preserve finding detail"
     );
+    assert!(fresh_text.contains("Next: ripr context --root"));
+    assert!(fresh_text.contains("--diff"));
+    assert!(fresh_text.contains("--mode ready"));
+    assert!(reused_text.contains("Next: ripr context --root"));
+    assert!(reused_text.contains("--from"));
+    assert!(reused_text.contains("--mode ready"));
 
     let without_flag = run_ripr(&[
         "explain",
