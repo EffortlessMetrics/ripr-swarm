@@ -42,6 +42,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.openFirstPrPacket'));
     assert.ok(commands.includes('ripr.copyFirstPrSummary'));
     assert.ok(commands.includes('ripr.copyFirstPrRepairPacket'));
+    assert.ok(commands.includes('ripr.copyRepairPacketAtCursor'));
     assert.ok(commands.includes('ripr.copyFirstPrVerifyCommand'));
     assert.ok(commands.includes('ripr.copyFirstPrReceiptCommand'));
     assert.ok(commands.includes('ripr.copyFirstPrRegenerationGuidance'));

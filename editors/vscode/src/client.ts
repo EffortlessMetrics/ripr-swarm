@@ -83,6 +83,7 @@ const RIPR_CLIENT_COMMANDS: readonly string[] = [
   'ripr.copyFirstPrReceiptCommand',
   'ripr.copyFirstPrRegenerationGuidance',
   'ripr.copyFirstPrRepairPacket',
+  'ripr.copyRepairPacketAtCursor',
   'ripr.copyFirstPrSummary',
   'ripr.copyFirstPrVerifyCommand',
   'ripr.copyReceiptCommand',
