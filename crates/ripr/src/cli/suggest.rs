@@ -54,7 +54,7 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
         return None;
     }
     let help_text = help::help_text_for(command)?;
-    closest(arg, known_flags(help_text).into_iter()).map(str::to_string)
+    closest(arg, known_flags(command, help_text).into_iter()).map(str::to_string)
 }
 
 /// Scan a help text for the flags it documents.
@@ -63,9 +63,23 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
 /// `  --format FORMAT    Output format. ...`. Usage lines are indented too but
 /// bracket their flags (`[--diff PATH]`), so requiring the token to start the
 /// trimmed line keeps this to the option list.
-fn known_flags(help_text: &str) -> Vec<&str> {
+fn known_flags(command: &str, help_text: &str) -> Vec<&str> {
+    let section = option_section(command);
+    let mut in_section = section.is_none();
     let mut flags = Vec::new();
     for line in help_text.lines() {
+        if let Some(section) = section {
+            if line == section {
+                in_section = true;
+                continue;
+            }
+            if in_section && line.ends_with(" options:") {
+                break;
+            }
+        }
+        if !in_section {
+            continue;
+        }
         if !line.starts_with(' ') {
             continue;
         }
@@ -86,6 +100,33 @@ fn known_flags(help_text: &str) -> Vec<&str> {
         }
     }
     flags
+}
+
+/// Return the options heading for help bodies shared by sibling commands.
+///
+/// The shared body is still useful for rendering `--help`, but mining the
+/// whole body would let one sibling suggest another sibling's flag. Commands
+/// with a single options section keep the existing full-body scan.
+fn option_section(command: &str) -> Option<&'static str> {
+    match command {
+        "assistant-loop proof" => Some("Proof options:"),
+        "assistant-loop health" => Some("Health options:"),
+        "baseline create" => Some("Create options:"),
+        "baseline diff" => Some("Diff options:"),
+        "baseline update" => Some("Update options:"),
+        "policy readiness" => Some("Readiness options:"),
+        "policy operations" => Some("Operations options:"),
+        "policy history" => Some("History options:"),
+        "policy promote" => Some("Promotion options:"),
+        "policy preview-promote" => Some("Preview promotion options:"),
+        "policy waiver-aging" => Some("Waiver aging options:"),
+        "policy suppression-health" => Some("Suppression health options:"),
+        "reports index" => Some("Index options:"),
+        "reports gap-ledger" => Some("Gap ledger options:"),
+        "reports ts-limitations" => Some("TypeScript limitation options:"),
+        "reports ts-false-actionable" => Some("TypeScript false-actionable audit options:"),
+        _ => None,
+    }
 }
 
 /// Pick the best candidate for `input`, or nothing when none is close enough.
@@ -242,6 +283,20 @@ mod tests {
     }
 
     #[test]
+    fn unknown_argument_does_not_suggest_a_sibling_baseline_flag() {
+        let message = unknown_argument("baseline create", "--out-md");
+        assert!(!message.contains("Did you mean"), "{message}");
+        assert!(message.contains("ripr baseline create --help"), "{message}");
+    }
+
+    #[test]
+    fn unknown_argument_does_not_suggest_a_sibling_report_flag() {
+        let message = unknown_argument("reports index", "--records");
+        assert!(!message.contains("Did you mean"), "{message}");
+        assert!(message.contains("ripr reports index --help"), "{message}");
+    }
+
+    #[test]
     fn unknown_value_lists_accepted_values_and_suggests() {
         let message = unknown_value("format", "jsonn", &["human", "json", "sarif"]);
         assert_eq!(
@@ -262,7 +317,7 @@ mod tests {
     #[test]
     fn known_flags_reads_the_option_list_and_skips_usage_brackets() {
         let help_text = "Summary line.\n\nUsage: ripr thing [--diff PATH]\n\nOptions:\n  --root PATH    Workspace root.\n  --json         Shortcut.\n  --            End of options.\n";
-        assert_eq!(known_flags(help_text), vec!["--root", "--json"]);
+        assert_eq!(known_flags("thing", help_text), vec!["--root", "--json"]);
     }
 
     /// Every command path the CLI reports errors for must resolve to a help
@@ -272,7 +327,7 @@ mod tests {
     fn every_registered_command_path_resolves_to_documented_flags() {
         for command in help::registered_command_paths() {
             let flags = match help::help_text_for(command) {
-                Some(help_text) => known_flags(help_text),
+                Some(help_text) => known_flags(command, help_text),
                 None => Vec::new(),
             };
             assert!(
