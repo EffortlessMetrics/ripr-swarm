@@ -36,7 +36,10 @@ fn check_dependency_suppression_expiry_text(text: &str, today: &str) -> Result<(
         }
 
         let Some(id_end) = trimmed[1..].find('"') else {
-            return Err(format!("deny.toml:{}: malformed advisory ignore entry", index + 1));
+            return Err(format!(
+                "deny.toml:{}: malformed advisory ignore entry",
+                index + 1
+            ));
         };
         let id = &trimmed[1..id_end + 1];
         if !id.starts_with("RUSTSEC-") {
@@ -113,9 +116,8 @@ fn utc_date_string() -> String {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let day_of_era = z - era * 146_097;
-    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
-        - day_of_era / 146_096)
-        / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let year = year_of_era + era * 400;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_part = (5 * day_of_year + 2) / 153;
@@ -127,7 +129,87 @@ fn utc_date_string() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::check_dependency_suppression_expiry_text;
+    use std::fs;
+    use std::path::Path;
+
+    use super::{check_dependency_suppression_expiry, check_dependency_suppression_expiry_text};
+
+    #[test]
+    fn checks_a_real_policy_file_using_the_current_utc_date() {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-dependency-expiry-{}.toml",
+            std::process::id()
+        ));
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 9999-12-31\n]\n";
+        let write_result = fs::write(&path, text);
+        assert!(
+            write_result.is_ok(),
+            "failed to write test policy: {write_result:?}"
+        );
+
+        let result = check_dependency_suppression_expiry(&path);
+        let remove_result = fs::remove_file(&path);
+        assert!(
+            remove_result.is_ok(),
+            "failed to remove test policy: {remove_result:?}"
+        );
+        assert!(result.is_ok(), "real policy check failed: {result:?}");
+    }
+
+    #[test]
+    fn reports_a_missing_policy_file() {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-dependency-expiry-missing-{}.toml",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let result = check_dependency_suppression_expiry(Path::new(&path));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_a_malformed_advisory_entry() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("malformed"))
+        );
+    }
+
+    #[test]
+    fn rejects_an_invalid_expiry_date() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-13-01\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("invalid expiry"))
+        );
+    }
+
+    #[test]
+    fn rejects_a_short_expiry_date() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-07\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("invalid expiry"))
+        );
+    }
+
+    #[test]
+    fn rejects_an_ignore_list_without_rustsec_entries() {
+        let text = "[advisories]\nignore = [\n  \"other-advisory\"\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("contains no RUSTSEC entries"))
+        );
+    }
 
     #[test]
     fn accepts_future_expiry_for_each_advisory() {
@@ -140,9 +222,11 @@ mod tests {
         let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\"\n]\n";
         let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
         assert!(result.is_err());
-        assert!(result
-            .err()
-            .is_some_and(|message| message.contains("missing")));
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("missing"))
+        );
     }
 
     #[test]
@@ -150,8 +234,10 @@ mod tests {
         let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-07-28\n]\n";
         let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
         assert!(result.is_err());
-        assert!(result
-            .err()
-            .is_some_and(|message| message.contains("not after today")));
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("not after today"))
+        );
     }
 }
