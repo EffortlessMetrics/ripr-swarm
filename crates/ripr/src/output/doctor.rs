@@ -51,12 +51,7 @@ fn parse_rustc_version(output: &str) -> Option<RustcVersion> {
     let mut components = version_token.split('.');
     let major = components.next()?.parse().ok()?;
     let minor = components.next()?.parse().ok()?;
-    let patch = components
-        .next()?
-        .split(|character| character == '-' || character == '+')
-        .next()?
-        .parse()
-        .ok()?;
+    let patch = components.next()?.split(['-', '+']).next()?.parse().ok()?;
     Some(RustcVersion {
         major,
         minor,
