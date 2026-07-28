@@ -27,21 +27,42 @@ fn check_dependency_suppression_expiry_text(text: &str, today: &str) -> Result<(
             in_ignore = true;
             continue;
         }
-        if in_advisories && in_ignore && trimmed == "]" {
+        if in_advisories && in_ignore && trimmed.starts_with(']') {
             in_ignore = false;
             continue;
         }
-        if !in_advisories || !in_ignore || !trimmed.starts_with('"') {
+        if !in_advisories || !in_ignore || trimmed.starts_with('#') {
             continue;
         }
 
-        let Some(id_end) = trimmed[1..].find('"') else {
+        let Some(quote) = trimmed
+            .chars()
+            .next()
+            .filter(|quote| *quote == '"' || *quote == '\'')
+        else {
             return Err(format!(
                 "deny.toml:{}: malformed advisory ignore entry",
                 index + 1
             ));
         };
-        let id = &trimmed[1..id_end + 1];
+        let Some(remainder) = trimmed.get(1..) else {
+            return Err(format!(
+                "deny.toml:{}: malformed advisory ignore entry",
+                index + 1
+            ));
+        };
+        let Some(id_end) = remainder.find(quote) else {
+            return Err(format!(
+                "deny.toml:{}: malformed advisory ignore entry",
+                index + 1
+            ));
+        };
+        let Some(id) = trimmed.get(1..id_end + 1) else {
+            return Err(format!(
+                "deny.toml:{}: malformed advisory ignore entry",
+                index + 1
+            ));
+        };
         if !id.starts_with("RUSTSEC-") {
             continue;
         }
@@ -210,6 +231,24 @@ mod tests {
                 .err()
                 .is_some_and(|message| message.contains("invalid expiry"))
         );
+    }
+
+    #[test]
+    fn rejects_a_literal_string_without_expiry() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-10-01\n  'RUSTSEC-2025-0002'\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
+        assert!(result.err().is_some_and(
+            |message| message.contains("RUSTSEC-2025-0002") && message.contains("missing")
+        ));
+    }
+
+    #[test]
+    fn closes_ignore_array_with_trailing_comment() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-10-01\n] # keep this list bounded\n";
+        assert!(matches!(
+            check_dependency_suppression_expiry_text(text, "2026-07-28"),
+            Ok(())
+        ));
     }
 
     #[test]
