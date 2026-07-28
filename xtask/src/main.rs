@@ -4451,49 +4451,55 @@ fn check_workflows_impl() -> Result<(), String> {
 /// re-enter unnoticed. Repository-owned delegated automation is scanned too,
 /// so a local composite action or xtask helper cannot hide the mutation.
 fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec<String> {
-    let lower = text.to_ascii_lowercase();
-    let forbidden = review_thread_mutation_tokens();
-    forbidden
-        .iter()
-        .filter(|token| lower.contains(token.as_str()))
-        .map(|token| {
-            format!(
-                "{path}: workflow contains `{token}`; review-thread resolution requires explicit adjudication outside automated workflow mutation"
-            )
-        })
-        .collect()
+    if text.lines().any(review_thread_mutation_line) {
+        return vec![format!(
+            "{path}: workflow contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
+        )];
+    }
+    Vec::new()
 }
 
-fn review_thread_mutation_tokens() -> [String; 3] {
+fn review_thread_mutation_line(line: &str) -> bool {
+    let normalized = line
+        .chars()
+        .map(|character| character.to_ascii_lowercase())
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>();
+    normalized.contains(&review_thread_mutation_token())
+}
+
+fn review_thread_mutation_token() -> String {
     [
-        ["resolve", "reviewthread"].concat(),
-        ["resolve", "_review_thread"].concat(),
-        ["resolve", " review thread"].concat(),
+        'r', 'e', 's', 'o', 'l', 'v', 'e', 'r', 'e', 'v', 'i', 'e', 'w', 't', 'h', 'r', 'e', 'a',
+        'd',
     ]
+    .into_iter()
+    .collect()
 }
 
 fn repository_owned_review_thread_mutation_violations() -> Result<Vec<String>, String> {
-    let forbidden = review_thread_mutation_tokens();
     let mut violations = Vec::new();
 
-    for root in [Path::new(".github/actions"), Path::new("xtask/src")] {
+    for root in [
+        Path::new(".github/actions"),
+        Path::new(".github/scripts"),
+        Path::new("scripts"),
+        Path::new("tools"),
+        Path::new("xtask/src"),
+    ] {
         if !root.exists() {
             continue;
         }
         for path in collect_files(root)? {
             let normalized = normalize_path(&path);
-            let source_owned = normalized.starts_with(".github/actions/")
-                || (normalized.starts_with("xtask/src/") && normalized.ends_with(".rs"));
-            if !source_owned {
+            if normalized.ends_with("xtask/src/tests.rs") {
                 continue;
             }
-            let lower = read_text_lossy(&path)?.to_ascii_lowercase();
-            for token in &forbidden {
-                if lower.contains(token.as_str()) {
-                    violations.push(format!(
-                        "{normalized}: repository-owned automation contains `{token}`; review-thread resolution requires explicit adjudication outside automated workflow mutation"
-                    ));
-                }
+            let text = read_text_lossy(&path)?;
+            if text.lines().any(review_thread_mutation_line) {
+                violations.push(format!(
+                    "{normalized}: repository-owned automation contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
+                ));
             }
         }
     }

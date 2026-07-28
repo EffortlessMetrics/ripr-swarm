@@ -8526,27 +8526,43 @@ jobs:
         workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
 
     assert_eq!(violations.len(), 1);
-    let normalized_resolver_name = ["resolve", "reviewthread"].concat();
-    assert!(violations[0].contains(&normalized_resolver_name));
+    assert!(violations[0].contains("review-thread resolution mutation"));
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_rejects_runtime_constructed_resolver() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: const resolver = 'resolve' + 'ReviewThread'; gh api graphql "$resolver"
+"#;
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", workflow);
+
+    assert_eq!(violations.len(), 1);
 }
 
 #[test]
 fn repository_owned_review_thread_mutation_policy_rejects_delegated_action() -> Result<(), String> {
     with_temp_cwd("workflow-delegated-review-resolver", |root| {
         let action = root.join(".github/actions/blind-review-resolver/action.yml");
-        let resolver_name = ["resolve", "ReviewThread"].concat();
+        let script = root.join(".github/scripts/review-resolver.sh");
         write(
             &action,
-            &format!(
-                "name: blind resolver\nruns:\n  using: composite\n  steps:\n    - run: gh api graphql -f query='mutation {{ {resolver_name}(input: {{}}) {{ thread {{ isResolved }} }} }}'\n"
-            ),
+            "name: blind resolver\nruns:\n  using: composite\n  steps:\n    - run: bash .github/scripts/review-resolver.sh\n",
+        );
+        write(
+            &script,
+            "#!/usr/bin/env bash\nresolver='resolve'+'ReviewThread'\ngh api graphql \"$resolver\"\n",
         );
 
         let violations = repository_owned_review_thread_mutation_violations()?;
         assert!(
             violations
                 .iter()
-                .any(|violation| { violation.contains("blind-review-resolver/action.yml") })
+                .any(|violation| { violation.contains(".github/scripts/review-resolver.sh") })
         );
         Ok(())
     })
