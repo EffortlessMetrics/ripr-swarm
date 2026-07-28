@@ -73,16 +73,24 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         .as_ref()
         .map(|ci| init_ci_workflow_path(&options.root, ci));
 
-    if config_path.exists() && !options.force && options.ci.is_none() {
+    // #2576 review: the plan must reject a parent the real run cannot create,
+    // not just a target that already exists. If `<root>/.github` is a regular
+    // file, nothing exists at `.github/workflows/ripr.yml`, so the target reads
+    // as `create` while `create_dir_all` will fail — and because the config is
+    // written first, the run would half-initialize the repo before failing.
+    // Checking every target up front also means a doomed run writes nothing.
+    for path in std::iter::once(&config_path).chain(workflow_path.as_ref()) {
+        ensure_creatable_parent(path)?;
+    }
+
+    if path_is_occupied(&config_path)? && !options.force && options.ci.is_none() {
         return Err(format!(
             "{} already exists; rerun `ripr init --force` to overwrite it",
             config_path.display()
         ));
     }
-    if let Some(path) = workflow_path
-        .as_ref()
-        .filter(|path| path.exists())
-        .filter(|_| !options.force)
+    if let Some(path) = workflow_path.as_ref().filter(|_| !options.force)
+        && path_is_occupied(path)?
     {
         return Err(format!(
             "{} already exists; rerun `ripr init --ci github --force` to overwrite it",
@@ -90,7 +98,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         ));
     }
 
-    let config_action = if config_path.exists() {
+    let config_action = if path_is_occupied(&config_path)? {
         if options.force {
             InitAction::Overwrite
         } else {
@@ -105,7 +113,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         body: generated_init_config().to_string(),
     }];
     if let Some(path) = workflow_path {
-        let action = if path.exists() {
+        let action = if path_is_occupied(&path)? {
             InitAction::Overwrite
         } else {
             InitAction::Create
@@ -117,6 +125,68 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         });
     }
     Ok(targets)
+}
+
+/// Is anything at all sitting at `path`?
+///
+/// This deliberately does not use `Path::exists()`, which follows symlinks and
+/// so reports `false` for a dangling symlink. The write path opens with
+/// `create_new`, which fails when *any* entry occupies the path — including a
+/// dangling symlink — so planning has to ask the same question the write asks.
+/// `symlink_metadata` also surfaces permission errors instead of silently
+/// reading as "absent, will create".
+fn path_is_occupied(path: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(format!("cannot inspect {}: {err}", path.display())),
+    }
+}
+
+/// Fail when a target's parent directory cannot be created.
+///
+/// `create_dir_all` fails if an existing ancestor is not a directory, so the
+/// nearest existing ancestor decides whether the write is possible at all.
+/// Ancestors are followed through symlinks, matching what `create_dir_all`
+/// itself does.
+fn ensure_creatable_parent(path: &Path) -> Result<(), String> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(());
+    };
+    for ancestor in parent.ancestors() {
+        match std::fs::metadata(ancestor) {
+            Ok(metadata) if metadata.is_dir() => return Ok(()),
+            Ok(_) => {
+                return Err(format!(
+                    "cannot write {}: {} exists and is not a directory",
+                    path.display(),
+                    ancestor.display()
+                ));
+            }
+            // `NotFound` means this level would simply be created. `NotADirectory`
+            // means a *shallower* ancestor is the real culprit, so keep walking
+            // up until the offending entry itself is found and can be named.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                continue;
+            }
+            Err(err) => {
+                return Err(format!(
+                    "cannot write {}: inspecting {} failed: {err}",
+                    path.display(),
+                    ancestor.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {

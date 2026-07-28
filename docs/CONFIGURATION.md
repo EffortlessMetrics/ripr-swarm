@@ -104,10 +104,23 @@ ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 | `--force` | _(off)_ | Overwrite an existing `ripr.toml` or generated workflow. Without this flag, existing repo policy and workflow files are left unchanged. |
 
 `--dry-run` resolves the same preconditions as the real run, so the preview
-cannot disagree with the run it previews. If the real run would fail — an
-existing `ripr.toml` without `--force`, or a `--root` that is not a directory —
-the dry run fails with the same message and the same exit status instead of
-printing a config it could not have written.
+cannot disagree with the run it previews. Whenever the real run would fail, the
+dry run fails with the same message and the same exit status instead of
+printing a config it could not have written. The blockers are:
+
+| Blocker | Applies when |
+| --- | --- |
+| `--root` is not a directory | always |
+| `ripr.toml` already exists, no `--force` | only without `--ci` — see below |
+| the target workflow already exists, no `--force` | with `--ci` |
+| a target's parent exists but is not a directory (for example `.github` is a file) | always |
+
+An existing `ripr.toml` is only a blocker when there is nothing else to do.
+With `--ci`, the run still has a workflow to write, so an existing config is
+reported as `leave existing` and the run proceeds — that is the case shown
+below. Because every target is checked before anything is written, a run that
+cannot finish writes nothing at all rather than half-initializing the
+repository.
 
 ```text
 $ ripr init --ci github --dry-run

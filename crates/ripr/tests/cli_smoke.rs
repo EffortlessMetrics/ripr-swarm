@@ -3186,6 +3186,90 @@ fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Re
     Ok(())
 }
 
+/// #2576 review: a parent that cannot be created is a blocker the plan has to
+/// catch. With `<root>/.github` as a regular file, nothing exists at the
+/// workflow path, so an existence-only check reads it as `create` — the dry
+/// run then reports success while the real run writes `ripr.toml` and only
+/// then fails, leaving the repo half-initialized.
+#[test]
+fn init_dry_run_fails_like_the_real_run_when_workflow_parent_is_a_file() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    std::fs::write(workspace.join(".github"), "not a directory\n")
+        .map_err(|e| format!("write .github as a file: {e}"))?;
+    let root = workspace.display().to_string();
+
+    let dry = run_ripr(&["init", "--root", &root, "--ci", "github", "--dry-run"]);
+    let real = run_ripr(&["init", "--root", &root, "--ci", "github"]);
+
+    assert!(
+        !dry.status.success(),
+        "dry run should fail when the real run fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&dry.stdout),
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert!(!real.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&dry.stderr),
+        String::from_utf8_lossy(&real.stderr),
+        "dry run and real run must report the same blocker"
+    );
+    assert!(
+        String::from_utf8_lossy(&dry.stderr).contains("exists and is not a directory"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+
+    // The failing run must not have half-initialized the workspace.
+    assert!(
+        !workspace.join("ripr.toml").exists(),
+        "the real run wrote ripr.toml before failing"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #2576 review: `create_new` refuses any occupied path, including a dangling
+/// symlink that `Path::exists()` reports as absent. Planning must ask the same
+/// question the write asks.
+#[test]
+fn init_dry_run_fails_like_the_real_run_for_a_dangling_symlink_target() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/nonexistent-ripr-init-target", workspace.join("ripr.toml"))
+        .map_err(|e| format!("create dangling symlink: {e}"))?;
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::remove_dir_all(&workspace);
+        return Ok(());
+    }
+    let root = workspace.display().to_string();
+
+    let dry = run_ripr(&["init", "--root", &root, "--dry-run"]);
+    let real = run_ripr(&["init", "--root", &root]);
+
+    assert!(
+        !dry.status.success(),
+        "dry run should fail when the real run fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&dry.stdout),
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert!(!real.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&dry.stderr),
+        String::from_utf8_lossy(&real.stderr),
+        "dry run and real run must report the same blocker"
+    );
+    assert!(
+        String::from_utf8_lossy(&dry.stderr).contains("already exists"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #2572: the same agreement property for a root that is not a directory.
 #[test]
 fn init_dry_run_fails_like_the_real_run_when_root_is_not_a_directory() -> Result<(), String> {
