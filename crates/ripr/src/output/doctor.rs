@@ -880,29 +880,16 @@ mod tests {
     #[test]
     fn doctor_rustc_probe_fails_below_msrv_and_on_malformed_output() -> Result<(), String> {
         let below = doctor_tool_check_success("rustc", b"rustc 1.94.0 (old-toolchain)\n");
-        if below.status != DoctorStatus::Fail {
-            return Err("rustc below MSRV unexpectedly passed doctor".to_string());
-        }
-        if !below
-            .evidence
-            .contains("below the minimum supported Rust version 1.95.0")
-        {
-            return Err(format!(
-                "below-MSRV evidence was not actionable: {}",
-                below.evidence
-            ));
-        }
+        assert_eq!(below.status, DoctorStatus::Fail);
+        assert!(
+            below
+                .evidence
+                .contains("below the minimum supported Rust version 1.95.0")
+        );
 
         let malformed = doctor_tool_check_success("rustc", b"rustc unknown\n");
-        if malformed.status != DoctorStatus::Fail {
-            return Err("malformed rustc version unexpectedly passed doctor".to_string());
-        }
-        if !malformed.evidence.contains("could not be parsed") {
-            return Err(format!(
-                "malformed rustc evidence was not actionable: {}",
-                malformed.evidence
-            ));
-        }
+        assert_eq!(malformed.status, DoctorStatus::Fail);
+        assert!(malformed.evidence.contains("could not be parsed"));
         Ok(())
     }
 
@@ -919,17 +906,12 @@ mod tests {
             "rustc 1.95.x",
         ] {
             let result = doctor_tool_check_success("rustc", output.as_bytes());
-            if result.status != DoctorStatus::Fail {
-                return Err(format!(
-                    "incomplete rustc version unexpectedly passed doctor: {output:?}"
-                ));
-            }
-            if !result.evidence.contains("could not be parsed") {
-                return Err(format!(
-                    "incomplete rustc evidence was not actionable: {}",
-                    result.evidence
-                ));
-            }
+            assert_eq!(result.status, DoctorStatus::Fail, "output: {output:?}");
+            assert!(
+                result.evidence.contains("could not be parsed"),
+                "evidence: {}",
+                result.evidence
+            );
         }
         Ok(())
     }
@@ -942,14 +924,16 @@ mod tests {
             "rustc 1.95.0-nightly (nightly-toolchain)",
         ] {
             let result = doctor_tool_check_success("rustc", output.as_bytes());
-            if result.status != DoctorStatus::Pass {
-                return Err(format!(
-                    "supported rustc version unexpectedly failed doctor: {output} -> {}",
-                    result.evidence
-                ));
-            }
+            assert_eq!(result.status, DoctorStatus::Pass, "output: {output}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn isolated_rustc_probe_uses_msrv_validation() {
+        let (status, evidence) = doctor_tool_check_isolated("rustc");
+        assert_eq!(status, DoctorStatus::Pass, "evidence: {evidence}");
+        assert!(evidence.starts_with("rustc "), "evidence: {evidence}");
     }
 
     #[test]
