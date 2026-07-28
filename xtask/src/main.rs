@@ -5171,9 +5171,10 @@ fn root_relative_path(root: &Path, path: &Path) -> String {
 fn check_traceability() -> Result<(), String> {
     let manifest = Path::new(".ripr/traceability.toml");
     let mut violations = Vec::new();
+    let mut advisories = Vec::new();
     if !manifest.exists() {
         violations.push(".ripr/traceability.toml is missing".to_string());
-        return finish_traceability_report(&violations);
+        return finish_traceability_report(&violations, &advisories);
     }
 
     let (behaviors, parse_violations) = parse_traceability_manifest(manifest)?;
@@ -5185,7 +5186,12 @@ fn check_traceability() -> Result<(), String> {
     let specs = collect_spec_statuses()?;
     let mut behavior_ids = BTreeSet::new();
     for behavior in &behaviors {
-        validate_trace_behavior(behavior, &mut behavior_ids, &mut violations)?;
+        validate_trace_behavior(
+            behavior,
+            &mut behavior_ids,
+            &mut violations,
+            &mut advisories,
+        )?;
     }
 
     for spec_id in specs.keys() {
@@ -5197,10 +5203,17 @@ fn check_traceability() -> Result<(), String> {
     }
 
     validate_fixture_spec_references(&specs, &mut violations)?;
-    finish_traceability_report(&violations)
+    finish_traceability_report(&violations, &advisories)
 }
 
-fn finish_traceability_report(violations: &[String]) -> Result<(), String> {
+fn finish_traceability_report(violations: &[String], advisories: &[String]) -> Result<(), String> {
+    // Print advisories to stderr so they're visible but don't affect the exit code (#2549).
+    if !advisories.is_empty() {
+        eprintln!("Traceability advisories (non-blocking):");
+        for advisory in advisories {
+            eprintln!("  {advisory}");
+        }
+    }
     finish_policy_report(
         PolicyReportSpec {
             report_file: "traceability.md",
@@ -5224,6 +5237,7 @@ fn validate_trace_behavior(
     behavior: &TraceBehavior,
     behavior_ids: &mut BTreeSet<String>,
     violations: &mut Vec<String>,
+    advisories: &mut Vec<String>,
 ) -> Result<(), String> {
     let Some(id) = behavior.id.as_ref() else {
         violations.push(format!(
@@ -5257,10 +5271,10 @@ fn validate_trace_behavior(
         }
     };
 
-    validate_trace_paths(id, "tests", &behavior.tests, violations);
-    validate_trace_paths(id, "fixtures", &behavior.fixtures, violations);
-    validate_trace_paths(id, "code", &behavior.code, violations);
-    validate_trace_paths(id, "outputs", &behavior.outputs, violations);
+    validate_trace_paths(id, "tests", &behavior.tests, violations, advisories);
+    validate_trace_paths(id, "fixtures", &behavior.fixtures, violations, advisories);
+    validate_trace_paths(id, "code", &behavior.code, violations, advisories);
+    validate_trace_paths(id, "outputs", &behavior.outputs, violations, advisories);
 
     if behavior.metrics.is_empty() {
         violations.push(format!("{id} has no metrics"));
@@ -5311,7 +5325,13 @@ fn validate_behavior_spec_path(
     }
 }
 
-fn validate_trace_paths(id: &str, field: &str, values: &[String], violations: &mut Vec<String>) {
+fn validate_trace_paths(
+    id: &str,
+    field: &str,
+    values: &[String],
+    violations: &mut Vec<String>,
+    advisories: &mut Vec<String>,
+) {
     for value in values {
         let (path_text, suffix) = split_trace_reference(value);
         if path_text.trim().is_empty() {
@@ -5322,16 +5342,11 @@ fn validate_trace_paths(id: &str, field: &str, values: &[String], violations: &m
             violations.push(format!("{id} `{field}` path does not exist: {path_text}"));
             continue;
         }
-        // #2345 Phase 1: if the reference carries a `::symbol` suffix, emit an
-        // advisory that the suffix is not structurally verified. This replaces
-        // the previous silent truncation (the suffix was discarded without
-        // any signal). The advisory does NOT fail the gate — it surfaces the
-        // unverified symbol so a human or agent knows the reference is
-        // file-existence-verified only, not symbol-resolved.
+        // #2345 Phase 1 / #2549: symbol suffix advisories are non-blocking.
         if let Some(suffix) = suffix
             && !suffix.trim().is_empty()
         {
-            violations.push(format!(
+            advisories.push(format!(
                 "{id} `{field}` symbol suffix `{suffix}` is not verified by the structural checker \
                  (file `{path_text}` exists; symbol resolution is a planned cargo-proof provider, see #2345)"
             ));
