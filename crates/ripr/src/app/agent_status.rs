@@ -786,9 +786,11 @@ mod tests {
 
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].artifact, "before_snapshot");
-        assert!(warnings[0]
-            .message
-            .contains("before snapshot is newer than after snapshot"));
+        assert!(
+            warnings[0]
+                .message
+                .contains("before snapshot is newer than after snapshot")
+        );
     }
 
     #[test]
