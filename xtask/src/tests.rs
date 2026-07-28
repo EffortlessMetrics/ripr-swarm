@@ -10269,13 +10269,11 @@ fn parse_reason_accepts_flag_forms() {
     let weak = parse_reason(&["--reason".to_string(), "x".to_string()])
         .expect_err("weak reasons must name the changed spec");
     assert!(weak.contains("RIPR-SPEC-NNNN"));
-    assert!(
-        parse_reason(&[
-            "--reason".to_string(),
-            "RIPR-SPEC-001: malformed id".to_string(),
-        ])
-        .is_err()
-    );
+    parse_reason(&[
+        "--reason".to_string(),
+        "RIPR-SPEC-001: malformed id".to_string(),
+    ])
+    .expect_err("malformed spec ids must be rejected");
     parse_reason(&[]).expect_err("empty args should fail to produce a reason");
 }
 
