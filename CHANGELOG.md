@@ -43,6 +43,10 @@ are scoped or reviewed.
 - `cargo xtask check-traceability` now keeps existing-file `::symbol`
   references visible as advisory diagnostics without failing the gate. Missing
   paths and other structural traceability errors remain blocking (#2549).
+- LSP ordinary findings that survive the configured diagnostic profile now
+  carry an explicit producer-owned delivery-eligibility signal, so the finite
+  diagnostic budget publishes them without weakening gap-ledger, seam, or
+  preview-family precedence (#2527).
 
 - `ripr check --diff <path>` now discloses when the diff input contains no
   parseable file changes (0 hunks, 0 files). Previously a non-diff file (a
