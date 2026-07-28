@@ -7374,6 +7374,7 @@ code = [
   "crates/ripr/src/lsp/config.rs",
   "crates/ripr/src/lsp/state.rs",
   "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/git.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md",

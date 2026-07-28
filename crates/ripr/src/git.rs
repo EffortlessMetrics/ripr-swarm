@@ -144,8 +144,13 @@ fn collect_output_with_deadline(
 
     let wait = poll_child(&mut child, timeout, describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
-    let stdout = drain_pipe_reader(stdout_reader, timed_out, "stdout", describe)?;
-    let stderr = drain_pipe_reader(stderr_reader, timed_out, "stderr", describe)?;
+    let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
+    let stdout_result =
+        drain_pipe_reader(stdout_reader, timed_out, drain_deadline, "stdout", describe);
+    let stderr_result =
+        drain_pipe_reader(stderr_reader, timed_out, drain_deadline, "stderr", describe);
+    let stdout = stdout_result?;
+    let stderr = stderr_result?;
 
     match wait {
         ChildWait::Exited(status) => Ok(Output {
@@ -222,31 +227,24 @@ fn spawn_pipe_reader(
 fn drain_pipe_reader(
     reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
     timed_out: bool,
+    deadline: Option<Instant>,
     stream_name: &str,
     describe: &str,
-) -> Result<Vec<u8>, String> {
-    drain_pipe_reader_with_grace(
-        reader,
-        timed_out,
-        stream_name,
-        describe,
-        POST_KILL_DRAIN_GRACE,
-    )
-}
-
-fn drain_pipe_reader_with_grace(
-    reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
-    timed_out: bool,
-    stream_name: &str,
-    describe: &str,
-    grace: Duration,
 ) -> Result<Vec<u8>, String> {
     let Some((handle, receiver)) = reader else {
         return Ok(Vec::new());
     };
-    match receiver.recv_timeout(grace) {
+    let received = match deadline {
+        Some(deadline) => receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+        None => receiver
+            .recv()
+            .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+    };
+    match received {
         Ok(buffer) => {
-            let _ = handle.join();
+            handle.join().map_err(|_| {
+                format!("{stream_name} pipe reader panicked while collecting {describe}")
+            })?;
             Ok(buffer)
         }
         Err(mpsc::RecvTimeoutError::Timeout) if timed_out => {
@@ -398,7 +396,7 @@ mod tests {
 
     #[test]
     fn drain_pipe_reader_reports_bounded_edge_states() -> Result<(), String> {
-        let empty = drain_pipe_reader_with_grace(None, false, "stdout", "empty", Duration::ZERO)?;
+        let empty = drain_pipe_reader(None, false, None, "stdout", "empty")?;
         if !empty.is_empty() {
             return Err("missing pipe reader should produce empty output".to_string());
         }
@@ -406,12 +404,12 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         drop(sender);
         let handle = std::thread::spawn(|| {});
-        let disconnected = drain_pipe_reader_with_grace(
+        let disconnected = drain_pipe_reader(
             Some((handle, receiver)),
             false,
+            Some(Instant::now()),
             "stderr",
             "disconnected",
-            Duration::ZERO,
         );
         match disconnected {
             Err(message) if message.contains("reader failed") => {}
@@ -432,12 +430,12 @@ mod tests {
         let handle = std::thread::spawn(move || {
             let _ = release_receiver.recv();
         });
-        let timed_out = drain_pipe_reader_with_grace(
+        let timed_out = drain_pipe_reader(
             Some((handle, output_receiver)),
             true,
+            Some(Instant::now()),
             "stdout",
             "timed-out",
-            Duration::ZERO,
         )?;
         if !timed_out.is_empty() {
             return Err("timed-out reader should return empty output".to_string());
@@ -450,12 +448,12 @@ mod tests {
         let handle = std::thread::spawn(move || {
             let _ = release_receiver.recv();
         });
-        let completed = drain_pipe_reader_with_grace(
+        let completed = drain_pipe_reader(
             Some((handle, output_receiver)),
             false,
+            Some(Instant::now()),
             "stderr",
             "completed-timeout",
-            Duration::ZERO,
         );
         match completed {
             Err(message) if message.contains("did not drain") => {}

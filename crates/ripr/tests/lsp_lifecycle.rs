@@ -1279,9 +1279,9 @@ fn compat_journey_collect_workspace_status_over_real_wire() -> Result<(), String
     }
 
     // Step 3: explicit refresh is the demand path that commits the first
-    // snapshot (RIPR-SPEC-0105); its result is null. This request triggers
-    // a full workspace analysis and may exceed the standard RESPONSE_TIMEOUT
-    // on Windows, so it uses ANALYSIS_TIMEOUT (#2495).
+    // snapshot (RIPR-SPEC-0105); its result is null. ANALYSIS_TIMEOUT is only
+    // an outer safety margin; the compatibility contract still requires the
+    // refresh to complete within RESPONSE_TIMEOUT (#2495).
     let refresh_started = Instant::now();
     let refresh = session.request_with_timeout(
         "workspace/executeCommand",
