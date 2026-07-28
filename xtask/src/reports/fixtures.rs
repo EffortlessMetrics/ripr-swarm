@@ -1535,7 +1535,7 @@ fn reason_spec_id(reason: &str) -> Option<&str> {
         (token.starts_with("RIPR-SPEC-")
             && token.len() == "RIPR-SPEC-0000".len()
             && token[10..].bytes().all(|byte| byte.is_ascii_digit()))
-            .then_some(token)
+        .then_some(token)
     })
 }
 
@@ -1546,7 +1546,7 @@ fn validate_bless_reason(reason: &str) -> Result<(), String> {
                 .to_string(),
         );
     };
-    let specs = crate::collect_spec_files_for_root(Path::new("."))?;
+    let specs = crate::collect_spec_files_for_root(&crate::repo_root()?)?;
     if specs.iter().any(|spec| spec.id == spec_id) {
         Ok(())
     } else {
