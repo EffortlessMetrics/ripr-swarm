@@ -214,7 +214,10 @@ mod tests {
     #[test]
     fn accepts_future_expiry_for_each_advisory() {
         let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-10-01\n]\n";
-        assert!(check_dependency_suppression_expiry_text(text, "2026-07-28").is_ok());
+        assert!(matches!(
+            check_dependency_suppression_expiry_text(text, "2026-07-28"),
+            Ok(())
+        ));
     }
 
     #[test]
