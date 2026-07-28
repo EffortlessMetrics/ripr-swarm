@@ -28,6 +28,20 @@ pub(in crate::cli) fn unknown_argument(command: &str, arg: &str) -> String {
     }
 }
 
+#[cfg(test)]
+fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
+    match closest(value, accepted.iter().copied()) {
+        Some(suggestion) => format!(
+            "unknown {label} {value:?}. Did you mean `{suggestion}`? Accepted: {}.",
+            accepted.join(", ")
+        ),
+        None => format!(
+            "unknown {label} {value:?}. Accepted: {}.",
+            accepted.join(", ")
+        ),
+    }
+}
+
 fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // Only flag-shaped input gets a flag suggestion. A stray positional value
     // is a different mistake, and proposing `--out` for `report.json` would be
