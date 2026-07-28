@@ -459,12 +459,46 @@ fn seam_action_context<'a>(
         .find_map(|diagnostic| {
             snapshot
                 .classified_seam_for_diagnostic(diagnostic)
+                .filter(|_| snapshot_has_current_seam_diagnostic(params, snapshot, diagnostic))
                 .map(|seam| SeamActionContext {
                     diagnostic,
                     seam,
                     snapshot,
                 })
         })
+}
+
+fn snapshot_has_current_seam_diagnostic(
+    params: &CodeActionParams,
+    snapshot: &AnalysisSnapshot,
+    cited: &Diagnostic,
+) -> bool {
+    let Some(cited_data) = cited.data.as_ref() else {
+        return false;
+    };
+    snapshot
+        .diagnostics_for_uri(&params.text_document.uri)
+        .is_some_and(|diagnostics| {
+            diagnostics.iter().any(|current| {
+                is_ripr_diagnostic(current)
+                    && is_seam_diagnostic(current)
+                    && current.data.as_ref().is_some_and(|current_data| {
+                        string_at(current_data, &["seam_id"]) == string_at(cited_data, &["seam_id"])
+                            && evidence_identities_match(current_data, cited_data)
+                    })
+            })
+        })
+}
+
+fn evidence_identities_match(left: &Value, right: &Value) -> bool {
+    match (
+        left.get("evidence_identity"),
+        right.get("evidence_identity"),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn gap_action_context<'a>(
@@ -970,6 +1004,7 @@ fn agent_loop_command_target(
         "base": snapshot.base.as_deref(),
         "mode": snapshot.mode.as_str(),
         "seam_id": seam.seam.id().as_str(),
+        "evidence_identity": snapshot.evidence_identity(),
         "seam_kind": seam.seam.kind().as_str(),
         "seam_file": seam.seam.file().to_string_lossy(),
         "owner": seam.seam.owner(),
@@ -2159,6 +2194,7 @@ fn copy_context_target(params: &CodeActionParams, diagnostic: &Diagnostic) -> LS
         }
         copy_optional_value(&mut target, data, "preview_actionability");
         copy_optional_value(&mut target, data, "witness");
+        copy_optional_value(&mut target, data, "evidence_identity");
     }
     serde_json::Value::Object(target)
 }
