@@ -784,27 +784,23 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
     // remaining single `\` that is NOT part of a JSON escape sequence.
     let after_double = value.replace("\\\\", "/");
     let mut result = String::with_capacity(after_double.len());
-    let bytes = after_double.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            let next = bytes[i + 1];
+    let mut chars = after_double.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '\\' {
             // Preserve JSON escape sequences: \" \\ \n \t \r \uXXXX
             // (\/ \b \f are rarely-used JSON escapes that in practice appear as
             // raw backslashes in code excerpts — normalize them as path separators)
-            if matches!(next, b'"' | b'\\' | b'n' | b't' | b'r' | b'u') {
+            if matches!(chars.peek(), Some('"' | '\\' | 'n' | 't' | 'r' | 'u')) {
                 result.push('\\');
-                result.push(next as char);
-                i += 2;
-                continue;
+                if let Some(next) = chars.next() {
+                    result.push(next);
+                }
+            } else {
+                result.push('/');
             }
-            // Not a JSON escape — treat as a path separator
-            result.push('/');
-            i += 1;
-            continue;
+        } else {
+            result.push(character);
         }
-        result.push(bytes[i] as char);
-        i += 1;
     }
     result
 }
@@ -1683,5 +1679,15 @@ mod tests {
         let input = r#"{"path":"src/lib.rs","count":42}"#;
         let out = normalize_fixture_json_output(input);
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn normalize_json_preserves_unicode_content() -> Result<(), String> {
+        let dash = char::from_u32(0x2014).ok_or("invalid em dash")?;
+        let input = format!("{{\"next\":\"a {dash} b\"}}");
+        let out = normalize_fixture_json_output(&input);
+        assert!(out.contains(dash));
+        assert!(!out.contains(char::from_u32(0x00e2).ok_or("invalid lead")?));
+        Ok(())
     }
 }

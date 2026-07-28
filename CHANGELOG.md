@@ -30,6 +30,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Fixture JSON normalization now preserves UTF-8 content while converting
+  non-JSON-escape backslashes, preventing mojibake-driven golden drift
+  (#2556).
+
 - Windows LSP refreshes now isolate shared Git subprocesses from the JSON-RPC
   server stdin and terminate timed-out process trees with bounded pipe draining.
   Explicit refreshes therefore return trustworthy results within the ordinary
