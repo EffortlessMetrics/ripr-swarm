@@ -41,10 +41,6 @@ are scoped or reviewed.
   makes it suggestible with no second edit. Applied across 48 argument-parsing
   sites covering 46 command paths (#2578).
 
-- An unrecognized `--format` value now lists the accepted values instead of
-  reporting only `unknown format "yaml"`, which left the reader to find more
-  than twenty valid spellings in `--help` (#2578).
-
 - `ripr init --dry-run` now previews the run it is actually a preview of.
   It previously returned before every precondition check and printed file
   bodies unconditionally, so it reported success for two runs that fail: an
