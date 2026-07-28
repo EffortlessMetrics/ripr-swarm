@@ -24,8 +24,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin main
           python3 - <<'PY'
           from pathlib import Path
+          import subprocess
 
           paths = [
               Path("docs/RIPR_SWARM_HUMAN_WORKFLOW.md"),
@@ -43,13 +45,13 @@ jobs:
 
           changed = []
           for path in paths:
-              if not path.is_file():
-                  raise SystemExit(f"expected live guidance file is missing: {path}")
-              text = path.read_text(encoding="utf-8")
-              count = text.count("rtk ")
+              raw = subprocess.check_output(
+                  ["git", "show", f"origin/main:{path.as_posix()}"]
+              )
+              count = raw.count(b"rtk ")
               if count == 0:
                   raise SystemExit(f"expected at least one RTK command in {path}")
-              path.write_text(text.replace("rtk ", ""), encoding="utf-8")
+              path.write_bytes(raw.replace(b"rtk ", b""))
               changed.append((str(path), count))
 
           for path, count in changed:
@@ -76,5 +78,5 @@ jobs:
             plans/lane4-pr-ci-review-cockpit/implementation-plan.md \
             plans/rust-usable-gap-projection/agent-context-route.md \
             plans/rust-usable-gap-projection/implementation-plan.md
-          git commit -m "docs: remove RTK from live command guidance"
+          git commit -m "docs: preserve source formatting in RTK cleanup"
           git push origin HEAD:agent/remove-live-rtk-guidance
