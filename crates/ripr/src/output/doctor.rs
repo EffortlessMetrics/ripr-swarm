@@ -652,6 +652,13 @@ mod tests {
     }
 
     #[test]
+    fn rustc_doctor_probe_from_selected_root_applies_the_version_gate() {
+        let (status, evidence) = doctor_tool_check_in_root("rustc", &std::env::temp_dir());
+        assert_eq!(status, DoctorStatus::Pass, "{evidence}");
+        assert!(evidence.starts_with("rustc "), "{evidence}");
+    }
+
+    #[test]
     fn render_text_shows_pass_and_fail_checks() {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(
