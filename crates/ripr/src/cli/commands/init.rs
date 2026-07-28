@@ -2404,3 +2404,232 @@ jobs:
         loop_commands::WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::commands_options::InitCi;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// The `cli_smoke` tests drive `ripr init` as a subprocess, so they prove
+    /// end-to-end behavior but leave the planning logic uninstrumented. These
+    /// in-process tests exercise `init_plan` and its precondition helpers
+    /// directly, which is also where the interesting branches live.
+    fn temp_root(name: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-init-{name}-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create temp root failed: {err}"))?;
+        Ok(root)
+    }
+
+    fn options(root: &Path) -> InitOptions {
+        InitOptions {
+            root: root.to_path_buf(),
+            dry_run: false,
+            force: false,
+            ci: None,
+        }
+    }
+
+    fn write(path: &Path, text: &str) -> Result<(), String> {
+        std::fs::write(path, text).map_err(|err| format!("write {} failed: {err}", path.display()))
+    }
+
+    #[test]
+    fn plan_creates_the_config_in_a_clean_root() -> Result<(), String> {
+        let root = temp_root("clean")?;
+        let plan = init_plan(&options(&root))?;
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].action, InitAction::Create);
+        assert_eq!(plan[0].path, root.join(CONFIG_FILE_NAME));
+        assert!(plan[0].body.contains("[analysis]"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn plan_adds_the_workflow_target_for_ci_github() -> Result<(), String> {
+        let root = temp_root("ci")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+        let plan = init_plan(&opts)?;
+
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[1].action, InitAction::Create);
+        assert_eq!(plan[1].path, root.join(".github/workflows/ripr.yml"));
+        assert!(plan[1].body.contains("name: RIPR"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn plan_rejects_an_existing_config_without_force() -> Result<(), String> {
+        let root = temp_root("exists")?;
+        write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
+
+        match init_plan(&options(&root)) {
+            Ok(_) => return Err("an existing config without --force must block".to_string()),
+            Err(message) => {
+                assert!(message.contains("already exists"), "{message}");
+                assert!(message.contains("--force"), "{message}");
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn plan_overwrites_an_existing_config_with_force() -> Result<(), String> {
+        let root = temp_root("force")?;
+        write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
+        let mut opts = options(&root);
+        opts.force = true;
+
+        let plan = init_plan(&opts)?;
+        assert_eq!(plan[0].action, InitAction::Overwrite);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// An existing config only blocks when there is nothing else to do; with
+    /// `--ci` the run still has a workflow to write.
+    #[test]
+    fn plan_leaves_an_existing_config_alone_when_ci_still_has_work() -> Result<(), String> {
+        let root = temp_root("leave")?;
+        write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+
+        let plan = init_plan(&opts)?;
+        assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
+        assert_eq!(plan[1].action, InitAction::Create);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn plan_rejects_an_existing_workflow_without_force() -> Result<(), String> {
+        let root = temp_root("wf-exists")?;
+        let workflow = root.join(".github/workflows/ripr.yml");
+        if let Some(parent) = workflow.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        write(&workflow, "name: existing\n")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+
+        match init_plan(&opts) {
+            Ok(_) => return Err("an existing workflow without --force must block".to_string()),
+            Err(message) => assert!(message.contains("already exists"), "{message}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn plan_rejects_a_root_that_is_not_a_directory() -> Result<(), String> {
+        let root = temp_root("bad-root")?;
+        let file_root = root.join("a-file");
+        write(&file_root, "not a directory\n")?;
+
+        match init_plan(&options(&file_root)) {
+            Ok(_) => return Err("a non-directory root must block".to_string()),
+            Err(message) => assert!(message.contains("is not a directory"), "{message}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #2576 review: the plan must reject a parent `create_dir_all` cannot
+    /// make, and must name the entry that actually blocks it.
+    #[test]
+    fn plan_rejects_a_workflow_parent_that_is_a_file() -> Result<(), String> {
+        let root = temp_root("parent-file")?;
+        write(&root.join(".github"), "not a directory\n")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+
+        match init_plan(&opts) {
+            Ok(_) => return Err("an uncreatable parent must block".to_string()),
+            Err(message) => {
+                assert!(
+                    message.contains("exists and is not a directory"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains(&root.join(".github").display().to_string()),
+                    "message should name the blocking entry: {message}"
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn creatable_parent_accepts_directories_that_do_not_exist_yet() -> Result<(), String> {
+        let root = temp_root("deep")?;
+        ensure_creatable_parent(&root.join("a/b/c/file.yml"))?;
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn occupied_reports_absent_and_present_paths() -> Result<(), String> {
+        let root = temp_root("occupied")?;
+        assert!(!path_is_occupied(&root.join("missing"))?);
+
+        let file = root.join("present");
+        write(&file, "x")?;
+        assert!(path_is_occupied(&file)?);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// `Path::exists()` follows symlinks and reports `false` here, but
+    /// `create_new` still refuses the path, so planning must call it occupied.
+    #[cfg(unix)]
+    #[test]
+    fn occupied_reports_a_dangling_symlink_as_present() -> Result<(), String> {
+        let root = temp_root("dangling")?;
+        let link = root.join("link");
+        std::os::unix::fs::symlink(root.join("nowhere"), &link)
+            .map_err(|err| format!("symlink failed: {err}"))?;
+
+        assert!(!link.exists(), "precondition: exists() misses this case");
+        assert!(path_is_occupied(&link)?);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn action_labels_are_padded_to_a_common_width() {
+        let width = InitAction::Create.label().len();
+        assert_eq!(InitAction::Overwrite.label().len(), width);
+        assert_eq!(InitAction::LeaveUnchanged.label().len(), width);
+        assert!(InitAction::Create.label().starts_with("create"));
+        assert!(InitAction::Overwrite.label().starts_with("overwrite"));
+        assert!(
+            InitAction::LeaveUnchanged
+                .label()
+                .starts_with("leave existing")
+        );
+    }
+}
