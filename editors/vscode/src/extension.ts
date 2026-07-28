@@ -78,7 +78,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       controller?.copyFirstPrRepairPacket()
     ),
     vscode.commands.registerCommand('ripr.copyRepairPacketAtCursor', async () =>
-      controller?.copyFirstPrRepairPacket()
+      controller?.copyRepairPacketAtCursor()
     ),
     vscode.commands.registerCommand('ripr.copyFirstPrVerifyCommand', async () =>
       controller?.copyFirstPrVerifyCommand()
