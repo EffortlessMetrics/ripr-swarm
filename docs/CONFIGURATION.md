@@ -100,8 +100,30 @@ ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
 | `--ci github` | _(off)_ | Also write `.github/workflows/ripr.yml`. The workflow installs `ripr`, runs `ripr pilot`, uploads pilot/report/agent artifacts, writes repo badge JSON, optionally renders and uploads SARIF when `RIPR_UPLOAD_SARIF` is true, and uses `continue-on-error` so the default path is advisory. |
-| `--dry-run` | _(off)_ | Print the generated config to stdout without writing. |
+| `--dry-run` | _(off)_ | Preview the run without writing. Prints a plan naming each target path and what would happen to it (`create`, `overwrite`, `leave existing`), then the body of each file that would be written. |
 | `--force` | _(off)_ | Overwrite an existing `ripr.toml` or generated workflow. Without this flag, existing repo policy and workflow files are left unchanged. |
+
+`--dry-run` resolves the same preconditions as the real run, so the preview
+cannot disagree with the run it previews. If the real run would fail — an
+existing `ripr.toml` without `--force`, or a `--root` that is not a directory —
+the dry run fails with the same message and the same exit status instead of
+printing a config it could not have written.
+
+```text
+$ ripr init --ci github --dry-run
+ripr init plan (dry run — nothing was written)
+  leave existing ./ripr.toml
+  create         ./.github/workflows/ripr.yml
+
+# ./.github/workflows/ripr.yml
+name: RIPR
+...
+
+Rerun without --dry-run to apply.
+```
+
+A target listed as `leave existing` prints no body, because nothing about that
+file would change.
 
 ### `ripr pilot`
 
