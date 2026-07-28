@@ -4416,6 +4416,7 @@ fn check_workflows_impl() -> Result<(), String> {
             }
         }
     }
+    violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
     violations.extend(routed_rust_workflow_contract_violations_for_repo()?);
 
@@ -4441,29 +4442,63 @@ fn check_workflows_impl() -> Result<(), String> {
     )
 }
 
-/// Workflow automation must not resolve review threads without adjudication.
+/// Workflow automation must not perform review-thread resolution without adjudication.
 ///
-/// A workflow-side `resolveReviewThread` mutation turns provider failure or an
+/// A workflow-side review-thread mutation turns provider failure or an
 /// unreviewed finding into an apparently resolved conversation. Review-thread
 /// resolution remains an explicit, evidence-backed operator action; the policy
 /// rejects common GraphQL/name variants so a renamed blind resolver cannot
-/// re-enter unnoticed.
+/// re-enter unnoticed. Repository-owned delegated automation is scanned too,
+/// so a local composite action or xtask helper cannot hide the mutation.
 fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec<String> {
     let lower = text.to_ascii_lowercase();
-    let forbidden = [
-        "resolvereviewthread",
-        "resolve_review_thread",
-        "resolve review thread",
-    ];
+    let forbidden = review_thread_mutation_tokens();
     forbidden
         .iter()
-        .filter(|token| lower.contains(**token))
+        .filter(|token| lower.contains(token.as_str()))
         .map(|token| {
             format!(
                 "{path}: workflow contains `{token}`; review-thread resolution requires explicit adjudication outside automated workflow mutation"
             )
         })
         .collect()
+}
+
+fn review_thread_mutation_tokens() -> [String; 3] {
+    [
+        ["resolve", "reviewthread"].concat(),
+        ["resolve", "_review_thread"].concat(),
+        ["resolve", " review thread"].concat(),
+    ]
+}
+
+fn repository_owned_review_thread_mutation_violations() -> Result<Vec<String>, String> {
+    let forbidden = review_thread_mutation_tokens();
+    let mut violations = Vec::new();
+
+    for root in [Path::new(".github/actions"), Path::new("xtask/src")] {
+        if !root.exists() {
+            continue;
+        }
+        for path in collect_files(root)? {
+            let normalized = normalize_path(&path);
+            let source_owned = normalized.starts_with(".github/actions/")
+                || (normalized.starts_with("xtask/src/") && normalized.ends_with(".rs"));
+            if !source_owned {
+                continue;
+            }
+            let lower = read_text_lossy(&path)?.to_ascii_lowercase();
+            for token in &forbidden {
+                if lower.contains(token.as_str()) {
+                    violations.push(format!(
+                        "{normalized}: repository-owned automation contains `{token}`; review-thread resolution requires explicit adjudication outside automated workflow mutation"
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(violations)
 }
 
 /// Flag a `run:` written as a plain YAML scalar that contains ` #`.

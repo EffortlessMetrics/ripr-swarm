@@ -153,7 +153,8 @@ use super::{
     repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
     report_index_lane1_readiness_packets, report_index_missing_artifact_count,
     report_index_missing_expected, report_index_next_commands, report_index_repo_ops_packets,
-    report_index_repo_ops_status, report_status_from_text, ripr_command_literals_in_text,
+    report_index_repo_ops_status, report_status_from_text,
+    repository_owned_review_thread_mutation_violations, ripr_command_literals_in_text,
     ripr_debug_binary, ripr_plus_receipt_from_badge, ripr_plus_receipt_from_options,
     ripr_plus_receipt_from_repo_badge_json, ripr_plus_receipt_from_repo_exposure_summary_json,
     ripr_plus_receipt_from_repo_exposure_summary_json_with_source, ripr_plus_receipt_markdown,
@@ -8511,18 +8512,44 @@ jobs:
 
 #[test]
 fn workflow_review_thread_mutation_policy_rejects_graphql_resolver() {
-    let workflow = r#"
+    let resolver_name = ["resolve", "ReviewThread"].concat();
+    let workflow = format!(
+        r#"
 jobs:
   review:
     steps:
-      - run: gh api graphql -f query='mutation { resolveReviewThread(input: {}) { thread { isResolved } } }'
-"#;
+      - run: gh api graphql -f query='mutation {{ {resolver_name}(input: {{}}) {{ thread {{ isResolved }} }} }}'
+"#
+    );
 
     let violations =
-        workflow_review_thread_mutation_violations(".github/workflows/review.yml", workflow);
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
 
     assert_eq!(violations.len(), 1);
-    assert!(violations[0].contains("resolvereviewthread"));
+    let normalized_resolver_name = ["resolve", "reviewthread"].concat();
+    assert!(violations[0].contains(&normalized_resolver_name));
+}
+
+#[test]
+fn repository_owned_review_thread_mutation_policy_rejects_delegated_action() -> Result<(), String> {
+    with_temp_cwd("workflow-delegated-review-resolver", |root| {
+        let action = root.join(".github/actions/blind-review-resolver/action.yml");
+        let resolver_name = ["resolve", "ReviewThread"].concat();
+        write(
+            &action,
+            &format!(
+                "name: blind resolver\nruns:\n  using: composite\n  steps:\n    - run: gh api graphql -f query='mutation {{ {resolver_name}(input: {{}}) {{ thread {{ isResolved }} }} }}'\n"
+            ),
+        );
+
+        let violations = repository_owned_review_thread_mutation_violations()?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains("blind-review-resolver/action.yml") })
+        );
+        Ok(())
+    })
 }
 
 #[test]
