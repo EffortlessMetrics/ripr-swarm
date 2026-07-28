@@ -563,6 +563,134 @@ mod tests {
     }
 
     #[test]
+    fn rustc_version_check_fails_below_msrv_and_passes_supported_versions() -> Result<(), String> {
+        let cases = [
+            (
+                "rustc 1.80.0 (abc 2024-01-01)",
+                DoctorStatus::Fail,
+                "below the minimum supported Rust version",
+            ),
+            ("rustc 1.95.0 (abc 2026-04-14)", DoctorStatus::Pass, ""),
+            (
+                "rustc 1.96.1-nightly (abc 2026-05-01)",
+                DoctorStatus::Pass,
+                "",
+            ),
+        ];
+        for (evidence, expected_status, expected_fragment) in cases {
+            let result = doctor_tool_check_success("rustc", evidence.as_bytes());
+            if result.status != expected_status {
+                return Err(format!(
+                    "unexpected status for {evidence:?}: {:?}",
+                    result.status
+                ));
+            }
+            if !result.evidence.contains(expected_fragment) {
+                return Err(format!(
+                    "missing expected evidence for {evidence:?}: {:?}",
+                    result.evidence
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rustc_version_check_fails_closed_for_malformed_output() -> Result<(), String> {
+        let result = doctor_tool_check_success("rustc", b"rustc unavailable");
+        if result.status != DoctorStatus::Fail {
+            return Err(format!(
+                "malformed rustc output unexpectedly passed: {result:?}"
+            ));
+        }
+        if !result.evidence.contains("could not be parsed") {
+            return Err(format!(
+                "unexpected malformed-output evidence: {:?}",
+                result.evidence
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rustc_version_parser_covers_invalid_prefix_and_components() {
+        for output in [
+            "",
+            "cargo 1.95.0",
+            "rustc",
+            "rustc ",
+            "rustc x.95.0",
+            "rustc 1.x.0",
+            "rustc 1.95",
+            "rustc 1.95.x",
+            "rustc 1.95.-nightly",
+        ] {
+            assert!(
+                parse_rustc_version(output).is_none(),
+                "malformed rustc output unexpectedly parsed: {output:?}"
+            );
+        }
+        assert!(parse_rustc_version("rustc 1.95.0-nightly").is_some());
+        assert_eq!(
+            doctor_tool_check_success("cargo", b"cargo 1.95.0").status,
+            DoctorStatus::Pass
+        );
+    }
+
+    #[test]
+    fn rustc_doctor_probes_apply_the_version_gate() {
+        let (status, evidence) = doctor_tool_check("rustc");
+        assert_eq!(status, DoctorStatus::Pass, "{evidence}");
+        assert!(evidence.starts_with("rustc "), "{evidence}");
+
+        let (isolated_status, isolated_evidence) = doctor_tool_check_isolated("rustc");
+        assert_eq!(isolated_status, DoctorStatus::Pass, "{isolated_evidence}");
+        assert!(
+            isolated_evidence.starts_with("rustc "),
+            "{isolated_evidence}"
+        );
+    }
+
+    #[test]
+    fn rustc_doctor_probe_from_selected_root_applies_the_version_gate() {
+        let (status, evidence) = doctor_tool_check_for_root("rustc", &std::env::temp_dir());
+        assert_eq!(status, DoctorStatus::Pass, "{evidence}");
+        assert!(evidence.starts_with("rustc "), "{evidence}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_rustc_probe_uses_selected_root() -> Result<(), String> {
+        let dir = unique_test_dir("selected-root-rustc");
+        let selected_root = dir.join("selected-root");
+        std::fs::create_dir_all(&selected_root).map_err(|err| format!("create root: {err}"))?;
+        let shim = publish_doctor_test_tool(
+            &dir,
+            "rustc-root-probe",
+            "#!/bin/sh\ncase \"$PWD\" in\n  *selected-root) printf 'rustc 1.94.0 (target-root)\\n' ;;\n  *) printf 'rustc 1.96.0 (caller-root)\\n' ;;\nesac\n",
+        )?;
+
+        let result = doctor_tool_check_with_command(
+            "rustc",
+            doctor_tool_command(
+                shim.to_str()
+                    .ok_or_else(|| "shim path is not UTF-8".to_string())?,
+            ),
+            DOCTOR_TOOL_TIMEOUT,
+            Some(&selected_root),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(result.status, DoctorStatus::Fail);
+        assert!(
+            result
+                .evidence
+                .contains("below the minimum supported Rust version")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn render_text_shows_pass_and_fail_checks() {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(
@@ -911,97 +1039,6 @@ mod tests {
             evidence.ends_with("not available"),
             "unexpected evidence for missing tool: {evidence:?}"
         );
-    }
-
-    #[test]
-    fn doctor_rustc_probe_fails_below_msrv_and_on_malformed_output() -> Result<(), String> {
-        let below = doctor_tool_check_success("rustc", b"rustc 1.94.0 (old-toolchain)\n");
-        assert_eq!(below.status, DoctorStatus::Fail);
-        assert!(
-            below
-                .evidence
-                .contains("below the minimum supported Rust version 1.95.0")
-        );
-
-        let malformed = doctor_tool_check_success("rustc", b"rustc unknown\n");
-        assert_eq!(malformed.status, DoctorStatus::Fail);
-        assert!(malformed.evidence.contains("could not be parsed"));
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn doctor_rustc_probe_uses_selected_root() -> Result<(), String> {
-        let dir = unique_test_dir("selected-root-rustc");
-        let selected_root = dir.join("selected-root");
-        std::fs::create_dir_all(&selected_root).map_err(|err| format!("create root: {err}"))?;
-        let shim = publish_doctor_test_tool(
-            &dir,
-            "rustc-root-probe",
-            "#!/bin/sh\ncase \"$PWD\" in\n  *selected-root) printf 'rustc 1.94.0 (target-root)\\n' ;;\n  *) printf 'rustc 1.96.0 (caller-root)\\n' ;;\nesac\n",
-        )?;
-
-        let result = doctor_tool_check_with_command(
-            "rustc",
-            doctor_tool_command(
-                shim.to_str()
-                    .ok_or_else(|| "shim path is not UTF-8".to_string())?,
-            ),
-            DOCTOR_TOOL_TIMEOUT,
-            Some(&selected_root),
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-
-        assert_eq!(result.status, DoctorStatus::Fail);
-        assert!(
-            result
-                .evidence
-                .contains("below the minimum supported Rust version")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn doctor_rustc_probe_rejects_incomplete_version_components() -> Result<(), String> {
-        for output in [
-            "",
-            "rustc",
-            "rustc ",
-            "rustc 1",
-            "rustc 1.95",
-            "rustc x.95.0",
-            "rustc 1.x.0",
-            "rustc 1.95.x",
-        ] {
-            let result = doctor_tool_check_success("rustc", output.as_bytes());
-            assert_eq!(result.status, DoctorStatus::Fail, "output: {output:?}");
-            assert!(
-                result.evidence.contains("could not be parsed"),
-                "evidence: {}",
-                result.evidence
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn doctor_rustc_probe_accepts_msrv_newer_and_prerelease_versions() -> Result<(), String> {
-        for output in [
-            "rustc 1.95.0 (minimum-toolchain)",
-            "rustc 1.96.1 (newer-toolchain)",
-            "rustc 1.95.0-nightly (nightly-toolchain)",
-        ] {
-            let result = doctor_tool_check_success("rustc", output.as_bytes());
-            assert_eq!(result.status, DoctorStatus::Pass, "output: {output}");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn isolated_rustc_probe_uses_msrv_validation() {
-        let (status, evidence) = doctor_tool_check_isolated("rustc");
-        assert_eq!(status, DoctorStatus::Pass, "evidence: {evidence}");
-        assert!(evidence.starts_with("rustc "), "evidence: {evidence}");
     }
 
     #[test]
