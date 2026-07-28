@@ -23,11 +23,7 @@ use std::time::{Duration, Instant};
 /// the probed tools.
 pub(crate) const DOCTOR_TOOLS: [&str; 3] = ["git", "cargo", "rustc"];
 
-const MINIMUM_RUSTC_VERSION: RustcVersion = RustcVersion {
-    major: 1,
-    minor: 95,
-    patch: 0,
-};
+const MINIMUM_RUSTC_VERSION: &str = env!("CARGO_PKG_RUST_VERSION");
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RustcVersion {
@@ -59,16 +55,39 @@ fn parse_rustc_version(output: &str) -> Option<RustcVersion> {
     })
 }
 
+fn minimum_rustc_version() -> Option<RustcVersion> {
+    let mut components = MINIMUM_RUSTC_VERSION.split('.');
+    let major = components.next()?.parse().ok()?;
+    let minor = components.next()?.parse().ok()?;
+    let patch = components
+        .next()
+        .unwrap_or("0")
+        .split(['-', '+'])
+        .next()?
+        .parse()
+        .ok()?;
+    Some(RustcVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
 fn validate_rustc_version(output: &str) -> Result<(), String> {
+    let minimum = minimum_rustc_version().ok_or_else(|| {
+        format!(
+            "declared package rust-version `{MINIMUM_RUSTC_VERSION}` could not be parsed; update Cargo.toml"
+        )
+    })?;
     let version = parse_rustc_version(output).ok_or_else(|| {
         format!(
-            "rustc version could not be parsed from `{}`; install Rust {MINIMUM_RUSTC_VERSION}+",
+            "rustc version could not be parsed from `{}`; install Rust {minimum}+",
             output.trim()
         )
     })?;
-    if version < MINIMUM_RUSTC_VERSION {
+    if version < minimum {
         return Err(format!(
-            "rustc {version} is below the minimum supported Rust version {MINIMUM_RUSTC_VERSION}; run `rustup update stable` or install Rust {MINIMUM_RUSTC_VERSION}+"
+            "rustc {version} is below the minimum supported Rust version {minimum}; run `rustup update stable` or install Rust {minimum}+"
         ));
     }
     Ok(())
@@ -134,7 +153,7 @@ pub(crate) struct DoctorReport {
 }
 
 impl DoctorReport {
-    pub(crate) const SCHEMA_VERSION: &'static str = "0.1";
+    pub(crate) const SCHEMA_VERSION: &'static str = "0.2";
 
     pub(crate) fn new(root: &str) -> Self {
         Self {
@@ -293,7 +312,7 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
         ),
     }
     for tool in DOCTOR_TOOLS {
-        let (status, evidence) = doctor_tool_check(tool);
+        let (status, evidence) = doctor_tool_check_for_root(tool, root);
         report.add_check(&format!("tool_{tool}"), status, Some(evidence));
     }
     // Typed language surface for generated CI (#2072): mirror exactly the
@@ -317,21 +336,10 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
 /// The probe runs from the OS temp dir with config resolution disabled.
 pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     let mut command = doctor_tool_command(tool);
-    command.arg("--version");
     command
         .current_dir(std::env::temp_dir())
         .env("YARN_IGNORE_PATH", "1");
-    match run_doctor_tool(command, DOCTOR_TOOL_TIMEOUT) {
-        Ok(output) if output.status.success() => {
-            doctor_tool_check_success(tool, &output.stdout).into_public()
-        }
-        Err(DoctorToolRunError::TimedOut) => (
-            DoctorStatus::Fail,
-            format!("{tool} timed out after {}s", DOCTOR_TOOL_TIMEOUT.as_secs()),
-        ),
-        Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind).into_public(),
-        _ => (DoctorStatus::Fail, format!("{tool} not available")),
-    }
+    doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
 fn doctor_tool_command(tool: &str) -> std::process::Command {
@@ -342,13 +350,41 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_timeout(tool, DOCTOR_TOOL_TIMEOUT)
 }
 
+fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
+    if tool == "rustc" {
+        doctor_tool_check_with_timeout_result_at(tool, DOCTOR_TOOL_TIMEOUT, Some(root))
+            .into_public()
+    } else {
+        doctor_tool_check(tool)
+    }
+}
+
 fn doctor_tool_check_with_timeout(tool: &str, timeout: Duration) -> (DoctorStatus, String) {
     doctor_tool_check_with_timeout_result(tool, timeout).into_public()
 }
 
 fn doctor_tool_check_with_timeout_result(tool: &str, timeout: Duration) -> DoctorToolCheckResult {
-    let mut command = doctor_tool_command(tool);
+    doctor_tool_check_with_timeout_result_at(tool, timeout, None)
+}
+
+fn doctor_tool_check_with_timeout_result_at(
+    tool: &str,
+    timeout: Duration,
+    root: Option<&Path>,
+) -> DoctorToolCheckResult {
+    doctor_tool_check_with_command(tool, doctor_tool_command(tool), timeout, root)
+}
+
+fn doctor_tool_check_with_command(
+    tool: &str,
+    mut command: std::process::Command,
+    timeout: Duration,
+    root: Option<&Path>,
+) -> DoctorToolCheckResult {
     command.arg("--version");
+    if let Some(root) = root {
+        command.current_dir(root);
+    }
     match run_doctor_tool(command, timeout) {
         Ok(output) if output.status.success() => doctor_tool_check_success(tool, &output.stdout),
         Err(DoctorToolRunError::TimedOut) => {
@@ -624,7 +660,7 @@ mod tests {
         let json = report.render_json()?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
-        assert_eq!(parsed["schema_version"], "0.1");
+        assert_eq!(parsed["schema_version"], "0.2");
         assert_eq!(parsed["tool"], "ripr");
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");
@@ -890,6 +926,35 @@ mod tests {
         let malformed = doctor_tool_check_success("rustc", b"rustc unknown\n");
         assert_eq!(malformed.status, DoctorStatus::Fail);
         assert!(malformed.evidence.contains("could not be parsed"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_rustc_probe_uses_selected_root() -> Result<(), String> {
+        let dir = unique_test_dir("selected-root-rustc");
+        let selected_root = dir.join("selected-root");
+        std::fs::create_dir_all(&selected_root).map_err(|err| format!("create root: {err}"))?;
+        let shim = publish_doctor_test_tool(
+            &dir,
+            "rustc-root-probe",
+            "#!/bin/sh\ncase \"$PWD\" in\n  *selected-root) printf 'rustc 1.94.0 (target-root)\\n' ;;\n  *) printf 'rustc 1.96.0 (caller-root)\\n' ;;\nesac\n",
+        )?;
+
+        let result = doctor_tool_check_with_command(
+            "rustc",
+            std::process::Command::new(shim),
+            DOCTOR_TOOL_TIMEOUT,
+            Some(&selected_root),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(result.status, DoctorStatus::Fail);
+        assert!(
+            result
+                .evidence
+                .contains("below the minimum supported Rust version")
+        );
         Ok(())
     }
 
