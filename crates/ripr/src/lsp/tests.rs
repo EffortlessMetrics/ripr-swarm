@@ -11855,6 +11855,32 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
             .ok_or_else(|| "expected current seam packet".to_string())?;
         assert_eq!(current_packet["packets_total"], 1);
 
+        for cited_identity in [
+            serde_json::json!({"snapshot_id": "snapshot:older"}),
+            serde_json::Value::Null,
+        ] {
+            let stale = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_CONTEXT_COMMAND.to_string(),
+                    arguments: vec![serde_json::json!({
+                        "seam_id": seam_id.clone(),
+                        "evidence_identity": cited_identity,
+                    })],
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("mismatched seam command failed: {err}"))?
+                .ok_or_else(|| "expected typed stale result for mismatched identity".to_string())?;
+            assert_eq!(stale["kind"], "lsp_seam_evidence");
+            assert_eq!(stale["status"], "stale");
+            assert_eq!(stale["current_snapshot_id"], "snapshot:full");
+            assert_eq!(stale["recovery_route"], "ripr.refreshDiagnostics");
+            assert_eq!(
+                stale["invalidation_reason"],
+                "the cited seam evidence belongs to an older snapshot"
+            );
+        }
+
         let mut deferred = sample_workspace_diagnostics(
             PathBuf::from("/workspace"),
             uri.clone(),
