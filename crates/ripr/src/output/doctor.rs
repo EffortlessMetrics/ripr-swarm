@@ -590,6 +590,31 @@ mod tests {
     }
 
     #[test]
+    fn rustc_version_parser_covers_invalid_prefix_and_components() {
+        for output in [
+            "",
+            "cargo 1.95.0",
+            "rustc",
+            "rustc ",
+            "rustc x.95.0",
+            "rustc 1.x.0",
+            "rustc 1.95",
+            "rustc 1.95.x",
+            "rustc 1.95.-nightly",
+        ] {
+            assert!(
+                parse_rustc_version(output).is_none(),
+                "malformed rustc output unexpectedly parsed: {output:?}"
+            );
+        }
+        assert!(parse_rustc_version("rustc 1.95.0-nightly").is_some());
+        assert_eq!(
+            doctor_tool_success("cargo", "cargo 1.95.0".to_string()).status,
+            DoctorStatus::Pass
+        );
+    }
+
+    #[test]
     fn render_text_shows_pass_and_fail_checks() {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(
