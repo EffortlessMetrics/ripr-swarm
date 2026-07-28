@@ -3022,7 +3022,9 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        _ => Err(format!("unknown diff format {value:?}")),
+        _ => Err(format!(
+            "unknown diff format {value:?}; expected `human`, `text`, `md`, `markdown`, or `json`"
+        )),
     }
 }
 
@@ -3152,7 +3154,9 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    let selector = selector.ok_or_else(|| "missing finding selector".to_string())?;
+    let selector = selector.ok_or_else(|| {
+        "missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
+    })?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let asserted_base = if base_explicitly_provided {
@@ -7838,7 +7842,7 @@ language = "rust"
     fn explain_requires_selector() {
         assert_eq!(
             explain(&args(&[])),
-            Err("missing finding selector".to_string())
+            Err("missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
         );
     }
 

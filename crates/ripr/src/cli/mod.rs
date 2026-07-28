@@ -36,7 +36,10 @@ mod tests {
     fn run_dispatches_check_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "check", "--format", "xml"])),
-            Err("unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json.".to_string())
+            Err(
+                "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
+                    .to_string()
+            )
         );
     }
 
@@ -62,15 +65,15 @@ mod tests {
         assert_eq!(run(args(&["ripr", "--version"])), Ok(()));
         assert_eq!(
             run(args(&["ripr", "explain"])),
-            Err("missing finding selector".to_string())
+            Err("missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
         );
         assert_eq!(
             run(args(&["ripr", "context"])),
-            Err("missing --at or --finding selector".to_string())
+            Err("missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
         );
         assert_eq!(
             run(args(&["ripr", "diff", "--format", "xml"])),
-            Err("unknown diff format \"xml\"".to_string())
+            Err("unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string())
         );
         assert_eq!(
             run(args(&["ripr", "lsp", "--bad"])),
