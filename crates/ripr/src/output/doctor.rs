@@ -645,7 +645,10 @@ mod tests {
 
         let (isolated_status, isolated_evidence) = doctor_tool_check_isolated("rustc");
         assert_eq!(isolated_status, DoctorStatus::Pass, "{isolated_evidence}");
-        assert!(isolated_evidence.starts_with("rustc "), "{isolated_evidence}");
+        assert!(
+            isolated_evidence.starts_with("rustc "),
+            "{isolated_evidence}"
+        );
     }
 
     #[test]
