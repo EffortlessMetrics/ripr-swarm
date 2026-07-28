@@ -194,18 +194,6 @@ impl OutputFormat {
             .find_map(|spec| spec.cli_names.contains(&value).then_some(spec.format))
     }
 
-    /// Returns every accepted `--format` spelling, aliases included, in
-    /// declaration order.
-    ///
-    /// The CLI lists these when it rejects a format so the reader does not
-    /// need a second trip to `--help`.
-    pub(crate) fn accepted_cli_names() -> Vec<&'static str> {
-        FORMAT_SPECS
-            .iter()
-            .flat_map(|spec| spec.cli_names.iter().copied())
-            .collect()
-    }
-
     /// Returns the preferred CLI spelling for this output format.
     pub(crate) fn primary_cli_name(&self) -> &'static str {
         FORMAT_SPECS
