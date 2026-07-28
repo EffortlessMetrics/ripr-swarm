@@ -12,8 +12,17 @@ import {
 import { getConfig, RiprConfig } from './config';
 import { requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
 import { setupFilePath, stringValues, hasUnsafeShellMetacharacter, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
+import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
+import type { WorkspaceRootPickItem } from './workspaceHelpers';
+import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldInlineFirstUsefulAction } from './statusRender';
+import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
 
-const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }> = [
+// Re-export for backward compatibility: the picker test imports these symbols
+// from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
+export { workspaceRootPickItems };
+export type { WorkspaceRootPickItem };
+
+export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }> = [
   { language: 'rust', scheme: 'file' },
   { language: 'typescript', scheme: 'file' },
   { language: 'typescriptreact', scheme: 'file' },
@@ -128,16 +137,6 @@ class RiprExperimentalLanguageClient extends LanguageClient {
         : {};
     capabilities.experimental = { ...existing, ...this.riprExperimental };
   }
-}
-
-function riprDocumentSelectorsForWorkspace(
-  workspaceRoot: string
-): Array<{ language: string; scheme: 'file'; pattern: string }> {
-  const workspacePattern = `${workspaceRoot.replace(/\\/g, '/')}/**/*`;
-  return RIPR_DOCUMENT_SELECTORS.map((selector) => ({
-    ...selector,
-    pattern: workspacePattern
-  }));
 }
 
 const RIPR_SETUP_ARTIFACTS: RiprSetupArtifactDefinition[] = [
@@ -1950,35 +1949,6 @@ interface RiprSetupArtifactDefinition {
   relativePath: string;
 }
 
-type RiprStatusKind =
-  | 'disabled'
-  | 'noWorkspace'
-  | 'workspaceUntrusted'
-  | 'workspaceAmbiguous'
-  | 'resolvingServer'
-  | 'serverUnavailable'
-  | 'starting'
-  | 'analysisQueued'
-  | 'ready'
-  | 'analysisRunning'
-  | 'analysisReady'
-  | 'gapActionable'
-  | 'gapNoAction'
-  | 'gapArtifactWarning'
-  | 'noActionableSeams'
-  | 'noEnabledLanguages'
-  | 'stale'
-  | 'analysisFailed'
-  | 'stopped';
-
-interface RiprStatusState {
-  kind: RiprStatusKind;
-  summary: string;
-  detail?: string;
-  enabledLanguages?: string[];
-  nextStep?: string;
-}
-
 interface RiprStatusContext {
   extensionVersion: string;
   expectedServerVersion: string;
@@ -2099,23 +2069,6 @@ export interface RiprFirstPrPacketStatus {
   warningCount?: number;
 }
 
-interface FirstUsefulActionStatus {
-  status: string;
-  actionKind: string;
-  title: string;
-  generatedAt?: string;
-  seamId?: string;
-  selectedLocation?: string;
-  missingDiscriminator?: string;
-  target?: string;
-  relatedTest?: string;
-  verifyCommand?: string;
-  receiptCommand?: string;
-  fallback?: string;
-  reportPath: string;
-  warningCount: number;
-}
-
 type RiprReceiptArtifactState =
   | 'found'
   | 'missing'
@@ -2134,121 +2087,6 @@ interface RiprReceiptArtifactStatus {
   movement?: string;
   repoRoot?: string;
   generatedAt?: string;
-}
-
-function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulActionStatus): string {
-  if (firstAction && shouldInlineFirstUsefulAction(kind)) {
-    if (
-      firstAction.status === 'stale' ||
-      firstAction.status === 'missing_required_artifact' ||
-      firstAction.status === 'unchanged_after_attempt'
-    ) {
-      return '$(warning) ripr: first action';
-    }
-    if (
-      firstAction.status === 'already_improved' ||
-      firstAction.status === 'baseline_only' ||
-      firstAction.status === 'no_actionable_seam' ||
-      firstAction.status === 'suppressed' ||
-      firstAction.status === 'acknowledged' ||
-      firstAction.status === 'waived'
-    ) {
-      return '$(pass) ripr: first action';
-    }
-    return '$(lightbulb) ripr: first action';
-  }
-  switch (kind) {
-    case 'disabled':
-      return '$(circle-slash) ripr: disabled';
-    case 'noWorkspace':
-      return '$(folder) ripr: open workspace';
-    case 'workspaceUntrusted':
-      return '$(shield) ripr: untrusted workspace';
-    case 'workspaceAmbiguous':
-      return '$(warning) ripr: select root';
-    case 'resolvingServer':
-      return '$(sync~spin) ripr: resolving';
-    case 'serverUnavailable':
-      return '$(warning) ripr: server missing';
-    case 'starting':
-      return '$(sync~spin) ripr: starting';
-    case 'ready':
-      return '$(pass) ripr: ready';
-    case 'analysisQueued':
-      return '$(clock) ripr: queued';
-    case 'analysisRunning':
-      return '$(sync~spin) ripr: analyzing';
-    case 'analysisReady':
-      return '$(check) ripr: diagnostics';
-    case 'gapActionable':
-      return '$(lightbulb) ripr: gap ready';
-    case 'gapNoAction':
-      return '$(pass) ripr: gap clear';
-    case 'gapArtifactWarning':
-      return '$(warning) ripr: gap blocked';
-    case 'noActionableSeams':
-      return '$(circle-slash) ripr: no seams';
-    case 'noEnabledLanguages':
-      return '$(circle-slash) ripr: languages off';
-    case 'stale':
-      return '$(warning) ripr: stale';
-    case 'analysisFailed':
-      return '$(error) ripr: failed';
-    case 'stopped':
-    default:
-      return 'ripr: stopped';
-  }
-}
-
-function statusSummary(status: RiprStatusState, firstAction?: FirstUsefulActionStatus): string {
-  if (!firstAction || !shouldInlineFirstUsefulAction(status.kind)) {
-    return status.summary;
-  }
-  return `${status.summary} First useful action: ${firstAction.title}`;
-}
-
-/**
- * Background + foreground `ThemeColor` pair for the status bar item, or
- * `undefined` for the default idle/OK colour. The mapping follows VS Code's
- * documented convention (`statusBarItem.errorBackground`,
- * `statusBarItem.warningBackground` — note: `statusBar.*Background` does not
- * exist; the correct key is `statusBarItem.*`):
- *
- * - error (red): the analysis run failed or the server is unavailable.
- *   These need user attention.
- * - warning (yellow): the run is stale, the workspace is untrusted or
- *   ambiguous, or the gap-artifact validation flagged something. These are
- *   degraded-but-not-failed states.
- * - default: transient (analysisRunning/starting/analysisQueued), idle
- *   (ready/analysisReady/gapActionable/...), and the initial `stopped`
- *   state. Setting a colour here would cry wolf; the codicon + text already
- *   convey the state. `stopped` is the extension's initial state and must
- *   not turn the bar red on startup.
- */
-interface StatusBarColors {
-  background: vscode.ThemeColor;
-  foreground: vscode.ThemeColor;
-}
-
-function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefined {
-  switch (kind) {
-    case 'analysisFailed':
-    case 'serverUnavailable':
-      return {
-        background: new vscode.ThemeColor('statusBarItem.errorBackground'),
-        foreground: new vscode.ThemeColor('statusBarItem.errorForeground'),
-      };
-    case 'stale':
-    case 'workspaceAmbiguous':
-    case 'workspaceUntrusted':
-    case 'gapArtifactWarning':
-      return {
-        background: new vscode.ThemeColor('statusBarItem.warningBackground'),
-        foreground: new vscode.ThemeColor('statusBarItem.warningForeground'),
-      };
-    default:
-      return undefined;
-  }
 }
 
 function statusTooltip(
@@ -2415,11 +2253,6 @@ function setupRepairBlocker(context: RiprStatusContext): string | undefined {
     return 'ripr setup is not ready for repair actions: ripr_version_unknown. Run ripr: Diagnose Setup before acting on editor repair packets.';
   }
   return undefined;
-}
-
-function extensionVersion(context: vscode.ExtensionContext): string {
-  const version = context.extension?.packageJSON?.version;
-  return typeof version === 'string' && version.trim() !== '' ? version.replace(/^v/, '') : '0.8.0';
 }
 
 function workspaceTrustState(context: RiprStatusContext): RiprSetupState {
@@ -3589,24 +3422,6 @@ function parseTimestamp(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function canProjectFirstUsefulAction(kind: RiprStatusKind): boolean {
-  return kind === 'starting'
-    || kind === 'analysisQueued'
-    || kind === 'analysisRunning'
-    || kind === 'analysisReady'
-    || kind === 'gapActionable'
-    || kind === 'gapNoAction'
-    || kind === 'noActionableSeams'
-    || kind === 'noEnabledLanguages'
-    || kind === 'ready';
-}
-
-function shouldInlineFirstUsefulAction(kind: RiprStatusKind): boolean {
-  return canProjectFirstUsefulAction(kind)
-    && kind !== 'gapActionable'
-    && kind !== 'gapNoAction';
-}
-
 function serverLogMessage(params: unknown): string | undefined {
   if (!params || typeof params !== 'object' || !('message' in params)) {
     return undefined;
@@ -3851,18 +3666,6 @@ function lineFromTarget(target: RiprContextTarget | undefined): number | undefin
     return undefined;
   }
   return Math.floor(target.line);
-}
-
-function traceFromConfig(trace: RiprConfig['traceServer']): Trace {
-  switch (trace) {
-    case 'messages':
-      return Trace.Messages;
-    case 'verbose':
-      return Trace.Verbose;
-    case 'off':
-    default:
-      return Trace.Off;
-  }
 }
 
 function firstUsefulActionReportPath(workspaceRoot: string): string {
@@ -5201,96 +5004,6 @@ function selectedLocation(selected: Record<string, unknown> | undefined): string
   }
   const line = numberFieldValue(selected, 'line');
   return line === undefined ? selectedPath : `${selectedPath}:${Math.trunc(line)}`;
-}
-
-/**
- * Quick-pick item for `ripr: Select Workspace Root` (#2077): the folder name
- * as the label and the folder path as the description, so the user can tell
- * same-named folders apart. `root` carries the picked folder back to the
- * controller.
- */
-export interface WorkspaceRootPickItem extends vscode.QuickPickItem {
-  root: string;
-}
-
-/**
- * Build the `ripr: Select Workspace Root` pick list from the workspace
- * folders. Kept pure and exported so the pick-list shape is reviewable and
- * testable without stubbing `vscode.window.showQuickPick` (#2077).
- */
-export function workspaceRootPickItems(
-  folders: readonly vscode.WorkspaceFolder[]
-): WorkspaceRootPickItem[] {
-  return folders.map((folder) => ({
-    label: folder.name,
-    description: folder.uri.fsPath,
-    root: folder.uri.fsPath
-  }));
-}
-
-function currentWorkspaceRootState(): RiprWorkspaceRootState {
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  if (folders.length === 0) {
-    return workspaceRootStateNoWorkspace();
-  }
-  if (folders.length === 1) {
-    return {
-      kind: 'singleRoot',
-      root: folders[0].uri.fsPath,
-      roots: [folders[0].uri.fsPath],
-      detail: 'single workspace folder is active'
-    };
-  }
-  const activeEditor = vscode.window.activeTextEditor;
-  const activeFolder = activeEditor && activeEditor.document.uri.scheme === 'file'
-    ? vscode.workspace.getWorkspaceFolder(activeEditor.document.uri)
-    : undefined;
-  if (activeFolder) {
-    return {
-      kind: 'selectedRoot',
-      root: activeFolder.uri.fsPath,
-      roots: folders.map((folder) => folder.uri.fsPath),
-      detail: 'selected from active editor workspace folder'
-    };
-  }
-  return {
-    kind: 'ambiguousMultiRoot',
-    roots: folders.map((folder) => folder.uri.fsPath),
-    detail: 'multiple workspace folders are open and no active editor selected a safe root'
-  };
-}
-
-function workspaceRootStateNoWorkspace(): RiprWorkspaceRootState {
-  return {
-    kind: 'noWorkspace',
-    roots: [],
-    detail: 'open a workspace folder before matching saved-workspace artifacts'
-  };
-}
-
-function workspaceRootStateLabel(state: RiprWorkspaceRootState): string {
-  switch (state.kind) {
-    case 'singleRoot':
-      return `workspace_single_root (${state.root ?? 'unknown'})`;
-    case 'selectedRoot':
-      return `workspace_multi_root_selected (${state.root ?? 'unknown'}; roots: ${state.roots.join(', ')})`;
-    case 'ambiguousMultiRoot':
-      return `workspace_multi_root_ambiguous (roots: ${state.roots.join(', ') || 'unknown'})`;
-    case 'noWorkspace':
-    default:
-      return 'workspace_not_open';
-  }
-}
-
-function workspaceRootStateDetail(state: RiprWorkspaceRootState): string {
-  const lines = [
-    state.detail ?? 'workspace root state is unavailable'
-  ];
-  if (state.roots.length > 0) {
-    lines.push(`Workspace folders: ${state.roots.join(', ')}`);
-  }
-  lines.push('Root-scoped repair actions are suppressed until one workspace folder is selected.');
-  return lines.join('\n');
 }
 
 function isRiprFileDocument(document: vscode.TextDocument): boolean {
