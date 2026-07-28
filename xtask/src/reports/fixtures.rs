@@ -225,6 +225,7 @@ fn collect_golden_runs() -> Result<GoldenRunSet, String> {
 }
 
 fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
+    validate_bless_reason(reason)?;
     let fixture = fixture_dir_for_name(name)?;
     if !fixture.exists() {
         return Err(format!(
@@ -1520,21 +1521,39 @@ fn non_empty_reason(value: &str) -> Result<String, String> {
     let reason = value.trim();
     if reason.is_empty() {
         Err("--reason must not be empty".to_string())
-    } else if !reason_contains_spec_id(reason) {
+    } else if reason_spec_id(reason).is_none() {
         Err("--reason must cite a spec using RIPR-SPEC-NNNN (for example, RIPR-SPEC-0001: updated output shape)".to_string())
     } else {
         Ok(reason.to_string())
     }
 }
 
-fn reason_contains_spec_id(reason: &str) -> bool {
-    reason.split_whitespace().any(|word| {
+fn reason_spec_id(reason: &str) -> Option<&str> {
+    reason.split_whitespace().find_map(|word| {
         let token = word
             .trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '-');
-        token.starts_with("RIPR-SPEC-")
+        (token.starts_with("RIPR-SPEC-")
             && token.len() == "RIPR-SPEC-0000".len()
-            && token[10..].bytes().all(|byte| byte.is_ascii_digit())
+            && token[10..].bytes().all(|byte| byte.is_ascii_digit()))
+            .then_some(token)
     })
+}
+
+fn validate_bless_reason(reason: &str) -> Result<(), String> {
+    let Some(spec_id) = reason_spec_id(reason) else {
+        return Err(
+            "--reason must cite a spec using RIPR-SPEC-NNNN (for example, RIPR-SPEC-0001: updated output shape)"
+                .to_string(),
+        );
+    };
+    let specs = crate::collect_spec_files_for_root(Path::new("."))?;
+    if specs.iter().any(|spec| spec.id == spec_id) {
+        Ok(())
+    } else {
+        Err(format!(
+            "--reason references missing spec `{spec_id}`; cite an existing RIPR-SPEC-NNNN"
+        ))
+    }
 }
 
 pub(crate) use self::fixtures_impl as fixtures;
@@ -1659,17 +1678,32 @@ fn fixtures_new(name: &str) -> Result<(), String> {
         "  3. Edit {}/SPEC.md to fill in the Given/When/Then/Must Not.",
         name
     );
-    println!(
-        "  4. Run: cargo xtask goldens bless {} --reason \"initial scaffold\"",
-        name
-    );
+    println!("{}", scaffold_bless_command(name));
     println!("  5. Run: cargo xtask fixtures {} to verify.", name);
 
     Ok(())
 }
+
+fn scaffold_bless_command(name: &str) -> String {
+    format!(
+        "  4. Assign an existing RIPR-SPEC-NNNN in {name}/SPEC.md, then run: cargo xtask goldens bless {name} --reason \"RIPR-SPEC-NNNN: describe the intentional golden update\""
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bless_reason_requires_existing_spec_and_scaffold_guidance() {
+        assert!(validate_bless_reason("RIPR-SPEC-0001: intentional update").is_ok());
+        let missing = validate_bless_reason("RIPR-SPEC-9999: fabricated reference")
+            .expect_err("fabricated spec references must fail");
+        assert!(missing.contains("RIPR-SPEC-9999"));
+
+        let command = scaffold_bless_command("sample");
+        assert!(command.contains("Assign an existing RIPR-SPEC-NNNN"));
+        assert!(!command.contains("initial scaffold"));
+    }
 
     #[test]
     fn normalize_json_handles_double_backslash() {
