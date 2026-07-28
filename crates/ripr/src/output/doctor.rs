@@ -943,7 +943,10 @@ mod tests {
 
         let result = doctor_tool_check_with_command(
             "rustc",
-            std::process::Command::new(shim),
+            doctor_tool_command(
+                shim.to_str()
+                    .ok_or_else(|| "shim path is not UTF-8".to_string())?,
+            ),
             DOCTOR_TOOL_TIMEOUT,
             Some(&selected_root),
         );
