@@ -30,19 +30,12 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Fixture JSON normalization now preserves UTF-8 content while converting
-  non-JSON-escape backslashes, preventing mojibake-driven golden drift
-  (#2556).
-
 - Windows LSP refreshes now isolate shared Git subprocesses from the JSON-RPC
   server stdin and terminate timed-out process trees with bounded pipe draining.
   Explicit refreshes therefore return trustworthy results within the ordinary
   compatibility budget instead of hanging on inherited descendant handles
   (#2430).
 
-- `cargo xtask check-traceability` now keeps existing-file `::symbol`
-  references visible as advisory diagnostics without failing the gate. Missing
-  paths and other structural traceability errors remain blocking (#2549).
 - LSP ordinary findings that survive the configured diagnostic profile now
   carry an explicit producer-owned delivery-eligibility signal, so the finite
   diagnostic budget publishes them without weakening gap-ledger, seam, or
