@@ -12050,7 +12050,8 @@ fn seam_code_actions_reject_a_mismatched_evidence_identity() -> Result<(), Strin
 }
 
 #[test]
-fn execute_command_collect_evidence_context_returns_none_for_unknown_seam() -> Result<(), String> {
+fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam()
+-> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -12082,7 +12083,14 @@ fn execute_command_collect_evidence_context_returns_none_for_unknown_seam() -> R
         };
         let result = backend.execute_command(params).await;
         let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        assert!(packet.is_none(), "expected None for unknown seam");
+        let packet = packet.ok_or_else(|| "expected typed stale packet".to_string())?;
+        assert_eq!(packet["status"], "stale");
+        assert_eq!(packet["seam_id"], "unknown-seam");
+        assert_eq!(
+            packet["invalidation_reason"],
+            "the cited seam is absent from the current full-seam evidence"
+        );
+        assert_eq!(packet["recovery_command"], "ripr.refreshDiagnostics");
         Ok(())
     })
 }
