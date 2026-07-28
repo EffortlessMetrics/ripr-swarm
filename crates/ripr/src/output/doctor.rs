@@ -615,6 +615,17 @@ mod tests {
     }
 
     #[test]
+    fn rustc_doctor_probes_apply_the_version_gate() {
+        let (status, evidence) = doctor_tool_check("rustc");
+        assert_eq!(status, DoctorStatus::Pass, "{evidence}");
+        assert!(evidence.starts_with("rustc "), "{evidence}");
+
+        let (isolated_status, isolated_evidence) = doctor_tool_check_isolated("rustc");
+        assert_eq!(isolated_status, DoctorStatus::Pass, "{isolated_evidence}");
+        assert!(isolated_evidence.starts_with("rustc "), "{isolated_evidence}");
+    }
+
+    #[test]
     fn render_text_shows_pass_and_fail_checks() {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(
