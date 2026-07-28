@@ -876,20 +876,18 @@ self-hosted routed-runner closeout.
 
 ## Source-Of-Truth PR Body Scaffold
 
-Use the active goal manifest to draft a PR body for one bounded work item:
+The `cargo xtask pr-body --work-item` command was retired with the `.ripr/goals/`
+scheduler (#1701). Draft PR bodies from the current GitHub issue/spec/plan
+model instead:
 
 ```bash
-cargo xtask pr-body --work-item <id>
+# Reconcile the work item from its issue and linked specs
+gh issue view <issue-number> --json body,title,labels
+# Draft the body from the issue's acceptance criteria and the diff
+cargo xtask pr-summary
 ```
 
-The command writes:
-
-```text
-target/ripr/reports/source-of-truth-pr-body.md
-```
-
-The scaffold links the active goal, work item, proposal/spec/plan references
-when present, acceptance text, non-goals, and proof commands. It deliberately
-leaves support-tier and policy impact checkboxes unchecked because those claims
-must be reviewed from the actual diff and proof, not inferred from active-goal
-metadata.
+The PR body should link the issue, proposal/spec/plan references when present,
+acceptance text, non-goals, and proof commands. Support-tier and policy impact
+checkboxes must be reviewed from the actual diff and proof, not inferred from
+issue metadata.
