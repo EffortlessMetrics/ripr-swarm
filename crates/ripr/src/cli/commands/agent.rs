@@ -526,7 +526,7 @@ mod tests {
             "--root",
             &dir.display().to_string(),
             "--before",
-            &before.to_string_lossy().to_string(),
+            before.to_string_lossy().as_ref(),
             "--after",
             &dir.join("missing-after.json").display().to_string(),
             "--json",
@@ -556,9 +556,9 @@ mod tests {
             "--root",
             &root.display().to_string(),
             "--before",
-            &before.to_string_lossy().to_string(),
+            before.to_string_lossy().as_ref(),
             "--after",
-            &after.to_string_lossy().to_string(),
+            after.to_string_lossy().as_ref(),
             "--json",
         ]));
 
