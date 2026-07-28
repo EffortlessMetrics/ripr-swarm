@@ -78,7 +78,8 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Check(args(&["--format", "xml"]))),
             Err(
-                "unknown format \"xml\"; run `ripr check --help` for supported formats".to_string()
+                "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
+                    .to_string()
             )
         );
         assert_eq!(
@@ -184,7 +185,7 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Diff(args(&["--format", "xml"]))),
-            Err("unknown diff format \"xml\"".to_string())
+            Err("unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string())
         );
         assert_eq!(
             execute(CliCommand::Cache(Vec::new())),

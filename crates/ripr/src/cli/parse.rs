@@ -185,7 +185,8 @@ mod tests {
         assert_eq!(
             parse_format("xml"),
             Err(
-                "unknown format \"xml\"; run `ripr check --help` for supported formats".to_string()
+                "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
+                    .to_string()
             )
         );
     }
