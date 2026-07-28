@@ -2098,7 +2098,7 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert!(!after_snapshot_text.contains("previous repair run"));
 
     let verify_json = root.join("target/ripr/workflow/agent-verify.json");
-    assert!(after_snapshot.is_file());
+    assert!(verify_json.is_file());
     let verify: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(verify_json)?)?;
     assert_eq!(verify["tool"], "ripr");
     let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
