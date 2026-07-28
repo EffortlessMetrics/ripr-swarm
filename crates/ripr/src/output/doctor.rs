@@ -251,7 +251,7 @@ pub(crate) fn evaluate_doctor_core_with_config(root: &Path) -> DoctorCoreEvaluat
         ),
     }
     for tool in DOCTOR_TOOLS {
-        let (status, evidence) = doctor_tool_check(tool);
+        let (status, evidence) = doctor_tool_check_in_root(tool, root);
         report.add_check(&format!("tool_{tool}"), status, Some(evidence));
     }
     // Typed language surface for generated CI (#2072): mirror exactly the
@@ -302,13 +302,36 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_timeout(tool, DOCTOR_TOOL_TIMEOUT)
 }
 
+fn doctor_tool_check_in_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
+    doctor_tool_check_with_timeout_result_in_root(tool, DOCTOR_TOOL_TIMEOUT, root).into_public()
+}
+
 fn doctor_tool_check_with_timeout(tool: &str, timeout: Duration) -> (DoctorStatus, String) {
     doctor_tool_check_with_timeout_result(tool, timeout).into_public()
 }
 
 fn doctor_tool_check_with_timeout_result(tool: &str, timeout: Duration) -> DoctorToolCheckResult {
+    doctor_tool_check_with_timeout_result_in_dir(tool, timeout, None)
+}
+
+fn doctor_tool_check_with_timeout_result_in_root(
+    tool: &str,
+    timeout: Duration,
+    root: &Path,
+) -> DoctorToolCheckResult {
+    doctor_tool_check_with_timeout_result_in_dir(tool, timeout, Some(root))
+}
+
+fn doctor_tool_check_with_timeout_result_in_dir(
+    tool: &str,
+    timeout: Duration,
+    root: Option<&Path>,
+) -> DoctorToolCheckResult {
     let mut command = doctor_tool_command(tool);
     command.arg("--version");
+    if let Some(root) = root {
+        command.current_dir(root);
+    }
     match run_doctor_tool(command, timeout) {
         Ok(output) if output.status.success() => doctor_tool_success(
             tool,
