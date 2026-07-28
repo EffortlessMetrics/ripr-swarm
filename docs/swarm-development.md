@@ -36,15 +36,18 @@ drift. Port, redirect, or close them unless they are release, security, or
 explicit promotion work.
 
 The retired `.ripr/goals` scheduler is not live execution authority. Do not
-continue a closed campaign or infer a successor from chat history. Select work from
-repo-owned evidence in this order:
+continue a closed campaign or infer a successor from chat history. Select work
+from repo-owned evidence in this order:
 
 1. open `ripr-swarm` PRs, reviews, and required checks;
 2. ordinary source-repo PRs that should be ported or redirected;
-3. open issues with explicit ownership and current acceptance criteria;
-4. the PR-local `ImplementationSliceV1` under `.allow/spec-system/slices/`;
-5. accepted RIPR-SPEC requirements and linked proposals, ADRs, or plans;
-6. historical campaign documents only as context, never as current authorization.
+3. open issues with explicit ownership and current acceptance criteria, including
+   their linked accepted RIPR-SPEC requirements, proposals, ADRs, and plans;
+4. historical campaign documents only as context, never as current authorization.
+
+After a PR is selected from live GitHub evidence, consult its matching
+`ImplementationSliceV1` under `.allow/spec-system/slices/` to bound that PR's
+scope. Slice files do not select work or authorize execution.
 
 If no aligned work is available, leave the trunk clean. Record new routed-runner
 proof on #24 or #34 only when there is fresh evidence; otherwise do not create a
