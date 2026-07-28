@@ -10,6 +10,7 @@ mod execute;
 mod help;
 mod parse;
 mod rerun;
+mod suggest;
 
 pub fn run(args: Vec<String>) -> Result<(), String> {
     execute::execute(parse::parse_args(args)?)
@@ -35,7 +36,7 @@ mod tests {
     fn run_dispatches_check_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "check", "--format", "xml"])),
-            Err("unknown format \"xml\"; expected `human` or `json`".to_string())
+            Err("unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json.".to_string())
         );
     }
 
@@ -73,7 +74,7 @@ mod tests {
         );
         assert_eq!(
             run(args(&["ripr", "lsp", "--bad"])),
-            Err("unknown lsp argument \"--bad\"".to_string())
+            Err("unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string())
         );
         assert_eq!(
             run(args(&["ripr", "agent", "brief", "--diff", "change.diff"])),

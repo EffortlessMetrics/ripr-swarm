@@ -184,7 +184,7 @@ mod tests {
         );
         assert_eq!(
             parse_format("xml"),
-            Err("unknown format \"xml\"; expected `human` or `json`".to_string())
+            Err("unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json.".to_string())
         );
     }
 

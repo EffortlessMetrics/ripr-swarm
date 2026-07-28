@@ -77,7 +77,7 @@ mod tests {
     fn execute_dispatches_subcommand_args_without_reparsing_argv() {
         assert_eq!(
             execute(CliCommand::Check(args(&["--format", "xml"]))),
-            Err("unknown format \"xml\"; expected `human` or `json`".to_string())
+            Err("unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json.".to_string())
         );
         assert_eq!(
             execute(CliCommand::Doctor(args(&["--root"]))),
@@ -202,7 +202,7 @@ mod tests {
         );
         assert_eq!(
             execute(CliCommand::Lsp(args(&["--bad"]))),
-            Err("unknown lsp argument \"--bad\"".to_string())
+            Err("unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string())
         );
     }
 }

@@ -30,6 +30,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Unrecognized CLI flags now suggest the nearest documented flag and point at
+  the command's own help, matching what unknown *commands* already did. A
+  mistyped flag is the more common slip, but it produced a bare
+  `unknown check argument "--forma"` with no suggestion and nowhere to go.
+  It now reads
+  ``unknown check argument "--forma". Did you mean `--format`? Run `ripr check --help`.``
+  Candidate flags are read out of each command's help text, so a suggestion can
+  never name a flag that `--help` does not document, and adding a flag to help
+  makes it suggestible with no second edit. Applied across 48 argument-parsing
+  sites covering 46 command paths (#2578).
+
+- An unrecognized `--format` value now lists the accepted values instead of
+  reporting only `unknown format "yaml"`, which left the reader to find more
+  than twenty valid spellings in `--help` (#2578).
+
 - Default `ripr check --format human` output no longer prints a `Hidden:`
   heading over a literal `0 lower-priority finding(s) omitted from default
   human output.` line when nothing was actually omitted. That block claimed a
