@@ -63,7 +63,7 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
 /// `  --format FORMAT    Output format. ...`. Usage lines are indented too but
 /// bracket their flags (`[--diff PATH]`), so requiring the token to start the
 /// trimmed line keeps this to the option list.
-fn known_flags(command: &str, help_text: &str) -> Vec<&str> {
+fn known_flags<'a>(command: &str, help_text: &'a str) -> Vec<&'a str> {
     let section = option_section(command);
     let mut in_section = section.is_none();
     let mut flags = Vec::new();
