@@ -178,7 +178,7 @@ use super::{
     suspicious_runtime_file_names, targeted_test_outcome, targeted_test_outcome_report_json,
     targeted_test_outcome_report_markdown, test_efficiency_entry, test_efficiency_report_json,
     test_efficiency_report_markdown, test_oracle_report_json, test_oracle_report_markdown,
-    test_oracle_tests_in_text, unknown_command_message,
+    test_oracle_tests_in_text, traceability_recommended_fixes, unknown_command_message,
     user_surface_projection_required_run_status_violations,
     validate_actionable_gap_outcomes_fixture_case, validate_actionable_gap_outcomes_fixture_corpus,
     validate_local_context_allowlist, validate_swarm_plan_packet_fixture_case,
@@ -25207,6 +25207,18 @@ fn specs_command_rejects_missing_or_unknown_subcommand() {
     };
     assert!(unknown.contains("unknown specs command"));
     assert!(unknown.contains("cargo xtask specs next"));
+}
+
+#[test]
+fn traceability_recommended_fixes_explain_spec_allocation_and_format() {
+    let fixes = traceability_recommended_fixes();
+    assert!(
+        fixes
+            .iter()
+            .any(|fix| fix.contains("cargo xtask specs next"))
+    );
+    assert!(fixes.iter().any(|fix| fix.contains("exactly 4 digits")));
+    assert!(fixes.iter().any(|fix| fix.contains("docs/specs/README.md")));
 }
 
 #[test]
