@@ -184,8 +184,8 @@ use super::{
     validate_swarm_plan_packet_fixture_corpus, vscode_compile_command, vscode_extension_dir,
     vscode_package_command, vscode_package_version, vscode_test_e2e_command,
     windows_absolute_path_tokens, workflow_bare_self_hosted_violations,
-    workflow_runtime_violations, worktree, worktree_doctor_findings,
-    write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
+    workflow_review_thread_mutation_violations, workflow_runtime_violations, worktree,
+    worktree_doctor_findings, write_badge_artifacts_after_build, write_badge_artifacts_from_diff,
     write_evidence_health_report_with_runner, write_evidence_health_report_with_runners,
     write_lane1_evidence_audit_repo_exposure_with_runner, write_repo_exposure_latency_report,
     write_repo_exposure_summary_report_with_runner,
@@ -8507,6 +8507,38 @@ jobs:
     assert!(violations.iter().any(|violation| {
         violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
     }));
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_rejects_graphql_resolver() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: gh api graphql -f query='mutation { resolveReviewThread(input: {}) { thread { isResolved } } }'
+"#;
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", workflow);
+
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("resolvereviewthread"));
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_accepts_adjudication_guidance() {
+    let workflow = r#"
+name: Review guidance
+jobs:
+  review:
+    steps:
+      - run: echo "Reply with evidence before resolving review threads"
+"#;
+
+    assert!(
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", workflow,)
+            .is_empty()
+    );
 }
 
 #[test]

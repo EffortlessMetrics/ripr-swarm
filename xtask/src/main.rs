@@ -4385,6 +4385,10 @@ fn check_workflows_impl() -> Result<(), String> {
             &text,
             &runtime_allowlist,
         ));
+        violations.extend(workflow_review_thread_mutation_violations(
+            &normalized,
+            &text,
+        ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
@@ -4435,6 +4439,31 @@ fn check_workflows_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Workflow automation must not resolve review threads without adjudication.
+///
+/// A workflow-side `resolveReviewThread` mutation turns provider failure or an
+/// unreviewed finding into an apparently resolved conversation. Review-thread
+/// resolution remains an explicit, evidence-backed operator action; the policy
+/// rejects common GraphQL/name variants so a renamed blind resolver cannot
+/// re-enter unnoticed.
+fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec<String> {
+    let lower = text.to_ascii_lowercase();
+    let forbidden = [
+        "resolvereviewthread",
+        "resolve_review_thread",
+        "resolve review thread",
+    ];
+    forbidden
+        .iter()
+        .filter(|token| lower.contains(**token))
+        .map(|token| {
+            format!(
+                "{path}: workflow contains `{token}`; review-thread resolution requires explicit adjudication outside automated workflow mutation"
+            )
+        })
+        .collect()
 }
 
 /// Flag a `run:` written as a plain YAML scalar that contains ` #`.
