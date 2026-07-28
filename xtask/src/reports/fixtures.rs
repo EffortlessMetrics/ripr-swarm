@@ -1520,9 +1520,22 @@ fn non_empty_reason(value: &str) -> Result<String, String> {
     let reason = value.trim();
     if reason.is_empty() {
         Err("--reason must not be empty".to_string())
+    } else if !reason_contains_spec_id(reason) {
+        Err("--reason must cite a spec using RIPR-SPEC-NNNN (for example, RIPR-SPEC-0001: updated output shape)".to_string())
     } else {
         Ok(reason.to_string())
     }
+}
+
+fn reason_contains_spec_id(reason: &str) -> bool {
+    reason.split_whitespace().any(|word| {
+        let token = word.trim_matches(|character: char| {
+            !character.is_ascii_alphanumeric() && character != '-'
+        });
+        token.starts_with("RIPR-SPEC-")
+            && token.len() == "RIPR-SPEC-0000".len()
+            && token[10..].bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 pub(crate) use self::fixtures_impl as fixtures;
