@@ -74,7 +74,15 @@ fn check_dependency_suppression_expiry_text(text: &str, today: &str) -> Result<(
                 index + 1
             ));
         };
-        let expiry = trimmed[marker_start + EXPIRY_MARKER.len()..].trim();
+        let Some(expiry) = trimmed
+            .get(marker_start + EXPIRY_MARKER.len()..)
+            .map(str::trim)
+        else {
+            return Err(format!(
+                "deny.toml:{}: advisory {id} has an invalid expiry",
+                index + 1
+            ));
+        };
         if !is_iso_date(expiry) {
             return Err(format!(
                 "deny.toml:{}: advisory {id} has invalid expiry `{expiry}`",
