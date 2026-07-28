@@ -1454,12 +1454,23 @@ export class RiprClientController {
         });
         return;
       case 'succeeded':
-        if (status.run_status === 'stale') {
+        if (status.run_status === 'stale' || this.dirtyRiprDocuments.size > 0) {
+          const dirtyDetail = this.dirtyRiprDocuments.size > 0
+            ? [
+              analysisStatusDetail(status),
+              'Current diagnostics describe the last saved workspace state.',
+              `Unsaved routed files: ${Array.from(this.dirtyRiprDocuments).join(', ')}`
+            ].join('\n')
+            : analysisStatusDetail(status);
           this.updateStatus({
             kind: 'stale',
-            summary: 'ripr analysis completed with stale or limited evidence.',
-            detail: analysisStatusDetail(status),
-            nextStep: `Run ${retry} after resolving the reported limitation.`
+            summary: this.dirtyRiprDocuments.size > 0
+              ? 'ripr analysis completed, but unsaved routed-file changes remain.'
+              : 'ripr analysis completed with stale or limited evidence.',
+            detail: dirtyDetail,
+            nextStep: this.dirtyRiprDocuments.size > 0
+              ? 'Save the file, then wait for ripr to refresh saved-workspace diagnostics.'
+              : `Run ${retry} after resolving the reported limitation.`
           });
         } else {
           this.updateStatus({

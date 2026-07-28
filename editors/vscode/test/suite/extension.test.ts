@@ -1182,6 +1182,31 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('typed refresh completion preserves stale status for dirty routed files', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+      context.controller.markWorkspaceStale(document);
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'completed',
+        attempt_id: 'dirty-refresh',
+        snapshot_id: 'snapshot:dirty-refresh'
+      });
+
+      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(String(context.status.tooltip).includes('unsaved routed-file changes remain'));
+      assert.ok(String(context.status.tooltip).includes('Current diagnostics describe the last saved workspace state.'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar projects existing first useful action report', async () => {
     const context = createControllerTestContext({
       firstActionJson: JSON.stringify({
