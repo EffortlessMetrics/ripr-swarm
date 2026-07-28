@@ -148,10 +148,14 @@ fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent packet")?;
 
+    let rendered = render_agent_packet(&options)?;
+    print!("{rendered}");
+    Ok(())
+}
+
+fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
-        let rendered = render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id)?;
-        print!("{rendered}");
-        return Ok(());
+        return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id);
     }
 
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
@@ -170,9 +174,9 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
         return Err(format!("agent packet seam_id {seam_id} {reason}"));
     }
 
-    let rendered = output::agent_seam_packets::render_agent_seam_packet_json(entry);
-    print!("{rendered}");
-    Ok(())
+    Ok(output::agent_seam_packets::render_agent_seam_packet_json(
+        entry,
+    ))
 }
 
 fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
@@ -357,13 +361,16 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
             write_agent_repo_exposure_snapshot(root, &before)?;
 
-            run_agent_packet(AgentPacketOptions {
+            let packet = render_agent_packet(&AgentPacketOptions {
                 root: root.clone(),
                 seam_id: Some(seam_id.clone()),
                 gap_ledger: None,
                 gap_id: None,
                 json: true,
             })?;
+            let packet_path = root.join("target/ripr/workflow/agent-packet.json");
+            write_text_file(&packet_path, &packet)?;
+            print!("{packet}");
 
             eprintln!("ripr: before phase complete. Next:");
             eprintln!("  1. Edit the source code to add or strengthen the discriminator.");
@@ -391,9 +398,10 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                     before.display()
                 ));
             }
-            if !after.exists() {
-                write_agent_repo_exposure_snapshot(root, &after)?;
-            }
+            // This is command-owned evidence. Always regenerate it so a
+            // repeated repair cannot compare the new before snapshot with a
+            // stale after artifact from an earlier run.
+            write_agent_repo_exposure_snapshot(root, &after)?;
 
             let verify_options = AgentVerifyOptions {
                 root: root.clone(),
@@ -414,7 +422,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 test_changed: None,
                 commands_run: Vec::new(),
                 json: true,
-                out: None,
+                out: Some(root.join("target/ripr/reports/agent-receipt.json")),
             })?;
 
             run_agent_status(AgentStatusOptions {
@@ -445,19 +453,41 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
     }
-    let file =
-        File::create(path).map_err(|err| format!("create {} failed: {err}", path.display()))?;
-    let mut writer = BufWriter::new(file);
-    output::repo_exposure::write_repo_exposure_json_with_context(
-        &classified,
-        limit_info.as_ref(),
-        ts_guidance.as_ref(),
-        &context,
-        &mut writer,
-    )?;
-    writer
-        .flush()
-        .map_err(|err| format!("flush {} failed: {err}", path.display()))?;
+    let temporary_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    let write_result = (|| -> Result<(), String> {
+        let file = File::create(&temporary_path)
+            .map_err(|err| format!("create {} failed: {err}", temporary_path.display()))?;
+        let mut writer = BufWriter::new(file);
+        output::repo_exposure::write_repo_exposure_json_with_context(
+            &classified,
+            limit_info.as_ref(),
+            ts_guidance.as_ref(),
+            &context,
+            &mut writer,
+        )?;
+        writer
+            .flush()
+            .map_err(|err| format!("flush {} failed: {err}", temporary_path.display()))?;
+        Ok(())
+    })();
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(err);
+    }
+
+    // Publish only a complete snapshot. Unix rename replaces atomically; on
+    // Windows the existing command-owned target must be unlinked first.
+    #[cfg(windows)]
+    if path.exists()
+        && let Err(err) = std::fs::remove_file(path)
+    {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(format!("remove {} failed: {err}", path.display()));
+    }
+    if let Err(err) = std::fs::rename(&temporary_path, path) {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(format!("publish {} failed: {err}", path.display()));
+    }
     Ok(())
 }
 

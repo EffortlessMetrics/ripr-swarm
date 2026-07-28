@@ -2071,6 +2071,17 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
 
     let before_snapshot = root.join("target/ripr/workflow/before.repo-exposure.json");
     assert!(before_snapshot.is_file());
+    let packet_path = root.join("target/ripr/workflow/agent-packet.json");
+    let packet: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&packet_path)?)?;
+    assert_eq!(packet["packets_total"], 1);
+    assert_eq!(packet["packets"][0]["seam_id"], "67fc764ba37d77bd");
+
+    let after_snapshot = root.join("target/ripr/workflow/after.repo-exposure.json");
+    let stale_after = serde_json::json!({
+        "stale_marker": "previous repair run",
+        "source": std::fs::read_to_string(&before_snapshot)?,
+    });
+    std::fs::write(&after_snapshot, serde_json::to_vec(&stale_after)?)?;
 
     let after = run_ripr(&[
         "agent",
@@ -2083,12 +2094,17 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "after",
     ]);
     assert_success(&after);
+    let after_snapshot_text = std::fs::read_to_string(&after_snapshot)?;
+    assert!(!after_snapshot_text.contains("previous repair run"));
 
-    let after_snapshot = root.join("target/ripr/workflow/after.repo-exposure.json");
     let verify_json = root.join("target/ripr/workflow/agent-verify.json");
     assert!(after_snapshot.is_file());
     let verify: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(verify_json)?)?;
     assert_eq!(verify["tool"], "ripr");
+    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+    let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt_path)?)?;
+    assert_eq!(receipt["provenance"]["seam_id"], "67fc764ba37d77bd");
+    assert!(String::from_utf8_lossy(&after.stdout).contains("\"status\": \"complete\""));
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
 
     std::fs::remove_dir_all(root)?;
