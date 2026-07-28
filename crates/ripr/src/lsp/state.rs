@@ -651,6 +651,13 @@ impl AnalysisSnapshot {
         })
     }
 
+    pub(super) fn evidence_identities_match(
+        left: Option<&serde_json::Value>,
+        right: Option<&serde_json::Value>,
+    ) -> bool {
+        left == right
+    }
+
     pub(super) fn is_consistent(&self) -> bool {
         let diagnostic_count = self
             .diagnostics_by_uri

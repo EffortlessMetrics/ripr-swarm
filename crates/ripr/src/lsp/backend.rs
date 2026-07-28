@@ -423,7 +423,8 @@ impl Backend {
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
-                diagnostics.snapshot.refresh.snapshot_id = Some(format!("snapshot:{generation}"));
+                diagnostics.snapshot.refresh.snapshot_id =
+                    Some(snapshot_id_for_generation(generation));
                 diagnostics
                     .snapshot
                     .refresh
@@ -1193,6 +1194,11 @@ impl Backend {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn reset_analysis_health_for_test(&self) {
+        self.reset_health_for_input_change();
+    }
+
     fn effective_health_for_snapshot(
         &self,
         mut health: AnalysisHealth,
@@ -1370,7 +1376,7 @@ impl Backend {
             RefreshAttemptOutcome::Published => {
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
-                let snapshot_id = format!("snapshot:{}", request.generation);
+                let snapshot_id = snapshot_id_for_generation(request.generation);
                 health.snapshot_id = Some(snapshot_id.clone());
                 health.last_success_snapshot_id = Some(snapshot_id);
                 health.last_success_at =
@@ -2898,6 +2904,10 @@ fn diagnostics_by_uri_from_batches(batches: &[DiagnosticBatch]) -> BTreeMap<Uri,
         .collect()
 }
 
+fn snapshot_id_for_generation(generation: u64) -> String {
+    format!("snapshot:{generation}")
+}
+
 fn bind_seam_evidence_identity(snapshot: &mut AnalysisSnapshot, batches: &mut [DiagnosticBatch]) {
     let evidence_identity = snapshot.evidence_identity();
     for diagnostics in snapshot.diagnostics_by_uri.values_mut() {
@@ -4078,16 +4088,17 @@ impl Backend {
         }
         let cited_identity = args.get("evidence_identity");
         if let Some(cited_identity) = cited_identity {
-            if cited_identity != &snapshot.evidence_identity() {
+            if !AnalysisSnapshot::evidence_identities_match(
+                Some(cited_identity),
+                Some(&snapshot.evidence_identity()),
+            ) {
                 return Some("the cited seam evidence belongs to an older snapshot");
             }
         } else if !legacy_test_snapshot {
             return Some("the cited seam action has no evidence identity");
         }
         let seam_id = args.get("seam_id").and_then(|v| v.as_str());
-        if seam_id.is_some_and(|id| snapshot.classified_seam_by_id(id).is_none())
-            && cited_identity.is_some()
-        {
+        if seam_id.is_some_and(|id| snapshot.classified_seam_by_id(id).is_none()) {
             return Some("the cited seam is absent from the current full-seam evidence");
         }
         None

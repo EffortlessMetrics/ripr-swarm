@@ -4575,6 +4575,28 @@ fn code_action_resolve_stale_input_identity_yields_disabled_stale_snapshot() -> 
 }
 
 #[test]
+fn code_action_resolve_stale_seam_snapshot_yields_disabled_stale_snapshot() -> Result<(), String> {
+    let vscode = vscode_client_features()?;
+    let (seam_params, mut old_snapshot) = seam_code_action_request()?;
+    old_snapshot.refresh.snapshot_id = Some("snapshot:old".to_string());
+    let actions = code_action_response(&seam_params, Some(&old_snapshot), &vscode);
+    let action = first_enabled_action(&actions)?;
+
+    let mut current_snapshot = old_snapshot.clone();
+    current_snapshot.refresh.snapshot_id = Some("snapshot:new".to_string());
+    let resolved = resolve_action(action, Some(&current_snapshot), &vscode)
+        .map_err(|err| format!("stale seam action was rejected instead of disabled: {err}"))?;
+    assert_disabled_action_invariants(&resolved)?;
+    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
+        return Err(format!(
+            "expected stale_snapshot, got {:?}",
+            disabled_reason_of(&resolved)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn code_action_resolve_missing_addressed_artifact_yields_disabled_stale_snapshot()
 -> Result<(), String> {
     // #1751: the current snapshot no longer carries the seam the action
@@ -11854,6 +11876,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
             .map_err(|err| format!("current seam command failed: {err}"))?
             .ok_or_else(|| "expected current seam packet".to_string())?;
         assert_eq!(current_packet["packets_total"], 1);
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
 
         for cited_identity in [
             serde_json::json!({"snapshot_id": "snapshot:older"}),
@@ -11880,6 +11903,21 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
                 "the cited seam evidence belongs to an older snapshot"
             );
         }
+
+        let stale_without_identity = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_CONTEXT_COMMAND.to_string(),
+                arguments: vec![serde_json::json!({"seam_id": seam_id.clone()})],
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .map_err(|err| format!("unbound seam command failed: {err}"))?
+            .ok_or_else(|| "expected typed stale result without evidence identity".to_string())?;
+        assert_eq!(stale_without_identity["status"], "stale");
+        assert_eq!(
+            stale_without_identity["invalidation_reason"],
+            "the cited seam action has no evidence identity"
+        );
 
         let mut deferred = sample_workspace_diagnostics(
             PathBuf::from("/workspace"),
@@ -11931,6 +11969,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         }
 
         backend.clear_all_diagnostic_uris();
+        backend.reset_analysis_health_for_test();
         let stale_without_snapshot = backend
             .execute_command(ExecuteCommandParams {
                 command: COLLECT_CONTEXT_COMMAND.to_string(),

@@ -212,6 +212,7 @@ fn action_data_payload(
         required_client_capability: required_client_capability(command_id),
         diagnostic,
         input_identity: snapshot.and_then(AnalysisSnapshot::input_identity_id),
+        evidence_identity: snapshot.map(AnalysisSnapshot::evidence_identity),
         disabled_reason: None,
     })
 }
@@ -295,6 +296,19 @@ pub(super) fn resolve_action(
         if let Some(payload_identity) = parsed.input_identity.as_deref()
             && Some(payload_identity) != snapshot.input_identity_id().as_deref()
         {
+            disable_action_in_place(&mut action, ActionDisabledReason::StaleSnapshot);
+            return Ok(action);
+        }
+        if parsed.seam_id.is_some()
+            && snapshot.refresh.snapshot_id.is_some()
+            && !AnalysisSnapshot::evidence_identities_match(
+                parsed.evidence_identity.as_ref(),
+                Some(&snapshot.evidence_identity()),
+            )
+        {
+            // A cached action can outlive an otherwise identical full refresh.
+            // The command target already carries this identity; keep resolve
+            // fail-closed too so an old enabled action cannot execute.
             disable_action_in_place(&mut action, ActionDisabledReason::StaleSnapshot);
             return Ok(action);
         }
@@ -405,6 +419,7 @@ fn disabled_action(
             required_client_capability: required_client_capability(command_id),
             diagnostic: Some(diagnostic),
             input_identity: snapshot.and_then(AnalysisSnapshot::input_identity_id),
+            evidence_identity: snapshot.map(AnalysisSnapshot::evidence_identity),
             disabled_reason: Some(reason),
         })),
         ..CodeAction::default()
@@ -491,14 +506,10 @@ fn snapshot_has_current_seam_diagnostic(
 }
 
 fn evidence_identities_match(left: &Value, right: &Value) -> bool {
-    match (
+    AnalysisSnapshot::evidence_identities_match(
         left.get("evidence_identity"),
         right.get("evidence_identity"),
-    ) {
-        (Some(left), Some(right)) => left == right,
-        (None, None) => true,
-        _ => false,
-    }
+    )
 }
 
 fn gap_action_context<'a>(
