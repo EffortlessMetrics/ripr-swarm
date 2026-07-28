@@ -34,6 +34,12 @@
 
 **ripr shows your agents where tests are needed and which tests are too weak to trust — without running mutation testing.**
 
+## Prerequisites
+
+- **Rust >= 1.95** (2024 edition). Check with `rustc --version`; update with `rustup update stable`.
+- **Git** on your `PATH`. ripr analyzes diffs against a base ref.
+- Run inside a **Git repository** with an `origin` remote. The default base ref is `origin/main`.
+
 ## The first useful run
 
 The agent loop is a simple three-step flow:
