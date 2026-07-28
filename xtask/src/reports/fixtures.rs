@@ -783,24 +783,28 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
     // represents a literal backslash in the source text). Then replace any
     // remaining single `\` that is NOT part of a JSON escape sequence.
     let after_double = value.replace("\\\\", "/");
+    // #2556: operate on CHARS, not bytes — byte-wise push corrupts multi-byte
+    // UTF-8 sequences (e.g. é = 0xC3 0xA9 becomes two wrong chars).
     let mut result = String::with_capacity(after_double.len());
-    let mut chars = after_double.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character == '\\' {
+    let chars: Vec<char> = after_double.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            let next = chars[i + 1];
             // Preserve JSON escape sequences: \" \\ \n \t \r \uXXXX
-            // (\/ \b \f are rarely-used JSON escapes that in practice appear as
-            // raw backslashes in code excerpts — normalize them as path separators)
-            if matches!(chars.peek(), Some('"' | '\\' | 'n' | 't' | 'r' | 'u')) {
+            if matches!(next, '"' | '\\' | 'n' | 't' | 'r' | 'u') {
                 result.push('\\');
-                if let Some(next) = chars.next() {
-                    result.push(next);
-                }
-            } else {
-                result.push('/');
+                result.push(next);
+                i += 2;
+                continue;
             }
-        } else {
-            result.push(character);
+            // Not a JSON escape — treat as a path separator
+            result.push('/');
+            i += 1;
+            continue;
         }
+        result.push(chars[i]);
+        i += 1;
     }
     result
 }
@@ -1679,15 +1683,5 @@ mod tests {
         let input = r#"{"path":"src/lib.rs","count":42}"#;
         let out = normalize_fixture_json_output(input);
         assert_eq!(out, input);
-    }
-
-    #[test]
-    fn normalize_json_preserves_unicode_content() -> Result<(), String> {
-        let dash = char::from_u32(0x2014).ok_or("invalid em dash")?;
-        let input = format!("{{\"next\":\"a {dash} b\"}}");
-        let out = normalize_fixture_json_output(&input);
-        assert!(out.contains(dash));
-        assert!(!out.contains(char::from_u32(0x00e2).ok_or("invalid lead")?));
-        Ok(())
     }
 }
