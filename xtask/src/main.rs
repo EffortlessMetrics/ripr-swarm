@@ -3797,6 +3797,14 @@ pub(crate) fn finish_policy_report(
     spec: PolicyReportSpec<'_>,
     violations: &[String],
 ) -> Result<(), String> {
+    finish_policy_report_with_advisories(spec, violations, &[])
+}
+
+fn finish_policy_report_with_advisories(
+    spec: PolicyReportSpec<'_>,
+    violations: &[String],
+    advisories: &[String],
+) -> Result<(), String> {
     let status = if violations.is_empty() {
         "pass"
     } else {
@@ -3814,6 +3822,15 @@ pub(crate) fn finish_policy_report(
         for violation in violations {
             body.push_str("```text\n");
             body.push_str(violation);
+            body.push_str("\n```\n\n");
+        }
+    }
+
+    if !advisories.is_empty() {
+        body.push_str("## Advisories\n\n");
+        for advisory in advisories {
+            body.push_str("```text\n");
+            body.push_str(advisory);
             body.push_str("\n```\n\n");
         }
     }
@@ -5171,9 +5188,10 @@ fn root_relative_path(root: &Path, path: &Path) -> String {
 fn check_traceability() -> Result<(), String> {
     let manifest = Path::new(".ripr/traceability.toml");
     let mut violations = Vec::new();
+    let mut advisories = Vec::new();
     if !manifest.exists() {
         violations.push(".ripr/traceability.toml is missing".to_string());
-        return finish_traceability_report(&violations);
+        return finish_traceability_report(&violations, &advisories);
     }
 
     let (behaviors, parse_violations) = parse_traceability_manifest(manifest)?;
@@ -5185,7 +5203,12 @@ fn check_traceability() -> Result<(), String> {
     let specs = collect_spec_statuses()?;
     let mut behavior_ids = BTreeSet::new();
     for behavior in &behaviors {
-        validate_trace_behavior(behavior, &mut behavior_ids, &mut violations)?;
+        validate_trace_behavior(
+            behavior,
+            &mut behavior_ids,
+            &mut violations,
+            &mut advisories,
+        )?;
     }
 
     for spec_id in specs.keys() {
@@ -5197,11 +5220,11 @@ fn check_traceability() -> Result<(), String> {
     }
 
     validate_fixture_spec_references(&specs, &mut violations)?;
-    finish_traceability_report(&violations)
+    finish_traceability_report(&violations, &advisories)
 }
 
-fn finish_traceability_report(violations: &[String]) -> Result<(), String> {
-    finish_policy_report(
+fn finish_traceability_report(violations: &[String], advisories: &[String]) -> Result<(), String> {
+    finish_policy_report_with_advisories(
         PolicyReportSpec {
             report_file: "traceability.md",
             check: "check-traceability",
@@ -5217,6 +5240,7 @@ fn finish_traceability_report(violations: &[String]) -> Result<(), String> {
             exception_template: None,
         },
         violations,
+        advisories,
     )
 }
 
@@ -5224,6 +5248,7 @@ fn validate_trace_behavior(
     behavior: &TraceBehavior,
     behavior_ids: &mut BTreeSet<String>,
     violations: &mut Vec<String>,
+    advisories: &mut Vec<String>,
 ) -> Result<(), String> {
     let Some(id) = behavior.id.as_ref() else {
         violations.push(format!(
@@ -5257,10 +5282,10 @@ fn validate_trace_behavior(
         }
     };
 
-    validate_trace_paths(id, "tests", &behavior.tests, violations);
-    validate_trace_paths(id, "fixtures", &behavior.fixtures, violations);
-    validate_trace_paths(id, "code", &behavior.code, violations);
-    validate_trace_paths(id, "outputs", &behavior.outputs, violations);
+    validate_trace_paths(id, "tests", &behavior.tests, violations, advisories);
+    validate_trace_paths(id, "fixtures", &behavior.fixtures, violations, advisories);
+    validate_trace_paths(id, "code", &behavior.code, violations, advisories);
+    validate_trace_paths(id, "outputs", &behavior.outputs, violations, advisories);
 
     if behavior.metrics.is_empty() {
         violations.push(format!("{id} has no metrics"));
@@ -5311,7 +5336,13 @@ fn validate_behavior_spec_path(
     }
 }
 
-fn validate_trace_paths(id: &str, field: &str, values: &[String], violations: &mut Vec<String>) {
+fn validate_trace_paths(
+    id: &str,
+    field: &str,
+    values: &[String],
+    violations: &mut Vec<String>,
+    advisories: &mut Vec<String>,
+) {
     for value in values {
         let (path_text, suffix) = split_trace_reference(value);
         if path_text.trim().is_empty() {
@@ -5331,7 +5362,7 @@ fn validate_trace_paths(id: &str, field: &str, values: &[String], violations: &m
         if let Some(suffix) = suffix
             && !suffix.trim().is_empty()
         {
-            violations.push(format!(
+            advisories.push(format!(
                 "{id} `{field}` symbol suffix `{suffix}` is not verified by the structural checker \
                  (file `{path_text}` exists; symbol resolution is a planned cargo-proof provider, see #2345)"
             ));
