@@ -53,15 +53,7 @@ fn check_dependency_suppression_expiry_text(text: &str, today: &str) -> Result<(
                 index + 1
             ));
         };
-        let expiry = trimmed[marker_start + EXPIRY_MARKER.len()..]
-            .trim()
-            .get(..10)
-            .ok_or_else(|| {
-                format!(
-                    "deny.toml:{}: advisory {id} has an invalid expiry",
-                    index + 1
-                )
-            })?;
+        let expiry = trimmed[marker_start + EXPIRY_MARKER.len()..].trim();
         if !is_iso_date(expiry) {
             return Err(format!(
                 "deny.toml:{}: advisory {id} has invalid expiry `{expiry}`",
@@ -87,13 +79,29 @@ fn is_iso_date(value: &str) -> bool {
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
         return false;
     }
+    let Some(year) = parse_digits(bytes, 0, 4) else {
+        return false;
+    };
     let Some(month) = parse_digits(bytes, 5, 7) else {
         return false;
     };
     let Some(day) = parse_digits(bytes, 8, 10) else {
         return false;
     };
-    parse_digits(bytes, 0, 4).is_some() && (1..=12).contains(&month) && (1..=31).contains(&day)
+    if year == 0 || !(1..=12).contains(&month) {
+        return false;
+    }
+    let days_in_month = match month {
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    (1..=days_in_month).contains(&day)
+}
+
+fn is_leap_year(year: u16) -> bool {
+    year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100))
 }
 
 fn parse_digits(bytes: &[u8], start: usize, end: usize) -> Option<u16> {
@@ -192,6 +200,38 @@ mod tests {
     #[test]
     fn rejects_a_short_expiry_date() {
         let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-07\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("invalid expiry"))
+        );
+    }
+
+    #[test]
+    fn rejects_a_calendar_invalid_expiry_date() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-02-29\n]\n";
+        let result = check_dependency_suppression_expiry_text(text, "2026-01-01");
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("invalid expiry"))
+        );
+    }
+
+    #[test]
+    fn accepts_a_leap_year_expiry_date() {
+        let text = "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2028-02-29\n]\n";
+        assert!(matches!(
+            check_dependency_suppression_expiry_text(text, "2026-01-01"),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    fn rejects_expiry_with_trailing_text() {
+        let text =
+            "[advisories]\nignore = [\n  \"RUSTSEC-2025-0001\", # expires: 2026-10-01 review\n]\n";
         let result = check_dependency_suppression_expiry_text(text, "2026-07-28");
         assert!(
             result
