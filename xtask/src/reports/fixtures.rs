@@ -12,8 +12,9 @@
 use crate::no_panic::contains_word;
 use crate::run::{run, run_output_owned};
 use crate::{
-    collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
-    normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
+    collect_pr_changes, forbidden_static_terms, has_markdown_heading, is_spec_id, json_escape,
+    markdown_cell, normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array,
+    write_report,
 };
 use rayon::prelude::*;
 use std::collections::BTreeSet;
@@ -1520,6 +1521,13 @@ fn non_empty_reason(value: &str) -> Result<String, String> {
     let reason = value.trim();
     if reason.is_empty() {
         Err("--reason must not be empty".to_string())
+    } else if !reason
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-'))
+        .any(is_spec_id)
+    {
+        Err(format!(
+            "--reason must cite a valid RIPR-SPEC-NNNN id (e.g. RIPR-SPEC-0001: ...); got: {reason:?}"
+        ))
     } else {
         Ok(reason.to_string())
     }

@@ -10252,11 +10252,30 @@ fn json_string_values_for_key_reads_multiline_arrays() {
 
 #[test]
 fn parse_reason_accepts_flag_forms() {
-    let spaced = vec!["--reason".to_string(), "intentional update".to_string()];
-    let equals = vec!["--reason=intentional update".to_string()];
+    let spaced = vec![
+        "--reason".to_string(),
+        "RIPR-SPEC-0001: intentional update".to_string(),
+    ];
+    let equals = vec!["--reason=RIPR-SPEC-0001: intentional update".to_string()];
 
-    assert_eq!(parse_reason(&spaced), Ok("intentional update".to_string()));
-    assert_eq!(parse_reason(&equals), Ok("intentional update".to_string()));
+    assert_eq!(
+        parse_reason(&spaced),
+        Ok("RIPR-SPEC-0001: intentional update".to_string())
+    );
+    assert_eq!(
+        parse_reason(&equals),
+        Ok("RIPR-SPEC-0001: intentional update".to_string())
+    );
+    let weak = parse_reason(&["--reason".to_string(), "x".to_string()])
+        .expect_err("weak reasons must name the changed spec");
+    assert!(weak.contains("RIPR-SPEC-NNNN"));
+    assert!(
+        parse_reason(&[
+            "--reason".to_string(),
+            "RIPR-SPEC-001: malformed id".to_string(),
+        ])
+        .is_err()
+    );
     parse_reason(&[]).expect_err("empty args should fail to produce a reason");
 }
 
