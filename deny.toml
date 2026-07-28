@@ -16,8 +16,9 @@ targets = [
 
 [advisories]
 yanked = "deny"
-# cargo-deny 0.18.9 does not support per-entry `until` fields. Keep expiry
-# metadata in comments and enforce it with `cargo xtask check-dependencies`.
+# cargo-deny advisory ignore entries accept IDs or `{ id, reason }` metadata,
+# but reject per-entry `until` fields (verified with cargo-deny 0.19.0). Keep
+# expiry metadata in comments and enforce it with `cargo xtask check-dependencies`.
 ignore = [
   # The `rust-unic` Unicode crate family is declared unmaintained
   # (umbrella announcement: RUSTSEC-2025-0098). Each crate has its
