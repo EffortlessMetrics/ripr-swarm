@@ -54,7 +54,18 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
         return None;
     }
     let help_text = help::help_text_for(command)?;
-    closest(arg, known_flags(command, help_text).into_iter()).map(str::to_string)
+    // #2583 review: never answer a rejected flag with itself. Section scoping
+    // removes the known way this happened (a shared help body offering a
+    // sibling subcommand's flag), but "did you mean the thing you just typed?"
+    // is nonsense from any source, so it is excluded structurally rather than
+    // left to depend on the scoping tables staying correct.
+    closest(
+        arg,
+        known_flags(command, help_text)
+            .into_iter()
+            .filter(|flag| *flag != arg),
+    )
+    .map(str::to_string)
 }
 
 /// Scan a help text for the flags it documents.
@@ -335,5 +346,53 @@ mod tests {
                 "no help text documenting flags is registered for {command:?}"
             );
         }
+    }
+
+    /// #2583 review: sweep every registered command against every flag its
+    /// help body mentions anywhere — including the sibling sections a shared
+    /// body carries — and assert none of them is ever answered with itself.
+    /// This covers the whole surface rather than the two reported examples.
+    #[test]
+    fn no_registered_command_ever_suggests_the_rejected_flag_itself() {
+        for command in help::registered_command_paths() {
+            let Some(help_text) = help::help_text_for(command) else {
+                continue;
+            };
+            // Deliberately mine the *whole* body, so sibling-section flags are
+            // included as inputs even though scoping should exclude them as
+            // candidates.
+            for flag in known_flags("", help_text) {
+                let message = unknown_argument(command, flag);
+                assert!(
+                    !message.contains(&format!("Did you mean `{flag}`?")),
+                    "{command:?} answered {flag:?} with itself: {message}"
+                );
+            }
+        }
+    }
+
+    /// Scoping must actively *select* the right sibling's flag, not merely
+    /// suppress suggestions. The same input resolves differently under two
+    /// baseline subcommands that share one help body.
+    #[test]
+    fn scoping_selects_the_subcommands_own_flag_for_a_near_miss() {
+        // `--out` belongs to create; `--out-md` belongs to diff.
+        let message = unknown_argument("baseline create", "--out-m");
+        assert!(message.contains("Did you mean `--out`?"), "{message}");
+
+        let message = unknown_argument("baseline diff", "--out-m");
+        assert!(message.contains("Did you mean `--out-md`?"), "{message}");
+    }
+
+    /// A single-command help body keeps mining its full option list, because
+    /// its usage line is often just `ripr check [OPTIONS]`.
+    #[test]
+    fn single_command_help_still_mines_the_full_option_list() {
+        let flags = match help::help_text_for("check") {
+            Some(help_text) => known_flags("check", help_text),
+            None => Vec::new(),
+        };
+        assert!(flags.contains(&"--format"), "{flags:?}");
+        assert!(flags.contains(&"--worktree"), "{flags:?}");
     }
 }
