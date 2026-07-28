@@ -36,6 +36,10 @@ are scoped or reviewed.
   compatibility budget instead of hanging on inherited descendant handles
   (#2430).
 
+- `cargo xtask check-traceability` now keeps existing-file `::symbol`
+  references visible as advisory diagnostics without failing the gate. Missing
+  paths and other structural traceability errors remain blocking (#2549).
+
 - `ripr check --diff <path>` now discloses when the diff input contains no
   parseable file changes (0 hunks, 0 files). Previously a non-diff file (a
   log, a source file, random text) silently produced "0 probe(s)" with exit
