@@ -7,6 +7,7 @@ use crate::output::perl_preview_card::perl_preview_card;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
+use std::path::Path;
 
 /// Render findings as GitHub Actions workflow command annotations.
 ///
@@ -134,7 +135,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         }
         out.push_str(&format!(
             "::{annotation_level} file={},line={},title={}::{}\n",
-            display_path(&finding.probe.location.file),
+            annotation_path(&output.root, &finding.probe.location.file),
             finding.probe.location.line,
             escape_cmd(&title),
             escape_cmd(&message)
@@ -144,6 +145,25 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         out.push_str("::notice title=ripr::No static exposure findings found\n");
     }
     out
+}
+
+/// GitHub workflow-command annotations require a repository-relative path.
+/// Findings are commonly root-joined during analysis, so strip the configured
+/// root first and remove the `./` form used by a relative root.
+fn annotation_path(root: &Path, file: &Path) -> String {
+    let root_display = display_path(root);
+    let root = root_display.trim_start_matches("./").trim_end_matches('/');
+    let file_display = display_path(file);
+    let file = file_display.trim_start_matches("./");
+    if root != "."
+        && !root.is_empty()
+        && let Some(relative) = file
+            .strip_prefix(root)
+            .and_then(|suffix| suffix.strip_prefix('/'))
+    {
+        return relative.to_string();
+    }
+    file.to_string()
 }
 
 fn python_no_action_annotation(finding: &Finding) -> Option<String> {
@@ -285,6 +305,26 @@ mod tests {
         assert!(rendered.contains("::notice file=src/lib.rs,line=13,title=ripr static_unknown::"));
         assert!(rendered.contains("Add%3A case%2C with 100%25 coverage%0Athen verify%0Doutcome"));
         assert!(rendered.contains("Stop reason%3A static_probe_unknown"));
+    }
+
+    #[test]
+    fn render_strips_relative_and_absolute_roots_from_annotation_paths() {
+        let mut output = output_with_unknown_finding();
+        output.root = PathBuf::from("repo");
+        output.findings[0].probe.location.file = PathBuf::from("./repo/src/lib.rs");
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("file=src/lib.rs,line=13"));
+        assert!(!rendered.contains("file=./"));
+
+        output.root = PathBuf::from(r"C:\repo");
+        output.findings[0].probe.location.file = PathBuf::from(r"C:\repo\src\lib.rs");
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("file=src/lib.rs,line=13"));
+        assert!(!rendered.contains("file=C:/repo"));
     }
 
     #[test]
