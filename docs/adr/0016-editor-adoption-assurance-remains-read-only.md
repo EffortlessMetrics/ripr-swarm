@@ -29,7 +29,9 @@ copyable commands when typed fields validate.
 
 The editor must not:
 
-- install, download, replace, or repair binaries;
+- install, replace, or repair binaries as part of adoption-assurance projection;
+  normal server resolution may download a verified server through its explicit
+  provisioning path when configured;
 - mutate repository config or user settings;
 - rerun hidden analysis to make artifacts current;
 - create first-pr packets, PR evidence, generated CI summaries, or PR comments;

@@ -112,9 +112,9 @@ Major durable discoveries in `docs/LEARNINGS.md`, newest first:
 | 2026-07-29 | Preserve the source vocabulary at every operator boundary | [Source Vocabulary](LEARNINGS.md#2026-07-29-preserve-the-source-vocabulary-at-every-operator-boundary) |
 | 2026-07-25 | A green check is not evidence; inspect the gate, artifact, and denominator | [Green Checks](LEARNINGS.md#2026-07-25-a-green-check-is-not-evidence--five-ways-a-passing-signal-covered-a-broken-surface) |
 | 2026-07-25 | A false-confidence gate is a contract failure when enforcement is weaker than its claim | [False-Confidence Gates](LEARNINGS.md#2026-07-25-false-confidence-gates--the-enforcement-layer-cardinal-sin) |
-| 2026-07-23 | Merge-then-cleanup must be chained, and red-arm experiments must preserve evidence | [Merge Then Cleanup](LEARNINGS.md#2026-07-23-merge-then-cleanup-must-be-and-chained-and-red-arm-experiments-must-not-use-git-checkout--) |
+| 2026-07-23 | Merge-then-cleanup must be chained, and red-arm experiments must preserve evidence | [Merge Then Cleanup](LEARNINGS.md#2026-07-23-merge-then-cleanup-must-be--chained-and-red-arm-experiments-must-not-use-git-checkout--) |
 | 2026-07-23 | A PR-body verification claim must be an executed experiment | [PR-Body Experiments](LEARNINGS.md#2026-07-23-a-pr-body-verification-claim-must-be-an-executed-experiment) |
-| 2026-07-23 | Canonical-input validation compares bytes, not parsed values | [Canonical Input](LEARNINGS.md#2026-07-23-canonical-input-validation-must-compare-bytes-not-parsed-values) |
+| 2026-07-22 | Canonical-input validation compares bytes, not parsed values | [Canonical Input](LEARNINGS.md#2026-07-22-canonical-input-validation-must-compare-bytes-not-parsed-values) |
 | 2026-07-22 | The required CI lane must invoke the local gate table, not copy it | [Required CI Lane](LEARNINGS.md#2026-07-22-the-required-ci-lane-must-invoke-the-local-gate-table-not-enumerate-a-copy) |
 | 2026-07-19 | `Result<_, String>` is the highest-leverage refactor target | [Result String](LEARNINGS.md#2026-07-19-result-string-everywhere-is-the-single-highest-leverage-refactor-target) |
 | 2026-07-19 | A file-policy gate that fails on main breaks every subsequent PR | [File Policy](LEARNINGS.md#2026-07-19-a-file-policy-gate-that-fails-on-main-breaks-every-subsequent-pr) |
