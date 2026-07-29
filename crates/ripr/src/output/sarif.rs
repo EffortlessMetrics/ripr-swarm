@@ -1287,12 +1287,21 @@ mod tests {
         let grip = &result["properties"]["typescript_preview_card"]["bun_cross_language_grip"];
 
         assert_eq!(grip["state"], "rust_ungripped_ts_missing_discriminator");
-        assert_eq!(grip["rust_seam"]["file"], "src/jsc/Blob.rs");
+        assert_eq!(grip["rust_seam"]["file"], "src/jsc/array_buffer.rs");
+        assert_eq!(grip["rust_seam"]["owner"], "ArrayBuffer::copy_to_unshared");
         assert_eq!(
             grip["typescript_evidence"]["missing_discriminators"][0],
-            "resizable_array_buffer"
+            "shared_array_buffer"
         );
         assert_eq!(grip["profiles"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            grip["profiles"][0]["rust_seam"]["owner"],
+            "Blob::from_js_without_defer_gc"
+        );
+        assert_eq!(
+            grip["profiles"][0]["typescript_evidence"]["missing_discriminators"][0],
+            "resizable_array_buffer"
+        );
         assert_eq!(
             grip["profiles"][1]["rust_seam"]["owner"],
             "ArrayBuffer::copy_to_unshared"
@@ -1324,7 +1333,7 @@ mod tests {
         );
         assert_eq!(
             grip["placement"]["reason"],
-            "existing Blob + ArrayBuffer integration tests live there; missing discriminator is resizable ArrayBuffer"
+            "existing Blob + ArrayBuffer integration tests cover copy_to_unshared"
         );
         assert_eq!(grip["placement"]["repair_packet_ready"], false);
         assert_eq!(grip["repair_packet_ready"], false);

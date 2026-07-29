@@ -145,7 +145,7 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         .into_iter()
         .collect::<Vec<_>>();
     let bun_cross_language_grips = bun_cross_language_grips(finding, &actionability);
-    let bun_cross_language_grip = bun_cross_language_grips.first().cloned();
+    let bun_cross_language_grip = compatibility_bun_cross_language_grip(&bun_cross_language_grips);
 
     Some(TypeScriptPreviewCard {
         card_version: "typescript_preview_card.v1".to_string(),
@@ -177,6 +177,16 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         repair_packet_ready: actionability.repair_packet_ready,
         limits: limits(),
     })
+}
+
+fn compatibility_bun_cross_language_grip(
+    grips: &[TypeScriptBunCrossLanguageGrip],
+) -> Option<TypeScriptBunCrossLanguageGrip> {
+    grips
+        .iter()
+        .find(|grip| grip.rust_owner.contains("copy_to_unshared"))
+        .cloned()
+        .or_else(|| grips.first().cloned())
 }
 
 pub(crate) fn typescript_preview_card_json_value(card: &TypeScriptPreviewCard) -> Value {
@@ -1001,11 +1011,8 @@ mod tests {
             .bun_cross_language_grip
             .as_ref()
             .ok_or_else(|| "expected Bun cross-language grip".to_string())?;
-        assert_eq!(compatibility_grip.rust_file, "src/jsc/Blob.rs");
-        assert_eq!(
-            compatibility_grip.rust_owner,
-            "Blob::from_js_without_defer_gc"
-        );
+        assert_eq!(compatibility_grip.rust_file, "src/jsc/array_buffer.rs");
+        assert_eq!(compatibility_grip.rust_owner, "copy_to_unshared");
         let copy_grip = card
             .bun_cross_language_grips
             .get(1)
@@ -1017,7 +1024,11 @@ mod tests {
         let json = typescript_preview_card_json_value(&card);
         assert_eq!(
             json["bun_cross_language_grip"]["rust_seam"]["file"],
-            "src/jsc/Blob.rs"
+            "src/jsc/array_buffer.rs"
+        );
+        assert_eq!(
+            json["bun_cross_language_grip"]["rust_seam"]["owner"],
+            "copy_to_unshared"
         );
         assert_eq!(
             json["bun_cross_language_grip"]["profiles"][1]["rust_seam"]["owner"],
