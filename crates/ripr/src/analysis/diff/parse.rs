@@ -88,6 +88,11 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
             continue;
         }
 
+        if state.handle_submodule_mode(raw) {
+            i += 1;
+            continue;
+        }
+
         if state.handle_submodule_index(raw) {
             i += 1;
             continue;
@@ -193,6 +198,18 @@ mod parser_state {
             self.submodule_file_count
         }
 
+        pub(super) fn handle_submodule_mode(&mut self, raw: &str) -> bool {
+            if self.in_hunk {
+                return false;
+            }
+            if matches!(raw, "new file mode 160000" | "deleted file mode 160000") {
+                self.submodule_section = true;
+                self.deletion_section = raw == "deleted file mode 160000";
+                return true;
+            }
+            false
+        }
+
         pub(super) fn handle_submodule_index(&mut self, raw: &str) -> bool {
             if self.in_hunk {
                 return false;
@@ -249,6 +266,14 @@ mod parser_state {
                 self.saw_old_path_marker = true;
                 self.section_old_path = parse_old_path_for_confinement(raw);
                 self.record_deleted_file_if_ready();
+                if self.submodule_section
+                    && self.deletion_section
+                    && !self.submodule_counted
+                    && self.section_old_path.is_some()
+                {
+                    self.submodule_file_count = self.submodule_file_count.saturating_add(1);
+                    self.submodule_counted = true;
+                }
                 return true;
             }
 
@@ -769,6 +794,19 @@ deleted file mode 100644
         assert_eq!(parsed.submodule_file_count, 1);
         assert_eq!(parsed.changed_files.len(), 1);
         assert_eq!(parsed.changed_files[0].path, PathBuf::from("vendor/lib"));
+    }
+
+    #[test]
+    fn metadata_counts_gitlink_additions_and_deletions() {
+        let addition = "diff --git a/vendor/new b/vendor/new\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/new\n";
+        let parsed = parse_unified_diff_with_metadata(addition);
+        assert_eq!(parsed.submodule_file_count, 1);
+        assert_eq!(parsed.changed_files[0].path, PathBuf::from("vendor/new"));
+
+        let deletion = "diff --git a/vendor/old b/vendor/old\ndeleted file mode 160000\nindex 1111111..0000000\n--- a/vendor/old\n+++ /dev/null\n";
+        let parsed = parse_unified_diff_with_metadata(deletion);
+        assert_eq!(parsed.submodule_file_count, 1);
+        assert!(parsed.changed_files.is_empty());
     }
 
     #[test]

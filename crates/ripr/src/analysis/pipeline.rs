@@ -765,7 +765,17 @@ mod tests {
              +++ b/vendor/lib\n\
              @@ -1 +1 @@\n\
              -Subproject commit 1111111\n\
-             +Subproject commit 2222222\n",
+             +Subproject commit 2222222\n\
+             diff --git a/vendor/new b/vendor/new\n\
+             new file mode 160000\n\
+             index 0000000..3333333\n\
+             --- /dev/null\n\
+             +++ b/vendor/new\n\
+             diff --git a/vendor/old b/vendor/old\n\
+             deleted file mode 160000\n\
+             index 4444444..0000000\n\
+             --- a/vendor/old\n\
+             +++ /dev/null\n",
         )?;
 
         let result = run_diff_pipeline_with_oracle_policy(
