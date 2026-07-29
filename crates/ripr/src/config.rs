@@ -83,10 +83,11 @@ path = ".ripr/suppressions.toml"
 # file is absent, Python project markers can enable Python preview analysis
 # automatically for the detected repository root; this explicit list remains
 # authoritative when present.
-# Valid values: rust, typescript, python.
-# (`perl` parses for forward compatibility but is scaffold-only — the adapter
-# is #[cfg(test)], the path router ignores .pm/.pl, and the pipeline errors
-# out even with lang-perl on. See Campaign 31 #1379 + Support Tiers.)
+# Valid values: rust, typescript, python, perl.
+# (`perl` consumes externally-produced `ripr-perl-facts-v1` packets and does
+# not parse Perl source directly. The adapter requires --perl-facts <path>;
+# without one, analysis is unavailable for Perl files. The external producer
+# binary is not yet released. See Campaign 31 #1379 + Support Tiers.)
 enabled = ["rust"]
 
 # Optional Bun stable-byte UB advisory profile. Leave this commented unless the
@@ -106,7 +107,7 @@ enabled = ["rust"]
 # [typescript]
 # resolve_tsconfig_paths = false
 
-# Optional Perl adapter settings (scaffold-only, preview — see Campaign 31 #1379).
+# Optional Perl adapter settings (fact-packet consumer, preview — see Campaign 31 #1379).
 #
 # [perl]
 # producer = "ripr"        # "ripr" (in-process) or "perllsp" (managed LSP)
@@ -282,7 +283,7 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python (perl parses but is scaffold-only — see Campaign 31 #1379)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets — see Campaign 31 #1379)"
                 ));
             }
         };
