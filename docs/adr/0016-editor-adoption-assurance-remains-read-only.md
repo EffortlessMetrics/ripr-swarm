@@ -1,6 +1,6 @@
 # ADR 0016: Editor Adoption Assurance Remains Read-Only
 
-Status: proposed
+Status: accepted
 
 Date: 2026-05-18
 
