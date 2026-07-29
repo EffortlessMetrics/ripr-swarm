@@ -119,7 +119,7 @@ struct AnnotationOutput {
 /// `warning`; weaker/uncertain findings render as the quieter `notice`.
 fn annotation_level_for_severity(severity: &str) -> &'static str {
     match severity {
-        "strong" | "medium" => "warning",
+        "warning" | "strong" | "medium" => "warning",
         _ => "notice",
     }
 }
@@ -338,6 +338,39 @@ mod tests {
                 .text
                 .contains("::notice file=src/lib.rs,line=10,title=ripr weak focused_test::"),
             "expected ::notice for weak severity, got: {}",
+            generated.text
+        );
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))
+    }
+
+    #[test]
+    fn warning_severity_preserves_warning_annotation_level() -> Result<(), String> {
+        let repo = temp_repo("ripr-annotations-warning")?;
+        write_json(
+            &repo,
+            DEFAULT_COMMENTS_JSON,
+            &json!({
+                "comments": [{
+                    "id": "rec-warning",
+                    "kind": "focused_test",
+                    "severity": "warning",
+                    "reason": "A configured warning must remain visible.",
+                    "placement": {
+                        "path": "src/lib.rs",
+                        "line": 11,
+                        "side": "RIGHT",
+                        "mode": "exact_seam_line"
+                    }
+                }],
+                "summary_only": []
+            }),
+        )?;
+        let generated = render_annotations(&repo, &AnnotationOptions::default())?;
+        assert!(
+            generated
+                .text
+                .contains("::warning file=src/lib.rs,line=11,title=ripr warning focused_test::"),
+            "expected ::warning for literal warning severity, got: {}",
             generated.text
         );
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))
