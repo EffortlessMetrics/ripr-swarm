@@ -304,9 +304,8 @@ where
     match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
         Ok(result) => result.map(PilotAnalysisResult::Complete),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancellation_token.cancel(
-                crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded,
-            );
+            cancellation_token
+                .cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
             Ok(PilotAnalysisResult::TimedOut)
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -426,8 +425,6 @@ mod tests {
         });
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        assert!(cancelled_rx
-            .recv_timeout(Duration::from_secs(1))
-            .is_ok());
+        assert!(cancelled_rx.recv_timeout(Duration::from_secs(1)).is_ok());
     }
 }
