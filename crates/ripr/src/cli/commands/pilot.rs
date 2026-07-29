@@ -425,6 +425,6 @@ mod tests {
         });
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        assert!(cancelled_rx.recv_timeout(Duration::from_secs(1)).is_ok());
+        cancelled_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     }
 }
