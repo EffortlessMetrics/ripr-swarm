@@ -13,18 +13,21 @@ Status: complete
   plan, non-goals, acceptance criteria, and proof path into the repository.
 - #2753 (`fd3a44771e401e074abeec7833f04e12968926a1`) merged final head
   `06e097e6a6ed41c4a2a5e02e67ef3bb4208362f6`, retaining every configured Bun
-  bridge profile across human, JSON, SARIF, and GitHub output. Follow-up #2763
-  preserves the historical `copy_to_unshared` selection for the singular v1
-  compatibility alias; multi-profile JSON keeps `profiles[]` in producer order.
-  Profile placement evidence is associated by producer order when it is present.
+  bridge profile across human, JSON, SARIF, and GitHub output. The first
+  producer profile remains the singular v1 compatibility alias; multi-profile
+  JSON keeps `profiles[]` in producer order. Profile placement evidence is
+  associated by producer order when it is present.
+
+- #2757 (this closeout PR) carries the exact merge heads, proof results, claim
+  boundary, local verification gaps, and follow-up disposition into the repo.
 
 Issues #2716 and #2744 are closed.
 
 ## Acceptance and proof
 
 - Blob plus `copy_to_unshared` focused fixtures prove two profiles survive the
-  card projection, preserve the historical singular alias, and retain separate
-  per-profile data. The Blob placement reason is producer-backed; the
+  card projection, preserve the first-profile compatibility alias, and retain
+  separate per-profile data. The Blob placement reason is producer-backed; the
   copy-specific placement string in the renderer fixture proves ordering and
   association only, not a production placement producer.
 - Human, GitHub, JSON/SARIF, and preview-card tests passed; the focused

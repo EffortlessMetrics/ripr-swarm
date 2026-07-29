@@ -57,11 +57,11 @@ multi-profile implementation merged as #2753 at
 `06e097e6a6ed41c4a2a5e02e67ef3bb4208362f6`.
 
 The focused card and cross-renderer tests passed, as did formatting, the
-profile-specific compatibility-alias regression, hosted required Rust gates,
-hosted workspace tests, coverage, UB review, dependency review, and
-source-of-truth checks. Follow-up #2763 preserves the historical singular
-`copy_to_unshared` alias while `profiles[]` remains producer ordered. Issues
-#2716 and #2744 are closed. The result remains preview-only:
+profile-specific multi-profile retention regression, hosted required Rust
+gates, hosted workspace tests, coverage, UB review, dependency review, and
+source-of-truth checks. The first producer profile remains the historical
+singular compatibility alias while `profiles[]` remains producer ordered.
+Issues #2716 and #2744 are closed. The result remains preview-only:
 it does not claim runtime Bun execution, mutation outcomes, coverage or test
 adequacy, public repair-packet authority, or default blocking.
 
