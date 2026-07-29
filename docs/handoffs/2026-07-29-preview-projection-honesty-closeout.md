@@ -13,17 +13,20 @@ Status: complete
   plan, non-goals, acceptance criteria, and proof path into the repository.
 - #2753 (`fd3a44771e401e074abeec7833f04e12968926a1`) merged final head
   `06e097e6a6ed41c4a2a5e02e67ef3bb4208362f6`, retaining every configured Bun
-  bridge profile across human, JSON, SARIF, and GitHub output. The first
-  profile remains the compatibility alias; multi-profile JSON adds `profiles[]`.
-  Profile placements are associated by producer order, so profiles sharing a
-  test file retain distinct placement reasons.
+  bridge profile across human, JSON, SARIF, and GitHub output. Follow-up #2763
+  preserves the historical `copy_to_unshared` selection for the singular v1
+  compatibility alias; multi-profile JSON keeps `profiles[]` in producer order.
+  Profile placement evidence is associated by producer order when it is present.
 
 Issues #2716 and #2744 are closed.
 
 ## Acceptance and proof
 
 - Blob plus `copy_to_unshared` focused fixtures prove two profiles survive the
-  card projection and keep separate placement reasons.
+  card projection, preserve the historical singular alias, and retain separate
+  per-profile data. The Blob placement reason is producer-backed; the
+  copy-specific placement string in the renderer fixture proves ordering and
+  association only, not a production placement producer.
 - Human, GitHub, JSON/SARIF, and preview-card tests passed; the focused
   cross-renderer suite passed 8 tests and the preview-card suite passed 14.
 - `cargo fmt --all -- --check` and
@@ -45,13 +48,20 @@ new Bun taxonomy, discovery engine, runtime, dependency, or broad refactor.
 ## Verification gaps and disposition
 
 The local full `cargo xtask check-pr` attempt did not complete because
-unrelated Cargo jobs held shared build locks. A local full-library attempt
-reported unrelated Windows timing, LSP, and path-normalization failures; the
-hosted workspace test gate passed, so those findings are not attributed to
-this campaign. GitHub's automated review rate limit prevented a CodeRabbit
-review; available review threads were addressed and resolved, including the
-profile-placement identity bug.
+unrelated Cargo jobs held shared build locks. The local full-library attempt
+reported these failures: `git::tests::deadline_kills_pipe_inheriting_descendants_without_blocking_the_reader`,
+`git::tests::output_larger_than_the_pipe_buffer_does_not_deadlock`,
+`lsp::tests::framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release`,
+`lsp::tests::framed_lsp_direct_root_switch_repulls_on_reselection`, and
+`output::github::tests::render_github_paths_are_repo_relative_without_dot_prefix`.
+They were not reproduced against `origin/main`, so they remain unresolved local
+verification gaps rather than an inherited-baseline conclusion. Hosted
+workspace tests passed, and the failures are not attributed to this campaign.
+GitHub's automated review rate limit prevented a CodeRabbit review; the
+available review threads were addressed and resolved, including the profile
+alias compatibility finding.
 
-No Campaign 36 follow-up issue is needed. Runtime Bun support, broader profile
+Follow-up #2764 records the missing producer-through-renderer regression for
+multi-profile placement evidence. Runtime Bun support, broader profile
 discovery, and non-preview repair-packet promotion remain intentionally outside
 this campaign.
