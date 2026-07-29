@@ -745,7 +745,7 @@ fn artifact_re_resolution_honors_git_timeout() -> Result<(), String> {
 
         let error = load_findings_for_reuse(&path, &input, &config, None)
             .expect_err("artifact re-resolution must honor a zero Git deadline");
-        if !crate::git::is_git_invocation_timeout(&error) {
+        if !error.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) {
             return Err(format!(
                 "expected named git timeout from artifact re-resolution, got: {error}"
             ));
