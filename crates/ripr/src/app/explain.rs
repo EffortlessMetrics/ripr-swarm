@@ -59,6 +59,23 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
 /// the rendered output is byte-identical to a recomputed run given the same
 /// render options. `asserted_base` is an explicitly passed `--base`, verified
 /// against the recording rather than used as an override.
+pub(crate) fn explain_finding_from_artifact(
+    input: CheckInput,
+    selector: &str,
+    config: &RiprConfig,
+    artifact_path: &Path,
+    asserted_base: Option<&str>,
+) -> Result<String, String> {
+    explain_finding_from_artifact_with_navigation_mode(
+        input,
+        selector,
+        config,
+        artifact_path,
+        asserted_base,
+        false,
+    )
+}
+
 pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
     input: CheckInput,
     selector: &str,
