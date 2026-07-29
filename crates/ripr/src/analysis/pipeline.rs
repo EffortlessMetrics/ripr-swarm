@@ -144,16 +144,6 @@ fn rename_disclosure_message(
     })
 }
 
-fn emit_rename_disclosure(
-    renamed_file_count: usize,
-    pure_rename_file_count: usize,
-    mut emit: impl FnMut(&str),
-) {
-    if let Some(message) = rename_disclosure_message(renamed_file_count, pure_rename_file_count) {
-        emit(&message);
-    }
-}
-
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
