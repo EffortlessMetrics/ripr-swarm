@@ -3,8 +3,12 @@
 mod startup;
 
 fn main() {
+    run_startup(startup::run);
+}
+
+fn run_startup(startup_run: impl FnOnce() -> Result<(), String>) {
     install_panic_hook();
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(startup::run)) {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(startup_run)) {
         Ok(Ok(())) => {}
         Ok(Err(err)) => {
             report_failure(&err);
@@ -61,16 +65,49 @@ const fn exit_code() -> i32 {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn panic_boundary_catches_main_thread_panics_and_preserves_exit_code() {
+    fn panic_boundary_reports_and_exits_with_code_two() -> Result<(), String> {
+        if std::env::var_os("RIPR_PANIC_HOOK_CHILD").is_some() {
+            super::run_startup(|| {
+                std::panic::panic_any("panic hook regression");
+            });
+            return Err("panic boundary returned instead of exiting".to_owned());
+        }
+
+        let executable = std::env::current_exe().map_err(|err| err.to_string())?;
+        for backtrace in ["0", "1"] {
+            let output = std::process::Command::new(&executable)
+                .args([
+                    "--exact",
+                    "tests::panic_boundary_reports_and_exits_with_code_two",
+                    "--nocapture",
+                ])
+                .env("RIPR_PANIC_HOOK_CHILD", "1")
+                .env("RUST_BACKTRACE", backtrace)
+                .output()
+                .map_err(|err| format!("failed to run panic-hook child: {err}"))?;
+            if output.status.code() != Some(2) {
+                return Err(format!(
+                    "panic-hook child exited with {:?}; stderr: {}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("ripr: internal error (this is a bug): panic hook regression") {
+                return Err(format!(
+                    "panic-hook child omitted the formatted report; stderr: {stderr}"
+                ));
+            }
+        }
+
         let report = super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));
-        assert_eq!(
-            report,
-            "ripr: internal error (this is a bug): panic hook regression at src/main.rs:42"
-        );
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            std::panic::resume_unwind(Box::new("panic hook regression"));
-        }));
-        assert!(result.is_err());
-        assert_eq!(super::exit_code(), 2);
+        if report != "ripr: internal error (this is a bug): panic hook regression at src/main.rs:42"
+        {
+            return Err(format!("unexpected formatted report: {report}"));
+        }
+        if super::exit_code() != 2 {
+            return Err(format!("unexpected exit code: {}", super::exit_code()));
+        }
+        Ok(())
     }
 }
