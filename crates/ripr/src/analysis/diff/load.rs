@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -9,6 +10,13 @@ pub fn load_diff(
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
     if let Some(diff_file) = diff_file {
+        if diff_file == std::path::Path::new("-") {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
+            return Ok(buffer);
+        }
         return std::fs::read_to_string(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()));
     }
@@ -883,6 +891,26 @@ mod tests {
         assert!(
             crate::git::is_git_invocation_timeout(&err),
             "expected the named git_invocation_timeout error, got: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn zero_deadline_default_base_diff_load_fails_closed() -> std::io::Result<()> {
+        // #2613: the CLI's default-base path must pass its deadline through
+        // candidate resolution instead of silently falling back to an
+        // unbounded Git probe or fabricating a base.
+        let dir = unique_fixture_root("load-diff-default-base-zero-deadline")?;
+        let _ = fs::remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let result = load_diff(&dir, None, None, Some(Duration::ZERO));
+        let err = result.expect_err("a zero deadline must fail default-base resolution");
+        assert!(
+            err.contains("could not resolve a default base"),
+            "expected fail-closed default-base error, got: {err}"
         );
 
         let _ = fs::remove_dir_all(&dir);

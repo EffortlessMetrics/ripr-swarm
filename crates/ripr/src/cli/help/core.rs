@@ -93,6 +93,8 @@ Options:
   --root PATH              Workspace root. Defaults to current directory.
   --base REV               Base revision for git diff. Defaults to origin/main.
   --diff PATH              Read a unified diff file instead of running git diff.
+                           Use --diff - to read from stdin (e.g.
+                           `git diff origin/main | ripr check --diff -`).
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
                            tracked edits. Cannot be combined with --diff.
@@ -151,6 +153,12 @@ Options:
                            formats, --gap-ledger, or managed [perl] producer
                            packet generation (pass --perl-facts PATH
                            explicitly instead).
+  --git-timeout SECS       Cooperative deadline in seconds for each git
+                           invocation in the diff-load path. A git command
+                           that exceeds the deadline is terminated and the
+                           error names git_invocation_timeout. 0 disables
+                           the deadline. Default: 300 (5 minutes). Also
+                           settable via RIPR_GIT_TIMEOUT env var.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
@@ -179,6 +187,11 @@ Environment variables:
                                     hard guard are clamped with disclosure.
                                     Invalid values fail closed as
                                     partial_budget_invalid. Default: 1000.
+  RIPR_GIT_TIMEOUT                  Cooperative deadline in seconds for each git
+                                    invocation in the diff-load path. A git command
+                                    that exceeds the deadline is terminated and the
+                                    error names git_invocation_timeout. 0 disables
+                                    the deadline. Default: 300 (5 minutes).
 
 Examples:
   ripr check
