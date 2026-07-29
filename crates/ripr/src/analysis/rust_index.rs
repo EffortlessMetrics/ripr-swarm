@@ -41,7 +41,7 @@ pub(crate) fn lexical_fallback_disclosure_for_files(files: &[PathBuf]) -> Option
     }
     let mut displayed = files
         .iter()
-        .map(|path| path.display().to_string())
+        .map(|path| escaped_path_display(path))
         .collect::<Vec<_>>();
     displayed.sort_unstable();
     Some(format!(
@@ -49,6 +49,25 @@ pub(crate) fn lexical_fallback_disclosure_for_files(files: &[PathBuf]) -> Option
         displayed.len(),
         displayed.join(", ")
     ))
+}
+
+fn escaped_path_display(path: &Path) -> String {
+    let mut displayed = String::new();
+    for character in path.to_string_lossy().chars() {
+        match character {
+            '\n' => displayed.push_str("\\n"),
+            '\r' => displayed.push_str("\\r"),
+            '\t' => displayed.push_str("\\t"),
+            '\u{1b}' => displayed.push_str("\\x1b"),
+            character if character.is_control() => {
+                use std::fmt::Write;
+                write!(displayed, "\\u{{{:04x}}}", character as u32)
+                    .expect("writing to a String cannot fail");
+            }
+            character => displayed.push(character),
+        }
+    }
+    displayed
 }
 
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
@@ -765,6 +784,21 @@ fn feature_gated_test() {}
             lexical_fallback_disclosure(&index).as_deref(),
             Some(
                 "ripr: lexical fallback was used for 2 Rust file(s): a.rs, z.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes."
+            )
+        );
+    }
+
+    #[test]
+    fn lexical_fallback_disclosure_escapes_control_characters() {
+        let files = vec![
+            PathBuf::from("src/line\nreturn\r\t\u{1b}[31m.rs"),
+            PathBuf::from("src/unit\u{0007}.rs"),
+        ];
+
+        assert_eq!(
+            lexical_fallback_disclosure_for_files(&files).as_deref(),
+            Some(
+                "ripr: lexical fallback was used for 2 Rust file(s): src/line\\nreturn\\r\\t\\x1b[31m.rs, src/unit\\u{0007}.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes."
             )
         );
     }
