@@ -924,6 +924,7 @@ mod tests {
         if report.status != "reconcile_required" || report.prs.iter().any(|pr| pr.merge_eligible) {
             return Err("malformed input must be fully non-eligible".to_string());
         }
+        let _ = report_markdown(&report);
         for expected in [
             "snapshot schema_version",
             "snapshot kind",
@@ -1039,6 +1040,24 @@ mod tests {
         {
             return Err("failed live collection did not remain visibly incomplete".to_string());
         }
+
+        let mut command_failures = VecDeque::from(vec![
+            Ok(format!("{main_sha}\n")),
+            Err("PR inventory unavailable".to_string()),
+            Err("release authority unavailable".to_string()),
+            Ok("worktree repo-root\n".to_string()),
+        ]);
+        let command_failed = capture_live_snapshot_with(|_, _, _| {
+            command_failures
+                .pop_front()
+                .ok_or_else(|| "test output queue exhausted".to_string())?
+        });
+        if command_failed.collector_errors.len() != 2
+            || command_failed.source.open_prs_complete
+            || !command_failed.source.worktree_inventory_complete
+        {
+            return Err("collector command failures were not recorded".to_string());
+        }
         Ok(())
     }
 
@@ -1056,6 +1075,15 @@ mod tests {
         .is_ok()
         {
             return Err("failed live command should return an error".to_string());
+        }
+        if live_output(
+            "ripr-release-control-command-that-does-not-exist",
+            &[],
+            "missing program",
+        )
+        .is_ok()
+        {
+            return Err("missing live program should return an error".to_string());
         }
 
         let timed_out = crate::run::TimedOutput {
