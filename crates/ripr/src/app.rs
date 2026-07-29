@@ -86,10 +86,10 @@ pub struct CheckInput {
     /// When `None`, check output is unchanged.
     pub suppression_policy: Option<PathBuf>,
     /// Cooperative per-invocation git deadline for the diff-load path
-    /// (#2303). When `None`, git invocations are unbounded. The CLI
-    /// populates this from the `--git-timeout` flag or `RIPR_GIT_TIMEOUT`
-    /// env var (default: 5 minutes); the LSP refresh path populates it
-    /// from the `gitTimeoutMs` session option.
+    /// (#2303). When `None`, git invocations are unbounded. The CLI check
+    /// adapter populates this from the `--git-timeout` flag or
+    /// `RIPR_GIT_TIMEOUT` env var (default: 5 minutes); the LSP refresh path
+    /// populates it from the `gitTimeoutMs` session option.
     pub git_timeout: Option<std::time::Duration>,
 }
 
@@ -104,7 +104,7 @@ impl Default for CheckInput {
             include_unchanged_tests: true,
             perl_facts_path: None,
             suppression_policy: None,
-            git_timeout: Some(default_cli_git_timeout()),
+            git_timeout: None,
         }
     }
 }

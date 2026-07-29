@@ -517,18 +517,15 @@ mod tests {
     }
 
     #[test]
-    fn cli_check_input_carries_bounded_git_deadline() -> Result<(), String> {
-        // #2613: the CLI now sets a bounded git deadline by default (5 minutes)
-        // so a stuck git invocation surfaces as a named timeout instead of
-        // blocking indefinitely. The LSP path sets its own deadline from the
-        // gitTimeoutMs session option.
+    fn library_check_input_default_keeps_git_deadline_unbounded() {
+        // #2613: the five-minute deadline is a CLI policy. Public library
+        // callers retain the unbounded default and can opt into a deadline
+        // through CheckInput::git_timeout explicitly.
         let input = sample_diff_input();
-        let timeout = crate::app::default_cli_git_timeout();
-        assert_eq!(input.git_timeout, Some(timeout));
+        assert_eq!(input.git_timeout, None);
         let options =
             options_builder::analysis_options_from_input_and_config(&input, &RiprConfig::default());
-        assert_eq!(options.git_timeout, Some(timeout));
-        Ok(())
+        assert_eq!(options.git_timeout, None);
     }
 
     #[test]

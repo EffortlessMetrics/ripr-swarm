@@ -195,7 +195,7 @@ fn build_identity_at_write(
     worktree: bool,
 ) -> Result<CheckArtifactIdentityV1, String> {
     let diff_source = diff_source_at_write(input, worktree)?;
-    let diff_text = resolve_diff_text(&diff_source, &input.root)?;
+    let diff_text = resolve_diff_text(&diff_source, &input.root, input.git_timeout)?;
     let options = analysis_options_from_input_and_config(input, config);
     let (include_unchanged_tests, perl_facts_path) = closed_analysis_options_view(&options);
     let perl_facts_path = canonical_optional_path(perl_facts_path)?;
@@ -223,7 +223,7 @@ fn build_identity_at_load(
     recorded: &CheckArtifactIdentityV1,
     artifact_path: &Path,
 ) -> Result<CheckArtifactIdentityV1, String> {
-    let diff_text = resolve_diff_text(&recorded.diff_source, &input.root).map_err(|err| {
+    let diff_text = resolve_diff_text(&recorded.diff_source, &input.root, input.git_timeout).map_err(|err| {
         format!(
             "check artifact at {} cannot be reused: {err}",
             artifact_path.display()
@@ -385,17 +385,21 @@ fn diff_source_at_write(input: &CheckInput, worktree: bool) -> Result<DiffSource
 /// Re-resolve a recorded diff source to its exact bytes: a recorded `--diff`
 /// path is re-read; a recorded base/head pair or worktree diff is
 /// re-resolved through git. Missing or unresolvable sources fail closed.
-fn resolve_diff_text(source: &DiffSourceIdentity, root: &Path) -> Result<String, String> {
+fn resolve_diff_text(
+    source: &DiffSourceIdentity,
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> Result<String, String> {
     match source {
         DiffSourceIdentity::DiffFile { path } => std::fs::read_to_string(path).map_err(|err| {
             format!("recorded diff file {path} no longer exists or is unreadable: {err}")
         }),
         DiffSourceIdentity::BaseHead { base, .. } => {
-            crate::analysis::load_diff(root, base.as_deref(), None, None)
+            crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
                 .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}"))
         }
         DiffSourceIdentity::Worktree { base } => {
-            crate::analysis::load_worktree_diff(root, base.as_deref(), None)
+            crate::analysis::load_worktree_diff(root, base.as_deref(), git_timeout)
                 .map_err(|err| format!("recorded worktree diff could not be re-resolved: {err}"))
         }
     }
