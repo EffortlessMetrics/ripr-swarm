@@ -29,6 +29,26 @@ Use --format json for diff-scoped findings, or --format repo-exposure-summary-js
     ))
 }
 
+fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("--git-timeout requires a non-negative integer (seconds); got {value:?}")
+    })?;
+    Ok((secs > 0).then_some(std::time::Duration::from_secs(secs)))
+}
+
+fn git_timeout_from_env(explicit: bool, env_value: Option<&str>) -> Option<Option<std::time::Duration>> {
+    if explicit {
+        return None;
+    }
+    let Some(value) = env_value else {
+        return None;
+    };
+    let Ok(secs) = value.parse::<u64>() else {
+        return None;
+    };
+    Some((secs > 0).then_some(std::time::Duration::from_secs(secs)))
+}
+
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let mut input = CheckInput::default();
     let mut explicit = CheckInputExplicit::default();
@@ -113,12 +133,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             "--git-timeout" => {
                 i += 1;
                 let value = expect_value(args, i, "--git-timeout")?;
-                let secs: u64 = value.parse().map_err(|_parse_err| {
-                    format!(
-                        "--git-timeout requires a non-negative integer (seconds); got {value:?}"
-                    )
-                })?;
-                input.git_timeout = (secs > 0).then_some(std::time::Duration::from_secs(secs));
+                input.git_timeout = parse_git_timeout(value)?;
                 git_timeout_explicitly_provided = true;
             }
             "--help" | "-h" => {
@@ -142,11 +157,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     }
     // #2613: RIPR_GIT_TIMEOUT env var is a fallback when --git-timeout was
     // not passed on the command line. Seconds; 0 disables the deadline.
-    if !git_timeout_explicitly_provided
-        && let Ok(env_value) = std::env::var("RIPR_GIT_TIMEOUT")
-        && let Ok(secs) = env_value.parse::<u64>()
-    {
-        input.git_timeout = (secs > 0).then_some(std::time::Duration::from_secs(secs));
+    if let Some(timeout) = git_timeout_from_env(
+        git_timeout_explicitly_provided,
+        std::env::var("RIPR_GIT_TIMEOUT").ok().as_deref(),
+    ) {
+        input.git_timeout = timeout;
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err("check --worktree cannot be combined with --diff".to_string());
@@ -432,6 +447,34 @@ mod tests {
         let warning = repo_scope_diff_bound_warning(OutputFormat::Json, true, None);
 
         assert!(warning.is_none());
+    }
+
+    #[test]
+    fn git_timeout_cli_values_are_parsed_before_dispatch() {
+        assert_eq!(check(&args(&["--git-timeout", "0", "--help"])), Ok(()));
+        assert_eq!(
+            check(&args(&["--git-timeout", "12", "--help"])),
+            Ok(())
+        );
+
+        let error = check(&args(&["--git-timeout", "not-a-number"]))
+            .expect_err("invalid git timeout should fail closed");
+        assert!(error.contains("--git-timeout requires a non-negative integer"));
+    }
+
+    #[test]
+    fn git_timeout_environment_is_a_fallback_and_zero_disables() {
+        assert_eq!(
+            git_timeout_from_env(false, Some("12")),
+            Some(Some(std::time::Duration::from_secs(12)))
+        );
+        assert_eq!(
+            git_timeout_from_env(false, Some("0")),
+            Some(None)
+        );
+        assert_eq!(git_timeout_from_env(false, Some("invalid")), None);
+        assert_eq!(git_timeout_from_env(false, None), None);
+        assert_eq!(git_timeout_from_env(true, Some("12")), None);
     }
 
     #[test]

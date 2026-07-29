@@ -523,20 +523,11 @@ mod tests {
         // blocking indefinitely. The LSP path sets its own deadline from the
         // gitTimeoutMs session option.
         let input = sample_diff_input();
-        let timeout = input
-            .git_timeout
-            .ok_or("CLI check input must set a default git deadline")?;
-        if timeout != crate::app::default_cli_git_timeout() {
-            return Err(format!(
-                "CLI git timeout must be the default ({:?}), got {timeout:?}",
-                crate::app::default_cli_git_timeout()
-            ));
-        }
+        let timeout = crate::app::default_cli_git_timeout();
+        assert_eq!(input.git_timeout, Some(timeout));
         let options =
             options_builder::analysis_options_from_input_and_config(&input, &RiprConfig::default());
-        if options.git_timeout != Some(timeout) {
-            return Err("CLI analysis options must carry the git deadline".to_string());
-        }
+        assert_eq!(options.git_timeout, Some(timeout));
         Ok(())
     }
 
