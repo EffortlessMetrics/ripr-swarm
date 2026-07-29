@@ -108,6 +108,12 @@ fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
     })
 }
 
+fn emit_submodule_disclosure(submodule_file_count: usize, mut emit: impl FnMut(&str)) {
+    if let Some(message) = submodule_disclosure_message(submodule_file_count) {
+        emit(&message);
+    }
+}
+
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
@@ -231,9 +237,7 @@ fn run_pipeline_for_diff_text(
         eprintln!("{message}");
     }
 
-    if let Some(message) = submodule_disclosure_message(submodule_file_count) {
-        eprintln!("{message}");
-    }
+    emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
 
     if findings.is_empty()
         && rust_changed_files == 0
@@ -747,6 +751,16 @@ mod tests {
             return Err("zero submodule changes must not produce a disclosure".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn submodule_pipeline_emits_exact_disclosure_message() {
+        let mut emitted = None;
+        emit_submodule_disclosure(1, |message| emitted = Some(message.to_string()));
+        assert_eq!(
+            emitted.as_deref(),
+            Some("ripr: skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.")
+        );
     }
 
     #[test]
