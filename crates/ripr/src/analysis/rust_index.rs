@@ -60,9 +60,7 @@ fn escaped_path_display(path: &Path) -> String {
             '\t' => displayed.push_str("\\t"),
             '\u{1b}' => displayed.push_str("\\x1b"),
             character if character.is_control() => {
-                use std::fmt::Write;
-                write!(displayed, "\\u{{{:04x}}}", character as u32)
-                    .expect("writing to a String cannot fail");
+                displayed.push_str(&format!("\\u{{{:04x}}}", character as u32));
             }
             character => displayed.push(character),
         }
