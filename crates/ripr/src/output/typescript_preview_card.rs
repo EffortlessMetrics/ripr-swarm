@@ -985,6 +985,58 @@ mod tests {
     }
 
     #[test]
+    fn typescript_preview_card_selects_copy_bridge_group_when_multiple_profiles_exist()
+    -> Result<(), String> {
+        let mut finding = sample_bun_missing_resizable_finding();
+        finding.evidence.extend([
+            "typescript_bun_ub_bridge_hint: confidence=configured_hint rust_file=src/jsc/array_buffer.rs rust_owner=copy_to_unshared rust_boundary=\"SharedArrayBuffer and resizable ArrayBuffer copy semantics\" ts_test_file=test/js/web/fetch/blob.test.ts".to_string(),
+            "typescript_bun_ub_bridge_verdict: ts_discriminated missing_discriminators=none action=no_missing_bridge_discriminator suggested_test_file=not_applicable repair_packet_ready=false".to_string(),
+            "typescript_bun_ub_cross_language_grip: state=rust_ungripped_ts_discriminated rust_grip=ungripped ts_verdict=ts_discriminated action=no_missing_bridge_discriminator authority=preview_advisory_only suggested_test_file=not_applicable repair_packet_ready=false".to_string(),
+        ]);
+
+        let card = typescript_preview_card(&finding)
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let grip = card
+            .bun_cross_language_grip
+            .as_ref()
+            .ok_or_else(|| "expected Bun cross-language grip".to_string())?;
+
+        assert_eq!(grip.rust_file, "src/jsc/array_buffer.rs");
+        assert_eq!(grip.rust_owner, "copy_to_unshared");
+        assert_eq!(grip.ts_verdict, "ts_discriminated");
+
+        let json = typescript_preview_card_json_value(&card);
+        assert_eq!(
+            json["bun_cross_language_grip"]["rust_seam"]["file"],
+            "src/jsc/array_buffer.rs"
+        );
+        assert_eq!(
+            json["bun_cross_language_grip"]["rust_seam"]["owner"],
+            "copy_to_unshared"
+        );
+        assert_eq!(
+            json["bun_cross_language_grip"]["typescript_evidence"]["test_file"],
+            "test/js/web/fetch/blob.test.ts"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_preview_card_keeps_blob_group_without_copy_profile() -> Result<(), String> {
+        let card = typescript_preview_card(&sample_bun_missing_resizable_finding())
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let grip = card
+            .bun_cross_language_grip
+            .as_ref()
+            .ok_or_else(|| "expected Bun cross-language grip".to_string())?;
+
+        assert_eq!(grip.rust_file, "src/jsc/Blob.rs");
+        assert_eq!(grip.rust_owner, "Blob::from_js_without_defer_gc");
+        assert_eq!(grip.ts_verdict, "ts_missing_resizable");
+        Ok(())
+    }
+
+    #[test]
     fn bun_cross_language_agent_packet_projects_missing_discriminator() -> Result<(), String> {
         let card = typescript_preview_card(&sample_bun_missing_resizable_finding())
             .ok_or_else(|| "expected TypeScript preview card".to_string())?;
