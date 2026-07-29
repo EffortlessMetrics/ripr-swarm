@@ -759,7 +759,9 @@ mod tests {
         emit_submodule_disclosure(1, |message| emitted = Some(message.to_string()));
         assert_eq!(
             emitted.as_deref(),
-            Some("ripr: skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.")
+            Some(
+                "ripr: skipped 1 submodule pointer change(s); ripr does not analyze submodule contents."
+            )
         );
     }
 
