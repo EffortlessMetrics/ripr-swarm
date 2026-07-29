@@ -181,6 +181,7 @@ mod parser_state {
         deleted_file_count: usize,
         submodule_section: bool,
         submodule_counted: bool,
+        submodule_new_file: bool,
         submodule_file_count: usize,
     }
 
@@ -265,6 +266,7 @@ mod parser_state {
             if parse_old_path_marker(raw) {
                 self.saw_old_path_marker = true;
                 self.section_old_path = parse_old_path_for_confinement(raw);
+                self.submodule_new_file = raw == "--- /dev/null";
                 self.record_deleted_file_if_ready();
                 if self.submodule_section
                     && self.deletion_section
@@ -294,10 +296,9 @@ mod parser_state {
                 }
                 return false;
             };
-            let is_new_file_section = raw == "--- /dev/null";
             if self.submodule_section
                 && !self.submodule_counted
-                && (is_new_file_section || self.section_old_path.as_ref() == Some(&path))
+                && (self.submodule_new_file || self.section_old_path.as_ref() == Some(&path))
             {
                 self.submodule_file_count = self.submodule_file_count.saturating_add(1);
                 self.submodule_counted = true;
@@ -338,6 +339,7 @@ mod parser_state {
             self.deletion_counted = false;
             self.submodule_section = false;
             self.submodule_counted = false;
+            self.submodule_new_file = false;
             true
         }
 
