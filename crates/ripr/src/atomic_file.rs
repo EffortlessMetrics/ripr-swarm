@@ -10,6 +10,22 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// the operation usable when the destination filename is near a platform's
 /// maximum filename length.
 pub(crate) fn write(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
+    write_with_sync(path, bytes, label, true)
+}
+
+/// Atomically replace an expendable cache entry without forcing a physical
+/// flush for every entry. Rename still prevents readers from observing a
+/// partial file; the cache may be recomputed after a power loss.
+pub(crate) fn write_cache(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
+    write_with_sync(path, bytes, label, false)
+}
+
+fn write_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    label: &str,
+    sync_before_publish: bool,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());
@@ -48,12 +64,23 @@ pub(crate) fn write(path: &Path, bytes: &[u8], label: &str) -> Result<(), String
                 tmp_path.display()
             )
         })?;
-        file.sync_all().map_err(|err| {
-            format!(
-                "failed to fsync {label} temp file {}: {err}",
-                tmp_path.display()
-            )
-        })?;
+        if let Ok(metadata) = std::fs::metadata(path) {
+            file.set_permissions(metadata.permissions())
+                .map_err(|err| {
+                    format!(
+                        "failed to preserve {label} permissions for {}: {err}",
+                        path.display()
+                    )
+                })?;
+        }
+        if sync_before_publish {
+            file.sync_all().map_err(|err| {
+                format!(
+                    "failed to fsync {label} temp file {}: {err}",
+                    tmp_path.display()
+                )
+            })?;
+        }
         drop(file);
         std::fs::rename(&tmp_path, path)
             .map_err(|err| format!("failed to finalize {label} {}: {err}", path.display()))?;

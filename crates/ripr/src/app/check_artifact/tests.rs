@@ -74,6 +74,85 @@ fn atomic_write_replaces_existing_file_without_leaving_temp_files() -> Result<()
     Ok(())
 }
 
+#[test]
+fn atomic_write_creates_missing_parent_directories() -> Result<(), String> {
+    let dir = unique_temp_dir("atomic-parent")?;
+    let path = dir.join("nested").join("artifact.json");
+
+    crate::atomic_file::write(&path, b"nested", "test artifact")?;
+    let contents = std::fs::read(&path).map_err(|err| format!("read nested artifact: {err}"))?;
+    if contents != b"nested" {
+        return Err(format!(
+            "nested atomic write wrote unexpected bytes: {contents:?}"
+        ));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn atomic_write_cleans_temp_file_when_publish_fails() -> Result<(), String> {
+    let dir = unique_temp_dir("atomic-cleanup")?;
+    let destination = dir.join("destination");
+    std::fs::create_dir(&destination).map_err(|err| format!("create destination: {err}"))?;
+
+    if crate::atomic_file::write(&destination, b"not published", "test artifact").is_ok() {
+        return Err("writing over a directory unexpectedly succeeded".to_string());
+    }
+    let temporary_count = std::fs::read_dir(&dir)
+        .map_err(|err| format!("read artifact directory: {err}"))?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ripr-atomic-")
+        })
+        .count();
+    if temporary_count != 0 {
+        return Err(format!(
+            "failed atomic write left {temporary_count} temporary files"
+        ));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn atomic_write_rejects_a_path_without_a_file_name() -> Result<(), String> {
+    let error = crate::atomic_file::write(Path::new(""), b"bytes", "test artifact")
+        .err()
+        .ok_or("empty path should be rejected")?;
+    if !error.contains("has no file name") {
+        return Err(format!("unexpected empty-path error: {error}"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_preserves_existing_file_permissions() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = unique_temp_dir("atomic-permissions")?;
+    let path = dir.join("artifact.json");
+    crate::atomic_file::write(&path, b"first", "test artifact")?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|err| format!("restrict artifact permissions: {err}"))?;
+    crate::atomic_file::write(&path, b"second", "test artifact")?;
+
+    let mode = std::fs::metadata(&path)
+        .map_err(|err| format!("read artifact permissions: {err}"))?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode != 0o600 {
+        return Err(format!("atomic replacement changed mode to {mode:o}"));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
 /// Run the real sample analysis and write its artifact to `dir/artifact.json`.
 fn write_sample_artifact(
     dir: &Path,

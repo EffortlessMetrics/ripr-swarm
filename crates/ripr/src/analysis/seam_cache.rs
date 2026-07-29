@@ -641,7 +641,7 @@ impl RepoCorpusFingerprintCache {
         };
         let bytes = codec::encode_corpus_fingerprint(&envelope)?;
         let path = self.entry_path(fingerprint);
-        crate::atomic_file::write(&path, &bytes, "corpus fingerprint cache")?;
+        crate::atomic_file::write_cache(&path, &bytes, "corpus fingerprint cache")?;
         Ok(())
     }
 
@@ -845,7 +845,7 @@ impl RepoSeamFactCache {
         );
         let bytes = codec::encode(&envelope)?;
         let path = self.entry_path(key);
-        crate::atomic_file::write(&path, &bytes, "cache")?;
+        crate::atomic_file::write_cache(&path, &bytes, "cache")?;
         Ok(CacheStoreStatus {
             label: "ok".to_string(),
         })
@@ -982,7 +982,7 @@ impl RepoSeamFactCache {
                 ShardedCacheEnvelope::new(key.clone(), index, shard_count, chunk.to_vec());
             let bytes = codec::encode_shard(&envelope)?;
             let path = self.sharded_entry_dir(key).join(&file);
-            crate::atomic_file::write(&path, &bytes, "sharded cache file")?;
+            crate::atomic_file::write_cache(&path, &bytes, "sharded cache file")?;
             shard_refs.push(ShardedCacheShardRef {
                 index,
                 file,
@@ -999,7 +999,7 @@ impl RepoSeamFactCache {
         );
         let bytes = codec::encode_sharded_manifest(&manifest)?;
         let manifest_path = self.sharded_manifest_path(key);
-        crate::atomic_file::write(&manifest_path, &bytes, "sharded cache manifest")?;
+        crate::atomic_file::write_cache(&manifest_path, &bytes, "sharded cache manifest")?;
         Ok(CacheStoreStatus {
             label: format!(
                 "sharded_ok_seams_{}_shards_{}_limit_{}",
@@ -1116,7 +1116,7 @@ impl RepoFileFactCache {
             .map_err(|err| format!("create file fact cache dir failed: {err}"))?;
         let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
         let bytes = codec::encode_file_facts(&envelope)?;
-        crate::atomic_file::write(&self.entry_path(key), &bytes, "file fact cache")?;
+        crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache")?;
         Ok(())
     }
 
@@ -1176,7 +1176,7 @@ impl RepoSeamCountCache {
         let envelope = CountCacheEnvelope::new(key.clone(), counts.clone());
         let bytes = codec::encode_counts(&envelope)?;
         let path = self.entry_path(key);
-        crate::atomic_file::write(&path, &bytes, "count cache")?;
+        crate::atomic_file::write_cache(&path, &bytes, "count cache")?;
         Ok(())
     }
 
