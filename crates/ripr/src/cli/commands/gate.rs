@@ -32,10 +32,9 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_gate_options(rest)?;
-    if let Some(warning) = default_visible_only_warning(
-        options.mode_explicit,
-        !std::io::stderr().is_terminal(),
-    ) {
+    if let Some(warning) =
+        default_visible_only_warning(options.mode_explicit, !std::io::stderr().is_terminal())
+    {
         eprintln!("{warning}");
     }
     // Surface the missing-input requirement directly instead of burying it
@@ -374,7 +373,8 @@ mod tests {
             Ok(false)
         );
         assert_eq!(
-            parse_gate_options(&args(&["--pr-guidance", "--mode"])).map(|options| options.mode_explicit),
+            parse_gate_options(&args(&["--pr-guidance", "--mode"]))
+                .map(|options| options.mode_explicit),
             Ok(false)
         );
     }
