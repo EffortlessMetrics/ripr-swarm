@@ -1,9 +1,7 @@
 use crate::config::OraclePolicy;
 #[cfg(test)]
 use crate::domain::{OracleKind, OracleStrength};
-use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 pub(crate) use super::extract::contains_macro_invocation;
@@ -26,23 +24,36 @@ pub use super::facts::{
 use super::syntax::LexicalRustSyntaxAdapter;
 pub use super::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 
-/// Returns a stable disclosure when indexed Rust files used lexical fallback.
-pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
+pub(crate) fn lexical_fallback_files(index: &RustIndex) -> Vec<PathBuf> {
     let mut files = index
         .files
         .values()
         .filter(|facts| facts.used_lexical_fallback)
-        .map(|facts| facts.path.display().to_string())
+        .map(|facts| facts.path.clone())
         .collect::<Vec<_>>();
+    files.sort_unstable();
+    files
+}
+
+pub(crate) fn lexical_fallback_disclosure_for_files(files: &[PathBuf]) -> Option<String> {
     if files.is_empty() {
         return None;
     }
-    files.sort_unstable();
+    let mut displayed = files
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    displayed.sort_unstable();
     Some(format!(
         "ripr: lexical fallback was used for {} Rust file(s): {}; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes.",
-        files.len(),
-        files.join(", ")
+        displayed.len(),
+        displayed.join(", ")
     ))
+}
+
+/// Returns a stable disclosure when indexed Rust files used lexical fallback.
+pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
+    lexical_fallback_disclosure_for_files(&lexical_fallback_files(index))
 }
 
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
