@@ -198,8 +198,6 @@ pub fn load_diff_range(root: &Path, base: &str, head: &str) -> Result<String, St
     // CLI-only range path (#1921 migration scope note): no deadline is
     // threaded here yet, so the invocation stays unbounded like the
     // pre-#2303 behavior.
-    warn_if_git_operation_in_progress(root, None);
-
     run_git_diff(
         root,
         &format!("{base}...{head}"),
@@ -284,12 +282,12 @@ fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
 
 /// Disclose repository operation state before a live git diff is analyzed.
 ///
-/// During a rebase, merge, or cherry-pick, `HEAD` can identify an ephemeral
-/// replay commit and the worktree can contain conflict markers. The diff may
-/// still be loadable, but presenting its findings without this context would
-/// make the result look more authoritative than the input warrants. The probe
-/// is fail-closed: an unavailable git invocation does not fabricate an
-/// in-progress operation.
+/// During an interrupted rebase, merge, or cherry-pick, the worktree can
+/// contain conflict markers; a rebase may also leave `HEAD` at an ephemeral
+/// replay commit. The diff may still be loadable, but presenting its findings
+/// without this context would make the result look more authoritative than
+/// the input warrants. The probe is fail-closed: an unavailable git invocation
+/// does not fabricate an in-progress operation.
 fn warn_if_git_operation_in_progress(root: &Path, git_timeout: Option<Duration>) {
     if let Some(operation) = git_operation_in_progress(root, git_timeout) {
         eprintln!("{}", git_operation_warning(operation));
@@ -302,35 +300,39 @@ fn warn_if_git_operation_in_progress(root: &Path, git_timeout: Option<Duration>)
 /// linked worktrees may use a `.git` file and Git can place operation state in
 /// a worktree-specific git directory.
 fn git_operation_in_progress(root: &Path, git_timeout: Option<Duration>) -> Option<GitOperation> {
-    [
-        ("rebase-merge", GitOperation::RebaseMerge),
-        ("rebase-apply", GitOperation::RebaseApply),
-        ("MERGE_HEAD", GitOperation::Merge),
-        ("CHERRY_PICK_HEAD", GitOperation::CherryPick),
-    ]
-    .into_iter()
-    .find_map(|(marker, operation)| {
-        let output = crate::git::run_git_output_with_deadline(
-            root,
-            &["rev-parse", "--git-path", marker],
-            git_timeout,
-        )
-        .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() {
-            return None;
-        }
-        let path = Path::new(&path);
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            root.join(path)
-        };
-        path.exists().then_some(operation)
-    })
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &[
+            "rev-parse",
+            "--git-path",
+            "rebase-merge",
+            "--git-path",
+            "rebase-apply",
+            "--git-path",
+            "MERGE_HEAD",
+            "--git-path",
+            "CHERRY_PICK_HEAD",
+        ],
+        git_timeout,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let operations = [
+        GitOperation::RebaseMerge,
+        GitOperation::RebaseApply,
+        GitOperation::Merge,
+        GitOperation::CherryPick,
+    ];
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .zip(operations)
+        .find_map(|(path, operation)| {
+            let path = path.trim();
+            (!path.is_empty() && root.join(path).exists()).then_some(operation)
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,14 +344,19 @@ enum GitOperation {
 }
 
 fn git_operation_warning(operation: GitOperation) -> String {
-    let operation = match operation {
-        GitOperation::RebaseMerge => "rebase",
-        GitOperation::RebaseApply => "rebase",
-        GitOperation::Merge => "merge",
-        GitOperation::CherryPick => "cherry-pick",
+    let (operation, context) = match operation {
+        GitOperation::RebaseMerge | GitOperation::RebaseApply => (
+            "rebase",
+            "HEAD may identify an ephemeral replay commit and the working tree may contain conflict markers",
+        ),
+        GitOperation::Merge => ("merge", "the working tree may contain conflict markers"),
+        GitOperation::CherryPick => (
+            "cherry-pick",
+            "the working tree may contain conflict markers",
+        ),
     };
     format!(
-        "ripr: git repository is mid-rebase/merge ({operation}); HEAD is an ephemeral replay commit and the working tree may contain conflict markers. Results may be distorted."
+        "ripr: git repository is mid-{operation}; {context}. Results may be distorted."
     )
 }
 
@@ -744,12 +751,20 @@ mod tests {
     }
 
     #[test]
-    fn git_operation_warning_discloses_ephemeral_head_and_conflict_markers() {
-        let warning = git_operation_warning(GitOperation::RebaseMerge);
-        assert!(warning.contains("mid-rebase/merge"));
-        assert!(warning.contains("HEAD is an ephemeral replay commit"));
-        assert!(warning.contains("working tree may contain conflict markers"));
-        assert!(warning.contains("Results may be distorted"));
+    fn git_operation_warning_qualifies_head_and_conflict_markers() {
+        let rebase_warning = git_operation_warning(GitOperation::RebaseMerge);
+        assert!(rebase_warning.contains("mid-rebase"));
+        assert!(rebase_warning.contains("HEAD may identify an ephemeral replay commit"));
+        assert!(rebase_warning.contains("working tree may contain conflict markers"));
+        assert!(rebase_warning.contains("Results may be distorted"));
+
+        let merge_warning = git_operation_warning(GitOperation::Merge);
+        assert!(merge_warning.contains("mid-merge"));
+        assert!(!merge_warning.contains("ephemeral replay commit"));
+
+        let cherry_pick_warning = git_operation_warning(GitOperation::CherryPick);
+        assert!(cherry_pick_warning.contains("mid-cherry-pick"));
+        assert!(!cherry_pick_warning.contains("ephemeral replay commit"));
     }
 
     fn git_marker_path(dir: &Path, marker: &str) -> std::io::Result<PathBuf> {
@@ -766,12 +781,7 @@ mod tests {
             )));
         }
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let path = PathBuf::from(path);
-        Ok(if path.is_absolute() {
-            path
-        } else {
-            dir.join(path)
-        })
+        Ok(dir.join(path))
     }
 
     #[test]
