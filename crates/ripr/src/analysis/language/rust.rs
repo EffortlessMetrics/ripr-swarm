@@ -2486,7 +2486,7 @@ let _ = (result, note, raw);"##,
                 "expected generated Rust path: {path}"
             );
         }
-        for path in ["src/lib.rs", "src/engine.rs", "tests/generated_behavior.rs"] {
+        for path in ["src/lib.rs", "src/engine.rs", "tests/behavior.rs"] {
             assert!(
                 !is_generated_rust_file(Path::new(path)),
                 "unexpected generated Rust path: {path}"
