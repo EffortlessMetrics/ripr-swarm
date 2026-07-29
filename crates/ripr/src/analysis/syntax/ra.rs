@@ -1047,6 +1047,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
                 returns: vec![],
                 literals: vec![],
                 probe_shapes: vec![],
+                used_lexical_fallback: false,
                 source: String::new(),
             },
             &ranges,
