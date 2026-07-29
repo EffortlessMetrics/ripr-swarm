@@ -425,6 +425,9 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-badge-diff-policy",
     "check-generated-clean",
     "check-proof-packs",
+    "check-dependencies",
+    "check-process-policy",
+    "check-network-policy",
     "check-lint-policy",
 ];
 
@@ -458,6 +461,9 @@ fn precommit() -> Result<(), String> {
     check_badge_diff_policy()?;
     check_generated_clean()?;
     check_proof_packs()?;
+    check_dependencies()?;
+    check_process_policy()?;
+    check_network_policy()?;
     check_lint_policy()?;
     let body = precommit_report_body();
     write_report("precommit.md", &body)
