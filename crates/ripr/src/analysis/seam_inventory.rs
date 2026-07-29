@@ -517,19 +517,18 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         ),
         Duration::ZERO,
     );
-    let store_status =
-        match cache.store_compact_classified_seams_with_limit_and_fallback(
-            &key,
-            &classified,
-            &lexical_fallback_files,
-            store_limit,
-        ) {
-            Ok(status) => status.label,
-            Err(reason) => {
-                eprintln!("ripr: compact repo seam cache store ignored ({reason})");
-                cache_store_status_label(&reason)
-            }
-        };
+    let store_status = match cache.store_compact_classified_seams_with_limit_and_fallback(
+        &key,
+        &classified,
+        &lexical_fallback_files,
+        store_limit,
+    ) {
+        Ok(status) => status.label,
+        Err(reason) => {
+            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+            cache_store_status_label(&reason)
+        }
+    };
     trace_latency_phase(
         "compact_cache_store",
         &store_status,

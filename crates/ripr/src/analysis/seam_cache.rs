@@ -1957,7 +1957,9 @@ mod tests {
                     Ok(())
                 }
             }
-            other => Err(format!("expected fallback provenance cache hit, got {other:?}")),
+            other => Err(format!(
+                "expected fallback provenance cache hit, got {other:?}"
+            )),
         };
         let _ = std::fs::remove_dir_all(&dir);
         result
