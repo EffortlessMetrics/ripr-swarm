@@ -74,6 +74,50 @@ fn atomic_write_replaces_existing_file_without_leaving_temp_files() -> Result<()
     Ok(())
 }
 
+#[test]
+fn atomic_write_cleans_up_after_publish_failure() -> Result<(), String> {
+    let dir = unique_temp_dir("atomic-write-publish-failure")?;
+    let path = dir.join("occupied");
+    std::fs::create_dir(&path).map_err(|err| format!("create occupied directory: {err}"))?;
+
+    let result = crate::atomic_file::write(&path, b"bytes", "test artifact");
+    if result.is_ok() {
+        return Err("atomic write unexpectedly replaced a directory".to_string());
+    }
+    let temporary_count = std::fs::read_dir(&dir)
+        .map_err(|err| format!("read artifact directory: {err}"))?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ripr-atomic-")
+        })
+        .count();
+    if temporary_count != 0 {
+        return Err(format!(
+            "failed atomic write left {temporary_count} temporary files"
+        ));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn atomic_write_reports_uncreatable_parent() -> Result<(), String> {
+    let dir = unique_temp_dir("atomic-write-parent-failure")?;
+    let blocker = dir.join("not-a-directory");
+    std::fs::write(&blocker, b"blocker").map_err(|err| format!("create blocker: {err}"))?;
+
+    let result =
+        crate::atomic_file::write(&blocker.join("artifact.json"), b"bytes", "test artifact");
+    if result.is_ok() {
+        return Err("atomic write unexpectedly created a child of a file".to_string());
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
 /// Run the real sample analysis and write its artifact to `dir/artifact.json`.
 fn write_sample_artifact(
     dir: &Path,
