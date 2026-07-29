@@ -49,6 +49,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // RIPR-SPEC-0140: explicit artifact sink for the explain/context reuse
     // pair. No implicit cache: the user names the artifact path.
     let mut write_artifact: Option<PathBuf> = None;
+    let mut git_timeout_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -109,6 +110,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 i += 1;
                 write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
             }
+            "--git-timeout" => {
+                i += 1;
+                let value = expect_value(args, i, "--git-timeout")?;
+                let secs: u64 = value.parse().map_err(|_parse_err| {
+                    format!(
+                        "--git-timeout requires a non-negative integer (seconds); got {value:?}"
+                    )
+                })?;
+                input.git_timeout = (secs > 0).then_some(std::time::Duration::from_secs(secs));
+                git_timeout_explicitly_provided = true;
+            }
             "--help" | "-h" => {
                 help::print_check_help();
                 return Ok(());
@@ -127,6 +139,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // is explicitly given, base_explicitly_provided is true and we preserve it.
     if !base_explicitly_provided && input.diff_file.is_none() {
         input.base = None;
+    }
+    // #2613: RIPR_GIT_TIMEOUT env var is a fallback when --git-timeout was
+    // not passed on the command line. Seconds; 0 disables the deadline.
+    if !git_timeout_explicitly_provided
+        && let Ok(env_value) = std::env::var("RIPR_GIT_TIMEOUT")
+        && let Ok(secs) = env_value.parse::<u64>()
+    {
+        input.git_timeout = (secs > 0).then_some(std::time::Duration::from_secs(secs));
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err("check --worktree cannot be combined with --diff".to_string());

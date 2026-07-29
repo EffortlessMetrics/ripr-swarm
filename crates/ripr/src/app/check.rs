@@ -517,19 +517,25 @@ mod tests {
     }
 
     #[test]
-    fn cli_check_input_carries_no_git_deadline() -> Result<(), String> {
-        // #2303 no-drift contract: the CLI never sets a git deadline, so the
-        // diff-load path stays unbounded and byte-identical to the pre-#2303
-        // behavior. Only the LSP refresh path populates the deadline (via
-        // `LspAnalysisConfig::check_input`).
+    fn cli_check_input_carries_bounded_git_deadline() -> Result<(), String> {
+        // #2613: the CLI now sets a bounded git deadline by default (5 minutes)
+        // so a stuck git invocation surfaces as a named timeout instead of
+        // blocking indefinitely. The LSP path sets its own deadline from the
+        // gitTimeoutMs session option.
         let input = sample_diff_input();
-        if input.git_timeout.is_some() {
-            return Err("CLI check input must not set a git deadline".to_string());
+        let timeout = input
+            .git_timeout
+            .ok_or("CLI check input must set a default git deadline")?;
+        if timeout != crate::app::default_cli_git_timeout() {
+            return Err(format!(
+                "CLI git timeout must be the default ({:?}), got {timeout:?}",
+                crate::app::default_cli_git_timeout()
+            ));
         }
         let options =
             options_builder::analysis_options_from_input_and_config(&input, &RiprConfig::default());
-        if options.git_timeout.is_some() {
-            return Err("CLI analysis options must not set a git deadline".to_string());
+        if options.git_timeout != Some(timeout) {
+            return Err("CLI analysis options must carry the git deadline".to_string());
         }
         Ok(())
     }
