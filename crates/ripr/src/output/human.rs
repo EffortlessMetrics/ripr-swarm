@@ -1482,7 +1482,7 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
-        assert!(rendered.contains("  Bun cross-language grip:\n"));
+        assert!(rendered.contains("  Bun cross-language grip 1/2:\n"));
         assert!(rendered.contains("    state: rust_ungripped_ts_missing_discriminator\n"));
         assert!(rendered.contains("  Bun cross-language grip 2/2:\n"));
         assert!(rendered.contains(

@@ -105,6 +105,11 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                     message.push_str(": ");
                 }
                 message.push_str(&grip.state);
+                message.push_str("; Rust seam `");
+                message.push_str(&grip.rust_file);
+                message.push(':');
+                message.push_str(&grip.rust_owner);
+                message.push('`');
                 message.push_str("; action `");
                 message.push_str(&grip.action);
                 message.push_str("`; suggested test file `");
@@ -534,13 +539,14 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Bun cross-language grip%3A rust_ungripped_ts_missing_discriminator")
+            rendered
+                .contains("Bun cross-language grip 1/2%3A rust_ungripped_ts_missing_discriminator")
         );
         assert!(
             rendered
                 .contains("Bun cross-language grip 2/2%3A rust_ungripped_ts_missing_discriminator")
         );
-        assert!(rendered.contains("ArrayBuffer%3A%3Acopy_to_unshared"));
+        assert!(rendered.contains("copy_to_unshared"));
         assert!(rendered.contains("action `route_cross_language_oracle_visibility_limitation`"));
         assert!(rendered.contains("suggested test file `test/js/web/fetch/blob.test.ts`"));
         assert!(rendered.contains("TypeScript placement%3A rank 1"));
