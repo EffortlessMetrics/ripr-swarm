@@ -53,6 +53,24 @@ map is:
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+## JSON object key ordering
+
+JSON object key order is not part of any `ripr` output contract. The examples
+below use a stable, readable order, but consumers must parse JSON objects by
+key rather than match raw strings, prefixes, or byte offsets. This is required
+by JSON's object model and keeps declaration-order and map-backed renderers
+interoperable.
+
+The current implementation intentionally uses default `serde_json` behavior:
+objects created with `json!({...})` are emitted in lexicographic key order,
+while derived structs and hand-built envelopes may follow declaration order.
+That difference is an implementation detail, not a schema distinction. The
+repository may retain byte-oriented golden snapshots as renderer regression
+tests, but those snapshots do not authorize downstream consumers to depend on
+their key order. Enabling `serde_json`'s `preserve_order` feature would be a
+separate, deliberately broad output migration and is not implied by any
+schema version.
+
 Schema changes that remove fields, rename fields, or change field meanings
 should bump `schema_version`.
 
