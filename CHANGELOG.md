@@ -13,8 +13,9 @@ are scoped or reviewed.
 
 - An unexpected panic now produces a recognizable `ripr: internal error`
   message and exits with code 2, not the default Rust panic output with
-  exit code 101. The message includes the panic location and a link to
-  report the bug ([#2660](https://github.com/EffortlessMetrics/ripr-swarm/issues/2660)).
+  exit code 101. The message includes the panic location when available and
+  a link to report the bug
+  ([#2660](https://github.com/EffortlessMetrics/ripr-swarm/issues/2660)).
 
 - `ripr check --diff -` now reads the diff from stdin, enabling pipe
   workflows like `git diff origin/main | ripr check --diff -`

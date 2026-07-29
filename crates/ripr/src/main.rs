@@ -4,15 +4,19 @@ mod startup;
 
 fn main() {
     install_panic_hook();
-    if let Err(err) = startup::run() {
-        report_failure(&err);
-        std::process::exit(exit_code());
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(startup::run)) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            report_failure(&err);
+            std::process::exit(exit_code());
+        }
+        Err(_) => std::process::exit(exit_code()),
     }
 }
 
 /// Install a panic hook so an unexpected panic produces a recognizable
-/// `ripr:` error message and exits with the documented code 2, not the
-/// default Rust panic output with exit code 101 (#2660).
+/// `ripr:` error message. The top-level startup boundary maps a main-thread
+/// panic to code 2; worker panics remain available to their joiners (#2660).
 fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload();
@@ -36,7 +40,6 @@ fn install_panic_hook() {
                 "note: set RUST_BACKTRACE=1 for a backtrace; report at https://github.com/EffortlessMetrics/ripr-swarm/issues"
             );
         }
-        std::process::exit(exit_code());
     }));
 }
 
@@ -58,12 +61,16 @@ const fn exit_code() -> i32 {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn panic_hook_report_preserves_message_location_and_exit_code() {
+    fn panic_boundary_catches_main_thread_panics_and_preserves_exit_code() {
         let report = super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));
         assert_eq!(
             report,
             "ripr: internal error (this is a bug): panic hook regression at src/main.rs:42"
         );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            std::panic::resume_unwind(Box::new("panic hook regression"));
+        }));
+        assert!(result.is_err());
         assert_eq!(super::exit_code(), 2);
     }
 }
