@@ -23,10 +23,7 @@ fn install_panic_hook() {
             .unwrap_or("(no panic message)");
         eprintln!(
             "{}",
-            format_panic_report(
-                message,
-                info.location().map(|loc| (loc.file(), loc.line())),
-            )
+            format_panic_report(message, info.location().map(|loc| (loc.file(), loc.line())),)
         );
         let backtrace = std::backtrace::Backtrace::capture();
         if matches!(
@@ -62,8 +59,7 @@ const fn exit_code() -> i32 {
 mod tests {
     #[test]
     fn panic_hook_report_preserves_message_location_and_exit_code() {
-        let report =
-            super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));
+        let report = super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));
         assert_eq!(
             report,
             "ripr: internal error (this is a bug): panic hook regression at src/main.rs:42"
