@@ -41,6 +41,39 @@ fn unique_temp_dir(label: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+#[test]
+fn atomic_write_replaces_existing_file_without_leaving_temp_files() -> Result<(), String> {
+    let dir = unique_temp_dir("atomic-write")?;
+    let path = dir.join("artifact.json");
+
+    crate::atomic_file::write(&path, b"first", "test artifact")?;
+    crate::atomic_file::write(&path, b"second", "test artifact")?;
+
+    let contents = std::fs::read(&path).map_err(|err| format!("read artifact: {err}"))?;
+    if contents != b"second" {
+        return Err(format!(
+            "atomic replacement wrote unexpected bytes: {contents:?}"
+        ));
+    }
+    let temporary_count = std::fs::read_dir(&dir)
+        .map_err(|err| format!("read artifact directory: {err}"))?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ripr-atomic-")
+        })
+        .count();
+    if temporary_count != 0 {
+        return Err(format!(
+            "atomic write left {temporary_count} temporary files"
+        ));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
 /// Run the real sample analysis and write its artifact to `dir/artifact.json`.
 fn write_sample_artifact(
     dir: &Path,
