@@ -7662,3 +7662,32 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0144"
+name = "temporary 0.11 release-control lens"
+spec = "docs/specs/RIPR-SPEC-0144-release-control-lens.md"
+tests = [
+  "xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible",
+  "xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed",
+  "xtask/src/reports/release_control.rs::tests::input_order_does_not_change_normalized_output",
+  "xtask/src/reports/release_control.rs::tests::stale_authority_cannot_be_merge_eligible",
+  "xtask/src/reports/release_control.rs::tests::unsupported_live_mode_cannot_be_merge_eligible",
+  "xtask/src/reports/release_control.rs::tests::live_origin_is_required_before_live_snapshot_can_be_ready",
+  "xtask/src/reports/release_control.rs::tests::collector_error_fails_closed_and_clears_eligibility",
+  "xtask/src/reports/release_control.rs::tests::non_main_base_cannot_be_merge_eligible",
+]
+fixtures = [
+  "fixtures/release_control/complete.json",
+  "fixtures/release_control/reconcile-required.json",
+]
+code = [
+  "xtask/src/reports/release_control.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "target/ripr/reports/release-control.json",
+  "target/ripr/reports/release-control.md",
+]
+metrics = []
