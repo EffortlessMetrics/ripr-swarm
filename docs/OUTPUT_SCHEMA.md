@@ -55,11 +55,16 @@ that family's version only.
 
 ## JSON object key ordering
 
-JSON object key order is not part of any `ripr` output contract. The examples
-below use a stable, readable order, but consumers must parse JSON objects by
-key rather than match raw strings, prefixes, or byte offsets. This is required
-by JSON's object model and keeps declaration-order and map-backed renderers
-interoperable.
+JSON object key order is not part of the semantic contract for ordinary
+schema-bearing `ripr` output. The examples below use a stable, readable order,
+but consumers must parse JSON objects by key rather than match raw strings,
+prefixes, or byte offsets. This keeps declaration-order and map-backed
+renderers interoperable.
+
+This guidance does not relax byte-canonical artifact contracts. Inputs to
+`ripr agent verify` and artifacts carrying a `content_sha256` commitment are
+validated as exact canonical bytes; consumers must preserve those bytes rather
+than parse and re-render them before verification.
 
 The current implementation intentionally uses default `serde_json` behavior:
 objects created with `json!({...})` are emitted in lexicographic key order,
