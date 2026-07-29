@@ -647,21 +647,13 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
 
 #[test]
 fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(), String> {
-    let (root, diff) = agent_brief_sample_workspace("navigation-explicit-draft")
-        .map_err(|err| err.to_string())?;
+    let (root, diff) =
+        agent_brief_sample_workspace("navigation-explicit-draft").map_err(|err| err.to_string())?;
     std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
         .map_err(|err| format!("write ripr.toml: {err}"))?;
     let root_arg = root.display().to_string();
     let diff_arg = diff.display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root_arg,
-        "--diff",
-        &diff_arg,
-        "--mode",
-        "draft",
-    ]);
+    let output = run_ripr(&["check", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft"]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let explain_line = stdout
@@ -679,19 +671,11 @@ fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(),
     }
     let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
     let context_args = context_line.split_whitespace().collect::<Vec<_>>();
-    let explain = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &explain_args[1..],
-    )
-    .map_err(|err| format!("run explicit-draft explain command: {err}"))?;
+    let explain = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &explain_args[1..])
+        .map_err(|err| format!("run explicit-draft explain command: {err}"))?;
     assert_success(&explain);
-    let context = run_command(
-        env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
-        &context_args[1..],
-    )
-    .map_err(|err| format!("run explicit-draft context command: {err}"))?;
+    let context = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &context_args[1..])
+        .map_err(|err| format!("run explicit-draft context command: {err}"))?;
     assert_success(&context);
     Ok(())
 }
