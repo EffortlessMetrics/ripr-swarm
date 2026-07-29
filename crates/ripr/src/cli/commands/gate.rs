@@ -9,6 +9,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use crate::output;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use super::{non_empty_path_arg, non_empty_string_arg, write_text_file};
@@ -40,6 +41,9 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), String> {
         return Err(
             "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options".to_string(),
         );
+    }
+    if let Some(warning) = default_visible_only_warning(rest, !std::io::stderr().is_terminal()) {
+        eprintln!("{warning}");
     }
     let report = output::gate::build_gate_decision_report(&options.input)?;
     let rendered_json = output::gate::render_gate_decision_json(&report)?;
@@ -195,6 +199,21 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     })
 }
 
+const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
+
+fn default_visible_only_warning(
+    args: &[String],
+    non_interactive: bool,
+) -> Option<&'static str> {
+    if non_interactive
+        && !args.iter().any(|arg| arg == "--mode")
+    {
+        Some(DEFAULT_VISIBLE_ONLY_WARNING)
+    } else {
+        None
+    }
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -333,6 +352,23 @@ mod tests {
                 out: PathBuf::from(output::gate::DEFAULT_GATE_OUT),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
             })
+        );
+    }
+
+    #[test]
+    fn default_visible_only_warning_requires_omitted_mode_and_non_interactive_use() {
+        assert_eq!(
+            default_visible_only_warning(&args(&[]), true),
+            Some(DEFAULT_VISIBLE_ONLY_WARNING)
+        );
+        assert_eq!(default_visible_only_warning(&args(&[]), false), None);
+        assert_eq!(
+            default_visible_only_warning(&args(&["--mode", "visible-only"]), true),
+            None
+        );
+        assert_eq!(
+            default_visible_only_warning(&args(&["--mode", "acknowledgeable"]), true),
+            None
         );
     }
 
