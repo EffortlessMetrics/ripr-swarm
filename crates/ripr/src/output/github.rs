@@ -558,7 +558,8 @@ mod tests {
         let copy_profile = rendered
             .split("Bun cross-language grip 2/2%3A")
             .nth(1)
-            .ok_or_else(|| "expected copy profile annotation".to_string())?;
+            .unwrap_or_default();
+        assert!(!copy_profile.is_empty(), "expected copy profile annotation");
         assert!(
             !copy_profile.contains("TypeScript placement%3A"),
             "copy_to_unshared must not receive placement evidence"

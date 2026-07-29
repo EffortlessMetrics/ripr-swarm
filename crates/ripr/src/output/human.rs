@@ -1516,14 +1516,17 @@ mod tests {
             "    placement reason: existing Blob + ArrayBuffer integration tests live there; missing discriminator is resizable ArrayBuffer\n"
         ));
         assert_eq!(
-            rendered.matches("    placement: rank 1 test/js/web/fetch/blob.test.ts\n").count(),
+            rendered
+                .matches("    placement: rank 1 test/js/web/fetch/blob.test.ts\n")
+                .count(),
             1,
             "only the Blob profile may receive placement evidence"
         );
         let copy_profile = rendered
             .split("  Bun cross-language grip 2/2:\n")
             .nth(1)
-            .ok_or_else(|| "expected copy profile rendering".to_string())?;
+            .unwrap_or_default();
+        assert!(!copy_profile.is_empty(), "expected copy profile rendering");
         assert!(
             !copy_profile.contains("    placement:"),
             "copy_to_unshared must not receive placement evidence"
