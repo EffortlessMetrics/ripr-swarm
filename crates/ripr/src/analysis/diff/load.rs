@@ -355,9 +355,7 @@ fn git_operation_warning(operation: GitOperation) -> String {
             "the working tree may contain conflict markers",
         ),
     };
-    format!(
-        "ripr: git repository is mid-{operation}; {context}. Results may be distorted."
-    )
+    format!("ripr: git repository is mid-{operation}; {context}. Results may be distorted.")
 }
 
 fn run_git_diff(
