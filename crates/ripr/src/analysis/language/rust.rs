@@ -1085,7 +1085,10 @@ pub(crate) fn is_generated_rust_file(path: &Path) -> bool {
         let std::path::Component::Normal(value) = component else {
             return false;
         };
-        matches!(value.to_string_lossy().as_ref(), "gen" | "generated" | "out")
+        matches!(
+            value.to_string_lossy().as_ref(),
+            "gen" | "generated" | "out"
+        )
     });
     conventional_name || generated_directory
 }
@@ -1366,11 +1369,11 @@ mod tests {
         apply_rust_macro_wrapped_assertion_limit, changed_rust_line_count,
         cross_language_limit_kind, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
-        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, macro_reach_limit_kind,
-        is_generated_rust_file, owner_has_ffi_attr, partial_diff_budgets_from_env,
-        partition_canonical_form,
-        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
-        select_partial_diff_partition, sha256_hex, transitive_reach_limit_kind,
+        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_generated_rust_file,
+        macro_reach_limit_kind, owner_has_ffi_attr, partial_diff_budgets_from_env,
+        partition_canonical_form, replace_witnessed_no_path_infection_summary,
+        repo_index_file_limit_from_env, select_partial_diff_partition, sha256_hex,
+        transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
