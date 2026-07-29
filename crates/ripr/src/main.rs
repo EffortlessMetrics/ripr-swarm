@@ -70,6 +70,7 @@ mod tests {
             super::run_startup(|| {
                 let trigger = std::env::var("RIPR_PANIC_HOOK_CHILD").unwrap_or_default();
                 assert_eq!(trigger, "trigger", "panic hook regression");
+                Ok(())
             });
             return Err("panic boundary returned instead of exiting".to_owned());
         }
