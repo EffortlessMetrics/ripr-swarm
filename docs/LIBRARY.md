@@ -124,7 +124,7 @@ Major durable discoveries in `docs/LEARNINGS.md`, newest first:
 | 2026-07-12 | A related test is not a repair route without producer facts | [Related Tests](LEARNINGS.md#2026-07-12-a-related-test-is-not-a-repair-route-without-producer-facts) |
 | 2026-06-26 | Perl owner-target identity is not changed-sink observation | [Perl Mapper Honesty](LEARNINGS.md#2026-06-26-perl-mapper-honesty--owner-target-is-not-sink-observation-the-producer-gate-is-the-wrong-harness) |
 | 2026-06-14 | Token coincidence is a false-`exposed` family, not one bug | [Token Coincidence](LEARNINGS.md#2026-06-14-token-coincidence-is-a-false-exposed-family-not-one-bug--and-no-siblings-was-premature) |
-| 2026-06-13 | Discrimination requires sink alignment, not merely coverage | [Discrimination vs Coverage](LEARNINGS.md#2026-06-13-discrimination-vs-coverage--exposed-requires-sink-alignment) |
+| 2026-06-13 | Discrimination requires sink alignment, not merely coverage | [Discrimination vs. Coverage](LEARNINGS.md#2026-06-13-discrimination-vs-coverage--exposed-requires-sink-alignment) |
 | 2026-06-13 | Surface projection must reuse the shared renderer, not a parallel language renderer | [Surface Projection](LEARNINGS.md#2026-06-13-surface-projection-for-a-typescript-packet-goes-through-the-shared-renderer-not-a-parallel-ts-renderer) |
 | 2026-06-12 | Release state and crates.io query failures must remain separate facts | [Release-State Boundary](LEARNINGS.md#2026-06-12-release-state-boundary-and-cratesio-query-honesty) |
 | 2026-06-12 | Receipt, outcome, and route-quality claims require honesty-detection discipline | [Receipt to Route Quality](LEARNINGS.md#2026-06-12-closing-the-receipt--outcome--route-quality-loop--the-honesty-detection-discipline) |
