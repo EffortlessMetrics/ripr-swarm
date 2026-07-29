@@ -408,6 +408,8 @@ fn bun_cross_language_grip(
 }
 
 fn selected_bun_bridge_hint(finding: &Finding) -> Option<(usize, &str)> {
+    // Prefer the first emitted copy profile when a producer supplies duplicate
+    // copy hints; evidence order is the producer-owned deterministic tie-break.
     finding
         .evidence
         .iter()
@@ -999,6 +1001,21 @@ mod tests {
             json["bun_cross_language_grip"]["typescript_evidence"]["test_file"],
             "test/js/web/fetch/blob.test.ts"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_preview_card_keeps_blob_group_without_copy_profile() -> Result<(), String> {
+        let card = typescript_preview_card(&sample_bun_missing_resizable_finding())
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+        let grip = card
+            .bun_cross_language_grip
+            .as_ref()
+            .ok_or_else(|| "expected Bun cross-language grip".to_string())?;
+
+        assert_eq!(grip.rust_file, "src/jsc/Blob.rs");
+        assert_eq!(grip.rust_owner, "Blob::from_js_without_defer_gc");
+        assert_eq!(grip.ts_verdict, "ts_missing_resizable");
         Ok(())
     }
 
