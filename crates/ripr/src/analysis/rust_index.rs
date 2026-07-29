@@ -26,6 +26,25 @@ pub use super::facts::{
 use super::syntax::LexicalRustSyntaxAdapter;
 pub use super::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 
+/// Returns a stable disclosure when indexed Rust files used lexical fallback.
+pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
+    let mut files = index
+        .files
+        .values()
+        .filter(|facts| facts.used_lexical_fallback)
+        .map(|facts| facts.path.display().to_string())
+        .collect::<Vec<_>>();
+    if files.is_empty() {
+        return None;
+    }
+    files.sort_unstable();
+    Some(format!(
+        "ripr: lexical fallback was used for {} Rust file(s): {}; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes.",
+        files.len(),
+        files.join(", ")
+    ))
+}
+
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
     for test in &mut index.tests {
         apply_oracle_policy_to_assertions(&mut test.assertions, policy);
@@ -47,7 +66,11 @@ fn apply_oracle_policy_to_assertions(assertions: &mut [OracleFact], policy: &Ora
 fn summarize_file(path: PathBuf, text: String) -> FileFacts {
     match RaRustSyntaxAdapter.summarize_file(&path, &text) {
         Ok(facts) => facts,
-        Err(_) => super::syntax::lexical::summarize_file_lexically(path, text),
+        Err(_) => {
+            let mut facts = super::syntax::lexical::summarize_file_lexically(path, text);
+            facts.used_lexical_fallback = true;
+            facts
+        }
     }
 }
 
@@ -711,5 +734,25 @@ fn feature_gated_test() {}
             Some(index) => Ok(index + 1),
             None => Err(format!("missing line containing {needle}")),
         }
+    }
+
+    #[test]
+    fn lexical_fallback_disclosure_is_stable_and_conservative() {
+        let mut index = RustIndex::default();
+        for path in ["z.rs", "a.rs"] {
+            index.files.insert(
+                PathBuf::from(path),
+                FileFacts {
+                    path: PathBuf::from(path),
+                    used_lexical_fallback: true,
+                    ..FileFacts::default()
+                },
+            );
+        }
+
+        assert_eq!(
+            lexical_fallback_disclosure(&index).as_deref(),
+            Some("ripr: lexical fallback was used for 2 Rust file(s): a.rs, z.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes.")
+        );
     }
 }
