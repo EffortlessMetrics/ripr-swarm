@@ -201,13 +201,8 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
 
 const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
 
-fn default_visible_only_warning(
-    args: &[String],
-    non_interactive: bool,
-) -> Option<&'static str> {
-    if non_interactive
-        && !args.iter().any(|arg| arg == "--mode")
-    {
+fn default_visible_only_warning(args: &[String], non_interactive: bool) -> Option<&'static str> {
+    if non_interactive && !args.iter().any(|arg| arg == "--mode") {
         Some(DEFAULT_VISIBLE_ONLY_WARNING)
     } else {
         None
