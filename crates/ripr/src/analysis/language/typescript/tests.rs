@@ -772,6 +772,7 @@ test("Blob copies ArrayBuffer-backed bytes", async () => {
         "typescript_bun_ub_bridge_hint: confidence=configured_hint",
     );
     assert_evidence_contains(&finding, "rust_owner=Blob::from_js_without_defer_gc");
+    assert_evidence_contains(&finding, "rust_owner=copy_to_unshared");
     assert_evidence_contains(
         &finding,
         "typescript_bun_ub_bridge_verdict: ts_discriminated missing_discriminators=none action=no_missing_bridge_discriminator",
@@ -786,6 +787,14 @@ test("Blob copies ArrayBuffer-backed bytes", async () => {
             .iter()
             .all(|entry| !entry.contains("max_byte_length_mention_only")),
         "maxByteLength mention-only must not be emitted for a Blob stable-byte observer: {:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .all(|entry| !entry.contains("cover copy_to_unshared")),
+        "copy_to_unshared has no producer-backed placement evidence: {:?}",
         finding.evidence
     );
     Ok(())
