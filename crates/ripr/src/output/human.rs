@@ -1484,9 +1484,7 @@ mod tests {
         assert!(rendered.contains("  Bun cross-language grip 1/2:\n"));
         assert!(rendered.contains("    state: rust_ungripped_ts_missing_discriminator\n"));
         assert!(rendered.contains("  Bun cross-language grip 2/2:\n"));
-        assert!(rendered.contains(
-            "    Rust seam: src/jsc/array_buffer.rs owner=copy_to_unshared"
-        ));
+        assert!(rendered.contains("    Rust seam: src/jsc/array_buffer.rs owner=copy_to_unshared"));
         assert!(rendered.contains(
             "    Rust seam: src/jsc/Blob.rs owner=Blob::from_js_without_defer_gc boundary=array_buffer.shared || array_buffer.resizable\n"
         ));
