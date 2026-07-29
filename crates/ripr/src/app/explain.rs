@@ -29,7 +29,16 @@ pub fn explain_finding_with_config(
     selector: &str,
     config: &RiprConfig,
 ) -> Result<String, String> {
-    let navigation = super::finding_navigation(&input, None);
+    explain_finding_with_config_and_navigation_mode(input, selector, config, false)
+}
+
+pub(crate) fn explain_finding_with_config_and_navigation_mode(
+    input: CheckInput,
+    selector: &str,
+    config: &RiprConfig,
+    mode_explicit: bool,
+) -> Result<String, String> {
+    let navigation = super::finding_navigation(&input, None, mode_explicit);
     let output = check_workspace_with_config(input, config)?;
     match select_finding(&output.findings, selector) {
         Some(finding) => Ok(output::human::render_finding_with_context_command(
@@ -57,7 +66,25 @@ pub(crate) fn explain_finding_from_artifact(
     artifact_path: &Path,
     asserted_base: Option<&str>,
 ) -> Result<String, String> {
-    let navigation = super::finding_navigation(&input, Some(artifact_path));
+    explain_finding_from_artifact_with_navigation_mode(
+        input,
+        selector,
+        config,
+        artifact_path,
+        asserted_base,
+        false,
+    )
+}
+
+pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
+    input: CheckInput,
+    selector: &str,
+    config: &RiprConfig,
+    artifact_path: &Path,
+    asserted_base: Option<&str>,
+    mode_explicit: bool,
+) -> Result<String, String> {
+    let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
     let findings = super::check_artifact::load_findings_for_reuse(
         artifact_path,
         &input,

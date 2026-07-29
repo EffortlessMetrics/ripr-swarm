@@ -308,6 +308,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         Some(app::finding_navigation(
             &limited_check_input,
             write_artifact.as_deref(),
+            explicit.mode,
         ))
     };
     write_stdout_chunked(&app::render_check_with_config_and_navigation(

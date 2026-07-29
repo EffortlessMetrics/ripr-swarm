@@ -32,6 +32,7 @@ impl FindingNavigation {
 pub(crate) fn finding_navigation(
     input: &CheckInput,
     artifact_path: Option<&Path>,
+    mode_explicit: bool,
 ) -> FindingNavigation {
     let mut args = vec![format!(
         "--root {}",
@@ -52,7 +53,7 @@ pub(crate) fn finding_navigation(
         args.push(format!("--base {}", shell_arg(base)));
     }
 
-    if input.mode != Mode::Draft {
+    if mode_explicit || input.mode != Mode::Draft {
         args.push(format!("--mode {}", shell_arg(input.mode.as_str())));
     }
     if !input.include_unchanged_tests {
@@ -90,7 +91,7 @@ mod tests {
             diff_file: Some(PathBuf::from("change set.diff")),
             ..CheckInput::default()
         };
-        let navigation = finding_navigation(&input, None);
+        let navigation = finding_navigation(&input, None, false);
 
         assert_eq!(
             navigation.explain_command("probe:src/lib.rs:error_path:abc123"),
@@ -110,11 +111,22 @@ mod tests {
             mode: Mode::Ready,
             ..CheckInput::default()
         };
-        let navigation = finding_navigation(&input, Some(Path::new("saved artifact.json")));
+        let navigation = finding_navigation(&input, Some(Path::new("saved artifact.json")), false);
 
         assert_eq!(
             navigation.explain_command("probe:id"),
             "ripr explain --root repo --from 'saved artifact.json' --mode ready probe:id"
+        );
+    }
+
+    #[test]
+    fn finding_navigation_preserves_explicit_draft_mode() {
+        let input = CheckInput::default();
+        let navigation = finding_navigation(&input, None, true);
+
+        assert_eq!(
+            navigation.explain_command("probe:id"),
+            "ripr explain --root . --mode draft probe:id"
         );
     }
 }
