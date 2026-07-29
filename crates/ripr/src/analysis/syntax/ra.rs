@@ -129,6 +129,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         returns: file_returns,
         literals: file_literals,
         probe_shapes: file_probe_shapes,
+        used_lexical_fallback: false,
         source: text.to_string(),
     })
 }

@@ -752,7 +752,9 @@ fn feature_gated_test() {}
 
         assert_eq!(
             lexical_fallback_disclosure(&index).as_deref(),
-            Some("ripr: lexical fallback was used for 2 Rust file(s): a.rs, z.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes.")
+            Some(
+                "ripr: lexical fallback was used for 2 Rust file(s): a.rs, z.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes."
+            )
         );
     }
 }
