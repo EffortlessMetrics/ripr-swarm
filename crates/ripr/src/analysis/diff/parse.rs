@@ -188,6 +188,7 @@ mod parser_state {
 
         pub(super) fn record_binary_deletion(&mut self, raw: &str) {
             if raw.starts_with("Binary files ") && raw.ends_with(" and /dev/null differ") {
+                self.deletion_section = true;
                 self.record_deleted_file_if_ready();
             }
         }
