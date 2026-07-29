@@ -12,31 +12,13 @@ use super::path::{
 const DEFAULT_DIFF_FILE_LIMIT: usize = 800;
 const DIFF_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 
-/// Parse a unified diff with a file-count bound that protects ALL language
-/// adapters, not just Rust (#2398). The bound is enforced at the parser level
-/// so the pipeline never hands an unbounded `Vec<ChangedFile>` to any adapter.
-///
-/// The error uses the `diff_scope_oversized:` prefix that
-/// `is_diff_scope_oversized()` (rust.rs:66) and the LSP limited-snapshot
-/// path already match, so existing detection logic works unchanged.
-#[allow(
-    dead_code,
-    reason = "retained for callers that only need bounded changed files; the pipeline also consumes deletion metadata"
-)]
-pub fn parse_unified_diff_bounded(input: &str) -> Result<Vec<ChangedFile>, String> {
-    Ok(parse_unified_diff_bounded_with_metadata(input)?.changed_files)
-}
-
 pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
     let limit = diff_file_limit_from_env();
     parse_unified_diff_with_metadata_and_limit(input, limit)
 }
 
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
-#[allow(
-    dead_code,
-    reason = "parser regression tests exercise the explicit bound independently of pipeline metadata"
-)]
+#[cfg(test)]
 pub(crate) fn parse_unified_diff_with_limit(
     input: &str,
     limit: usize,
@@ -1233,7 +1215,8 @@ deleted file mode 100644
     #[test]
     fn bounded_parser_accepts_normal_diff() -> Result<(), String> {
         let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
-        let files = parse_unified_diff_bounded(diff)
+        let files = parse_unified_diff_bounded_with_metadata(diff)
+            .map(|parsed| parsed.changed_files)
             .map_err(|e| format!("bounded parser should accept a normal diff: {e}"))?;
         assert_eq!(files.len(), 1);
         Ok(())
