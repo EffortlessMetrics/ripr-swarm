@@ -140,6 +140,7 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
         submodule_file_count: state.submodule_file_count(),
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
+        pure_rename_paths: state.pure_rename_paths(),
     }
 }
 
@@ -150,6 +151,7 @@ pub(crate) struct ParsedDiff {
     pub(crate) submodule_file_count: usize,
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
+    pub(crate) pure_rename_paths: Vec<PathBuf>,
 }
 
 fn parse_hunk_header(raw: &str) -> Option<(usize, usize)> {
@@ -201,6 +203,7 @@ mod parser_state {
         renamed_file_count: usize,
         pure_rename_counted: bool,
         pure_rename_file_count: usize,
+        pure_rename_paths: Vec<PathBuf>,
     }
 
     impl ParserState {
@@ -223,6 +226,10 @@ mod parser_state {
 
         pub(super) fn pure_rename_file_count(&self) -> usize {
             self.pure_rename_file_count
+        }
+
+        pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
+            self.pure_rename_paths.clone()
         }
 
         pub(super) fn handle_rename_metadata(
@@ -255,6 +262,7 @@ mod parser_state {
                     self.rename_counted = true;
                     if self.pure_rename_section && !self.pure_rename_counted {
                         self.pure_rename_file_count = self.pure_rename_file_count.saturating_add(1);
+                        self.pure_rename_paths.push(path.clone());
                         self.pure_rename_counted = true;
                     }
                 }
@@ -915,6 +923,15 @@ deleted file mode 100644
         assert_eq!(parsed.changed_files[0].path, PathBuf::from("src/new.rs"));
         assert!(parsed.changed_files[0].added_lines.is_empty());
         assert!(parsed.changed_files[0].removed_lines.is_empty());
+
+        let spaced = "diff --git a/src/old file.rs b/src/new file.rs\nsimilarity index 100%\nrename from src/old file.rs\nrename to src/new file.rs\n";
+        let parsed = parse_unified_diff_with_metadata(spaced);
+        assert_eq!(parsed.renamed_file_count, 1);
+        assert_eq!(parsed.pure_rename_file_count, 1);
+        assert_eq!(
+            parsed.changed_files[0].path,
+            PathBuf::from("src/new file.rs")
+        );
     }
 
     #[test]
@@ -925,6 +942,16 @@ deleted file mode 100644
         assert_eq!(parsed.pure_rename_file_count, 0);
         assert_eq!(parsed.changed_files.len(), 1);
         assert_eq!(parsed.changed_files[0].path, PathBuf::from("src/new.rs"));
+        assert_eq!(parsed.changed_files[0].added_lines.len(), 1);
+
+        let spaced = "diff --git a/src/old file.rs b/src/new file.rs\nsimilarity index 80%\nrename from src/old file.rs\nrename to src/new file.rs\n--- \"a/src/old file.rs\"\n+++ \"b/src/new file.rs\"\n@@ -1 +1 @@\n-old\n+new\n";
+        let parsed = parse_unified_diff_with_metadata(spaced);
+        assert_eq!(parsed.renamed_file_count, 1);
+        assert_eq!(parsed.changed_files.len(), 1);
+        assert_eq!(
+            parsed.changed_files[0].path,
+            PathBuf::from("src/new file.rs")
+        );
         assert_eq!(parsed.changed_files[0].added_lines.len(), 1);
 
         let traversal = "diff --git a/../old.rs b/src/new.rs\nsimilarity index 100%\nrename from ../old.rs\nrename to src/new.rs\n";
