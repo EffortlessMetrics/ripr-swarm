@@ -262,7 +262,7 @@ fn escape_cmd(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::render;
+    use super::{display_path, render};
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
         Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId,
@@ -325,7 +325,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("file=src/lib.rs,line=13"));
-        assert!(!rendered.contains("file=C:/repo"));
+        assert!(!rendered.contains(&format!("file={}", display_path(&absolute_root))));
     }
 
     #[test]
