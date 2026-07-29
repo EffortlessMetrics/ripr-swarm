@@ -18,7 +18,11 @@ pub(super) fn is_dev_null_new_path_marker(raw: &str) -> bool {
 
 pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     let marker = raw.strip_prefix("diff --git ")?;
-    let path = parse_diff_path_token(marker)?;
+    let old_token = marker
+        .starts_with('"')
+        .then_some(marker)
+        .or_else(|| marker.split_whitespace().next())?;
+    let path = parse_diff_path_token(old_token)?;
     let path = path.strip_prefix("a/").unwrap_or(&path);
     confine_to_relative_path(path)
 }
