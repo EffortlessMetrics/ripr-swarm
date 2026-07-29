@@ -223,12 +223,13 @@ fn build_identity_at_load(
     recorded: &CheckArtifactIdentityV1,
     artifact_path: &Path,
 ) -> Result<CheckArtifactIdentityV1, String> {
-    let diff_text = resolve_diff_text(&recorded.diff_source, &input.root, input.git_timeout).map_err(|err| {
-        format!(
-            "check artifact at {} cannot be reused: {err}",
-            artifact_path.display()
-        )
-    })?;
+    let diff_text = resolve_diff_text(&recorded.diff_source, &input.root, input.git_timeout)
+        .map_err(|err| {
+            format!(
+                "check artifact at {} cannot be reused: {err}",
+                artifact_path.display()
+            )
+        })?;
     let perl_facts_path = recorded
         .analysis_options
         .perl_facts_path

@@ -466,10 +466,7 @@ mod tests {
     #[test]
     fn git_timeout_cli_values_are_parsed_before_dispatch() {
         assert_eq!(check(&args(&["--git-timeout", "0", "--help"])), Ok(()));
-        assert_eq!(
-            check(&args(&["--git-timeout", "12", "--help"])),
-            Ok(())
-        );
+        assert_eq!(check(&args(&["--git-timeout", "12", "--help"])), Ok(()));
 
         let error = check(&args(&["--git-timeout", "not-a-number"]))
             .expect_err("invalid git timeout should fail closed");
@@ -482,10 +479,7 @@ mod tests {
             git_timeout_from_env(false, Some("12")),
             Ok(Some(Some(std::time::Duration::from_secs(12))))
         );
-        assert_eq!(
-            git_timeout_from_env(false, Some("0")),
-            Ok(Some(None))
-        );
+        assert_eq!(git_timeout_from_env(false, Some("0")), Ok(Some(None)));
         assert_eq!(git_timeout_from_env(false, Some("invalid")), Ok(None));
         assert_eq!(git_timeout_from_env(false, None), Ok(None));
         assert_eq!(git_timeout_from_env(true, Some("12")), Ok(None));
