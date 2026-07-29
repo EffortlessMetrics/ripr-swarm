@@ -47,3 +47,25 @@ The focused tests establish profile retention and cross-surface agreement.
 They do not establish runtime Bun behavior, mutation outcomes, or general
 cross-language correctness.
 
+## Completion receipt
+
+Campaign 36 is complete. The JSON-order documentation slice merged as #2743
+at `17560690002de21a4615a92ac13053d64b1346fe`; campaign source-truth setup
+merged as #2746 at `8783582935d7ff0b23a68710c90727bc0ac57ad2`; and the
+multi-profile implementation merged as #2753 at
+`fd3a44771e401e074abeec7833f04e12968926a1` from final head
+`06e097e6a6ed41c4a2a5e02e67ef3bb4208362f6`.
+
+The focused card and cross-renderer tests passed, as did formatting, the
+profile-specific placement regression, hosted required Rust gates, hosted
+workspace tests, coverage, UB review, dependency review, and source-of-truth
+checks. Issues #2716 and #2744 are closed. The result remains preview-only:
+it does not claim runtime Bun execution, mutation outcomes, coverage or test
+adequacy, public repair-packet authority, or default blocking.
+
+The local full `cargo xtask check-pr` attempt was not completed because
+unrelated Cargo jobs held shared build locks; hosted required gates provide
+the workspace-level merge proof. The local full-library attempt also exposed
+pre-existing Windows timing, LSP, and path-test failures; they were not part
+of this projection seam and hosted full tests passed. No follow-up is required
+for Campaign 36; broader Bun discovery/runtime support remains outside scope.
