@@ -150,8 +150,8 @@ fn parse_start(segment: &str) -> Option<usize> {
 mod parser_state {
     use super::{
         ChangedFile, ChangedLine, is_dev_null_new_path_marker, is_new_path_marker,
-        parse_git_old_path, parse_hunk_header, parse_new_path_marker, parse_old_path_for_confinement,
-        parse_old_path_marker,
+        parse_git_old_path, parse_hunk_header, parse_new_path_marker,
+        parse_old_path_for_confinement, parse_old_path_marker,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -711,10 +711,16 @@ deleted file mode 100644
     #[test]
     fn metadata_does_not_count_null_or_traversal_old_paths_as_deletions() {
         let new_file = "diff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.rs\n";
-        assert_eq!(parse_unified_diff_with_metadata(new_file).deleted_file_count, 0);
+        assert_eq!(
+            parse_unified_diff_with_metadata(new_file).deleted_file_count,
+            0
+        );
 
         let traversal = "diff --git a/src/../escape.rs b/src/../escape.rs\ndeleted file mode 100644\n--- a/../../../etc/passwd\n+++ /dev/null\n";
-        assert_eq!(parse_unified_diff_with_metadata(traversal).deleted_file_count, 0);
+        assert_eq!(
+            parse_unified_diff_with_metadata(traversal).deleted_file_count,
+            0
+        );
     }
 
     #[test]
