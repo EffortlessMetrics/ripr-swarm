@@ -985,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn typescript_preview_card_selects_copy_bridge_group_when_multiple_profiles_exist()
+    fn typescript_preview_card_retains_copy_bridge_group_when_multiple_profiles_exist()
     -> Result<(), String> {
         let mut finding = sample_bun_missing_resizable_finding();
         finding.evidence.extend([
@@ -996,22 +996,31 @@ mod tests {
 
         let card = typescript_preview_card(&finding)
             .ok_or_else(|| "expected TypeScript preview card".to_string())?;
-        let grip = card
+        assert_eq!(card.bun_cross_language_grips.len(), 2);
+        let compatibility_grip = card
             .bun_cross_language_grip
             .as_ref()
             .ok_or_else(|| "expected Bun cross-language grip".to_string())?;
-
-        assert_eq!(grip.rust_file, "src/jsc/array_buffer.rs");
-        assert_eq!(grip.rust_owner, "copy_to_unshared");
-        assert_eq!(grip.ts_verdict, "ts_discriminated");
+        assert_eq!(compatibility_grip.rust_file, "src/jsc/Blob.rs");
+        assert_eq!(
+            compatibility_grip.rust_owner,
+            "Blob::from_js_without_defer_gc"
+        );
+        let copy_grip = card
+            .bun_cross_language_grips
+            .get(1)
+            .ok_or_else(|| "expected copy profile".to_string())?;
+        assert_eq!(copy_grip.rust_file, "src/jsc/array_buffer.rs");
+        assert_eq!(copy_grip.rust_owner, "copy_to_unshared");
+        assert_eq!(copy_grip.ts_verdict, "ts_discriminated");
 
         let json = typescript_preview_card_json_value(&card);
         assert_eq!(
             json["bun_cross_language_grip"]["rust_seam"]["file"],
-            "src/jsc/array_buffer.rs"
+            "src/jsc/Blob.rs"
         );
         assert_eq!(
-            json["bun_cross_language_grip"]["rust_seam"]["owner"],
+            json["bun_cross_language_grip"]["profiles"][1]["rust_seam"]["owner"],
             "copy_to_unshared"
         );
         assert_eq!(
