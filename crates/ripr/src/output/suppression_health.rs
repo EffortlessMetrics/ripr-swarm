@@ -698,7 +698,6 @@ created_at = "2026-01-01"
 last_seen = "2026-05-01"
 review_by = "2026-12-01"
 expected_visibility = "suppressed_visible"
-static_class = "weakly_exposed"
 language = "rust"
 "#))));
         assert_eq!(report.status, "healthy");
