@@ -478,6 +478,29 @@ mod tests {
     }
 
     #[test]
+    fn cli_zero_timeout_reaches_git_diff_loader() -> Result<(), String> {
+        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let error = check(&args(&[
+            "--root",
+            workspace_root.to_string_lossy().as_ref(),
+            "--base",
+            "HEAD",
+            "--git-timeout",
+            "0",
+            "--format",
+            "json",
+        ]))
+        .expect_err("zero CLI timeout must fail before running analysis");
+
+        if !crate::git::is_git_invocation_timeout(&error) {
+            return Err(format!(
+                "expected named git timeout from the diff loader, got: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn git_timeout_environment_is_a_fallback_and_zero_disables() -> Result<(), String> {
         assert_eq!(
             git_timeout_from_env(false, Some("12")),
