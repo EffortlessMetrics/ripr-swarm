@@ -294,9 +294,10 @@ mod parser_state {
                 }
                 return false;
             };
+            let is_new_file_section = raw == "--- /dev/null";
             if self.submodule_section
                 && !self.submodule_counted
-                && self.section_old_path.as_ref() == Some(&path)
+                && (is_new_file_section || self.section_old_path.as_ref() == Some(&path))
             {
                 self.submodule_file_count = self.submodule_file_count.saturating_add(1);
                 self.submodule_counted = true;
