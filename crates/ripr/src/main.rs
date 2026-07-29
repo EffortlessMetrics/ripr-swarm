@@ -95,7 +95,9 @@ mod tests {
                 ));
             }
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.contains("ripr: internal error (this is a bug): panic hook regression") {
+            if !stderr.contains("ripr: internal error (this is a bug):")
+                || !stderr.contains("panic hook regression")
+            {
                 return Err(format!(
                     "panic-hook child omitted the formatted report; stderr: {stderr}"
                 ));
