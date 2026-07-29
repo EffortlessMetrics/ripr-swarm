@@ -647,7 +647,8 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
 
 #[test]
 fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(), String> {
-    let (root, diff) = agent_brief_sample_workspace("navigation-explicit-draft")?;
+    let (root, diff) = agent_brief_sample_workspace("navigation-explicit-draft")
+        .map_err(|err| err.to_string())?;
     std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
         .map_err(|err| format!("write ripr.toml: {err}"))?;
     let root_arg = root.display().to_string();
