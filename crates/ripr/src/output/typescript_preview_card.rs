@@ -985,6 +985,20 @@ mod tests {
         assert_eq!(grip.rust_file, "src/jsc/array_buffer.rs");
         assert_eq!(grip.rust_owner, "copy_to_unshared");
         assert_eq!(grip.ts_verdict, "ts_discriminated");
+
+        let json = typescript_preview_card_json_value(&card);
+        assert_eq!(
+            json["bun_cross_language_grip"]["rust_seam"]["file"],
+            "src/jsc/array_buffer.rs"
+        );
+        assert_eq!(
+            json["bun_cross_language_grip"]["rust_seam"]["owner"],
+            "copy_to_unshared"
+        );
+        assert_eq!(
+            json["bun_cross_language_grip"]["typescript_evidence"]["test_file"],
+            "test/js/web/fetch/blob.test.ts"
+        );
         Ok(())
     }
 
