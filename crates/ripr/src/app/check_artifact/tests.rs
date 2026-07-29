@@ -153,6 +153,21 @@ fn atomic_write_preserves_existing_file_permissions() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn atomic_write_reports_uncreatable_parent() -> Result<(), String> {
+    let dir = unique_temp_dir("atomic-write-parent-failure")?;
+    let blocker = dir.join("not-a-directory");
+    std::fs::write(&blocker, b"blocker").map_err(|err| format!("create blocker: {err}"))?;
+
+    let result =
+        crate::atomic_file::write(&blocker.join("artifact.json"), b"bytes", "test artifact");
+    if result.is_ok() {
+        return Err("atomic write unexpectedly created a child of a file".to_string());
+    }
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
 /// Run the real sample analysis and write its artifact to `dir/artifact.json`.
 fn write_sample_artifact(
     dir: &Path,
