@@ -184,18 +184,18 @@ pub(crate) fn typescript_preview_card_json_value(card: &TypeScriptPreviewCard) -
         .bun_cross_language_grip
         .as_ref()
         .map(bun_cross_language_grip_json);
-    if card.bun_cross_language_grips.len() > 1 {
-        if let Some(Value::Object(object)) = bun_grip.as_mut() {
-            object.insert(
-                "profiles".to_string(),
-                Value::Array(
-                    card.bun_cross_language_grips
-                        .iter()
-                        .map(bun_cross_language_grip_json)
-                        .collect(),
-                ),
-            );
-        }
+    if card.bun_cross_language_grips.len() > 1
+        && let Some(Value::Object(object)) = bun_grip.as_mut()
+    {
+        object.insert(
+            "profiles".to_string(),
+            Value::Array(
+                card.bun_cross_language_grips
+                    .iter()
+                    .map(bun_cross_language_grip_json)
+                    .collect(),
+            ),
+        );
     }
 
     json!({
