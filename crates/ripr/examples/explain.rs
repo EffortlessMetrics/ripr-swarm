@@ -3,11 +3,10 @@ use std::path::PathBuf;
 
 fn sample_input() -> CheckInput {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest_dir.join("examples/sample");
-    let diff_file = root.join("example.diff");
+    let diff_file = manifest_dir.join("examples/library.diff");
 
     CheckInput {
-        root,
+        root: manifest_dir,
         diff_file: Some(diff_file),
         format: OutputFormat::Json,
         ..CheckInput::default()
@@ -21,7 +20,7 @@ fn main() -> Result<(), String> {
         .first()
         .map(|finding| finding.id.clone())
         .ok_or_else(|| "sample diff produced no findings".to_string())?;
-    let explanation = ripr::app::explain_finding_with_input(input, &finding_id)?;
+    let explanation = ripr::explain_finding_with_input(input, &finding_id)?;
     println!("{explanation}");
     Ok(())
 }

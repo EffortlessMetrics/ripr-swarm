@@ -23,6 +23,7 @@ include = [
   "examples/*/example.diff",
   "examples/*/src/**",
   "examples/*/tests/**",
+  "examples/*.diff",
   "examples/*.rs",
   "README.md",
   "LICENSE-*",
