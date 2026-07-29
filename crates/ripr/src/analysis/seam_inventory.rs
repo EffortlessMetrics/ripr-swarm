@@ -604,11 +604,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
     Ok((classified, lexical_fallback_files))
 }
 
-type ClassifiedSeamInventory = (
-    Vec<ClassifiedSeam>,
-    Option<SeamLimitInfo>,
-    Vec<PathBuf>,
-);
+type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<PathBuf>);
 
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
