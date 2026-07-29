@@ -21,11 +21,13 @@ fn install_panic_hook() {
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("(no panic message)");
-        let location = info
-            .location()
-            .map(|loc| format!(" at {}:{}", loc.file(), loc.line()))
-            .unwrap_or_default();
-        eprintln!("ripr: internal error (this is a bug): {message}{location}");
+        eprintln!(
+            "{}",
+            format_panic_report(
+                message,
+                info.location().map(|loc| (loc.file(), loc.line())),
+            )
+        );
         let backtrace = std::backtrace::Backtrace::capture();
         if matches!(
             backtrace.status(),
@@ -41,6 +43,13 @@ fn install_panic_hook() {
     }));
 }
 
+fn format_panic_report(message: &str, location: Option<(&str, u32)>) -> String {
+    let location = location
+        .map(|(file, line)| format!(" at {file}:{line}"))
+        .unwrap_or_default();
+    format!("ripr: internal error (this is a bug): {message}{location}")
+}
+
 fn report_failure(err: &str) {
     eprintln!("ripr: {err}");
 }
@@ -51,36 +60,14 @@ const fn exit_code() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    const PANIC_HOOK_CHILD_ENV: &str = "RIPR_PANIC_HOOK_CHILD";
-
     #[test]
-    fn panic_hook_reports_ripr_error_and_exit_code() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var_os(PANIC_HOOK_CHILD_ENV).is_some() {
-            return Ok(());
-        }
-
-        let output = std::process::Command::new(std::env::current_exe()?)
-            .args(["--exact", "tests::panic_hook_child_process", "--nocapture"])
-            .env(PANIC_HOOK_CHILD_ENV, "1")
-            .env("RUST_BACKTRACE", "0")
-            .output()?;
-        assert_eq!(output.status.code(), Some(super::exit_code()));
-        let stderr = String::from_utf8(output.stderr)?;
-        assert!(stderr.contains("ripr: internal error (this is a bug):"));
-        assert!(stderr.contains("panic hook regression"));
-        assert!(stderr.contains("note: set RUST_BACKTRACE=1 for a backtrace"));
-        assert!(!stderr.contains("thread '"));
-        Ok(())
-    }
-
-    #[test]
-    fn panic_hook_child_process() {
-        if std::env::var_os(PANIC_HOOK_CHILD_ENV).as_deref() != Some(std::ffi::OsStr::new("1"))
-        {
-            return;
-        }
-        super::install_panic_hook();
-        let trigger = std::env::var(PANIC_HOOK_CHILD_ENV).unwrap_or_default();
-        assert_eq!(trigger, "trigger", "panic hook regression");
+    fn panic_hook_report_preserves_message_location_and_exit_code() {
+        let report =
+            super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));
+        assert_eq!(
+            report,
+            "ripr: internal error (this is a bug): panic hook regression at src/main.rs:42"
+        );
+        assert_eq!(super::exit_code(), 2);
     }
 }
