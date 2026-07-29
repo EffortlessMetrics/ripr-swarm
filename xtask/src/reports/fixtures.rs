@@ -1695,10 +1695,14 @@ mod tests {
 
     #[test]
     fn bless_reason_requires_existing_spec_and_scaffold_guidance() {
-        assert!(validate_bless_reason("RIPR-SPEC-0001: intentional update").is_ok());
-        let missing = validate_bless_reason("RIPR-SPEC-9999: fabricated reference")
-            .expect_err("fabricated spec references must fail");
-        assert!(missing.contains("RIPR-SPEC-9999"));
+        assert!(matches!(
+            validate_bless_reason("RIPR-SPEC-0001: intentional update"),
+            Ok(())
+        ));
+        assert!(matches!(
+            validate_bless_reason("RIPR-SPEC-9999: fabricated reference"),
+            Err(error) if error.contains("RIPR-SPEC-9999")
+        ));
 
         let command = scaffold_bless_command("sample");
         assert!(command.contains("Assign an existing RIPR-SPEC-NNNN"));
