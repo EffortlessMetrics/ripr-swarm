@@ -148,7 +148,11 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 }
 
 fn annotation_path(root: &Path, file: &Path) -> String {
-    let relative = file.strip_prefix(root).unwrap_or(file);
+    let relative = if root.is_absolute() {
+        file.strip_prefix(root).unwrap_or(file)
+    } else {
+        file
+    };
     let mut displayed = display_path(relative);
     while let Some(stripped) = displayed.strip_prefix("./") {
         displayed = stripped.to_string();
@@ -309,6 +313,15 @@ mod tests {
         assert!(rendered.contains("file=crates/ripr/src/lib.rs,line=13"));
         assert!(!rendered.contains("file=./"));
         assert!(!rendered.contains("file=/workspace/repo"));
+
+        let mut nested = output_with_unknown_finding();
+        nested.root = PathBuf::from("fixtures/boundary_gap/input");
+        nested.findings[0].probe.location.file =
+            PathBuf::from("fixtures/boundary_gap/input/src/lib.rs");
+
+        let nested_rendered = render(&nested);
+
+        assert!(nested_rendered.contains("file=fixtures/boundary_gap/input/src/lib.rs,line=13"));
     }
 
     #[test]
