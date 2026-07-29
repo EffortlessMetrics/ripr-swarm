@@ -339,7 +339,7 @@ fn record_for_entry(
             &source,
         ));
     }
-    if entry.static_class.is_none() {
+    if entry.kind == SuppressionKind::ExposureGap && entry.static_class.is_none() {
         findings.push(record_finding(
             "missing_static_class",
             "warning",
@@ -649,7 +649,7 @@ reason = "temporary smoke exception"
         assert_eq!(report.summary.missing_last_seen, 1);
         assert_eq!(report.summary.missing_review_by_or_expires, 1);
         assert_eq!(report.summary.missing_expected_visibility, 1);
-        assert_eq!(report.summary.missing_static_class, 1);
+        assert_eq!(report.summary.missing_static_class, 0);
         assert_eq!(report.summary.overbroad_scope, 1);
         let rendered = render_suppression_health_json(&report)?;
         assert!(rendered.contains("\"overbroad_scope\": 1"));
