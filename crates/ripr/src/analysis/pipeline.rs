@@ -134,6 +134,16 @@ fn rename_disclosure_message(
     })
 }
 
+fn emit_rename_disclosure(
+    renamed_file_count: usize,
+    pure_rename_file_count: usize,
+    mut emit: impl FnMut(&str),
+) {
+    if let Some(message) = rename_disclosure_message(renamed_file_count, pure_rename_file_count) {
+        emit(&message);
+    }
+}
+
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
@@ -249,7 +259,7 @@ fn run_pipeline_for_diff_text(
     if findings.is_empty()
         && rust_changed_files == 0
         && submodule_file_count == 0
-        && pure_rename_file_count == 0
+        && renamed_file_count == 0
         && changed_files_by_language
             .iter()
             .all(|(_, count)| *count == 0)
@@ -262,9 +272,9 @@ fn run_pipeline_for_diff_text(
 
     emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
 
-    if let Some(message) = rename_disclosure_message(renamed_file_count, pure_rename_file_count) {
+    emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
         eprintln!("{message}");
-    }
+    });
 
     if findings.is_empty()
         && rust_changed_files == 0
@@ -828,6 +838,14 @@ mod tests {
         )?;
 
         assert!(result.findings.is_empty());
+        let mut disclosures = Vec::new();
+        emit_rename_disclosure(1, 1, |message| disclosures.push(message.to_string()));
+        assert_eq!(
+            disclosures,
+            vec![
+                "ripr: detected 1 pure rename(s) with no changed lines; rename-only changes produce no probes."
+            ]
+        );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
