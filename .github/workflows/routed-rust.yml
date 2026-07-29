@@ -182,6 +182,9 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-dependencies
+          cargo xtask check-process-policy
+          cargo xtask check-network-policy
           cargo xtask goldens check
           cargo xtask fixtures
       - name: Advisory reports
@@ -320,6 +323,9 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-dependencies
+          cargo xtask check-process-policy
+          cargo xtask check-network-policy
           cargo xtask goldens check
           cargo xtask fixtures
       - name: Advisory reports
@@ -457,6 +463,9 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-dependencies
+          cargo xtask check-process-policy
+          cargo xtask check-network-policy
           cargo xtask goldens check
           cargo xtask fixtures
       - name: Advisory reports
@@ -548,6 +557,9 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-dependencies
+          cargo xtask check-process-policy
+          cargo xtask check-network-policy
           cargo xtask goldens check
           cargo xtask fixtures
       - name: Advisory reports
