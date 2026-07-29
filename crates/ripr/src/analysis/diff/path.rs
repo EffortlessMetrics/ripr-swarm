@@ -10,6 +10,12 @@ pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     confine_to_relative_path(path)
 }
 
+pub(super) fn is_dev_null_new_path_marker(raw: &str) -> bool {
+    raw.strip_prefix("+++ ")
+        .and_then(parse_diff_path_token)
+        .is_some_and(|path| path == "/dev/null")
+}
+
 /// Whether `raw` is syntactically a `+++ <path>` new-path marker, regardless
 /// of whether the path survives confinement. Boundary detection must treat a
 /// confinement-rejected (or `/dev/null`) marker as a file-section boundary:

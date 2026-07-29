@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::model::{ChangedFile, ChangedLine};
-use super::path::{is_new_path_marker, parse_new_path_marker, parse_old_path_marker};
+use super::path::{
+    is_dev_null_new_path_marker, is_new_path_marker, parse_new_path_marker, parse_old_path_marker,
+};
 
 /// Default file-count limit for parsed diffs. Same default as the Rust adapter
 /// (`analysis/language/rust.rs:DIFF_INDEX_FILE_LIMIT`); kept in sync so the
@@ -10,35 +12,50 @@ use super::path::{is_new_path_marker, parse_new_path_marker, parse_old_path_mark
 const DEFAULT_DIFF_FILE_LIMIT: usize = 800;
 const DIFF_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 
-/// Parse a unified diff with a file-count bound that protects ALL language
-/// adapters, not just Rust (#2398). The bound is enforced at the parser level
-/// so the pipeline never hands an unbounded `Vec<ChangedFile>` to any adapter.
-///
-/// The error uses the `diff_scope_oversized:` prefix that
-/// `is_diff_scope_oversized()` (rust.rs:66) and the LSP limited-snapshot
-/// path already match, so existing detection logic works unchanged.
-pub fn parse_unified_diff_bounded(input: &str) -> Result<Vec<ChangedFile>, String> {
+/// Parse a unified diff with the deletion metadata needed by pipeline
+/// disclosures. The file vector remains bounded by the same parser-level
+/// limit used by the Rust adapter.
+pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
     let limit = diff_file_limit_from_env();
-    parse_unified_diff_with_limit(input, limit)
+    parse_unified_diff_with_metadata_and_limit(input, limit)
+}
+
+#[cfg(test)]
+fn parse_unified_diff_bounded(input: &str) -> Result<Vec<ChangedFile>, String> {
+    Ok(parse_unified_diff_bounded_with_metadata(input)?.files)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ParsedDiff {
+    pub(crate) files: Vec<ChangedFile>,
+    pub(crate) deleted_file_count: usize,
 }
 
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
+#[cfg(test)]
 pub(crate) fn parse_unified_diff_with_limit(
     input: &str,
     limit: usize,
 ) -> Result<Vec<ChangedFile>, String> {
-    let files = parse_unified_diff(input);
-    if files.len() > limit {
+    Ok(parse_unified_diff_with_metadata_and_limit(input, limit)?.files)
+}
+
+fn parse_unified_diff_with_metadata_and_limit(
+    input: &str,
+    limit: usize,
+) -> Result<ParsedDiff, String> {
+    let parsed = parse_unified_diff_with_metadata(input);
+    if parsed.files.len() > limit {
         return Err(format!(
             "diff_scope_oversized: {} changed files exceed the {DIFF_FILE_LIMIT_ENV} \
              limit ({limit}); analysis was not run to protect runner memory before \
              probe expansion. Repair route: reduce the diff scope, split the extraction \
              PR, run a narrower diff, or raise the limit via \
              {DIFF_FILE_LIMIT_ENV}=<number>.",
-            files.len()
+            parsed.files.len()
         ));
     }
-    Ok(files)
+    Ok(parsed)
 }
 
 fn diff_file_limit_from_env() -> usize {
@@ -50,6 +67,10 @@ fn diff_file_limit_from_env() -> usize {
 }
 
 pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
+    parse_unified_diff_with_metadata(input).files
+}
+
+fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
     let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
     let mut state = parser_state::ParserState::default();
 
@@ -109,7 +130,10 @@ pub fn parse_unified_diff(input: &str) -> Vec<ChangedFile> {
         i += 1;
     }
 
-    files.into_values().collect()
+    ParsedDiff {
+        files: files.into_values().collect(),
+        deleted_file_count: state.deleted_file_count(),
+    }
 }
 
 fn parse_hunk_header(raw: &str) -> Option<(usize, usize)> {
@@ -131,8 +155,8 @@ fn parse_start(segment: &str) -> Option<usize> {
 
 mod parser_state {
     use super::{
-        ChangedFile, ChangedLine, is_new_path_marker, parse_hunk_header, parse_new_path_marker,
-        parse_old_path_marker,
+        ChangedFile, ChangedLine, is_dev_null_new_path_marker, is_new_path_marker,
+        parse_hunk_header, parse_new_path_marker, parse_old_path_marker,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -144,6 +168,7 @@ mod parser_state {
         new_line: usize,
         in_hunk: bool,
         saw_old_path_marker: bool,
+        deleted_file_count: usize,
     }
 
     impl ParserState {
@@ -158,6 +183,10 @@ mod parser_state {
         pub(super) fn close_hunk(&mut self) {
             self.in_hunk = false;
             self.saw_old_path_marker = false;
+        }
+
+        pub(super) fn deleted_file_count(&self) -> usize {
+            self.deleted_file_count
         }
 
         pub(super) fn register_path_marker(
@@ -181,6 +210,9 @@ mod parser_state {
                 // be mis-attributed to the previous file. consume_hunk_line
                 // ignores hunk lines while current_path is None (#2099).
                 if is_new_path_marker(raw) {
+                    if self.saw_old_path_marker && is_dev_null_new_path_marker(raw) {
+                        self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                    }
                     self.current_path = None;
                     self.saw_old_path_marker = false;
                     return true;
@@ -619,6 +651,20 @@ deleted file mode 100644
 
         let files = parse_unified_diff(diff);
         assert!(files.is_empty());
+
+        let parsed = parse_unified_diff_with_metadata(diff);
+        assert!(parsed.files.is_empty());
+        assert_eq!(parsed.deleted_file_count, 1);
+    }
+
+    #[test]
+    fn does_not_count_new_file_as_deletion() {
+        let diff = "diff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1,1 @@\n+new\n";
+
+        let parsed = parse_unified_diff_with_metadata(diff);
+
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.deleted_file_count, 0);
     }
 
     #[test]

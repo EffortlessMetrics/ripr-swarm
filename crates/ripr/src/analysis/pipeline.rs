@@ -90,13 +90,24 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     ))
 }
 
+fn deletion_only_disclosure_message(deleted_file_count: usize) -> Option<String> {
+    (deleted_file_count > 0).then(|| {
+        format!(
+            "ripr: diff deleted {deleted_file_count} file(s); deletion-only diffs produce no probes \
+             (deleted behavior has no new-side code to analyze)."
+        )
+    })
+}
+
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
-    let changed_files = diff::parse_unified_diff_bounded(diff_text)?;
+    let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
+    let changed_files = parsed_diff.files;
+    let deleted_file_count = parsed_diff.deleted_file_count;
 
     let mut findings: Vec<Finding> = Vec::new();
     // `changed_rust_files` counts Rust adapter files only (#2103); every
@@ -221,6 +232,7 @@ fn run_pipeline_for_diff_text(
         && changed_files_by_language
             .iter()
             .all(|(_, count)| *count == 0)
+        && deleted_file_count == 0
         && !diff_text.trim().is_empty()
     {
         eprintln!(
@@ -228,6 +240,17 @@ fn run_pipeline_for_diff_text(
              If this is unexpected, verify the --diff path points to a valid unified diff. \
              The empty result may not reflect sufficient tests — it reflects an empty analysis scope."
         );
+    }
+
+    if findings.is_empty()
+        && rust_changed_files == 0
+        && changed_files.is_empty()
+        && changed_files_by_language
+            .iter()
+            .all(|(_, count)| *count == 0)
+        && let Some(message) = deletion_only_disclosure_message(deleted_file_count)
+    {
+        eprintln!("{message}");
     }
 
     sort::sort_findings(&mut findings);
@@ -652,6 +675,24 @@ mod tests {
         let empty: Vec<diff::ChangedFile> = Vec::new();
         if non_source_disclosure_message(&empty).is_some() {
             return Err("an empty diff must not disclose".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deletion_only_disclosure_message_names_deleted_files() -> Result<(), String> {
+        let message = deletion_only_disclosure_message(2)
+            .ok_or_else(|| "deletion-only diff must produce a disclosure".to_string())?;
+        if !message.contains("diff deleted 2 file(s)") {
+            return Err(format!("disclosure must name deleted files: {message}"));
+        }
+        if !message.contains("no new-side code to analyze") {
+            return Err(format!(
+                "disclosure must explain the analysis boundary: {message}"
+            ));
+        }
+        if deletion_only_disclosure_message(0).is_some() {
+            return Err("empty deletion count must not disclose".to_string());
         }
         Ok(())
     }
