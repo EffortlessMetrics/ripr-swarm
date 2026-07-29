@@ -651,6 +651,10 @@ mod tests {
     use std::collections::VecDeque;
     use std::time::Duration;
 
+    fn require(condition: bool, message: impl Into<String>) -> Result<(), String> {
+        condition.then_some(()).ok_or(message.into())
+    }
+
     fn snapshot() -> Result<Snapshot, String> {
         serde_json::from_value(json!({
             "schema_version": "0.1",
@@ -848,23 +852,26 @@ mod tests {
     fn argument_and_snapshot_loading_paths_are_explicit() -> Result<(), String> {
         let live_args = ["--live".to_string()];
         let live = parse_args(&live_args)?;
-        if !matches!(live, ReleaseControlInput::Live) {
-            return Err("--live should select the live collector".to_string());
-        }
+        require(
+            matches!(live, ReleaseControlInput::Live),
+            "--live should select the live collector",
+        )?;
         let input_args = ["--input".to_string(), "snapshot.json".to_string()];
         let input = parse_args(&input_args)?;
-        if !matches!(input, ReleaseControlInput::Captured("snapshot.json")) {
-            return Err("--input should retain its path".to_string());
-        }
+        require(
+            matches!(input, ReleaseControlInput::Captured("snapshot.json")),
+            "--input should retain its path",
+        )?;
         for args in [
             vec!["--help".to_string()],
             vec!["--input".to_string()],
             vec!["--input".to_string(), " ".to_string()],
             vec!["--unexpected".to_string()],
         ] {
-            if parse_args(&args).is_ok() {
-                return Err(format!("invalid arguments were accepted: {args:?}"));
-            }
+            require(
+                parse_args(&args).is_err(),
+                format!("invalid arguments were accepted: {args:?}"),
+            )?;
         }
 
         let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -876,12 +883,14 @@ mod tests {
             .to_str()
             .ok_or_else(|| "fixture path was not UTF-8".to_string())?;
         let loaded = read_snapshot(fixture_text)?;
-        if loaded.kind != "release_control_snapshot" {
-            return Err("fixture did not load as a release-control snapshot".to_string());
-        }
-        if read_snapshot("fixtures/release_control/does-not-exist.json").is_ok() {
-            return Err("missing snapshot should return an error".to_string());
-        }
+        require(
+            loaded.kind == "release_control_snapshot",
+            "fixture did not load as a release-control snapshot",
+        )?;
+        require(
+            read_snapshot("fixtures/release_control/does-not-exist.json").is_err(),
+            "missing snapshot should return an error",
+        )?;
         Ok(())
     }
 
@@ -921,9 +930,10 @@ mod tests {
         malformed.prs.push(duplicate);
 
         let report = normalize_snapshot(malformed);
-        if report.status != "reconcile_required" || report.prs.iter().any(|pr| pr.merge_eligible) {
-            return Err("malformed input must be fully non-eligible".to_string());
-        }
+        require(
+            report.status == "reconcile_required" && !report.prs.iter().any(|pr| pr.merge_eligible),
+            "malformed input must be fully non-eligible",
+        )?;
         let _ = report_markdown(&report);
         for expected in [
             "snapshot schema_version",
@@ -949,13 +959,13 @@ mod tests {
             "PR #0 title is missing",
             "PR #0 is missing a disposition reason",
         ] {
-            if !report
-                .reconciliation_reasons
-                .iter()
-                .any(|reason| reason.contains(expected))
-            {
-                return Err(format!("missing malformed-input reason: {expected}"));
-            }
+            require(
+                report
+                    .reconciliation_reasons
+                    .iter()
+                    .any(|reason| reason.contains(expected)),
+                format!("missing malformed-input reason: {expected}"),
+            )?;
         }
         Ok(())
     }
@@ -971,24 +981,23 @@ mod tests {
         held.disposition_reason = Some("reason | text\ncontinued".to_string());
         let report = normalize_snapshot(escaped);
         let markdown = report_markdown(&report);
-        if !markdown.contains("held \\| title continued")
-            || !markdown.contains("reason \\| text continued")
-        {
-            return Err("Markdown cells were not escaped and normalized".to_string());
-        }
+        require(
+            markdown.contains("held \\| title continued")
+                && markdown.contains("reason \\| text continued"),
+            "Markdown cells were not escaped and normalized",
+        )?;
         let json = report_json(&report);
-        if json.get("authority_boundary")
-            != Some(&Value::String("temporary_release_lens_only".to_string()))
-        {
-            return Err("JSON authority boundary changed unexpectedly".to_string());
-        }
-        if json
-            .get("must_not_claim")
-            .and_then(Value::as_array)
-            .is_none_or(|claims| claims.len() != 4)
-        {
-            return Err("JSON must-not-claim boundary is incomplete".to_string());
-        }
+        require(
+            json.get("authority_boundary")
+                == Some(&Value::String("temporary_release_lens_only".to_string())),
+            "JSON authority boundary changed unexpectedly",
+        )?;
+        require(
+            json.get("must_not_claim")
+                .and_then(Value::as_array)
+                .is_some_and(|claims| claims.len() == 4),
+            "JSON must-not-claim boundary is incomplete",
+        )?;
         Ok(())
     }
 
@@ -1006,20 +1015,22 @@ mod tests {
                 .pop_front()
                 .ok_or_else(|| "test output queue exhausted".to_string())?
         });
-        if live.source.freshness != "current"
-            || live.source.main_sha != main_sha
-            || live.source.authority_state != "open"
-            || live.source.worktree_count != 2
-            || !live.collector_errors.is_empty()
-        {
-            return Err("successful live collection was not normalized".to_string());
-        }
-        if live.prs.first().map(|pr| pr.state.as_str()) != Some("open") {
-            return Err("live PR state was not normalized".to_string());
-        }
-        if normalize_snapshot_with_origin(live, true).status != "reconcile_required" {
-            return Err("live collection must remain fail-closed without claim inputs".to_string());
-        }
+        require(
+            live.source.freshness == "current"
+                && live.source.main_sha == main_sha
+                && live.source.authority_state == "open"
+                && live.source.worktree_count == 2
+                && live.collector_errors.is_empty(),
+            "successful live collection was not normalized",
+        )?;
+        require(
+            live.prs.first().map(|pr| pr.state.as_str()) == Some("open"),
+            "live PR state was not normalized",
+        )?;
+        require(
+            normalize_snapshot_with_origin(live, true).status == "reconcile_required",
+            "live collection must remain fail-closed without claim inputs",
+        )?;
 
         let mut failed_outputs = VecDeque::from(vec![
             Err("main unavailable".to_string()),
@@ -1032,14 +1043,14 @@ mod tests {
                 .pop_front()
                 .ok_or_else(|| "test output queue exhausted".to_string())?
         });
-        if failed.source.freshness != "unknown"
-            || failed.source.open_prs_complete
-            || failed.source.worktree_inventory_complete
-            || failed.source.worktree_count != 0
-            || failed.collector_errors.len() != 4
-        {
-            return Err("failed live collection did not remain visibly incomplete".to_string());
-        }
+        require(
+            failed.source.freshness == "unknown"
+                && !failed.source.open_prs_complete
+                && !failed.source.worktree_inventory_complete
+                && failed.source.worktree_count == 0
+                && failed.collector_errors.len() == 4,
+            "failed live collection did not remain visibly incomplete",
+        )?;
 
         let mut command_failures = VecDeque::from(vec![
             Ok(format!("{main_sha}\n")),
@@ -1052,39 +1063,40 @@ mod tests {
                 .pop_front()
                 .ok_or_else(|| "test output queue exhausted".to_string())?
         });
-        if command_failed.collector_errors.len() != 2
-            || command_failed.source.open_prs_complete
-            || !command_failed.source.worktree_inventory_complete
-        {
-            return Err("collector command failures were not recorded".to_string());
-        }
+        require(
+            command_failed.collector_errors.len() == 2
+                && !command_failed.source.open_prs_complete
+                && command_failed.source.worktree_inventory_complete,
+            "collector command failures were not recorded",
+        )?;
         Ok(())
     }
 
     #[test]
     fn live_command_and_result_interpretation_are_bounded() -> Result<(), String> {
         let stdout = live_output("git", &["--version"], "test success")?;
-        if !stdout.contains("git version") {
-            return Err("successful live command did not return stdout".to_string());
-        }
-        if live_output(
-            "git",
-            &["--definitely-invalid-ripr-argument"],
-            "test failure",
-        )
-        .is_ok()
-        {
-            return Err("failed live command should return an error".to_string());
-        }
-        if live_output(
-            "ripr-release-control-command-that-does-not-exist",
-            &[],
-            "missing program",
-        )
-        .is_ok()
-        {
-            return Err("missing live program should return an error".to_string());
-        }
+        require(
+            stdout.contains("git version"),
+            "successful live command did not return stdout",
+        )?;
+        require(
+            live_output(
+                "git",
+                &["--definitely-invalid-ripr-argument"],
+                "test failure",
+            )
+            .is_err(),
+            "failed live command should return an error",
+        )?;
+        require(
+            live_output(
+                "ripr-release-control-command-that-does-not-exist",
+                &[],
+                "missing program",
+            )
+            .is_err(),
+            "missing live program should return an error",
+        )?;
 
         let timed_out = crate::run::TimedOutput {
             status: None,
@@ -1093,12 +1105,12 @@ mod tests {
             duration: Duration::ZERO,
             timed_out: true,
         };
-        if interpret_live_output("cmd", &[], "timed out", timed_out)
-            .err()
-            .is_none_or(|error| !error.contains("timed out"))
-        {
-            return Err("timed-out live command lost its diagnostic".to_string());
-        }
+        require(
+            interpret_live_output("cmd", &[], "timed out", timed_out)
+                .err()
+                .is_some_and(|error| error.contains("timed out")),
+            "timed-out live command lost its diagnostic",
+        )?;
         let missing_status = crate::run::TimedOutput {
             status: None,
             stdout: String::new(),
@@ -1106,12 +1118,12 @@ mod tests {
             duration: Duration::ZERO,
             timed_out: false,
         };
-        if interpret_live_output("cmd", &[], "missing status", missing_status)
-            .err()
-            .is_none_or(|error| !error.contains("did not report"))
-        {
-            return Err("missing live process status lost its diagnostic".to_string());
-        }
+        require(
+            interpret_live_output("cmd", &[], "missing status", missing_status)
+                .err()
+                .is_some_and(|error| error.contains("did not report")),
+            "missing live process status lost its diagnostic",
+        )?;
         Ok(())
     }
 }
