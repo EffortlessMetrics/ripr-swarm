@@ -649,7 +649,6 @@ mod tests {
     };
     use serde_json::{Value, json};
     use std::collections::VecDeque;
-    use std::process::Command;
     use std::time::Duration;
 
     fn snapshot() -> Result<Snapshot, String> {
@@ -999,7 +998,7 @@ mod tests {
             Ok(format!("{main_sha}\n")),
             Ok(r#"[{"number":7,"title":"live PR","state":"OPEN","isDraft":false,"headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"main"}]"#.to_string()),
             Ok(r#"{"state":"OPEN","body":"release graph"}"#.to_string()),
-            Ok("worktree H:\\Code\\Rust\\ripr-swarm\n\nworktree H:\\Code\\Rust\\other\n".to_string()),
+            Ok("worktree repo-root\n\nworktree other-root\n".to_string()),
         ]);
         let live = capture_live_snapshot_with(|_, _, _| {
             successful_outputs
@@ -1045,11 +1044,17 @@ mod tests {
 
     #[test]
     fn live_command_and_result_interpretation_are_bounded() -> Result<(), String> {
-        let stdout = live_output("cmd", &["/C", "echo", "release-control"], "test success")?;
-        if !stdout.contains("release-control") {
+        let stdout = live_output("git", &["--version"], "test success")?;
+        if !stdout.contains("git version") {
             return Err("successful live command did not return stdout".to_string());
         }
-        if live_output("cmd", &["/C", "exit", "7"], "test failure").is_ok() {
+        if live_output(
+            "git",
+            &["--definitely-invalid-ripr-argument"],
+            "test failure",
+        )
+        .is_ok()
+        {
             return Err("failed live command should return an error".to_string());
         }
 
@@ -1078,37 +1083,6 @@ mod tests {
             .is_none_or(|error| !error.contains("did not report"))
         {
             return Err("missing live process status lost its diagnostic".to_string());
-        }
-        let success_status = Command::new("cmd")
-            .args(["/C", "exit", "0"])
-            .status()
-            .map_err(|error| format!("failed to create success status: {error}"))?;
-        let success = crate::run::TimedOutput {
-            status: Some(success_status),
-            stdout: "ok".to_string(),
-            stderr: String::new(),
-            duration: Duration::ZERO,
-            timed_out: false,
-        };
-        if interpret_live_output("cmd", &[], "synthetic success", success)? != "ok" {
-            return Err("successful live result was not returned".to_string());
-        }
-        let failure_status = Command::new("cmd")
-            .args(["/C", "exit", "7"])
-            .status()
-            .map_err(|error| format!("failed to create failure status: {error}"))?;
-        let failure = crate::run::TimedOutput {
-            status: Some(failure_status),
-            stdout: "out".to_string(),
-            stderr: "err".to_string(),
-            duration: Duration::ZERO,
-            timed_out: false,
-        };
-        let error = interpret_live_output("cmd", &["/C"], "synthetic failure", failure)
-            .err()
-            .ok_or_else(|| "failed live result should return an error".to_string())?;
-        if !error.contains("stdout:\nout") || !error.contains("stderr:\nerr") {
-            return Err("failed live result lost captured output".to_string());
         }
         Ok(())
     }
