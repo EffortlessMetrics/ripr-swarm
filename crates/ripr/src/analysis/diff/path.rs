@@ -27,6 +27,19 @@ pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     confine_to_relative_path(path)
 }
 
+pub(super) fn parse_rename_from_path(raw: &str) -> Option<PathBuf> {
+    parse_rename_path_marker(raw, "rename from ")
+}
+
+pub(super) fn parse_rename_to_path(raw: &str) -> Option<PathBuf> {
+    parse_rename_path_marker(raw, "rename to ")
+}
+
+fn parse_rename_path_marker(raw: &str, prefix: &str) -> Option<PathBuf> {
+    let path = raw.strip_prefix(prefix).and_then(parse_diff_path_token)?;
+    confine_to_relative_path(&path)
+}
+
 /// Whether `raw` is syntactically a `+++ <path>` new-path marker, regardless
 /// of whether the path survives confinement. Boundary detection must treat a
 /// confinement-rejected (or `/dev/null`) marker as a file-section boundary:
