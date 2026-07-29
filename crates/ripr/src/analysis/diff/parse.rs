@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
-    is_dev_null_new_path_marker, is_new_path_marker, parse_new_path_marker, parse_old_path_marker,
+    is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_new_path_marker,
+    parse_old_path_for_confinement, parse_old_path_marker,
 };
 
 /// Default file-count limit for parsed diffs. Same default as the Rust adapter
@@ -82,6 +83,7 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
         // through and consume the literal `Binary files ...` line as hunk
         // payload.
         if state.handle_binary_files_sentinel(raw) {
+            state.record_binary_deletion(raw);
             i += 1;
             continue;
         }
@@ -148,7 +150,8 @@ fn parse_start(segment: &str) -> Option<usize> {
 mod parser_state {
     use super::{
         ChangedFile, ChangedLine, is_dev_null_new_path_marker, is_new_path_marker,
-        parse_hunk_header, parse_new_path_marker, parse_old_path_marker,
+        parse_git_old_path, parse_hunk_header, parse_new_path_marker, parse_old_path_for_confinement,
+        parse_old_path_marker,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -160,6 +163,9 @@ mod parser_state {
         new_line: usize,
         in_hunk: bool,
         saw_old_path_marker: bool,
+        section_old_path: Option<PathBuf>,
+        deletion_section: bool,
+        deletion_counted: bool,
         deleted_file_count: usize,
     }
 
@@ -171,6 +177,19 @@ mod parser_state {
 
         pub(super) fn deleted_file_count(&self) -> usize {
             self.deleted_file_count
+        }
+
+        fn record_deleted_file_if_ready(&mut self) {
+            if self.deletion_section && !self.deletion_counted && self.section_old_path.is_some() {
+                self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                self.deletion_counted = true;
+            }
+        }
+
+        pub(super) fn record_binary_deletion(&mut self, raw: &str) {
+            if raw.starts_with("Binary files ") && raw.ends_with(" and /dev/null differ") {
+                self.record_deleted_file_if_ready();
+            }
         }
 
         /// Close the current hunk without consuming a line.  Called by the
@@ -190,14 +209,23 @@ mod parser_state {
                 return false;
             }
 
+            if raw.starts_with("deleted file mode ") {
+                self.deletion_section = true;
+                self.record_deleted_file_if_ready();
+                return true;
+            }
+
             if parse_old_path_marker(raw) {
                 self.saw_old_path_marker = true;
+                self.section_old_path = parse_old_path_for_confinement(raw);
+                self.record_deleted_file_if_ready();
                 return true;
             }
 
             let Some(path) = parse_new_path_marker(raw) else {
                 if self.saw_old_path_marker && is_dev_null_new_path_marker(raw) {
-                    self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                    self.deletion_section = true;
+                    self.record_deleted_file_if_ready();
                 }
                 // A syntactically valid `+++` marker whose path was rejected
                 // by confinement (or `/dev/null`): consume the marker and
@@ -242,6 +270,9 @@ mod parser_state {
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
+            self.section_old_path = parse_git_old_path(raw);
+            self.deletion_section = false;
+            self.deletion_counted = false;
             true
         }
 
@@ -659,11 +690,30 @@ deleted file mode 100644
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
 
+        let empty = "diff --git a/src/empty.rs b/src/empty.rs\ndeleted file mode 100644\n";
+        let parsed = parse_unified_diff_with_metadata(empty);
+        assert!(parsed.changed_files.is_empty());
+        assert_eq!(parsed.deleted_file_count, 1);
+
+        let binary = "diff --git a/src/blob.bin b/src/blob.bin\nBinary files a/src/blob.bin and /dev/null differ\n";
+        let parsed = parse_unified_diff_with_metadata(binary);
+        assert!(parsed.changed_files.is_empty());
+        assert_eq!(parsed.deleted_file_count, 1);
+
         let changed = parse_unified_diff_with_metadata(
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
         );
         assert_eq!(changed.deleted_file_count, 0);
         assert_eq!(changed.changed_files.len(), 1);
+    }
+
+    #[test]
+    fn metadata_does_not_count_null_or_traversal_old_paths_as_deletions() {
+        let new_file = "diff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.rs\n";
+        assert_eq!(parse_unified_diff_with_metadata(new_file).deleted_file_count, 0);
+
+        let traversal = "diff --git a/src/../escape.rs b/src/../escape.rs\ndeleted file mode 100644\n--- a/../../../etc/passwd\n+++ /dev/null\n";
+        assert_eq!(parse_unified_diff_with_metadata(traversal).deleted_file_count, 0);
     }
 
     #[test]
