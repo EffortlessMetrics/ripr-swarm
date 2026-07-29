@@ -7142,9 +7142,7 @@ outputs = [
   "docs/specs/RIPR-SPEC-0128-retired-active-goal-authority-audit.md",
   "docs/specs/README.md",
 ]
-metrics = [
-  "deprecated_spec_identifiers_recorded",
-]
+metrics = []
 
 
 [[behavior]]

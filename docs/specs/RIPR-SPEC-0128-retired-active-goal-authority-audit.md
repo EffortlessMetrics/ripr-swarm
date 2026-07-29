@@ -50,8 +50,11 @@ than reusing 0128.
 ## Test Mapping
 
 No executable test applies to a deprecated documentation-only identifier.
-The `check-spec-format`, `check-spec-numbering`, and `check-traceability`
-repository gates provide the applicable structural proof.
+`check-spec-format` validates the document shape, `check-spec-numbering`
+validates the index link, and `check-traceability` validates the manifest and
+paths. These gates do not enforce that a future edit retains the `deprecated`
+lifecycle status; it is intentionally recorded as human source truth here
+rather than claimed as an enforced metric.
 
 ## Implementation Mapping
 
@@ -63,4 +66,4 @@ repository gates provide the applicable structural proof.
 
 ## Metrics
 
-- `deprecated_spec_identifiers_recorded`
+No runtime metrics apply to this deprecated documentation-only identifier.
