@@ -1,5 +1,7 @@
-# Copy selected entries into .ripr/suppressions.toml and replace the example
-# identities, owners, reasons, and dates with repository-specific values.
+# Copy the exact-id entry into .ripr/suppressions.toml after replacing the
+# example identity, owner, reason, and dates. The path-glob entry is an example
+# for an explicit `--suppression-policy` findings run; implicit badge exposure
+# suppression currently matches exact finding_id entries only.
 schema_version = 1
 
 # Prefer an exact finding id when one known finding is the accepted exception.
@@ -29,19 +31,3 @@ created_at = "2026-07-29"
 last_seen = "2026-07-29"
 review_by = "2026-10-31"
 expected_visibility = "suppressed_visible"
-static_class = "no_static_path"
-
-# Test-efficiency entries identify the test by name and may narrow by path.
-[[suppressions]]
-kind = "test_efficiency"
-test = "cli_prints_help"
-path = "tests/cli.rs"
-owner = "devtools"
-reason = "The broad help smoke test is retained alongside narrower CLI contract tests."
-expires = "2026-12-31"
-scope = "cli-help-tests"
-created_at = "2026-07-29"
-last_seen = "2026-07-29"
-review_by = "2026-10-31"
-expected_visibility = "suppressed_visible"
-static_class = "weakly_exposed"

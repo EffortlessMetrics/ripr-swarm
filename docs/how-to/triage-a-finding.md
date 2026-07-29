@@ -14,11 +14,13 @@ path. Detailed reports keep suppressed findings visible, so the identifier is
 also the durable reference for later review.
 
 ```text
-ripr check --root . --json
+ripr check --root . --json --suppression-policy .ripr/suppressions.toml
 ```
 
-Prefer an exact finding id over a broad path when the exception applies to one
-finding.
+The explicit policy flag is required for suppression-aware findings JSON.
+Badge-specific formats load the repository manifest, but their exposure-gap
+application currently matches exact `finding_id` entries; prefer an exact
+finding id when the exception applies to one finding.
 
 ## 2. Inspect the evidence
 
@@ -69,6 +71,10 @@ and policy-health dates where appropriate, and avoid unknown fields: the
 manifest parser rejects them. Preview-language entries also need
 `language_status = "preview"` until the repository policy promotes that
 language.
+
+The path-glob example in the example file is for an explicit
+`--suppression-policy` findings run. For implicit badge suppression, use exact
+`finding_id` entries; do not assume that a path glob changes badge counts.
 
 ## 5. Check suppression health
 
