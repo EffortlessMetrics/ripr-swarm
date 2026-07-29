@@ -66,15 +66,14 @@ This guidance does not relax byte-canonical artifact contracts. Inputs to
 validated as exact canonical bytes; consumers must preserve those bytes rather
 than parse and re-render them before verification.
 
-The current implementation intentionally uses default `serde_json` behavior:
-objects created with `json!({...})` are emitted in lexicographic key order,
-while derived structs and hand-built envelopes may follow declaration order.
-That difference is an implementation detail, not a schema distinction. The
-repository may retain byte-oriented golden snapshots as renderer regression
-tests, but those snapshots do not authorize downstream consumers to depend on
-their key order. Enabling `serde_json`'s `preserve_order` feature would be a
-separate, deliberately broad output migration and is not implied by any
-schema version.
+Individual renderers may emit object keys in different deterministic orders,
+including declaration order or map order. The exact order is an implementation
+detail, not a schema distinction, and this document deliberately does not
+specify which order a renderer must choose. The repository may retain
+byte-oriented golden snapshots as renderer regression tests, but those
+snapshots do not authorize downstream consumers to depend on their key order.
+Changing a renderer's ordering would be a separate output migration and is not
+implied by any schema version.
 
 Schema changes that remove fields, rename fields, or change field meanings
 should bump `schema_version`.
