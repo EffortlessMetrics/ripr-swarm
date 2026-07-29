@@ -17947,7 +17947,7 @@ fn is_static_language_candidate(path: &str) -> bool {
         return false;
     }
     let extensions = [
-        ".md", ".rs", ".txt", ".json", ".toml", ".yml", ".yaml", ".ts", ".js",
+        ".md", ".rs", ".txt", ".json", ".toml", ".yml", ".yaml", ".ts", ".tsx", ".js", ".jsx",
     ];
     extensions.iter().any(|extension| path.ends_with(extension))
 }

@@ -7642,7 +7642,15 @@ fn should_scan_static_language_path_combines_candidate_check_and_allowlist() {
     ));
     assert!(should_scan_static_language_path(
         &allowlist,
+        "editors/vscode/src/component.tsx"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
         "editors/vscode/scripts/package.js"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/scripts/component.jsx"
     ));
 
     // Candidate files covered by an exact allowlist entry are not scanned.
