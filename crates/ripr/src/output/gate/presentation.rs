@@ -157,7 +157,8 @@ pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
 /// (#2599).
 ///
 /// For `config_error`: the first config error message. For `blocked`: the
-/// count of blocking decisions plus the first blocking `gate_reason`.
+/// first blocking decision or, when exception policy is the blocker, the
+/// count and first blocking exception-policy violation.
 /// Returns an empty string when no useful detail is available.
 pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String {
     if report.status == "config_error"
@@ -177,6 +178,19 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 blocking.len(),
                 first.gate_reason
             );
+        }
+        if let Some(exception_policy) = &report.exception_policy {
+            let mut blocking_violations = exception_policy
+                .violations
+                .iter()
+                .filter(|violation| violation.blocking);
+            if let Some(first) = blocking_violations.next() {
+                let count = 1 + blocking_violations.count();
+                return format!(
+                    ": {count} blocking exception-policy violation(s); first: {}: {}",
+                    first.kind, first.detail
+                );
+            }
         }
     }
     String::new()
