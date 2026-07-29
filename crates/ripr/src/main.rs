@@ -68,7 +68,8 @@ mod tests {
     fn panic_boundary_reports_and_exits_with_code_two() -> Result<(), String> {
         if std::env::var_os("RIPR_PANIC_HOOK_CHILD").is_some() {
             super::run_startup(|| {
-                std::panic::panic_any("panic hook regression");
+                let trigger = std::env::var("RIPR_PANIC_HOOK_CHILD").unwrap_or_default();
+                assert_eq!(trigger, "trigger", "panic hook regression");
             });
             return Err("panic boundary returned instead of exiting".to_owned());
         }
