@@ -17,6 +17,7 @@ Support-tier impact:
 
 - No product support-tier change. This is a maintainer-facing, read-only
   control-plane report and cannot strengthen analyzer, release, or merge claims.
+- Reference: [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
