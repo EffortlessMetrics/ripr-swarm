@@ -152,6 +152,36 @@ pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
     &report.status
 }
 
+/// Extract the first actionable detail from a failing gate report so the
+/// CLI can surface it inline instead of only pointing at the JSON artifact
+/// (#2599).
+///
+/// For `config_error`: the first config error message. For `blocked`: the
+/// count of blocking decisions plus the first blocking `gate_reason`.
+/// Returns an empty string when no useful detail is available.
+pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String {
+    if report.status == "config_error"
+        && let Some(first) = report.config_errors.first()
+    {
+        return format!(": {first}");
+    }
+    if report.status == "blocked" {
+        let blocking: Vec<&GateDecision> = report
+            .decisions
+            .iter()
+            .filter(|d| d.decision == "blocking")
+            .collect();
+        if let Some(first) = blocking.first() {
+            return format!(
+                ": {} blocking gap(s); first: {}",
+                blocking.len(),
+                first.gate_reason
+            );
+        }
+    }
+    String::new()
+}
+
 pub(crate) fn markdown_path_for(out: &Path) -> PathBuf {
     let mut path = out.to_path_buf();
     path.set_extension("md");
