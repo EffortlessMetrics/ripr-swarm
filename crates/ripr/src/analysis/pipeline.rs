@@ -90,11 +90,11 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     ))
 }
 
-fn deletion_only_disclosure_message(deleted_file_count: usize) -> Option<String> {
+fn deletion_disclosure_message(deleted_file_count: usize) -> Option<String> {
     (deleted_file_count > 0).then(|| {
         format!(
-            "ripr: diff deleted {deleted_file_count} file(s); deletion-only diffs produce no probes \
-             (deleted behavior has no new-side code to analyze)."
+            "ripr: diff deleted {deleted_file_count} file(s); deleted behavior has no new-side \
+             code to analyze."
         )
     })
 }
@@ -242,14 +242,7 @@ fn run_pipeline_for_diff_text(
         );
     }
 
-    if findings.is_empty()
-        && rust_changed_files == 0
-        && changed_files.is_empty()
-        && changed_files_by_language
-            .iter()
-            .all(|(_, count)| *count == 0)
-        && let Some(message) = deletion_only_disclosure_message(deleted_file_count)
-    {
+    if let Some(message) = deletion_disclosure_message(deleted_file_count) {
         eprintln!("{message}");
     }
 
@@ -680,9 +673,9 @@ mod tests {
     }
 
     #[test]
-    fn deletion_only_disclosure_message_names_deleted_files() -> Result<(), String> {
-        let message = deletion_only_disclosure_message(2)
-            .ok_or_else(|| "deletion-only diff must produce a disclosure".to_string())?;
+    fn deletion_disclosure_message_names_deleted_files() -> Result<(), String> {
+        let message = deletion_disclosure_message(2)
+            .ok_or_else(|| "deleted diff must produce a disclosure".to_string())?;
         if !message.contains("diff deleted 2 file(s)") {
             return Err(format!("disclosure must name deleted files: {message}"));
         }
@@ -691,7 +684,7 @@ mod tests {
                 "disclosure must explain the analysis boundary: {message}"
             ));
         }
-        if deletion_only_disclosure_message(0).is_some() {
+        if deletion_disclosure_message(0).is_some() {
             return Err("empty deletion count must not disclose".to_string());
         }
         Ok(())

@@ -100,6 +100,11 @@ fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
             continue;
         }
 
+        if state.handle_deleted_file_mode(raw) {
+            i += 1;
+            continue;
+        }
+
         // RANK-2 fix: detect a plain-diff file-section boundary while in_hunk.
         // A genuine `--- payload` line inside a hunk starts with `-` (one dash)
         // and is consumed as a removed line.  A file-section separator starts
@@ -132,7 +137,7 @@ fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
 
     ParsedDiff {
         files: files.into_values().collect(),
-        deleted_file_count: state.deleted_file_count(),
+        deleted_file_count: state.finish_deleted_section(),
     }
 }
 
@@ -169,6 +174,8 @@ mod parser_state {
         in_hunk: bool,
         saw_old_path_marker: bool,
         deleted_file_count: usize,
+        saw_deleted_file_mode: bool,
+        deletion_counted_for_section: bool,
     }
 
     impl ParserState {
@@ -185,8 +192,22 @@ mod parser_state {
             self.saw_old_path_marker = false;
         }
 
-        pub(super) fn deleted_file_count(&self) -> usize {
+        pub(super) fn finish_deleted_section(&mut self) -> usize {
+            self.record_deleted_file_if_needed();
             self.deleted_file_count
+        }
+
+        fn record_deleted_file_if_needed(&mut self) {
+            if self.saw_deleted_file_mode && !self.deletion_counted_for_section {
+                self.record_deleted_file();
+            }
+        }
+
+        fn record_deleted_file(&mut self) {
+            if !self.deletion_counted_for_section {
+                self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                self.deletion_counted_for_section = true;
+            }
         }
 
         pub(super) fn register_path_marker(
@@ -211,7 +232,7 @@ mod parser_state {
                 // ignores hunk lines while current_path is None (#2099).
                 if is_new_path_marker(raw) {
                     if self.saw_old_path_marker && is_dev_null_new_path_marker(raw) {
-                        self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                        self.record_deleted_file();
                     }
                     self.current_path = None;
                     self.saw_old_path_marker = false;
@@ -247,9 +268,20 @@ mod parser_state {
             if !is_boundary {
                 return false;
             }
+            self.record_deleted_file_if_needed();
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
+            self.saw_deleted_file_mode = false;
+            self.deletion_counted_for_section = false;
+            true
+        }
+
+        pub(super) fn handle_deleted_file_mode(&mut self, raw: &str) -> bool {
+            if self.in_hunk || !raw.starts_with("deleted file mode ") {
+                return false;
+            }
+            self.saw_deleted_file_mode = true;
             true
         }
 
@@ -299,6 +331,9 @@ mod parser_state {
             // hunk is closed so a later textual section is not mis-attributed.
             if !raw.starts_with("Binary files ") || !raw.ends_with(" differ") {
                 return false;
+            }
+            if raw.contains(" and /dev/null differ") {
+                self.record_deleted_file();
             }
             self.in_hunk = false;
             self.saw_old_path_marker = false;
@@ -665,6 +700,26 @@ deleted file mode 100644
 
         assert_eq!(parsed.files.len(), 1);
         assert_eq!(parsed.deleted_file_count, 0);
+    }
+
+    #[test]
+    fn counts_metadata_only_empty_file_deletion() {
+        let diff = "diff --git a/src/empty.rs b/src/empty.rs\ndeleted file mode 100644\n";
+
+        let parsed = parse_unified_diff_with_metadata(diff);
+
+        assert!(parsed.files.is_empty());
+        assert_eq!(parsed.deleted_file_count, 1);
+    }
+
+    #[test]
+    fn counts_binary_file_deletion_without_double_counting() {
+        let diff = "diff --git a/assets/icon.bin b/assets/icon.bin\ndeleted file mode 100644\nBinary files a/assets/icon.bin and /dev/null differ\n";
+
+        let parsed = parse_unified_diff_with_metadata(diff);
+
+        assert!(parsed.files.is_empty());
+        assert_eq!(parsed.deleted_file_count, 1);
     }
 
     #[test]

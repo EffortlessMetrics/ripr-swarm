@@ -602,6 +602,39 @@ fn check_human_output_reports_sample_findings() {
 }
 
 #[test]
+fn check_deletion_only_diff_discloses_deleted_behavior() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let diff = workspace.join("deletion.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/removed.rs b/src/removed.rs\ndeleted file mode 100644\n--- a/src/removed.rs\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-old\n",
+    )
+    .map_err(|err| format!("write deletion diff: {err}"))?;
+
+    let root = workspace.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let output = run_ripr(&["check", "--root", &root, "--diff", &diff_arg, "--json"]);
+    assert_success(&output);
+
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("deletion-only JSON did not parse: {err}"))?;
+    if !report["findings"].as_array().is_some_and(Vec::is_empty) {
+        return Err(format!(
+            "deletion-only diff should not produce findings: {}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("diff deleted 1 file(s)") || !stderr.contains("no new-side code to analyze")
+    {
+        return Err(format!("deletion disclosure missing from stderr: {stderr}"));
+    }
+
+    std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     let root = ".";
     let diff = "crates/ripr/examples/sample/example.diff";
