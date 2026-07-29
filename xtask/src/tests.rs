@@ -7635,6 +7635,16 @@ fn should_scan_static_language_path_combines_candidate_check_and_allowlist() {
         "fixtures/boundary_gap/expected/output.bin"
     ));
 
+    // Editor-extension source is part of the static-language policy surface.
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/src/extension.ts"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/scripts/package.js"
+    ));
+
     // Candidate files covered by an exact allowlist entry are not scanned.
     assert!(!should_scan_static_language_path(&allowlist, "AGENTS.md"));
 
