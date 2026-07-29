@@ -167,8 +167,15 @@ struct LivePr {
 }
 
 fn capture_live_snapshot() -> Snapshot {
+    capture_live_snapshot_with(live_output)
+}
+
+fn capture_live_snapshot_with<F>(mut output: F) -> Snapshot
+where
+    F: FnMut(&str, &[&str], &str) -> Result<String, String>,
+{
     let mut collector_errors = Vec::new();
-    let main_sha = match live_output("git", &["rev-parse", "origin/main"], "live main collection") {
+    let main_sha = match output("git", &["rev-parse", "origin/main"], "live main collection") {
         Ok(value) => value.trim().to_string(),
         Err(error) => {
             collector_errors.push(format!("live main collection failed: {error}"));
@@ -176,7 +183,7 @@ fn capture_live_snapshot() -> Snapshot {
         }
     };
     let mut open_prs_complete = true;
-    let prs = match live_output(
+    let prs = match output(
         "gh",
         &[
             "pr",
@@ -221,7 +228,7 @@ fn capture_live_snapshot() -> Snapshot {
             Vec::new()
         }
     };
-    let authority = match live_output(
+    let authority = match output(
         "gh",
         &[
             "issue",
@@ -257,7 +264,7 @@ fn capture_live_snapshot() -> Snapshot {
         .map(hash_text)
         .unwrap_or_default();
     let (worktree_inventory_complete, worktree_count) =
-        collect_worktree_inventory(&mut collector_errors);
+        collect_worktree_inventory(&mut collector_errors, &mut output);
     let freshness = if collector_errors.is_empty() {
         "current"
     } else {
@@ -286,8 +293,11 @@ fn capture_live_snapshot() -> Snapshot {
     }
 }
 
-fn collect_worktree_inventory(errors: &mut Vec<String>) -> (bool, u64) {
-    match live_output(
+fn collect_worktree_inventory<F>(errors: &mut Vec<String>, output: &mut F) -> (bool, u64)
+where
+    F: FnMut(&str, &[&str], &str) -> Result<String, String>,
+{
+    match output(
         "git",
         &["worktree", "list", "--porcelain"],
         "live worktree collection",
@@ -318,6 +328,15 @@ fn live_output(program: &str, args: &[&str], context: &str) -> Result<String, St
         LIVE_COLLECTION_TIMEOUT,
         context,
     )?;
+    interpret_live_output(program, args, context, output)
+}
+
+fn interpret_live_output(
+    program: &str,
+    args: &[&str],
+    context: &str,
+    output: crate::run::TimedOutput,
+) -> Result<String, String> {
     if output.timed_out {
         return Err(format!(
             "{context} timed out after {} seconds; the child process tree was terminated",
@@ -624,9 +643,14 @@ fn markdown_cell(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Snapshot, normalize_snapshot, normalize_snapshot_with_origin, report_json, report_markdown,
+        ReleaseControlInput, Snapshot, capture_live_snapshot_with, interpret_live_output,
+        live_output, normalize_snapshot, normalize_snapshot_with_origin, parse_args, read_snapshot,
+        report_json, report_markdown,
     };
     use serde_json::{Value, json};
+    use std::collections::VecDeque;
+    use std::process::Command;
+    use std::time::Duration;
 
     fn snapshot() -> Result<Snapshot, String> {
         serde_json::from_value(json!({
@@ -817,6 +841,274 @@ mod tests {
         }
         if report.prs.iter().any(|pr| pr.merge_eligible) {
             return Err("non-main base must not permit merge eligibility".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn argument_and_snapshot_loading_paths_are_explicit() -> Result<(), String> {
+        let live_args = ["--live".to_string()];
+        let live = parse_args(&live_args)?;
+        if !matches!(live, ReleaseControlInput::Live) {
+            return Err("--live should select the live collector".to_string());
+        }
+        let input_args = ["--input".to_string(), "snapshot.json".to_string()];
+        let input = parse_args(&input_args)?;
+        if !matches!(input, ReleaseControlInput::Captured("snapshot.json")) {
+            return Err("--input should retain its path".to_string());
+        }
+        for args in [
+            vec!["--help".to_string()],
+            vec!["--input".to_string()],
+            vec!["--input".to_string(), " ".to_string()],
+            vec!["--unexpected".to_string()],
+        ] {
+            if parse_args(&args).is_ok() {
+                return Err(format!("invalid arguments were accepted: {args:?}"));
+            }
+        }
+
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("release_control")
+            .join("complete.json");
+        let fixture_text = fixture_path
+            .to_str()
+            .ok_or_else(|| "fixture path was not UTF-8".to_string())?;
+        let loaded = read_snapshot(fixture_text)?;
+        if loaded.kind != "release_control_snapshot" {
+            return Err("fixture did not load as a release-control snapshot".to_string());
+        }
+        if read_snapshot("fixtures/release_control/does-not-exist.json").is_ok() {
+            return Err("missing snapshot should return an error".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_source_and_pr_fields_all_fail_closed() -> Result<(), String> {
+        let mut malformed = snapshot()?;
+        malformed.schema_version = "wrong".to_string();
+        malformed.kind = "wrong_kind".to_string();
+        malformed.captured_at.clear();
+        malformed.source.mode = "unknown".to_string();
+        malformed.source.freshness = "stale".to_string();
+        malformed.source.main_sha = "bad".to_string();
+        malformed.source.authority_issue = 1;
+        malformed.source.authority_state = "closed".to_string();
+        malformed.source.authority_main_sha = "different".to_string();
+        malformed.source.portfolio_state = "unknown".to_string();
+        malformed.source.open_prs_complete = false;
+        malformed.source.active_claims_complete = false;
+        malformed.source.worktree_inventory_complete = false;
+        malformed.source.graph_digest.clear();
+        let first = malformed
+            .prs
+            .first_mut()
+            .ok_or_else(|| "expected fixture PR".to_string())?;
+        first.number = 0;
+        first.title.clear();
+        first.state = "closed".to_string();
+        first.head_sha = "bad".to_string();
+        first.base_ref.clear();
+        first.release_disposition = Some("not-a-disposition".to_string());
+        first.disposition_reason = Some(" ".to_string());
+        let duplicate = malformed
+            .prs
+            .first()
+            .cloned()
+            .ok_or_else(|| "expected malformed PR".to_string())?;
+        malformed.prs.push(duplicate);
+
+        let report = normalize_snapshot(malformed);
+        if report.status != "reconcile_required" || report.prs.iter().any(|pr| pr.merge_eligible) {
+            return Err("malformed input must be fully non-eligible".to_string());
+        }
+        for expected in [
+            "snapshot schema_version",
+            "snapshot kind",
+            "snapshot captured_at is missing",
+            "source mode must be captured or live",
+            "source freshness must be current",
+            "source main_sha must be",
+            "release authority must be issue #2379",
+            "release authority #1 must remain open",
+            "authority main SHA does not match",
+            "portfolio state must be complete",
+            "open PR inventory is incomplete",
+            "active claim/worktree inventory is incomplete",
+            "worktree inventory is incomplete",
+            "release graph digest is missing",
+            "PR #0 is missing a valid release disposition",
+            "PR #0 appears more than once",
+            "PR number must be non-zero",
+            "PR #0 head_sha must be",
+            "PR #0 is not open",
+            "PR #0 base_ref is missing",
+            "PR #0 title is missing",
+            "PR #0 is missing a disposition reason",
+        ] {
+            if !report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains(expected))
+            {
+                return Err(format!("missing malformed-input reason: {expected}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn markdown_and_json_escape_and_expose_contract_boundaries() -> Result<(), String> {
+        let mut escaped = snapshot()?;
+        let held = escaped
+            .prs
+            .first_mut()
+            .ok_or_else(|| "expected held PR".to_string())?;
+        held.title = "held | title\ncontinued".to_string();
+        held.disposition_reason = Some("reason | text\ncontinued".to_string());
+        let report = normalize_snapshot(escaped);
+        let markdown = report_markdown(&report);
+        if !markdown.contains("held \\| title continued")
+            || !markdown.contains("reason \\| text continued")
+        {
+            return Err("Markdown cells were not escaped and normalized".to_string());
+        }
+        let json = report_json(&report);
+        if json.get("authority_boundary")
+            != Some(&Value::String("temporary_release_lens_only".to_string()))
+        {
+            return Err("JSON authority boundary changed unexpectedly".to_string());
+        }
+        if json
+            .get("must_not_claim")
+            .and_then(Value::as_array)
+            .is_none_or(|claims| claims.len() != 4)
+        {
+            return Err("JSON must-not-claim boundary is incomplete".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_live_collector_normalizes_success_and_failure_inputs() -> Result<(), String> {
+        let main_sha = "cccccccccccccccccccccccccccccccccccccccc";
+        let mut successful_outputs = VecDeque::from(vec![
+            Ok(format!("{main_sha}\n")),
+            Ok(r#"[{"number":7,"title":"live PR","state":"OPEN","isDraft":false,"headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"main"}]"#.to_string()),
+            Ok(r#"{"state":"OPEN","body":"release graph"}"#.to_string()),
+            Ok("worktree H:\\Code\\Rust\\ripr-swarm\n\nworktree H:\\Code\\Rust\\other\n".to_string()),
+        ]);
+        let live = capture_live_snapshot_with(|_, _, _| {
+            successful_outputs
+                .pop_front()
+                .ok_or_else(|| "test output queue exhausted".to_string())?
+        });
+        if live.source.freshness != "current"
+            || live.source.main_sha != main_sha
+            || live.source.authority_state != "open"
+            || live.source.worktree_count != 2
+            || !live.collector_errors.is_empty()
+        {
+            return Err("successful live collection was not normalized".to_string());
+        }
+        if live.prs.first().map(|pr| pr.state.as_str()) != Some("open") {
+            return Err("live PR state was not normalized".to_string());
+        }
+        if normalize_snapshot_with_origin(live, true).status != "reconcile_required" {
+            return Err("live collection must remain fail-closed without claim inputs".to_string());
+        }
+
+        let mut failed_outputs = VecDeque::from(vec![
+            Err("main unavailable".to_string()),
+            Ok("not-json".to_string()),
+            Ok("also-not-json".to_string()),
+            Err("worktrees unavailable".to_string()),
+        ]);
+        let failed = capture_live_snapshot_with(|_, _, _| {
+            failed_outputs
+                .pop_front()
+                .ok_or_else(|| "test output queue exhausted".to_string())?
+        });
+        if failed.source.freshness != "unknown"
+            || failed.source.open_prs_complete
+            || failed.source.worktree_inventory_complete
+            || failed.source.worktree_count != 0
+            || failed.collector_errors.len() != 4
+        {
+            return Err("failed live collection did not remain visibly incomplete".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn live_command_and_result_interpretation_are_bounded() -> Result<(), String> {
+        let stdout = live_output("cmd", &["/C", "echo", "release-control"], "test success")?;
+        if !stdout.contains("release-control") {
+            return Err("successful live command did not return stdout".to_string());
+        }
+        if live_output("cmd", &["/C", "exit", "7"], "test failure").is_ok() {
+            return Err("failed live command should return an error".to_string());
+        }
+
+        let timed_out = crate::run::TimedOutput {
+            status: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration: Duration::ZERO,
+            timed_out: true,
+        };
+        if interpret_live_output("cmd", &[], "timed out", timed_out)
+            .err()
+            .is_none_or(|error| !error.contains("timed out"))
+        {
+            return Err("timed-out live command lost its diagnostic".to_string());
+        }
+        let missing_status = crate::run::TimedOutput {
+            status: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration: Duration::ZERO,
+            timed_out: false,
+        };
+        if interpret_live_output("cmd", &[], "missing status", missing_status)
+            .err()
+            .is_none_or(|error| !error.contains("did not report"))
+        {
+            return Err("missing live process status lost its diagnostic".to_string());
+        }
+        let success_status = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .status()
+            .map_err(|error| format!("failed to create success status: {error}"))?;
+        let success = crate::run::TimedOutput {
+            status: Some(success_status),
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+            duration: Duration::ZERO,
+            timed_out: false,
+        };
+        if interpret_live_output("cmd", &[], "synthetic success", success)? != "ok" {
+            return Err("successful live result was not returned".to_string());
+        }
+        let failure_status = Command::new("cmd")
+            .args(["/C", "exit", "7"])
+            .status()
+            .map_err(|error| format!("failed to create failure status: {error}"))?;
+        let failure = crate::run::TimedOutput {
+            status: Some(failure_status),
+            stdout: "out".to_string(),
+            stderr: "err".to_string(),
+            duration: Duration::ZERO,
+            timed_out: false,
+        };
+        let error = interpret_live_output("cmd", &["/C"], "synthetic failure", failure)
+            .err()
+            .ok_or_else(|| "failed live result should return an error".to_string())?;
+        if !error.contains("stdout:\nout") || !error.contains("stderr:\nerr") {
+            return Err("failed live result lost captured output".to_string());
         }
         Ok(())
     }
