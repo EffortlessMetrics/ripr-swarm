@@ -1,15 +1,14 @@
 [alias]
+build-lld = [
+    "--config",
+    "target.x86_64-unknown-linux-gnu.linker='clang'",
+    "--config",
+    "target.x86_64-unknown-linux-gnu.rustflags=['-C','link-arg=-fuse-ld=lld']",
+    "build",
+]
 xtask = "run -p xtask --"
 
 [env]
 TEMP = { value = "target", relative = true, force = true }
 TMP = { value = "target", relative = true, force = true }
 TMPDIR = { value = "target", relative = true, force = true }
-
-# Use the LLVM linker for Linux builds. Release profiles use LTO and one
-# codegen unit, so keeping the linker selection explicit avoids paying the
-# slower system-linker path on the supported Linux build runners. Other
-# targets, including Windows, retain their toolchain defaults.
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
