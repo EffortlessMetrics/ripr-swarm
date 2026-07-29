@@ -114,6 +114,16 @@ fn emit_submodule_disclosure(submodule_file_count: usize, mut emit: impl FnMut(&
     }
 }
 
+fn emit_rename_disclosure(
+    renamed_file_count: usize,
+    pure_rename_file_count: usize,
+    mut emit: impl FnMut(&str),
+) {
+    if let Some(message) = rename_disclosure_message(renamed_file_count, pure_rename_file_count) {
+        emit(&message);
+    }
+}
+
 fn rename_disclosure_message(
     renamed_file_count: usize,
     pure_rename_file_count: usize,
@@ -128,7 +138,7 @@ fn rename_disclosure_message(
                 "ripr: detected {edited} rename(s); changed lines are analyzed under the new path, but old-path test associations are not carried forward."
             ),
             (pure, edited) => format!(
-                "ripr: detected {pure} pure rename(s) with no changed lines and {edited} rename(s) with edits; changed lines are analyzed under new paths."
+                "ripr: detected {pure} pure rename(s) with no changed lines and {edited} rename(s) with edits; changed lines are analyzed under new paths, but old-path test associations are not carried forward."
             ),
         }
     })
@@ -146,6 +156,12 @@ fn run_pipeline_for_diff_text(
     let submodule_file_count = parsed_diff.submodule_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
     let pure_rename_file_count = parsed_diff.pure_rename_file_count;
+    let pure_rename_paths = parsed_diff.pure_rename_paths;
+    let analysis_changed_files = changed_files
+        .iter()
+        .filter(|file| !pure_rename_paths.contains(&file.path))
+        .cloned()
+        .collect::<Vec<_>>();
 
     let mut findings: Vec<Finding> = Vec::new();
     // `changed_rust_files` counts Rust adapter files only (#2103); every
@@ -167,7 +183,7 @@ fn run_pipeline_for_diff_text(
         let result = RustAdapter.analyze_diff_for_languages(
             options,
             oracle_policy,
-            &changed_files,
+            &analysis_changed_files,
             languages,
         )?;
         cancellation::checkpoint()?;
@@ -182,7 +198,7 @@ fn run_pipeline_for_diff_text(
     let restricted_changed_files;
     let preview_changed_files: &[diff::ChangedFile] = match &partial_scope {
         Some(scope) => {
-            restricted_changed_files = changed_files
+            restricted_changed_files = analysis_changed_files
                 .iter()
                 .filter(|file| scope.selects(&file.path))
                 .cloned()
@@ -239,7 +255,7 @@ fn run_pipeline_for_diff_text(
     // clean Rust-grade result for a TypeScript/JavaScript/Python change
     // (RIPR-SPEC-0082, #1111). Detection is pure path routing — it does not
     // require the adapter to be enabled.
-    let preview_paths: Vec<&diff::ChangedFile> = changed_files.iter().collect();
+    let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files.iter().collect();
     let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
 
     // Disclose when the diff contains only non-source files (docs/config-only
@@ -249,7 +265,7 @@ fn run_pipeline_for_diff_text(
     if findings.is_empty()
         && rust_changed_files == 0
         && submodule_file_count == 0
-        && pure_rename_file_count == 0
+        && renamed_file_count == 0
         && changed_files_by_language
             .iter()
             .all(|(_, count)| *count == 0)
@@ -262,9 +278,9 @@ fn run_pipeline_for_diff_text(
 
     emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
 
-    if let Some(message) = rename_disclosure_message(renamed_file_count, pure_rename_file_count) {
-        eprintln!("{message}");
-    }
+    emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
+        eprintln!("{message}")
+    });
 
     if findings.is_empty()
         && rust_changed_files == 0
@@ -788,6 +804,24 @@ mod tests {
         if !edited.contains("not carried forward") {
             return Err(format!(
                 "edited rename disclosure must state the association limit: {edited}"
+            ));
+        }
+        let mixed = rename_disclosure_message(2, 1)
+            .ok_or_else(|| "mixed renames must produce a disclosure".to_string())?;
+        if !mixed.contains("not carried forward") {
+            return Err(format!(
+                "mixed rename disclosure must state the association limit: {mixed}"
+            ));
+        }
+        let mut emitted = None;
+        emit_rename_disclosure(1, 1, |message| emitted = Some(message.to_string()));
+        if emitted.as_deref()
+            != Some(
+                "ripr: detected 1 pure rename(s) with no changed lines; rename-only changes produce no probes.",
+            )
+        {
+            return Err(format!(
+                "pipeline emitted the wrong rename disclosure: {emitted:?}"
             ));
         }
         if rename_disclosure_message(0, 0).is_some() {
