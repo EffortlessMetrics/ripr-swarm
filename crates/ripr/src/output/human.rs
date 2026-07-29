@@ -1516,6 +1516,9 @@ mod tests {
         assert!(rendered.contains(
             "    placement reason: existing Blob + ArrayBuffer integration tests live there; missing discriminator is resizable ArrayBuffer\n"
         ));
+        assert!(rendered.contains(
+            "    placement reason: existing Blob + ArrayBuffer integration tests cover copy_to_unshared\n"
+        ));
         assert!(rendered.contains("    proof mode: observable_red_green\n"));
         assert!(rendered.contains(
             "    proof mode reason: The missing TypeScript discriminator belongs in an existing bridged stable-byte observer route; future proof should be a system-Bun red/patched-green witness after the discriminator is added.\n"

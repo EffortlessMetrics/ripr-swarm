@@ -1298,6 +1298,10 @@ mod tests {
             "ArrayBuffer::copy_to_unshared"
         );
         assert_eq!(
+            grip["profiles"][1]["placement"]["reason"],
+            "existing Blob + ArrayBuffer integration tests cover copy_to_unshared"
+        );
+        assert_eq!(
             grip["limitation_category"],
             "cross_language_oracle_visibility_unresolved"
         );

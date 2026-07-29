@@ -551,6 +551,7 @@ mod tests {
         assert!(rendered.contains("suggested test file `test/js/web/fetch/blob.test.ts`"));
         assert!(rendered.contains("TypeScript placement%3A rank 1"));
         assert!(rendered.contains("missing discriminator is resizable ArrayBuffer"));
+        assert!(rendered.contains("cover copy_to_unshared"));
         assert!(rendered.contains("(preview advisory)."));
     }
 

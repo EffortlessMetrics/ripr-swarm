@@ -184,18 +184,18 @@ pub(crate) fn typescript_preview_card_json_value(card: &TypeScriptPreviewCard) -
         .bun_cross_language_grip
         .as_ref()
         .map(bun_cross_language_grip_json);
-    if card.bun_cross_language_grips.len() > 1
-        && let Some(Value::Object(object)) = bun_grip.as_mut()
-    {
-        object.insert(
-            "profiles".to_string(),
-            Value::Array(
-                card.bun_cross_language_grips
-                    .iter()
-                    .map(bun_cross_language_grip_json)
-                    .collect(),
-            ),
-        );
+    if card.bun_cross_language_grips.len() > 1 {
+        if let Some(Value::Object(object)) = bun_grip.as_mut() {
+            object.insert(
+                "profiles".to_string(),
+                Value::Array(
+                    card.bun_cross_language_grips
+                        .iter()
+                        .map(bun_cross_language_grip_json)
+                        .collect(),
+                ),
+            );
+        }
     }
 
     json!({
@@ -352,6 +352,7 @@ fn bun_cross_language_grips(
     let hints = evidence_values(finding, "typescript_bun_ub_bridge_hint: ");
     let verdicts = evidence_values(finding, "typescript_bun_ub_bridge_verdict: ");
     let grips = evidence_values(finding, "typescript_bun_ub_cross_language_grip: ");
+    let placements = evidence_values(finding, "typescript_bun_ub_test_placement: ");
     if hints.len() != verdicts.len() || hints.len() != grips.len() {
         return Vec::new();
     }
@@ -360,14 +361,13 @@ fn bun_cross_language_grips(
         .into_iter()
         .zip(verdicts)
         .zip(grips)
-        .filter_map(|((hint, verdict), grip)| {
+        .enumerate()
+        .filter_map(|(index, ((hint, verdict), grip))| {
             let suggested_test_file = keyed_value(verdict, "suggested_test_file")?;
-            let placement = evidence_values(finding, "typescript_bun_ub_test_placement: ")
-                .into_iter()
-                .find(|candidate| {
-                    keyed_value(candidate, "suggested_test_file").as_deref()
-                        == Some(suggested_test_file.as_str())
-                });
+            let placement = placements.get(index).copied().filter(|candidate| {
+                keyed_value(candidate, "suggested_test_file").as_deref()
+                    == Some(suggested_test_file.as_str())
+            });
             bun_cross_language_grip_for_lines(actionability, hint, verdict, grip, placement)
         })
         .collect()
@@ -1138,6 +1138,13 @@ mod tests {
             card.bun_cross_language_grips[1].rust_owner,
             "ArrayBuffer::copy_to_unshared"
         );
+        assert_eq!(
+            card.bun_cross_language_grips[1]
+                .placement
+                .as_ref()
+                .map(|placement| placement.reason.as_str()),
+            Some("existing Blob + ArrayBuffer integration tests cover copy_to_unshared")
+        );
         let json = typescript_preview_card_json_value(&card);
         assert_eq!(
             json["bun_cross_language_grip"]["profiles"]
@@ -1148,6 +1155,10 @@ mod tests {
         assert_eq!(
             json["bun_cross_language_grip"]["profiles"][1]["rust_seam"]["owner"],
             "ArrayBuffer::copy_to_unshared"
+        );
+        assert_eq!(
+            json["bun_cross_language_grip"]["profiles"][1]["placement"]["reason"],
+            "existing Blob + ArrayBuffer integration tests cover copy_to_unshared"
         );
         Ok(())
     }
