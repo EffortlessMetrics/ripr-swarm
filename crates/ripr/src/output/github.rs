@@ -318,8 +318,9 @@ mod tests {
         assert!(rendered.contains("file=src/lib.rs,line=13"));
         assert!(!rendered.contains("file=./"));
 
-        output.root = PathBuf::from(r"C:\repo");
-        output.findings[0].probe.location.file = PathBuf::from(r"C:\repo\src\lib.rs");
+        let absolute_root = std::env::temp_dir().join("ripr-github-annotations");
+        output.root = absolute_root.clone();
+        output.findings[0].probe.location.file = absolute_root.join("src/lib.rs");
 
         let rendered = render(&output);
 
