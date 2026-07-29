@@ -126,7 +126,7 @@ mod tests {
 
         assert_eq!(
             navigation.explain_command("probe:id"),
-            "ripr explain --root . --mode draft probe:id"
+            "ripr explain --root . --base origin/main --mode draft probe:id"
         );
     }
 }
