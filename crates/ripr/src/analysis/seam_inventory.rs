@@ -604,10 +604,16 @@ fn inventory_compact_classified_seams_from_state_with_config(
     Ok((classified, lexical_fallback_files))
 }
 
+type ClassifiedSeamInventory = (
+    Vec<ClassifiedSeam>,
+    Option<SeamLimitInfo>,
+    Vec<PathBuf>,
+);
+
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
-) -> Result<(Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<PathBuf>), String> {
+) -> Result<ClassifiedSeamInventory, String> {
     let production_files = production_files_from_state(state);
     let build_started = Instant::now();
     trace_latency_phase(

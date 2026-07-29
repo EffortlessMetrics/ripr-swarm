@@ -708,6 +708,7 @@ impl RepoSeamFactCache {
     /// `SeamLimitInfo` so the caller can surface correct `run_status` on
     /// a cache hit. `Miss` is returned for both "no file" and "different
     /// key"; `CorruptIgnored` carries a reason for logs.
+    #[cfg(test)]
     pub(crate) fn load_classified_seams(
         &self,
         key: &RepoSeamCacheKey,
@@ -770,6 +771,7 @@ impl RepoSeamFactCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn store_compact_classified_seams_with_limit(
         &self,
         key: &RepoSeamCacheKey,
@@ -800,6 +802,7 @@ impl RepoSeamFactCache {
     /// `limit_info` is `Some(...)` when this is a truncated run (seam limit
     /// was applied); `None` for a complete run. The value is persisted in the
     /// cache envelope so a warm-path load can return the correct `run_status`.
+    #[cfg(test)]
     pub(crate) fn store_classified_seams_with_limit(
         &self,
         key: &RepoSeamCacheKey,
@@ -1299,6 +1302,7 @@ impl CountCacheEnvelope {
 }
 
 impl CacheEnvelope {
+    #[cfg(test)]
     fn new(
         key: RepoSeamCacheKey,
         classified_seams: Vec<ClassifiedSeam>,
