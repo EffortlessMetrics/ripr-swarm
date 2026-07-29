@@ -38,12 +38,12 @@ pub use check::{
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
 pub use context::{collect_context, collect_context_with_input};
+pub use explain::explain_finding_with_config;
+pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use explain::{
     explain_finding_from_artifact, explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_and_navigation_mode,
 };
-pub use explain::explain_finding_with_config;
-pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use navigation::{FindingNavigation, finding_navigation};
 
 use crate::analysis::{AnalysisMode, PreviewLanguageAdvisory};

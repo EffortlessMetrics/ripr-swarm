@@ -653,7 +653,9 @@ fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(),
         .map_err(|err| format!("write ripr.toml: {err}"))?;
     let root_arg = root.display().to_string();
     let diff_arg = diff.display().to_string();
-    let output = run_ripr(&["check", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft"]);
+    let output = run_ripr(&[
+        "check", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+    ]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let explain_line = stdout
