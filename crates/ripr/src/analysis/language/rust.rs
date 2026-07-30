@@ -1394,7 +1394,8 @@ mod tests {
         enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_generated_rust_file,
         macro_reach_limit_kind, owner_has_ffi_attr, partial_diff_budgets_from_env,
         partition_canonical_form, replace_witnessed_no_path_infection_summary,
-        repo_index_file_limit_from_env, select_partial_diff_partition, sha256_hex,
+        repo_index_file_limit_from_env, select_partial_diff_partition,
+        select_partial_diff_partition_with_identity, sha256_hex,
         transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
