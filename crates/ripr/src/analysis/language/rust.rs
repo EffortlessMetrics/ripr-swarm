@@ -430,6 +430,20 @@ fn select_partial_diff_partition(
     budgets: &PartialDiffBudgets,
     enabled_languages: &[LanguageId],
 ) -> Option<PartialDiffScope> {
+    select_partial_diff_partition_with_identity(
+        changed_files,
+        changed_files,
+        budgets,
+        enabled_languages,
+    )
+}
+
+fn select_partial_diff_partition_with_identity(
+    changed_files: &[ChangedFile],
+    identity_files: &[ChangedFile],
+    budgets: &PartialDiffBudgets,
+    enabled_languages: &[LanguageId],
+) -> Option<PartialDiffScope> {
     let mut candidates: Vec<PartitionCandidate> = changed_files
         .iter()
         .filter_map(|file| {
@@ -517,7 +531,7 @@ fn select_partial_diff_partition(
         .collect();
     let mut selected_sorted = selected_files.clone();
     selected_sorted.sort();
-    let diff_identity = diff_identity_from_changed_files(changed_files);
+    let diff_identity = diff_identity_from_changed_files(identity_files);
     let canonical = partition_canonical_form(
         &diff_identity,
         budgets.file_budget,
@@ -1071,6 +1085,10 @@ pub(crate) struct RustAdapter;
 /// pattern list needs a separate config-contract lane; the default must still
 /// avoid analyzing common generated names without inventing a config value.
 pub(crate) fn is_generated_rust_file(path: &Path) -> bool {
+    if route(path) != Some(LanguageId::Rust) {
+        return false;
+    }
+
     let name = path
         .file_name()
         .map(|value| value.to_string_lossy())
@@ -1122,15 +1140,15 @@ impl RustAdapter {
         // failing closed with zero findings. A malformed override fails closed
         // as `partial_budget_invalid`.
         let partial_budgets = partial_diff_budgets()?;
-        let partial_scope = select_partial_diff_partition(
+        let partial_scope = select_partial_diff_partition_with_identity(
             &analyzable_changed_files,
+            changed_files,
             &partial_budgets,
             enabled_languages,
         );
         let changed_rust_paths = analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
-            .filter(|file| !is_generated_rust_file(&file.path))
             .filter(|file| {
                 partial_scope
                     .as_ref()
@@ -1139,8 +1157,12 @@ impl RustAdapter {
             .map(|file| file.path.clone())
             .collect::<Vec<_>>();
         let rust_files = workspace::discover_rust_files(&options.root)?;
+        let analyzable_rust_files = rust_files
+            .into_iter()
+            .filter(|path| !is_generated_rust_file(path))
+            .collect::<Vec<_>>();
         let index_files = workspace::select_rust_files_for_mode(
-            &rust_files,
+            &analyzable_rust_files,
             &changed_rust_paths,
             options.mode,
             options.include_unchanged_tests,
@@ -2489,12 +2511,45 @@ let _ = (result, note, raw);"##,
                 "expected generated Rust path: {path}"
             );
         }
-        for path in ["src/lib.rs", "src/engine.rs", "tests/behavior.rs"] {
+        for path in [
+            "src/lib.rs",
+            "src/engine.rs",
+            "tests/behavior.rs",
+            "src/proto/generated/data.ts",
+            "out/data.py",
+        ] {
             assert!(
                 !is_generated_rust_file(Path::new(path)),
                 "unexpected generated Rust path: {path}"
             );
         }
+    }
+
+    #[test]
+    fn partial_scope_identity_includes_skipped_generated_files() {
+        let analyzable = vec![changed_file("src/a.rs", 1, 0), changed_file("src/b.rs", 1, 0)];
+        let mut identity_a = analyzable.clone();
+        identity_a.push(changed_file("src/generated.rs", 1, 0));
+        let mut identity_b = analyzable.clone();
+        identity_b.push(changed_file("src/schema.rs", 1, 0));
+
+        let first = select_partial_diff_partition_with_identity(
+            &analyzable,
+            &identity_a,
+            &budgets(1, 1),
+            ALL_LANGUAGES,
+        )
+        .expect("two changed files exceed the partial budget");
+        let second = select_partial_diff_partition_with_identity(
+            &analyzable,
+            &identity_b,
+            &budgets(1, 1),
+            ALL_LANGUAGES,
+        )
+        .expect("two changed files exceed the partial budget");
+
+        assert_ne!(first.diff_identity, second.diff_identity);
+        assert_ne!(first.partition_identity, second.partition_identity);
     }
 
     fn changed_lines(count: usize) -> Vec<ChangedLine> {
