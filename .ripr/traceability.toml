@@ -6517,6 +6517,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/release_denominator/complete.json",
+  "fixtures/release_denominator/current-main-provisional.json",
   "fixtures/release_denominator/reconcile-required.json",
 ]
 code = [
