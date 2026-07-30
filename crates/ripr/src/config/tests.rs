@@ -706,6 +706,63 @@ fn config_file_discovery_records_source_metadata() -> Result<(), String> {
 }
 
 #[test]
+fn config_file_discovery_walks_up_from_nested_root() -> Result<(), String> {
+    let root = temp_root("nested")?;
+    let nested = root.join("crates/member/src");
+    fs::create_dir_all(&nested).map_err(|err| format!("create nested root failed: {err}"))?;
+    write_file(
+        &root.join(CONFIG_FILE_NAME),
+        "[analysis]\nmode = \"fast\"\n",
+    )?;
+    write_file(
+        &root.join("Cargo.toml"),
+        "[package]\nname = \"nested-config\"\nversion = \"0.1.0\"\n",
+    )?;
+
+    let config = load_for_root(&nested)?;
+    let source_path = config.source_path().map(Path::to_path_buf);
+    let mode = config.analysis().mode().cloned();
+    let expected_source_path = fs::canonicalize(root.join(CONFIG_FILE_NAME))
+        .map_err(|err| format!("canonicalize discovered config failed: {err}"))?;
+    fs::remove_dir_all(&root).map_err(|err| format!("remove nested fixture failed: {err}"))?;
+
+    if source_path != Some(expected_source_path) {
+        return Err(format!(
+            "unexpected discovered config path: {source_path:?}"
+        ));
+    }
+    if mode != Some(Mode::Fast) {
+        return Err(format!("unexpected discovered config mode: {mode:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn config_file_discovery_stops_at_git_boundary() -> Result<(), String> {
+    let root = temp_root("git-boundary")?;
+    let boundary = root.join("isolated");
+    let nested = boundary.join("src");
+    fs::create_dir_all(&nested).map_err(|err| format!("create nested root failed: {err}"))?;
+    fs::create_dir(boundary.join(".git"))
+        .map_err(|err| format!("create git boundary failed: {err}"))?;
+    write_file(
+        &root.join(CONFIG_FILE_NAME),
+        "[analysis]\nmode = \"fast\"\n",
+    )?;
+
+    let config = load_for_root(&nested)?;
+    let source_path = config.source_path().map(Path::to_path_buf);
+    fs::remove_dir_all(&root).map_err(|err| format!("remove boundary fixture failed: {err}"))?;
+
+    if source_path.is_some() {
+        return Err(format!(
+            "config discovery crossed .git boundary: {source_path:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn oracle_strength_literals_round_trip_through_config() -> Result<(), String> {
     let weak_smoke_none = parse_config(
         r#"
