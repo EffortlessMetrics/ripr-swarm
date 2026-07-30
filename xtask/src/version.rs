@@ -450,7 +450,7 @@ mod tests {
     #[test]
     fn rejects_malformed_or_drifting_json_version_surfaces() -> Result<(), String> {
         for (text, expected) in [
-            ("not json", "invalid JSON"),
+            ("not json", "not valid JSON"),
             ("{}", "no usable root version"),
             ("{\"version\":\"\"}", "no usable root version"),
         ] {
