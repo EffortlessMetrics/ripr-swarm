@@ -1300,13 +1300,24 @@ fn read_crate_version(manifest: &Path, workspace_manifest: &Path) -> Option<Stri
 
 /// Extract the `version` key from one top-level table of a manifest.
 ///
-/// Scoped to `[{section}]` so a `version = "…"` belonging to a dependency
-/// table can never be mistaken for the package's own version.
+/// Scoped to `[{section}]` so a `version = "…"` belonging to a dependency table
+/// can never be mistaken for the package's own version.
+///
+/// This reads the `version` key of a Cargo manifest table, not arbitrary TOML:
+/// it handles the spellings Cargo actually accepts for that key — either quote
+/// style, both inheritance forms, and trailing comments on values and section
+/// headers — and returns `None` for anything else. That boundary matters
+/// because the guarantee callers rely on is "a real version or `None`", so an
+/// unrecognized spelling has to read as unreadable rather than as whatever text
+/// happened to follow the `=`.
 fn package_version(text: &str, section: &str) -> Option<PackageVersion> {
     let header = format!("[{section}]");
     let mut in_section = false;
     for line in text.lines() {
-        let trimmed = line.trim();
+        let trimmed = strip_toml_comment(line).trim();
+        if trimmed.is_empty() {
+            continue;
+        }
         if trimmed.starts_with('[') {
             in_section = trimmed == header;
             continue;
@@ -1319,10 +1330,15 @@ fn package_version(text: &str, section: &str) -> Option<PackageVersion> {
         };
         let value = value.trim();
         match key.trim() {
+            // `version = { workspace = true }` and `version.workspace = true`
+            // are the same declaration in two spellings; Cargo accepts both.
+            "version" if inline_table_inherits_workspace(value) => {
+                return Some(PackageVersion::Inherited);
+            }
             "version" => {
-                let value = value.trim_matches('"');
-                if !value.is_empty() {
-                    return Some(PackageVersion::Literal(value.to_string()));
+                let version = unquote_toml_string(value)?;
+                if !version.is_empty() {
+                    return Some(PackageVersion::Literal(version.to_string()));
                 }
             }
             "version.workspace" if value == "true" => return Some(PackageVersion::Inherited),
@@ -1330,6 +1346,48 @@ fn package_version(text: &str, section: &str) -> Option<PackageVersion> {
         }
     }
     None
+}
+
+/// Drop a trailing `#` comment that begins outside a quoted string.
+///
+/// Without this, `version = "0.10.0" # bump` reads as the version
+/// `0.10.0" # bump`, and a `[package] # note` header stops matching its table.
+fn strip_toml_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    for (index, ch) in line.char_indices() {
+        match (quote, ch) {
+            (None, '"' | '\'') => quote = Some(ch),
+            (Some(open), _) if ch == open => quote = None,
+            (None, '#') => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+/// Return the contents of a quoted TOML string, or `None` when `value` is not
+/// one. An unquoted or malformed value is unreadable, not a bare version.
+fn unquote_toml_string(value: &str) -> Option<&str> {
+    for quote in ['"', '\''] {
+        if let Some(rest) = value.strip_prefix(quote) {
+            return rest.strip_suffix(quote);
+        }
+    }
+    None
+}
+
+/// Whether an inline table declares workspace inheritance
+/// (`{ workspace = true }`).
+fn inline_table_inherits_workspace(value: &str) -> bool {
+    let Some(inner) = value.strip_prefix('{').and_then(|v| v.strip_suffix('}')) else {
+        return false;
+    };
+    inner.split(',').any(|entry| {
+        let Some((key, entry_value)) = entry.split_once('=') else {
+            return false;
+        };
+        key.trim() == "workspace" && entry_value.trim() == "true"
+    })
 }
 
 fn git_worktree_is_clean() -> Result<bool, String> {
@@ -1484,6 +1542,72 @@ mod tests {
             != Some(PackageVersion::Literal("0.11.0".to_string()))
         {
             return Err("expected the workspace table version".to_string());
+        }
+        Ok(())
+    }
+
+    /// The manifest spellings Cargo accepts that a naive line scan gets wrong.
+    /// Each of these is valid TOML, so reading them loosely would return a
+    /// corrupted version — `0.10.0" # bump` — while still satisfying the
+    /// "returns Some" happy path. Raised in review on #2711.
+    #[test]
+    fn package_version_handles_comments_and_quote_styles() -> Result<(), String> {
+        let cases: &[(&str, PackageVersion, &str)] = &[
+            (
+                "[package]\nversion = \"0.10.0\" # bump me at release\n",
+                PackageVersion::Literal("0.10.0".to_string()),
+                "a trailing comment after a double-quoted version",
+            ),
+            (
+                "[package]\nversion = '0.10.0'\n",
+                PackageVersion::Literal("0.10.0".to_string()),
+                "a single-quoted version",
+            ),
+            (
+                "[package] # the package table\nversion = \"0.10.0\"\n",
+                PackageVersion::Literal("0.10.0".to_string()),
+                "a trailing comment on the section header",
+            ),
+            (
+                "[package]\nversion = { workspace = true }\n",
+                PackageVersion::Inherited,
+                "the inline-table inheritance spelling",
+            ),
+            (
+                "[package]\nversion.workspace = true # inherited\n",
+                PackageVersion::Inherited,
+                "a trailing comment after inherited",
+            ),
+        ];
+        for (manifest, expected, label) in cases {
+            let found = package_version(manifest, "package");
+            if found.as_ref() != Some(expected) {
+                return Err(format!("expected {expected:?} for {label}, got {found:?}"));
+            }
+        }
+
+        // A `#` inside the quoted value is part of the version, not a comment.
+        let hashed = "[package]\nversion = \"0.10.0+build#7\"\n";
+        if package_version(hashed, "package")
+            != Some(PackageVersion::Literal("0.10.0+build#7".to_string()))
+        {
+            return Err("a quoted '#' must not be treated as a comment".to_string());
+        }
+
+        // An unquoted value is not a version; it must read as unreadable.
+        let unquoted = "[package]\nversion = 0.10.0\n";
+        if let Some(found) = package_version(unquoted, "package") {
+            return Err(format!(
+                "expected unreadable for an unquoted version, got {found:?}"
+            ));
+        }
+
+        // A commented-out version leaves the table with no version at all.
+        let commented_out = "[package]\n# version = \"0.9.0\"\nedition = \"2024\"\n";
+        if let Some(found) = package_version(commented_out, "package") {
+            return Err(format!(
+                "expected unreadable when the version is commented out, got {found:?}"
+            ));
         }
         Ok(())
     }
