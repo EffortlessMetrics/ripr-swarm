@@ -2527,7 +2527,7 @@ let _ = (result, note, raw);"##,
     }
 
     #[test]
-    fn partial_scope_identity_includes_skipped_generated_files() {
+    fn partial_scope_identity_includes_skipped_generated_files() -> Result<(), String> {
         let analyzable = vec![
             changed_file("src/a.rs", 1, 0),
             changed_file("src/b.rs", 1, 0),
@@ -2537,33 +2537,24 @@ let _ = (result, note, raw);"##,
         let mut identity_b = analyzable.clone();
         identity_b.push(changed_file("src/schema.rs", 1, 0));
 
-        let first = match select_partial_diff_partition_with_identity(
+        let first = select_partial_diff_partition_with_identity(
             &analyzable,
             &identity_a,
             &budgets(1, 1),
             ALL_LANGUAGES,
-        ) {
-            Some(scope) => scope,
-            None => {
-                assert!(false, "two changed files exceed the partial budget");
-                return;
-            }
-        };
-        let second = match select_partial_diff_partition_with_identity(
+        )
+        .ok_or_else(|| "two changed files exceed the partial budget".to_string())?;
+        let second = select_partial_diff_partition_with_identity(
             &analyzable,
             &identity_b,
             &budgets(1, 1),
             ALL_LANGUAGES,
-        ) {
-            Some(scope) => scope,
-            None => {
-                assert!(false, "two changed files exceed the partial budget");
-                return;
-            }
-        };
+        )
+        .ok_or_else(|| "two changed files exceed the partial budget".to_string())?;
 
         assert_ne!(first.diff_identity, second.diff_identity);
         assert_ne!(first.partition_identity, second.partition_identity);
+        Ok(())
     }
 
     fn changed_lines(count: usize) -> Vec<ChangedLine> {
