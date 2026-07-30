@@ -607,7 +607,7 @@ mod tests {
     #[test]
     fn markdown_is_derived_from_the_normalized_report() -> Result<(), String> {
         let input = fixture()?;
-        let report = build_report(&input, &root()?)?;
+        let report = build_report_with_facts(&input, captured_facts(&input))?;
         let markdown = report_markdown(&report);
         for required in [
             "ready",
