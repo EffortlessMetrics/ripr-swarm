@@ -6,6 +6,7 @@ Usage:
 Setup:
   ripr doctor
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+  ripr config validate [--root PATH]
   ripr cache status [--json]
 
 Analysis:
