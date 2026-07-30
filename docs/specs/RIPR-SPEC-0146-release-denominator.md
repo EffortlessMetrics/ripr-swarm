@@ -56,10 +56,11 @@ decision; final output is ready only after every record is reconciled.
 ## Current-main evidence
 
 `fixtures/release_denominator/current-main-provisional.json` is a captured
-provisional census of `c86807ec..3c086540` at current `origin/main`. It carries
-183 first-parent records and matching candidate-tree membership. All records
-remain `operator_decision_required`; the fixture is range/identity evidence,
-not a final release disposition or candidate qualification.
+provisional census of `c86807ec..37cc6595` at `origin/main` as observed on
+2026-07-30. It carries 191 first-parent records and matching candidate-tree
+membership. All records remain `operator_decision_required`; the fixture is
+range/identity evidence, not a final release disposition or candidate
+qualification.
 
 ## Acceptance and proof map
 
