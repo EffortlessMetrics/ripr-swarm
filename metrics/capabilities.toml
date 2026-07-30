@@ -266,7 +266,7 @@ evidence = [
   "framed LSP protocol smoke executes collectEvidenceContext against a published boundary-gap seam diagnostic",
   "VS Code e2e copies a live seam packet from the real server path"
 ]
-fixtures = []
+fixtures = ["fixtures/user-surface-projection-alignment"]
 next = "maintenance"
 metric = "packet includes missing discriminator and related tests"
 
