@@ -164,8 +164,8 @@ mod tests {
                 }
             };
 
-            prop_assert_eq!(value["schema_version"], serde_json::json!(schema_version));
-            prop_assert_eq!(value["tool"], serde_json::json!(tool));
+            prop_assert_eq!(&value["schema_version"], &serde_json::json!(schema_version));
+            prop_assert_eq!(&value["tool"], &serde_json::json!(tool));
             prop_assert!(value["findings"].is_array());
         }
     }
