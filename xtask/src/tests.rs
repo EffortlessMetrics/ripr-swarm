@@ -21374,6 +21374,71 @@ metric = "language_adapter_python_repair_routing_quality_metrics"
 }
 
 #[test]
+fn capability_matrix_accepts_manifest_names() -> Result<(), String> {
+    with_temp_cwd("capability-matrix-aligned", |root| {
+        write(
+            &root.join("docs/CAPABILITY_MATRIX.md"),
+            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n| Unknown stop reasons | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+        );
+        let capabilities = vec![
+            Capability {
+                name: Some("Static exposure loop".to_string()),
+                ..Capability::default()
+            },
+            Capability {
+                name: Some("Unknown stop reasons".to_string()),
+                ..Capability::default()
+            },
+        ];
+        let mut violations = Vec::new();
+        super::validate_capability_matrix(&capabilities, &mut violations)?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn capability_matrix_rejects_stale_or_duplicate_names() -> Result<(), String> {
+    with_temp_cwd("capability-matrix-drift", |root| {
+        write(
+            &root.join("docs/CAPABILITY_MATRIX.md"),
+            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n| Retired capability | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+        );
+        let capabilities = vec![
+            Capability {
+                name: Some("Static exposure loop".to_string()),
+                ..Capability::default()
+            },
+            Capability {
+                name: Some("Unknown stop reasons".to_string()),
+                ..Capability::default()
+            },
+        ];
+        let mut violations = Vec::new();
+        super::validate_capability_matrix(&capabilities, &mut violations)?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("missing capability `Unknown stop reasons`")
+            }),
+            "{violations:#?}"
+        );
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("contains capability `Retired capability` absent")
+            }),
+            "{violations:#?}"
+        );
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("contains capability `Static exposure loop` 2 times")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn support_tiers_accept_valid_fixture() -> Result<(), String> {
     with_temp_cwd("support-tiers-valid", |root| {
         write_support_tier_fixture(
