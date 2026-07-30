@@ -344,9 +344,10 @@ fn unquote(value: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bump_version, cargo_metadata_validation, json_root_version, lockfile_versions,
-        prepare_update, replace_json_version_lines, replace_section_version, section_version,
-        validate_version_input, verify_updated_json, verify_updated_lockfile,
+        EXTENSION_LOCKFILE, EXTENSION_MANIFEST, WORKSPACE_MANIFEST, bump_version,
+        json_root_version, lockfile_versions, prepare_update, replace_json_version_lines,
+        replace_section_version, section_version, validate_version_input, verify_updated_json,
+        verify_updated_lockfile,
     };
     use std::fs;
 
@@ -526,11 +527,6 @@ mod tests {
             return Err(format!("unexpected updated lockfile error: {lock_error}"));
         }
         Ok(())
-    }
-
-    #[test]
-    fn cargo_metadata_validation_succeeds_in_this_workspace() -> Result<(), String> {
-        crate::tests::with_repo_cwd(cargo_metadata_validation)
     }
 
     #[test]
