@@ -2434,8 +2434,8 @@ mod tests {
             "expected honesty note; got:\n{rendered}"
         );
         assert!(
-            rendered.contains("A test may already exercise these changes")
-                && rendered.contains("through macros"),
+            rendered.contains("A test may already exercise these changes through")
+                && rendered.contains("macros, helper-call chains"),
             "expected honest untraced-test wording; got:\n{rendered}"
         );
         assert!(
