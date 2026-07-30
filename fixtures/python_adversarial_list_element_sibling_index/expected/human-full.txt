@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/routes.py:2
 
 Changed
-  after:  return ["index", "browse", "detail"]
+  after:      return ["index", "browse", "detail"]
 
 Probe
   family: return_value

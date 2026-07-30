@@ -104,13 +104,11 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
     out
 }
 
-/// Collapse a possibly-multi-line source fragment to one bounded display line.
+/// Collapse a possibly-multi-line value to one bounded display line.
 ///
-/// This is the single line-budget policy for every human surface. The digest
-/// and full forms share it deliberately: "full" means the full *set* of
-/// evidence, not an unbounded width for one line. `--format json` remains the
-/// lossless surface for the complete expression, and the human output already
-/// routes there.
+/// This is the *digest* policy: the digest shows one selected finding and routes
+/// the reader to `--format human-full`, so losing detail here is recoverable.
+/// The full form must not use it — see [`wrapped_fragment`].
 fn one_line(value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= LINE_BUDGET {
@@ -125,6 +123,41 @@ fn one_line(value: &str) -> String {
 /// Maximum displayed characters for one rendered source fragment.
 const LINE_BUDGET: usize = 180;
 
+/// Render a changed-source fragment for the exhaustive surface: **complete**,
+/// but hard-wrapped so no display line runs past the budget.
+///
+/// Truncating here would be wrong in two ways that review on #2752 caught:
+///
+/// - `--format json` serializes only `probe.expression`, never `probe.before`
+///   or `probe.after` (`output/json/report.rs`). When a long `before` differs
+///   from the shorter probe expression — the normal case for a widened branch —
+///   truncating the full form would leave the complete changed source in *no*
+///   ripr output at all.
+/// - Collapsing whitespace can erase the delta itself. A diff that changes
+///   `"a  b"` to `"a b"` renders as two identical lines once whitespace is
+///   normalized, hiding exactly the behavior that changed.
+///
+/// So the wrap is positional, not whitespace-aware: every character survives,
+/// including runs of spaces, and a reader sees the whole fragment.
+fn wrapped_fragment(label: &str, value: &str) -> String {
+    // The label column is the continuation indent, so wrapped lines line up
+    // under the value rather than under the field name.
+    let indent = " ".repeat(label.chars().count());
+    let budget = LINE_BUDGET.saturating_sub(indent.chars().count()).max(1);
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= budget {
+        return format!("{label}{value}\n");
+    }
+    let mut out = String::new();
+    for (index, chunk) in chars.chunks(budget).enumerate() {
+        let prefix = if index == 0 { label } else { indent.as_str() };
+        out.push_str(prefix);
+        out.extend(chunk.iter());
+        out.push('\n');
+    }
+    out
+}
+
 pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
@@ -135,22 +168,20 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
         finding.probe.location.line
     ));
 
-    // #2752: these three were the only rendered source fragments in any human
-    // surface that skipped `one_line`, so a long changed expression (a chained
-    // iterator, a jq pipeline, a heredoc) printed at full width — 400+ chars on
-    // one line, in output whose every other line stays under ~100. Bound them
-    // to the same budget as the digest form; `--format json` stays lossless.
+    // #2752: these three printed at full source width, so a long changed
+    // expression (a chained iterator, a jq pipeline, a heredoc) rendered 400+
+    // characters on one line inside output whose every other line stays under
+    // ~100. They are bounded by wrapping rather than truncation, because this is
+    // the only surface that carries `before`/`after` at all — see
+    // `wrapped_fragment`.
     out.push_str("\nChanged\n");
     if let Some(before) = &finding.probe.before {
-        out.push_str(&format!("  before: {}\n", one_line(before)));
+        out.push_str(&wrapped_fragment("  before: ", before));
     }
     if let Some(after) = &finding.probe.after {
-        out.push_str(&format!("  after:  {}\n", one_line(after)));
+        out.push_str(&wrapped_fragment("  after:  ", after));
     } else {
-        out.push_str(&format!(
-            "  expr:   {}\n",
-            one_line(&finding.probe.expression)
-        ));
+        out.push_str(&wrapped_fragment("  expr:   ", &finding.probe.expression));
     }
 
     out.push_str("\nProbe\n");

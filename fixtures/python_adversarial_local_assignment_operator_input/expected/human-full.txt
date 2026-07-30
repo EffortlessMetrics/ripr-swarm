@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/calc.py:2
 
 Changed
-  after:  total = base - bonus
+  after:      total = base - bonus
 
 Probe
   family: predicate

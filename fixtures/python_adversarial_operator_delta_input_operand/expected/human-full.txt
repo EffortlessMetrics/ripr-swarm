@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/counter.py:2
 
 Changed
-  after:  return count - 1
+  after:      return count - 1
 
 Probe
   family: return_value

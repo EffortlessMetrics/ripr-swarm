@@ -1378,20 +1378,21 @@ mod tests {
         assert!(rendered.contains("Add assertion for disabled path result."));
     }
 
-    /// #2752: the `Changed` block rendered `before`/`after`/`expr` at full
-    /// source width. A chained iterator, jq pipeline, or heredoc printed 400+
-    /// characters on one line inside output whose every other line stays under
-    /// ~100, which made the first read of a finding unusable. The bound applied
-    /// here is the one the digest form already used.
+    /// #2752: the `Changed` block rendered `before`/`after`/`expr` at full source
+    /// width, so one long expression printed 400+ characters on a single line.
+    ///
+    /// It is bounded by *wrapping*, not truncation, and review on the fix
+    /// established why: `--format json` serializes only `probe.expression`, so
+    /// truncating here would leave a long `before` in no ripr output at all.
     #[test]
-    fn render_finding_bounds_long_changed_expressions() {
+    fn render_finding_wraps_long_changed_expressions_without_losing_them() {
         let long_expr = format!(
             "if {}true",
             "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0 && ".repeat(6)
         );
         assert!(
             long_expr.chars().count() > 180,
-            "fixture must exceed the display budget to exercise truncation, got {}",
+            "fixture must exceed the display budget to exercise wrapping, got {}",
             long_expr.chars().count()
         );
         let mut finding = sample_finding();
@@ -1400,49 +1401,74 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
-        assert!(
-            !rendered.contains(&long_expr),
-            "the untruncated expression must not be rendered"
-        );
-        assert!(
-            rendered.contains('…'),
-            "a truncated expression must be marked with an ellipsis"
-        );
-        assert!(
-            rendered.contains("  before: if decisions.iter()"),
-            "the truncated line must keep its label and the leading source text"
-        );
+        // Every line stays inside the budget...
         for line in rendered.lines() {
             let width = line.chars().count();
             assert!(
-                width <= 200,
+                width <= 180,
                 "rendered line exceeds the display budget at {width} chars: {line}"
             );
         }
+        // ...and no character of the expression is lost. Reassembling the
+        // `before` block by stripping the label/indent column must reproduce it
+        // exactly.
+        // `  before: ` and the continuation indent are both exactly 10 columns.
+        const LABEL_WIDTH: usize = 10;
+        let indent = " ".repeat(LABEL_WIDTH);
+        let reassembled: String = rendered
+            .lines()
+            .skip_while(|line| !line.starts_with("  before: "))
+            .take_while(|line| line.starts_with("  before: ") || line.starts_with(&indent))
+            .map(|line| line.get(LABEL_WIDTH..).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            reassembled, long_expr,
+            "the wrapped before-block must reproduce the complete expression"
+        );
+        assert!(
+            !rendered.contains('…'),
+            "the exhaustive surface must not elide the expression"
+        );
     }
 
-    /// The `expr:` fallback is the same rendered fragment reached through a
-    /// different branch, so it needs the same bound — and a multi-line
-    /// expression must collapse rather than break the block's
-    /// one-line-per-field shape.
+    /// A whitespace-only change is a real behavior change when it is inside a
+    /// string literal. Collapsing whitespace would render both sides
+    /// identically and hide exactly the delta the finding is about.
     #[test]
-    fn render_finding_bounds_and_collapses_long_expr_fallback() {
+    fn render_finding_preserves_whitespace_that_distinguishes_before_and_after() {
         let mut finding = sample_finding();
-        finding.probe.before = None;
-        finding.probe.after = None;
-        finding.probe.expression = format!("enabled\n    && {}", "other.flag() ".repeat(30));
+        finding.probe.before = Some("assert_eq!(msg, \"a  b\")".to_string());
+        finding.probe.after = Some("assert_eq!(msg, \"a b\")".to_string());
 
         let rendered = render_finding(&finding);
 
-        assert!(rendered.contains("expr:   enabled && other.flag()"));
-        assert!(rendered.contains('…'));
+        assert!(rendered.contains("  before: assert_eq!(msg, \"a  b\")"));
+        assert!(rendered.contains("  after:  assert_eq!(msg, \"a b\")"));
+    }
+
+    /// The `expr:` fallback is the same rendered fragment reached through a
+    /// different branch, so it gets the same treatment: wrapped, complete, and
+    /// not whitespace-normalized.
+    #[test]
+    fn render_finding_wraps_the_expr_fallback() {
+        let mut finding = sample_finding();
+        finding.probe.before = None;
+        finding.probe.after = None;
+        finding.probe.expression = format!("enabled && {}", "other.flag() && ".repeat(20));
+
+        let rendered = render_finding(&finding);
+
+        assert!(rendered.contains("  expr:   enabled && other.flag()"));
+        for line in rendered.lines() {
+            assert!(line.chars().count() <= 180, "line too wide: {line}");
+        }
         let expr_lines = rendered
             .lines()
-            .filter(|line| line.starts_with("  expr:"))
+            .filter(|line| line.starts_with("  expr:   ") || line.starts_with("           "))
             .count();
-        assert_eq!(
-            expr_lines, 1,
-            "a collapsed expression must render on one line"
+        assert!(
+            expr_lines > 1,
+            "a long expression should wrap across continuation lines"
         );
     }
 

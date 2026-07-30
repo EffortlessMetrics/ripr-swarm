@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/clamp.ts:2
 
 Changed
-  after:  if (value < min) {
+  after:      if (value < min) {
 
 Probe
   family: predicate

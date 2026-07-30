@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/parser.ts:2
 
 Changed
-  after:  if (input.trim() === "") {
+  after:      if (input.trim() === "") {
 
 Probe
   family: predicate

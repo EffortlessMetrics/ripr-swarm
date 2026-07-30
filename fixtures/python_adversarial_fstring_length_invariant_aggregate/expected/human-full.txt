@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/status.py:2
 
 Changed
-  after:  return f"NO:{code}"
+  after:      return f"NO:{code}"
 
 Probe
   family: return_value

@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/score.ts:2
 
 Changed
-  after:  return total - penalty + 0;
+  after:      return total - penalty + 0;
 
 Probe
   family: return_value

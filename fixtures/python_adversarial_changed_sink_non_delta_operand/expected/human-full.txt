@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 NOTE src/account.py:7
 
 Changed
-  after:  return max(0, self._balance)
+  after:          return max(0, self._balance)
 
 Probe
   family: return_value

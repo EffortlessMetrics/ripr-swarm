@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/audit.ts:10
 
 Changed
-  after:  return amount * 1.2;
+  after:    return amount * 1.2;
 
 Probe
   family: return_value

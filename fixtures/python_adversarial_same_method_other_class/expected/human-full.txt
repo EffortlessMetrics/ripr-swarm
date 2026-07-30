@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/auth.py:6
 
 Changed
-  after:  return token.strip() in self._valid
+  after:          return token.strip() in self._valid
 
 Probe
   family: return_value
