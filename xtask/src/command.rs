@@ -924,7 +924,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         ),
         command_entry(
             "release-denominator --live --input <ledger.json>",
-            "report_only",
+            "external_state_read",
             "target/ripr/reports/release-denominator.{json,md}",
             false,
             false,

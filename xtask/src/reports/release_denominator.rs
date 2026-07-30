@@ -459,19 +459,41 @@ fn collect_live_facts(source: &SnapshotSource) -> LiveFacts {
             Vec::new()
         }
     };
+    let candidate_tree_commits = match candidate_sha.as_deref() {
+        Some(candidate_sha) => match live_output(
+            &root,
+            &[
+                "rev-list",
+                "--first-parent",
+                "--reverse",
+                &format!("{}..{candidate_sha}", source.historical_base_sha),
+            ],
+            "candidate tree collection",
+        ) {
+            Ok(value) => value
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect(),
+            Err(error) => {
+                errors.push(error);
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
     LiveFacts {
         candidate_sha,
-        candidate_tree_commits: range_commits.clone(),
+        candidate_tree_commits,
         range_commits,
         errors,
     }
 }
 
-fn live_output(_root: &Path, args: &[&str], context: &str) -> Result<String, String> {
-    let owned_args = args
-        .iter()
-        .map(|arg| (*arg).to_string())
-        .collect::<Vec<_>>();
+fn live_output(root: &Path, args: &[&str], context: &str) -> Result<String, String> {
+    let mut owned_args = vec!["-C".to_string(), root.display().to_string()];
+    owned_args.extend(args.iter().map(|arg| (*arg).to_string()));
     let output =
         crate::run::capture_output_with_timeout("git", &owned_args, &[], LIVE_TIMEOUT, context)?;
     if output.timed_out {

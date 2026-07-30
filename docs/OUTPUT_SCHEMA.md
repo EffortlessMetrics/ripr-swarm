@@ -857,7 +857,6 @@ JSON fields:
 
 ```json
 {
-  "report": "release-denominator",
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "typescript_limitation_leaderboard",
@@ -11895,8 +11894,9 @@ stable top-level shape:
 
 ```json
 {
+  "report": "release-denominator",
   "schema_version": "0.1",
-  "kind": "release_denominator_report",
+  "captured_at": "...",
   "status": "ready | reconcile_required",
   "source": {},
   "counts_by_disposition": {},
