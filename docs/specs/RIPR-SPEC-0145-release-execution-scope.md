@@ -91,6 +91,9 @@ then status is reconcile_required and the stale decision is not ready.
 - `xtask/src/reports/release_scope.rs::tests::closed_execution_issue_fails_closed`
   — closing #2332 cannot turn an incomplete execution surface into an accepted
   scope.
+- `xtask/src/reports/release_scope.rs::tests::duplicate_strictly_dependent_commits_fail_closed`
+  — duplicate dependent-commit inventory is rejected instead of being silently
+  normalized away.
 - `xtask/src/reports/release_scope.rs::tests::report_json_has_an_explicit_authority_boundary`
   — the report does not claim candidate construction or qualification.
 
