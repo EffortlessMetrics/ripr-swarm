@@ -149,13 +149,16 @@ fn normalize_snapshot(
     if let Some(facts) = live_facts {
         reasons.extend(facts.errors.iter().cloned());
         if facts.candidate_sha.as_deref() != Some(snapshot.source.candidate_sha.as_str()) {
-            reasons.push("live candidate ref does not resolve to captured candidate_sha".to_string());
+            reasons
+                .push("live candidate ref does not resolve to captured candidate_sha".to_string());
         }
         if facts.range_commits != snapshot.source.range_commits {
             reasons.push("live first-parent range differs from captured range_commits".to_string());
         }
         if facts.candidate_tree_commits != snapshot.source.candidate_tree_commits {
-            reasons.push("live candidate tree differs from captured candidate_tree_commits".to_string());
+            reasons.push(
+                "live candidate tree differs from captured candidate_tree_commits".to_string(),
+            );
         }
     }
 
@@ -170,10 +173,16 @@ fn normalize_snapshot(
     let mut counts_by_tree_state = BTreeMap::new();
     for (index, record) in snapshot.records.iter().enumerate() {
         if !seen.insert(record.commit_sha.as_str()) {
-            reasons.push(format!("commit {} appears more than once", record.commit_sha));
+            reasons.push(format!(
+                "commit {} appears more than once",
+                record.commit_sha
+            ));
         }
         if !expected.contains(record.commit_sha.as_str()) {
-            reasons.push(format!("commit {} is outside the captured range", record.commit_sha));
+            reasons.push(format!(
+                "commit {} is outside the captured range",
+                record.commit_sha
+            ));
         }
         if snapshot
             .source
@@ -267,13 +276,22 @@ fn validate_source(snapshot: &Snapshot, reasons: &mut Vec<String>) {
     }
     let source = &snapshot.source;
     if source.mode != "captured" && source.mode != "live" {
-        reasons.push(format!("source mode must be captured or live, got {}", source.mode));
+        reasons.push(format!(
+            "source mode must be captured or live, got {}",
+            source.mode
+        ));
     }
     if source.stage != "provisional" && source.stage != "final" {
-        reasons.push(format!("source stage must be provisional or final, got {}", source.stage));
+        reasons.push(format!(
+            "source stage must be provisional or final, got {}",
+            source.stage
+        ));
     }
     if source.freshness != "current" {
-        reasons.push(format!("source freshness must be current, got {}", source.freshness));
+        reasons.push(format!(
+            "source freshness must be current, got {}",
+            source.freshness
+        ));
     }
     if !is_sha(&source.historical_base_sha) {
         reasons.push("historical_base_sha must be a 40-character hexadecimal SHA".to_string());
@@ -285,7 +303,11 @@ fn validate_source(snapshot: &Snapshot, reasons: &mut Vec<String>) {
         reasons.push("candidate_sha must be a 40-character hexadecimal SHA".to_string());
     }
     validate_sha_list("range_commits", &source.range_commits, reasons);
-    validate_sha_list("candidate_tree_commits", &source.candidate_tree_commits, reasons);
+    validate_sha_list(
+        "candidate_tree_commits",
+        &source.candidate_tree_commits,
+        reasons,
+    );
 }
 
 fn validate_sha_list(name: &str, values: &[String], reasons: &mut Vec<String>) {
@@ -305,7 +327,10 @@ fn validate_sha_list(name: &str, values: &[String], reasons: &mut Vec<String>) {
 
 fn validate_record(record: &CommitRecord, source: &SnapshotSource, reasons: &mut Vec<String>) {
     if !is_sha(&record.commit_sha) {
-        reasons.push(format!("record {} has an invalid commit SHA", record.commit_sha));
+        reasons.push(format!(
+            "record {} has an invalid commit SHA",
+            record.commit_sha
+        ));
     }
     for (field, value) in [
         ("subject", &record.subject),
@@ -315,7 +340,10 @@ fn validate_record(record: &CommitRecord, source: &SnapshotSource, reasons: &mut
             "source_survivor_or_swarm_exclusion_effect",
             &record.source_survivor_or_swarm_exclusion_effect,
         ),
-        ("limitation_or_operator_decision", &record.limitation_or_operator_decision),
+        (
+            "limitation_or_operator_decision",
+            &record.limitation_or_operator_decision,
+        ),
     ] {
         if value.trim().is_empty() {
             reasons.push(format!("commit {} has empty {field}", record.commit_sha));
@@ -397,7 +425,11 @@ fn collect_live_facts(source: &SnapshotSource) -> LiveFacts {
     let mut errors = Vec::new();
     let candidate_sha = match live_output(
         &root,
-        &["rev-parse", "--verify", &format!("{}^{{commit}}", source.candidate_ref)],
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{}^{{commit}}", source.candidate_ref),
+        ],
         "candidate ref collection",
     ) {
         Ok(value) => Some(value.trim().to_string()),
@@ -416,7 +448,12 @@ fn collect_live_facts(source: &SnapshotSource) -> LiveFacts {
         ],
         "candidate range collection",
     ) {
-        Ok(value) => value.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect(),
+        Ok(value) => value
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect(),
         Err(error) => {
             errors.push(error);
             Vec::new()
@@ -430,17 +467,18 @@ fn collect_live_facts(source: &SnapshotSource) -> LiveFacts {
     }
 }
 
-fn live_output(root: &Path, args: &[&str], context: &str) -> Result<String, String> {
-    let owned_args = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
-    let output = crate::run::capture_output_with_timeout(
-        "git",
-        &owned_args,
-        &[],
-        LIVE_TIMEOUT,
-        context,
-    )?;
+fn live_output(_root: &Path, args: &[&str], context: &str) -> Result<String, String> {
+    let owned_args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let output =
+        crate::run::capture_output_with_timeout("git", &owned_args, &[], LIVE_TIMEOUT, context)?;
     if output.timed_out {
-        return Err(format!("{context} timed out after {} seconds", LIVE_TIMEOUT.as_secs()));
+        return Err(format!(
+            "{context} timed out after {} seconds",
+            LIVE_TIMEOUT.as_secs()
+        ));
     }
     let status = output
         .status
@@ -509,7 +547,9 @@ fn report_markdown(report: &NormalizedReport) -> String {
     }
     markdown.push_str("\n## Reconciliation\n\n");
     if report.reconciliation_reasons.is_empty() {
-        markdown.push_str("The captured range, record order, dispositions, and candidate tree reconcile.\n\n");
+        markdown.push_str(
+            "The captured range, record order, dispositions, and candidate tree reconcile.\n\n",
+        );
     } else {
         for reason in &report.reconciliation_reasons {
             markdown.push_str(&format!("- {}\n", escape_cell(reason)));
@@ -527,11 +567,15 @@ fn escape_cell(value: &str) -> String {
 }
 
 fn digest_json<T: Serialize>(value: &T) -> Result<String, String> {
-    let bytes = serde_json::to_vec(value).map_err(|error| format!("failed to hash JSON: {error}"))?;
+    let bytes =
+        serde_json::to_vec(value).map_err(|error| format!("failed to hash JSON: {error}"))?;
     let digest = Sha256::digest(bytes);
     Ok(format!(
         "sha256:{}",
-        digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     ))
 }
 
@@ -545,8 +589,10 @@ mod tests {
     use serde_json::json;
 
     fn fixture() -> Result<Snapshot, String> {
-        serde_json::from_str(include_str!("../../../fixtures/release_denominator/complete.json"))
-            .map_err(|error| error.to_string())
+        serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/complete.json"
+        ))
+        .map_err(|error| error.to_string())
     }
 
     fn require(condition: bool, message: impl Into<String>) -> Result<(), String> {
@@ -556,11 +602,23 @@ mod tests {
     #[test]
     fn complete_provisional_ledger_is_ready_and_digest_stable() -> Result<(), String> {
         let report = normalize_snapshot(fixture()?, None)?;
-        require(report.status == "ready", format!("unexpected reasons: {:?}", report.reconciliation_reasons))?;
-        require(report.records.len() == 4, "fixture denominator is incomplete")?;
-        require(report.record_set_digest.starts_with("sha256:"), "record digest missing")?;
+        require(
+            report.status == "ready",
+            format!("unexpected reasons: {:?}", report.reconciliation_reasons),
+        )?;
+        require(
+            report.records.len() == 4,
+            "fixture denominator is incomplete",
+        )?;
+        require(
+            report.record_set_digest.starts_with("sha256:"),
+            "record digest missing",
+        )?;
         let again = normalize_snapshot(fixture()?, None)?;
-        require(report.record_set_digest == again.record_set_digest, "record digest is not stable")
+        require(
+            report.record_set_digest == again.record_set_digest,
+            "record digest is not stable",
+        )
     }
 
     #[test]
@@ -568,8 +626,17 @@ mod tests {
         let mut snapshot = fixture()?;
         snapshot.records.pop();
         let report = normalize_snapshot(snapshot, None)?;
-        require(report.status == "reconcile_required", "missing record was accepted")?;
-        require(report.reconciliation_reasons.iter().any(|reason| reason.contains("record count")), "missing count reason absent")
+        require(
+            report.status == "reconcile_required",
+            "missing record was accepted",
+        )?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("record count")),
+            "missing count reason absent",
+        )
     }
 
     #[test]
@@ -578,7 +645,13 @@ mod tests {
         let duplicate = snapshot.records[1].clone();
         snapshot.records[2] = duplicate;
         let report = normalize_snapshot(snapshot, None)?;
-        require(report.reconciliation_reasons.iter().any(|reason| reason.contains("appears more than once")), "duplicate reason absent")
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("appears more than once")),
+            "duplicate reason absent",
+        )
     }
 
     #[test]
@@ -586,7 +659,13 @@ mod tests {
         let mut snapshot = fixture()?;
         snapshot.records[0].commit_sha = "ffffffffffffffffffffffffffffffffffffffff".to_string();
         let report = normalize_snapshot(snapshot, None)?;
-        require(report.reconciliation_reasons.iter().any(|reason| reason.contains("outside the captured range")), "out-of-range reason absent")
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("outside the captured range")),
+            "out-of-range reason absent",
+        )
     }
 
     #[test]
@@ -594,7 +673,13 @@ mod tests {
         let mut snapshot = fixture()?;
         snapshot.records.swap(0, 1);
         let report = normalize_snapshot(snapshot, None)?;
-        require(report.reconciliation_reasons.iter().any(|reason| reason.contains("first-parent range order")), "wrong-order reason absent")
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("first-parent range order")),
+            "wrong-order reason absent",
+        )
     }
 
     #[test]
@@ -602,7 +687,13 @@ mod tests {
         let mut snapshot = fixture()?;
         snapshot.source.candidate_tree_commits.pop();
         let report = normalize_snapshot(snapshot, None)?;
-        require(report.reconciliation_reasons.iter().any(|reason| reason.contains("present_in_candidate")), "wrong-tree reason absent")
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("present_in_candidate")),
+            "wrong-tree reason absent",
+        )
     }
 
     #[test]
@@ -611,7 +702,13 @@ mod tests {
         snapshot.source.stage = "final".to_string();
         snapshot.records[0].release_disposition = "operator_decision_required".to_string();
         let report = normalize_snapshot(snapshot, None)?;
-        require(report.reconciliation_reasons.iter().any(|reason| reason.contains("final ledger retains")), "final operator reason absent")
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("final ledger retains")),
+            "final operator reason absent",
+        )
     }
 
     #[test]
@@ -624,16 +721,25 @@ mod tests {
             errors: Vec::new(),
         };
         let report = normalize_snapshot(snapshot, Some(&facts))?;
-        require(report.status == "reconcile_required", "live mismatch was accepted")
+        require(
+            report.status == "reconcile_required",
+            "live mismatch was accepted",
+        )
     }
 
     #[test]
     fn report_json_and_markdown_share_the_claim_boundary() -> Result<(), String> {
         let report = normalize_snapshot(fixture()?, None)?;
         let json = report_json(&report);
-        require(json["authority_boundary"] == "supplemental_denominator_only", "JSON boundary changed")?;
+        require(
+            json["authority_boundary"] == "supplemental_denominator_only",
+            "JSON boundary changed",
+        )?;
         let markdown = report_markdown(&report);
-        require(markdown.contains("## Must not claim") && markdown.contains("candidate qualification"), "Markdown boundary missing")?;
+        require(
+            markdown.contains("## Must not claim") && markdown.contains("candidate qualification"),
+            "Markdown boundary missing",
+        )?;
         let _ = json!(report.counts_by_tree_state);
         Ok(())
     }
