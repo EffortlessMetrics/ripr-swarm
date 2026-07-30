@@ -857,6 +857,7 @@ JSON fields:
 
 ```json
 {
+  "report": "release-denominator",
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "typescript_limitation_leaderboard",
@@ -11898,7 +11899,8 @@ stable top-level shape:
   "kind": "release_denominator_report",
   "status": "ready | reconcile_required",
   "source": {},
-  "counts": {},
+  "counts_by_disposition": {},
+  "counts_by_tree_state": {},
   "records": [],
   "range_digest": "sha256:...",
   "candidate_tree_digest": "sha256:...",
@@ -11906,7 +11908,7 @@ stable top-level shape:
   "reconciliation_reasons": [],
   "next_action": "...",
   "authority_boundary": "supplemental_denominator_only",
-  "must_not_claim": ["candidate_qualified", "published", "released"]
+  "must_not_claim": ["candidate qualification", "merge approval", "release publication", "source integration"]
 }
 ```
 

@@ -21,8 +21,10 @@ and SHA, ordered range commits, candidate-tree commits, and one record per
 range commit. Each record carries release disposition, ownership, tree state,
 review/proof references, and source-survivor or swarm-exclusion context.
 
-The accepted dispositions are `include`, `exclude_source_only`,
-`exclude_candidate_only`, `replace`, `defer_post_0_11`, and
+The accepted dispositions are `include_product`,
+`include_release_infrastructure`, `include_control_or_honesty`,
+`structural_no_semantic_delta`, `candidate_only_exclusion`,
+`source_only_followup`, `safe_defer_post_0_11`, and
 `operator_decision_required`. The report uses `ready` or
 `reconcile_required`; it never claims that a candidate is qualified, published,
 or released.

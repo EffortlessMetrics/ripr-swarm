@@ -159,7 +159,12 @@ fn normalize_snapshot(
         }
     }
 
-    let expected = snapshot.source.range_commits.iter().collect::<BTreeSet<_>>();
+    let expected = snapshot
+        .source
+        .range_commits
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
     let mut counts_by_disposition = BTreeMap::new();
     let mut counts_by_tree_state = BTreeMap::new();
@@ -167,7 +172,7 @@ fn normalize_snapshot(
         if !seen.insert(record.commit_sha.as_str()) {
             reasons.push(format!("commit {} appears more than once", record.commit_sha));
         }
-        if !expected.contains(&record.commit_sha) {
+        if !expected.contains(record.commit_sha.as_str()) {
             reasons.push(format!("commit {} is outside the captured range", record.commit_sha));
         }
         if snapshot
