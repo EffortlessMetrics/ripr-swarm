@@ -21378,7 +21378,7 @@ fn capability_matrix_accepts_manifest_names() -> Result<(), String> {
     with_temp_cwd("capability-matrix-aligned", |root| {
         write(
             &root.join("docs/CAPABILITY_MATRIX.md"),
-            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n| Unknown stop reasons | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n\n| Unknown stop reasons | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
         );
         let capabilities = vec![
             Capability {

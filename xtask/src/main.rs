@@ -10663,6 +10663,9 @@ fn validate_capability_matrix(
     let mut matrix_names = Vec::new();
     for line in matrix.lines().skip(header_index + 2) {
         let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
         if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
             break;
         }
