@@ -425,6 +425,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// when the same file hits both budgets the stop reason is `file_budget`
 /// with the line count recorded on the scope record; the first-file
 /// exception always wins over the simultaneous-hit rule.
+#[cfg(test)]
 fn select_partial_diff_partition(
     changed_files: &[ChangedFile],
     budgets: &PartialDiffBudgets,
@@ -2536,20 +2537,30 @@ let _ = (result, note, raw);"##,
         let mut identity_b = analyzable.clone();
         identity_b.push(changed_file("src/schema.rs", 1, 0));
 
-        let first = select_partial_diff_partition_with_identity(
+        let first = match select_partial_diff_partition_with_identity(
             &analyzable,
             &identity_a,
             &budgets(1, 1),
             ALL_LANGUAGES,
-        )
-        .expect("two changed files exceed the partial budget");
-        let second = select_partial_diff_partition_with_identity(
+        ) {
+            Some(scope) => scope,
+            None => {
+                assert!(false, "two changed files exceed the partial budget");
+                return;
+            }
+        };
+        let second = match select_partial_diff_partition_with_identity(
             &analyzable,
             &identity_b,
             &budgets(1, 1),
             ALL_LANGUAGES,
-        )
-        .expect("two changed files exceed the partial budget");
+        ) {
+            Some(scope) => scope,
+            None => {
+                assert!(false, "two changed files exceed the partial budget");
+                return;
+            }
+        };
 
         assert_ne!(first.diff_identity, second.diff_identity);
         assert_ne!(first.partition_identity, second.partition_identity);
