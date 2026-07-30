@@ -104,17 +104,26 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
     out
 }
 
+/// Collapse a possibly-multi-line source fragment to one bounded display line.
+///
+/// This is the single line-budget policy for every human surface. The digest
+/// and full forms share it deliberately: "full" means the full *set* of
+/// evidence, not an unbounded width for one line. `--format json` remains the
+/// lossless surface for the complete expression, and the human output already
+/// routes there.
 fn one_line(value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    const LIMIT: usize = 180;
-    if collapsed.chars().count() <= LIMIT {
+    if collapsed.chars().count() <= LINE_BUDGET {
         collapsed
     } else {
-        let mut truncated = collapsed.chars().take(LIMIT).collect::<String>();
+        let mut truncated = collapsed.chars().take(LINE_BUDGET).collect::<String>();
         truncated.push('…');
         truncated
     }
 }
+
+/// Maximum displayed characters for one rendered source fragment.
+const LINE_BUDGET: usize = 180;
 
 pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig) -> String {
     let mut out = String::new();
@@ -126,14 +135,22 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
         finding.probe.location.line
     ));
 
+    // #2752: these three were the only rendered source fragments in any human
+    // surface that skipped `one_line`, so a long changed expression (a chained
+    // iterator, a jq pipeline, a heredoc) printed at full width — 400+ chars on
+    // one line, in output whose every other line stays under ~100. Bound them
+    // to the same budget as the digest form; `--format json` stays lossless.
     out.push_str("\nChanged\n");
     if let Some(before) = &finding.probe.before {
-        out.push_str(&format!("  before: {before}\n"));
+        out.push_str(&format!("  before: {}\n", one_line(before)));
     }
     if let Some(after) = &finding.probe.after {
-        out.push_str(&format!("  after:  {after}\n"));
+        out.push_str(&format!("  after:  {}\n", one_line(after)));
     } else {
-        out.push_str(&format!("  expr:   {}\n", finding.probe.expression));
+        out.push_str(&format!(
+            "  expr:   {}\n",
+            one_line(&finding.probe.expression)
+        ));
     }
 
     out.push_str("\nProbe\n");

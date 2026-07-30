@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/conf.py:2
 
 Changed
-  after:      return {"host": "localhost", "port": 9090}
+  after:  return {"host": "localhost", "port": 9090}
 
 Probe
   family: field_construction

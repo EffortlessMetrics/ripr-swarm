@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/auth.ts:8
 
 Changed
-  after:      return this.valid.has(token.trim());
+  after:  return this.valid.has(token.trim());
 
 Probe
   family: return_value

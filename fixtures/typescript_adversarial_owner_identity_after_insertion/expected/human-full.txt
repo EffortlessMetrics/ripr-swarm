@@ -77,7 +77,7 @@ Next step
 WARNING src/pricing.ts:14
 
 Changed
-  after:    if (amount >= threshold) {
+  after:  if (amount >= threshold) {
 
 Probe
   family: predicate

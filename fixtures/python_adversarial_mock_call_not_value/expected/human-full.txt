@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/notifier.py:2
 
 Changed
-  after:      return client.post("/alerts", {"level": level, "priority": "critical"})
+  after:  return client.post("/alerts", {"level": level, "priority": "critical"})
 
 Probe
   family: return_value

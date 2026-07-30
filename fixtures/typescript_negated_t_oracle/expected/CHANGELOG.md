@@ -99,3 +99,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: bound and whitespace-collapse the human Changed block's before/after/expr fields (#2752)
+
+Command:
+`cargo xtask goldens bless typescript_negated_t_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

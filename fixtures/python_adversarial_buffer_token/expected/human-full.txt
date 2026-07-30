@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/pack.py:3
 
 Changed
-  after:      if len(buffer) <= limit:
+  after:  if len(buffer) <= limit:
 
 Probe
   family: predicate

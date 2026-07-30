@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/badge.tsx:2
 
 Changed
-  after:    return count > 99 ? "99+" : String(count);
+  after:  return count > 99 ? "99+" : String(count);
 
 Probe
   family: return_value

@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/parseint.py:3
 
 Changed
-  after:          raise KeyError("empty")
+  after:  raise KeyError("empty")
 
 Probe
   family: error_path

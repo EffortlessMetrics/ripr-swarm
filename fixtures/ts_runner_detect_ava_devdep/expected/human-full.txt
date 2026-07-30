@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/math.ts:2
 
 Changed
-  after:      return a + b + 0;
+  after:  return a + b + 0;
 
 Probe
   family: return_value

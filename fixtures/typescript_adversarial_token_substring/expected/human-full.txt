@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/stream.ts:2
 
 Changed
-  after:    return chunks.join("|");
+  after:  return chunks.join("|");
 
 Probe
   family: return_value

@@ -9,7 +9,7 @@ Changed file(s) by language: python: 1, rust: 0.
 WARNING src/handler.py:2
 
 Changed
-  after:      return payload.strip() == "ok"
+  after:  return payload.strip() == "ok"
 
 Probe
   family: return_value

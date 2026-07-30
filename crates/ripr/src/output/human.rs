@@ -1378,6 +1378,74 @@ mod tests {
         assert!(rendered.contains("Add assertion for disabled path result."));
     }
 
+    /// #2752: the `Changed` block rendered `before`/`after`/`expr` at full
+    /// source width. A chained iterator, jq pipeline, or heredoc printed 400+
+    /// characters on one line inside output whose every other line stays under
+    /// ~100, which made the first read of a finding unusable. The bound applied
+    /// here is the one the digest form already used.
+    #[test]
+    fn render_finding_bounds_long_changed_expressions() {
+        let long_expr = format!(
+            "if {}true",
+            "decisions.iter().filter(|d| d.decision == \"blocking\").count() == 0 && ".repeat(6)
+        );
+        assert!(
+            long_expr.chars().count() > 180,
+            "fixture must exceed the display budget to exercise truncation, got {}",
+            long_expr.chars().count()
+        );
+        let mut finding = sample_finding();
+        finding.probe.before = Some(long_expr.clone());
+        finding.probe.after = Some(long_expr.clone());
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            !rendered.contains(&long_expr),
+            "the untruncated expression must not be rendered"
+        );
+        assert!(
+            rendered.contains('…'),
+            "a truncated expression must be marked with an ellipsis"
+        );
+        assert!(
+            rendered.contains("  before: if decisions.iter()"),
+            "the truncated line must keep its label and the leading source text"
+        );
+        for line in rendered.lines() {
+            let width = line.chars().count();
+            assert!(
+                width <= 200,
+                "rendered line exceeds the display budget at {width} chars: {line}"
+            );
+        }
+    }
+
+    /// The `expr:` fallback is the same rendered fragment reached through a
+    /// different branch, so it needs the same bound — and a multi-line
+    /// expression must collapse rather than break the block's
+    /// one-line-per-field shape.
+    #[test]
+    fn render_finding_bounds_and_collapses_long_expr_fallback() {
+        let mut finding = sample_finding();
+        finding.probe.before = None;
+        finding.probe.after = None;
+        finding.probe.expression = format!("enabled\n    && {}", "other.flag() ".repeat(30));
+
+        let rendered = render_finding(&finding);
+
+        assert!(rendered.contains("expr:   enabled && other.flag()"));
+        assert!(rendered.contains('…'));
+        let expr_lines = rendered
+            .lines()
+            .filter(|line| line.starts_with("  expr:"))
+            .count();
+        assert_eq!(
+            expr_lines, 1,
+            "a collapsed expression must render on one line"
+        );
+    }
+
     #[test]
     fn render_finding_uses_expr_and_fallback_evidence_when_no_before_after() {
         let mut finding = sample_finding();

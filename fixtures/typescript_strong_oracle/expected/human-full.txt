@@ -9,7 +9,7 @@ Changed file(s) by language: rust: 0, typescript: 1.
 WARNING src/discount.ts:2
 
 Changed
-  after:      if (amount >= threshold) {
+  after:  if (amount >= threshold) {
 
 Probe
   family: predicate
