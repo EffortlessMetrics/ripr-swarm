@@ -12,6 +12,7 @@ homepage = "https://github.com/EffortlessMetrics/ripr/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 const_item_interior_mutations = "deny"
 function_casts_as_integer = "deny"
 unused_must_use = "deny"

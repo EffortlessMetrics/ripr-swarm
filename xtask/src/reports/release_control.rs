@@ -641,6 +641,7 @@ fn markdown_cell(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::{
         ReleaseControlInput, Snapshot, capture_live_snapshot_with, interpret_live_output,
