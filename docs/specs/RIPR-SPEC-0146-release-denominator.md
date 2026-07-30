@@ -73,7 +73,7 @@ under `RIPR-SPEC-0146`. Focused proof is provided by the ten tests named there
 and the complete/reconcile-required fixtures under
 `fixtures/release_denominator/`; hosted CI is the authoritative execution
 proof for this PR. The current-main census is loaded by a focused
-normalization test that pins its 183-record range and candidate-tree counts.
+normalization test that pins its 191-record range and candidate-tree counts.
 
 ## Problem
 
@@ -118,7 +118,7 @@ decision in a final ledger, or disagreeing with live observations produces
 The ten focused tests listed in `.ripr/traceability.toml` cover deterministic
 normalization, missing/duplicate/out-of-range/order/tree failures, final
 operator decisions, live drift, JSON/Markdown claim-boundary parity, and the
-current-main 183-record census.
+current-main 191-record census.
 
 ## Implementation Mapping
 
