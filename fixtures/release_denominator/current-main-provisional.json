@@ -386,10 +386,11 @@
       "first_parent_position": 1,
       "subject": "release(0.11.0): retain and qualify the replacement freeze (#2354) (#2362)",
       "pr_refs": [
-        2354,
         2362
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2354
+      ],
       "theme_or_surface": "release(0.11.0)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -406,10 +407,11 @@
       "first_parent_position": 2,
       "subject": "fix(release): close the 0.11 Perl and live VS Code qualification blockers (#2369) (#2374)",
       "pr_refs": [
-        2369,
         2374
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2369
+      ],
       "theme_or_surface": "fix(release)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -426,10 +428,11 @@
       "first_parent_position": 3,
       "subject": "test(lsp): isolate boundary-gap saved-workspace fixtures from checkout HEAD (#2371) (#2375)",
       "pr_refs": [
-        2371,
         2375
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2371
+      ],
       "theme_or_surface": "test(lsp)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -505,7 +508,11 @@
       "pr_refs": [
         2417
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2390,
+        2391,
+        2409
+      ],
       "theme_or_surface": "test",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -541,10 +548,11 @@
       "first_parent_position": 9,
       "subject": "security(analysis): reject rooted rerun scope anchors, not just is_absolute (#2392) (#2416)",
       "pr_refs": [
-        2392,
         2416
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2392
+      ],
       "theme_or_surface": "security(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -561,10 +569,11 @@
       "first_parent_position": 10,
       "subject": "fix(output): emit diff JSON changed-file paths with forward slashes (#2429) (#2431)",
       "pr_refs": [
-        2429,
         2431
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2429
+      ],
       "theme_or_surface": "fix(output)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -619,10 +628,11 @@
       "first_parent_position": 13,
       "subject": "ci(windows): add an advisory Windows lane with evidence-aware repeated-run verdicts (#2393) (#2442)",
       "pr_refs": [
-        2393,
         2442
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2393
+      ],
       "theme_or_surface": "ci(windows)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -696,10 +706,11 @@
       "first_parent_position": 17,
       "subject": "fix(output): 'analyzed' field now reflects actual analysis, not just adapter enabled state (#2403) (#2482)",
       "pr_refs": [
-        2403,
         2482
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2403
+      ],
       "theme_or_surface": "fix(output)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -716,10 +727,11 @@
       "first_parent_position": 18,
       "subject": "ux(vscode): disambiguate 'Copy Receipt Command' palette collision (#2440) (#2471)",
       "pr_refs": [
-        2440,
         2471
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2440
+      ],
       "theme_or_surface": "ux(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -736,10 +748,11 @@
       "first_parent_position": 19,
       "subject": "packaging(vscode): exclude test artifacts and fixtures from VSIX (#2439) (#2472)",
       "pr_refs": [
-        2439,
         2472
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2439
+      ],
       "theme_or_surface": "packaging(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -756,10 +769,11 @@
       "first_parent_position": 20,
       "subject": "devex(cargo): add [profile.dev] debug = line-tables-only — 9% smaller debug binaries, faster links (#2420) (#2468)",
       "pr_refs": [
-        2420,
         2468
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2420
+      ],
       "theme_or_surface": "devex(cargo)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -776,10 +790,11 @@
       "first_parent_position": 21,
       "subject": "devex(cli): make 'ripr cache status' discoverable in --help and doctor (#2426) (#2474)",
       "pr_refs": [
-        2426,
         2474
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2426
+      ],
       "theme_or_surface": "devex(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -796,10 +811,11 @@
       "first_parent_position": 22,
       "subject": "fix(analysis): flow stage now flags typed-wildcard let _: as swallowed (#2401) (#2481)",
       "pr_refs": [
-        2401,
         2481
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2401
+      ],
       "theme_or_surface": "fix(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -816,10 +832,11 @@
       "first_parent_position": 23,
       "subject": "fix(sarif): omit region for line-0 findings instead of fabricating startLine:1 (#2407) (#2478)",
       "pr_refs": [
-        2407,
         2478
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2407
+      ],
       "theme_or_surface": "fix(sarif)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -836,10 +853,11 @@
       "first_parent_position": 24,
       "subject": "security(diff): add confined old-path extractor symmetric with new-path confinement (#2402) (#2483)",
       "pr_refs": [
-        2402,
         2483
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2402
+      ],
       "theme_or_surface": "security(diff)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -856,10 +874,11 @@
       "first_parent_position": 25,
       "subject": "ci(routed-rust): wire sccache into self-hosted jobs — RUSTC_WRAPPER + install + stats (#2453) (#2469)",
       "pr_refs": [
-        2453,
         2469
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2453
+      ],
       "theme_or_surface": "ci(routed-rust)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -876,10 +895,11 @@
       "first_parent_position": 26,
       "subject": "security(receipt): fail-closed on absent/unrecognized movement — default to RECEIPT_MISSING not RECEIPT_FOUND (#2404) (#2479)",
       "pr_refs": [
-        2404,
         2479
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2404
+      ],
       "theme_or_surface": "security(receipt)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -896,10 +916,11 @@
       "first_parent_position": 27,
       "subject": "docs(agents): name the false-confidence-gate family in AGENTS.md + LEARNINGS.md (#2346) (#2489)",
       "pr_refs": [
-        2346,
         2489
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2346
+      ],
       "theme_or_surface": "docs(agents)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -916,10 +937,11 @@
       "first_parent_position": 28,
       "subject": "fix(analysis): disclose when diff input has no parseable file changes (#2425) (#2476)",
       "pr_refs": [
-        2425,
         2476
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2425
+      ],
       "theme_or_surface": "fix(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -938,7 +960,10 @@
       "pr_refs": [
         2466
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2413,
+        2399
+      ],
       "theme_or_surface": "gate(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -955,10 +980,11 @@
       "first_parent_position": 30,
       "subject": "gate(xtask): enforce no-panic allowlist expires field — flag entries past their expiry date (#2344) (#2484)",
       "pr_refs": [
-        2344,
         2484
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2344
+      ],
       "theme_or_surface": "gate(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -977,7 +1003,9 @@
       "pr_refs": [
         2485
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2450
+      ],
       "theme_or_surface": "test(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -994,10 +1022,11 @@
       "first_parent_position": 32,
       "subject": "fix(vscode): exclude compiled test output and test fixtures from VSIX (#2439) (#2492)",
       "pr_refs": [
-        2439,
         2492
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2439
+      ],
       "theme_or_surface": "fix(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1071,10 +1100,11 @@
       "first_parent_position": 36,
       "subject": "fix(agent): make agent start Next: instruction path match actual artifact location (#2414) (#2475)",
       "pr_refs": [
-        2414,
         2475
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2414
+      ],
       "theme_or_surface": "fix(agent)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1205,10 +1235,11 @@
       "first_parent_position": 43,
       "subject": "fix(lsp): use 90s ANALYSIS_TIMEOUT for refresh request in lifecycle test (#2495) (#2497)",
       "pr_refs": [
-        2495,
         2497
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2495
+      ],
       "theme_or_surface": "fix(lsp)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1225,10 +1256,12 @@
       "first_parent_position": 44,
       "subject": "test(receipt): add HEAD-binding tests for #1941 security check (#2329) (#2494)",
       "pr_refs": [
-        2329,
         2494
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        1941,
+        2329
+      ],
       "theme_or_surface": "test(receipt)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1245,10 +1278,11 @@
       "first_parent_position": 45,
       "subject": "fix(analysis): replace short-token length gate with word-boundary matching (#2397) (#2496)",
       "pr_refs": [
-        2397,
         2496
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2397
+      ],
       "theme_or_surface": "fix(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1265,10 +1299,11 @@
       "first_parent_position": 46,
       "subject": "fix(ci): drop contents:write and id-token:write from droid review jobs (#2455) (#2498)",
       "pr_refs": [
-        2455,
         2498
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2455
+      ],
       "theme_or_surface": "fix(ci)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1285,10 +1320,11 @@
       "first_parent_position": 47,
       "subject": "ux(xtask): show allowlist entry format in process/network policy violation messages (#2339) (#2499)",
       "pr_refs": [
-        2339,
         2499
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2339
+      ],
       "theme_or_surface": "ux(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1305,10 +1341,11 @@
       "first_parent_position": 48,
       "subject": "security(xtask): expand network-policy pattern list + scan .py/.js/.sh/.ps1 files (#2412) (#2502)",
       "pr_refs": [
-        2412,
         2502
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2412
+      ],
       "theme_or_surface": "security(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1325,10 +1362,11 @@
       "first_parent_position": 49,
       "subject": "fix(xtask): skip fixture CHANGELOG files in static-language scan (#2338) (#2501)",
       "pr_refs": [
-        2338,
         2501
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2338
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1345,10 +1383,11 @@
       "first_parent_position": 50,
       "subject": "ux(cli): add Performance section to explain/context help for --from flag (#2340) (#2500)",
       "pr_refs": [
-        2340,
         2500
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2340
+      ],
       "theme_or_surface": "ux(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1365,10 +1404,11 @@
       "first_parent_position": 51,
       "subject": "fix(analysis): gate detect_python_test_framework behind lang-python feature (#2418) (#2503)",
       "pr_refs": [
-        2418,
         2503
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2418
+      ],
       "theme_or_surface": "fix(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1385,10 +1425,11 @@
       "first_parent_position": 52,
       "subject": "test(vscode): make npm test actually run tests — delegate to vscode_test_e2e (#2437) (#2505)",
       "pr_refs": [
-        2437,
         2505
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2437
+      ],
       "theme_or_surface": "test(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1405,10 +1446,11 @@
       "first_parent_position": 53,
       "subject": "gate(xtask): add integrity guards to goldens bless — JSON parse, zero-finding guard, emptiness check (#2410) (#2506)",
       "pr_refs": [
-        2410,
         2506
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2410
+      ],
       "theme_or_surface": "gate(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1425,10 +1467,11 @@
       "first_parent_position": 54,
       "subject": "refactor(xtask): extract droid-review checks + yaml helpers to policy/droid_review.rs (#2119) (#2507)",
       "pr_refs": [
-        2119,
         2507
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2119
+      ],
       "theme_or_surface": "refactor(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1445,10 +1488,11 @@
       "first_parent_position": 55,
       "subject": "devex(cli): auto-retry pilot at 240s when default 30s timeout fires (#2424) (#2508)",
       "pr_refs": [
-        2424,
         2508
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2424
+      ],
       "theme_or_surface": "devex(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1465,10 +1509,11 @@
       "first_parent_position": 56,
       "subject": "gate(xtask): dogfood exit code now reflects scenario outcomes (#2411) (#2509)",
       "pr_refs": [
-        2411,
         2509
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2411
+      ],
       "theme_or_surface": "gate(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1485,10 +1530,11 @@
       "first_parent_position": 57,
       "subject": "refactor(xtask): extract release-server machinery to reports/release_server.rs (#2119) (#2510)",
       "pr_refs": [
-        2119,
         2510
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2119
+      ],
       "theme_or_surface": "refactor(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1507,7 +1553,9 @@
       "pr_refs": [
         2513
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2119
+      ],
       "theme_or_surface": "refactor(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1524,10 +1572,11 @@
       "first_parent_position": 59,
       "subject": "devex(docs): restructure docs/README.md as newcomer-first landing page (#2427) (#2512)",
       "pr_refs": [
-        2427,
         2512
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2427
+      ],
       "theme_or_surface": "devex(docs)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1544,10 +1593,11 @@
       "first_parent_position": 60,
       "subject": "ci: add --no-default-features and --all-features to Windows advisory lane (#2400) (#2511)",
       "pr_refs": [
-        2400,
         2511
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2400
+      ],
       "theme_or_surface": "ci",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1564,10 +1614,11 @@
       "first_parent_position": 61,
       "subject": "api(config): expose RiprConfig and config types as public (#2458) (#2514)",
       "pr_refs": [
-        2458,
         2514
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2458
+      ],
       "theme_or_surface": "api(config)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1584,10 +1635,11 @@
       "first_parent_position": 62,
       "subject": "ci: auto-resolve bot review threads so they don't block merges (#2341) (#2515)",
       "pr_refs": [
-        2341,
         2515
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2341
+      ],
       "theme_or_surface": "ci",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1623,10 +1675,11 @@
       "first_parent_position": 64,
       "subject": "test(cli): add flag/help parity test for key commands (#2342) (#2519)",
       "pr_refs": [
-        2342,
         2519
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2342
+      ],
       "theme_or_surface": "test(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1662,10 +1715,11 @@
       "first_parent_position": 66,
       "subject": "fix(analysis): add parser-level diff file-count guard for all languages (#2398) (#2521)",
       "pr_refs": [
-        2398,
         2521
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2398
+      ],
       "theme_or_surface": "fix(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1682,10 +1736,11 @@
       "first_parent_position": 67,
       "subject": "fix(xtask): normalize single-backslash paths in golden JSON output (#2337) (#2522)",
       "pr_refs": [
-        2337,
         2522
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2337
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1702,10 +1757,11 @@
       "first_parent_position": 68,
       "subject": "api(app): expose _with_config overloads as pub (#2458) (#2524)",
       "pr_refs": [
-        2458,
         2524
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2458
+      ],
       "theme_or_surface": "api(app)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1724,7 +1780,9 @@
       "pr_refs": [
         2525
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2522
+      ],
       "theme_or_surface": "fix",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1741,10 +1799,11 @@
       "first_parent_position": 70,
       "subject": "feat(xtask): add fixture scaffold command (#2445) (#2526)",
       "pr_refs": [
-        2445,
         2526
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2445
+      ],
       "theme_or_surface": "feat(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1761,10 +1820,11 @@
       "first_parent_position": 71,
       "subject": "perf(xtask): parallelize fixture and golden execution via rayon (#2415) (#2529)",
       "pr_refs": [
-        2415,
         2529
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2415
+      ],
       "theme_or_surface": "perf(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1800,10 +1860,11 @@
       "first_parent_position": 73,
       "subject": "feat(xtask): add diff-aware check-fast gate runner (#2343) (#2531)",
       "pr_refs": [
-        2343,
         2531
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2343
+      ],
       "theme_or_surface": "feat(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1820,10 +1881,11 @@
       "first_parent_position": 74,
       "subject": "fix(xtask): preserve traceability symbol suffix and emit advisory (#2345) (#2534)",
       "pr_refs": [
-        2345,
         2534
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2345
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1842,7 +1904,9 @@
       "pr_refs": [
         2536
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2534
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1878,10 +1942,11 @@
       "first_parent_position": 77,
       "subject": "feat(agent): add two-phase repair command (#2443) (#2538)",
       "pr_refs": [
-        2443,
         2538
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2443
+      ],
       "theme_or_surface": "feat(agent)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1898,10 +1963,11 @@
       "first_parent_position": 78,
       "subject": "fix(agent): satisfy clippy + update subcommand list for repair (#2538) (#2548)",
       "pr_refs": [
-        2538,
         2548
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2538
+      ],
       "theme_or_surface": "fix(agent)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1956,10 +2022,11 @@
       "first_parent_position": 81,
       "subject": "feat(verify): execute one producer-owned CommandSpec under bounded process policy (#2332) (#2396)",
       "pr_refs": [
-        2332,
         2396
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2332
+      ],
       "theme_or_surface": "feat(verify)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -1995,10 +2062,11 @@
       "first_parent_position": 83,
       "subject": "fix(xtask): keep unresolved traceability symbols advisory (#2549) (#2557)",
       "pr_refs": [
-        2549,
         2557
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2549
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2034,10 +2102,11 @@
       "first_parent_position": 85,
       "subject": "fix(xtask): use chars() instead of bytes in JSON normalization (#2556) (#2561)",
       "pr_refs": [
-        2556,
         2561
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2556
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2054,10 +2123,11 @@
       "first_parent_position": 86,
       "subject": "docs: remove RTK from live operating guidance (#2560) (#2563)",
       "pr_refs": [
-        2560,
         2563
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2560
+      ],
       "theme_or_surface": "docs",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2112,10 +2182,11 @@
       "first_parent_position": 89,
       "subject": "docs: align live work guidance with scheduler retirement (#2565) (#2566)",
       "pr_refs": [
-        2565,
         2566
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2565
+      ],
       "theme_or_surface": "docs",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2132,10 +2203,11 @@
       "first_parent_position": 90,
       "subject": "feat(xtask): extend module-health to scan editors/vscode/src/*.ts files (#2544) (#2568)",
       "pr_refs": [
-        2544,
         2568
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2544
+      ],
       "theme_or_surface": "feat(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2171,10 +2243,11 @@
       "first_parent_position": 92,
       "subject": "fix(output): stop claiming a hidden remainder that does not exist (#2567) (#2571)",
       "pr_refs": [
-        2567,
         2571
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2567
+      ],
       "theme_or_surface": "fix(output)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2210,10 +2283,11 @@
       "first_parent_position": 94,
       "subject": "test(lsp): increase root-switch test shutdown drain to 10s (#2567) (#2577)",
       "pr_refs": [
-        2567,
         2577
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2567
+      ],
       "theme_or_surface": "test(lsp)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2268,10 +2342,11 @@
       "first_parent_position": 97,
       "subject": "refactor(vscode): extract shared JSON/path helpers to packetJson.ts (#2552) (#2570)",
       "pr_refs": [
-        2552,
         2570
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2552
+      ],
       "theme_or_surface": "refactor(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2307,10 +2382,11 @@
       "first_parent_position": 99,
       "subject": "refactor(vscode): extract workspace/trace helpers to workspaceHelpers.ts (#2553) (#2580)",
       "pr_refs": [
-        2553,
         2580
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2553
+      ],
       "theme_or_surface": "refactor(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2365,10 +2441,11 @@
       "first_parent_position": 102,
       "subject": "refactor(vscode): extract status render helpers to statusRender.ts (#2554) (#2581)",
       "pr_refs": [
-        2554,
         2581
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2554
+      ],
       "theme_or_surface": "refactor(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2385,10 +2462,11 @@
       "first_parent_position": 103,
       "subject": "refactor(vscode): extract first-PR projection to firstPrProjection.ts (#2543) (#2586)",
       "pr_refs": [
-        2543,
         2586
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2543
+      ],
       "theme_or_surface": "refactor(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2481,10 +2559,11 @@
       "first_parent_position": 108,
       "subject": "fix(ci): require adjudication before review-thread resolution (#2341) (#2589)",
       "pr_refs": [
-        2341,
         2589
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2341
+      ],
       "theme_or_surface": "fix(ci)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2501,10 +2580,11 @@
       "first_parent_position": 109,
       "subject": "fix(deps): enforce advisory suppression expiry (#1949) (#2585)",
       "pr_refs": [
-        1949,
         2585
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        1949
+      ],
       "theme_or_surface": "fix(deps)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2597,10 +2677,11 @@
       "first_parent_position": 114,
       "subject": "fix(doctor): enforce rustc minimum version (#2594) (#2619)",
       "pr_refs": [
-        2594,
         2619
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2594
+      ],
       "theme_or_surface": "fix(doctor)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2674,10 +2755,11 @@
       "first_parent_position": 118,
       "subject": "fix(vscode): register refresh diagnostics command (#2593) (#2633)",
       "pr_refs": [
-        2593,
         2633
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2593
+      ],
       "theme_or_surface": "fix(vscode)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2751,10 +2833,11 @@
       "first_parent_position": 122,
       "subject": "fix(xtask): require spec-backed golden bless reasons (#2650) (#2683)",
       "pr_refs": [
-        2650,
         2683
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2650
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2845,10 +2928,11 @@
       "first_parent_position": 127,
       "subject": "docs(specs): reserve retired 0128 identifier (#2638) (#2700)",
       "pr_refs": [
-        2638,
         2700
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2638
+      ],
       "theme_or_surface": "docs(specs)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2960,10 +3044,11 @@
       "first_parent_position": 133,
       "subject": "fix(lsp): raise exposed default severity from info to warning (#2592) (#2718)",
       "pr_refs": [
-        2592,
         2718
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2592
+      ],
       "theme_or_surface": "fix(lsp)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -2980,10 +3065,11 @@
       "first_parent_position": 134,
       "subject": "fix(cli): surface first gate config_error or blocking reason inline (#2599) (#2721)",
       "pr_refs": [
-        2599,
         2721
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2599
+      ],
       "theme_or_surface": "fix(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3000,10 +3086,11 @@
       "first_parent_position": 135,
       "subject": "fix(xtask): map annotation severity to notice/warning instead of hardcoding warning (#2632) (#2722)",
       "pr_refs": [
-        2632,
         2722
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2632
+      ],
       "theme_or_surface": "fix(xtask)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3039,10 +3126,11 @@
       "first_parent_position": 137,
       "subject": "fix(test): make fixed-path temp dirs unique with process ID (#2685) (#2728)",
       "pr_refs": [
-        2685,
         2728
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2685
+      ],
       "theme_or_surface": "fix(test)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3325,10 +3413,11 @@
       "first_parent_position": 152,
       "subject": "fix(ci): show all blocking reasons in gate summary instead of only first (#2622) (#2748)",
       "pr_refs": [
-        2622,
         2748
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2622
+      ],
       "theme_or_surface": "fix(ci)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3474,10 +3563,11 @@
       "first_parent_position": 160,
       "subject": "fix(cli): add bounded default git timeout (#2613) (#2760)",
       "pr_refs": [
-        2613,
         2760
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2613
+      ],
       "theme_or_surface": "fix(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3494,10 +3584,11 @@
       "first_parent_position": 161,
       "subject": "fix(cli): support --diff - to read diff from stdin (#2655) (#2770)",
       "pr_refs": [
-        2655,
         2770
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2655
+      ],
       "theme_or_surface": "fix(cli)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3569,10 +3660,11 @@
       "first_parent_position": 165,
       "subject": "fix(analysis): lexical adapter honestly reports used_lexical_fallback (#2698) (#2775)",
       "pr_refs": [
-        2698,
         2775
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2698
+      ],
       "theme_or_surface": "fix(analysis)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3589,10 +3681,11 @@
       "first_parent_position": 166,
       "subject": "test(diff): add proptest property tests for parser invariants (#2751) (#2774)",
       "pr_refs": [
-        2751,
         2774
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2751
+      ],
       "theme_or_surface": "test(diff)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3854,10 +3947,11 @@
       "first_parent_position": 180,
       "subject": "release(scope): reconcile 0.11 execution surface (#2767) (#2788)",
       "pr_refs": [
-        2767,
         2788
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2767
+      ],
       "theme_or_surface": "release(scope)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
@@ -3910,10 +4004,11 @@
       "first_parent_position": 183,
       "subject": "release(denominator): retain deterministic 0.11 candidate ledger (#2768) (#2790)",
       "pr_refs": [
-        2768,
         2790
       ],
-      "issue_refs": [],
+      "issue_refs": [
+        2768
+      ],
       "theme_or_surface": "release(denominator)",
       "release_disposition": "operator_decision_required",
       "acceptance_owner": "release-authority-2379",
