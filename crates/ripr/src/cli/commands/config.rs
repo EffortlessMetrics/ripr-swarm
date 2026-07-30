@@ -29,6 +29,9 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
         [] => Ok(PathBuf::from(".")),
         [flag] if flag == "--root" => Err("missing value for --root".to_string()),
         [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
+        [flag, _value, extra, ..] if flag == "--root" => {
+            Err(unknown_argument("config validate", extra))
+        }
         [other, ..] => Err(unknown_argument("config validate", other)),
     }
 }
@@ -148,6 +151,11 @@ mod tests {
             (
                 args(&["validate", "--wat"]),
                 "unknown config validate argument \"--wat\". Run `ripr config validate --help`."
+                    .to_string(),
+            ),
+            (
+                args(&["validate", "--root", "/tmp/workspace", "extra"]),
+                "unknown config validate argument \"extra\". Run `ripr config validate --help`."
                     .to_string(),
             ),
         ];
