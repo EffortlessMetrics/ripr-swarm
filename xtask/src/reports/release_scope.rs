@@ -544,16 +544,18 @@ mod tests {
     #[test]
     fn duplicate_strictly_dependent_commits_fail_closed() -> Result<(), String> {
         let mut input = fixture()?;
-        input.strictly_dependent_commits =
-            vec![input.execution_commit.clone(), input.execution_commit.clone()];
+        input.strictly_dependent_commits = vec![
+            input.execution_commit.clone(),
+            input.execution_commit.clone(),
+        ];
         let report = build_report(&input, &root()?)?;
         if report.status != "reconcile_required"
             || !report
                 .reconciliation_reasons
                 .iter()
-                .any(|reason| {
-                    reason.contains("strictly dependent commits inventory contains duplicates")
-                })
+            || !report.reconciliation_reasons.iter().any(|reason| {
+                reason.contains("strictly dependent commits inventory contains duplicates")
+            })
         {
             return Err("duplicate strictly dependent commit was accepted".to_string());
         }
