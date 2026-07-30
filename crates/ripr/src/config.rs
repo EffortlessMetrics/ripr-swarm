@@ -355,6 +355,12 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
 fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
     for value in values {
+        if value.chars().any(char::is_control) {
+            return Err(
+                "languages.rust.generated_file_patterns must not contain control characters"
+                    .to_string(),
+            );
+        }
         let trimmed = value.trim();
         parse_relative_path("languages.rust.generated_file_patterns", trimmed)?;
         if trimmed == "." {

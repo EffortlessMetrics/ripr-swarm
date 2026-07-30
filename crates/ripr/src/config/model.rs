@@ -293,6 +293,20 @@ pub struct RustLanguageConfig {
     pub generated_file_patterns: Vec<String>,
 }
 
+fn canonical_generated_file_patterns(patterns: &[String]) -> String {
+    let mut ordered = patterns.iter().collect::<Vec<_>>();
+    ordered.sort_unstable();
+
+    let mut encoded = ordered.len().to_string();
+    for pattern in ordered {
+        encoded.push('|');
+        encoded.push_str(&pattern.len().to_string());
+        encoded.push(':');
+        encoded.push_str(pattern);
+    }
+    encoded
+}
+
 /// `[perl]` repository configuration (Campaign 31 Phase D, #1407).
 ///
 /// When `producer` is set to `"perllsp"`, ripr invokes a Perl facts
@@ -609,7 +623,7 @@ impl RiprConfig {
         } = reports;
         let SuppressionsConfig { path: _ } = suppressions;
         let LanguagesConfig {
-            enabled: _,
+            enabled,
             rust: RustLanguageConfig {
                 generated_file_patterns,
             },
@@ -624,6 +638,11 @@ impl RiprConfig {
             timeout_ms,
             cache_dir,
         } = perl;
+        let generated_file_patterns_identity = if enabled.contains(&LanguageId::Rust) {
+            canonical_generated_file_patterns(generated_file_patterns)
+        } else {
+            String::new()
+        };
         let mut fields = vec![
             ConfigIdentityField {
                 name: "analysis.mode",
@@ -717,7 +736,7 @@ impl RiprConfig {
             ConfigIdentityField {
                 name: "languages.rust.generated_file_patterns",
                 role: ConfigIdentityRole::FindingAffecting,
-                value: Some(generated_file_patterns.join("\n")),
+                value: Some(generated_file_patterns_identity),
                 note: "custom Rust generated-file patterns change which source files are analyzed",
             },
         ]);

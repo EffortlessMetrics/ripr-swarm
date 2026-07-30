@@ -195,6 +195,10 @@ fn generated_file_patterns_reject_empty_duplicate_and_escape_values() {
             "[languages.rust]\ngenerated_file_patterns = ['src\\generated\\*.rs']\n",
             "uses backslashes",
         ),
+        (
+            "[languages.rust]\ngenerated_file_patterns = [\"*.gen.rs\\u000A\"]\n",
+            "control characters",
+        ),
     ] {
         let result = parse_config(text);
         assert!(
@@ -1074,6 +1078,23 @@ fn check_artifact_config_identity_hash_tracks_finding_affecting_fields_only() ->
     if check_artifact_config_identity_hash(&generated_patterns_changed) == base_hash {
         return Err(
             "languages.rust.generated_file_patterns change must change the config identity"
+                .to_string(),
+        );
+    }
+
+    // Rust-only configuration does not affect a Python-only analysis identity.
+    let mut python_only = RiprConfig::default();
+    python_only.languages.enabled = vec![LanguageId::Python];
+    let mut python_only_with_rust_patterns = python_only.clone();
+    python_only_with_rust_patterns
+        .languages
+        .rust
+        .generated_file_patterns = vec!["*.gen.rs".to_string()];
+    if check_artifact_config_identity_hash(&python_only_with_rust_patterns)
+        != check_artifact_config_identity_hash(&python_only)
+    {
+        return Err(
+            "Rust generated-file patterns must not change a Python-only config identity"
                 .to_string(),
         );
     }
