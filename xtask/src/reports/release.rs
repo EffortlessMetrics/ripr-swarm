@@ -1447,6 +1447,93 @@ mod tests {
         Ok(())
     }
 
+    /// The remaining ways a manifest can fail to declare a usable version. Each
+    /// must read as unreadable, because every caller reports a verdict on
+    /// whatever it receives — an empty or bogus version would be published as
+    /// confidently as a real one.
+    #[test]
+    fn package_version_rejects_malformed_and_non_inherited_declarations() -> Result<(), String> {
+        let cases: &[(&str, &str)] = &[
+            (
+                "[package]\nname = \"ripr\"\nversion = \"\"\n",
+                "an empty version string",
+            ),
+            (
+                "[package]\nname = \"ripr\"\nversion.workspace = false\n",
+                "an explicitly non-inherited version",
+            ),
+            (
+                "[package]\nname = \"ripr\"\nedition = \"2024\"\n",
+                "a package table with no version key",
+            ),
+            (
+                "[workspace.package]\nversion = \"0.10.0\"\n",
+                "a version declared only in another table",
+            ),
+        ];
+        for (manifest, label) in cases {
+            if let Some(found) = package_version(manifest, "package") {
+                return Err(format!("expected unreadable for {label}, got {found:?}"));
+            }
+        }
+
+        // The workspace lookup is the same scanner against a different table,
+        // so confirm it actually resolves the table it claims to.
+        let workspace = "[workspace]\nmembers = [\"crates/ripr\"]\n\n[workspace.package]\nversion = \"0.11.0\"\n";
+        if package_version(workspace, "workspace.package")
+            != Some(PackageVersion::Literal("0.11.0".to_string()))
+        {
+            return Err("expected the workspace table version".to_string());
+        }
+        Ok(())
+    }
+
+    /// A workspace root that itself defers, and a member manifest that cannot be
+    /// read at all, both have nowhere left to look. Neither may fall back to a
+    /// guess: inheritance must terminate in a real version or in `None`.
+    #[test]
+    fn read_crate_version_terminates_instead_of_guessing() -> Result<(), String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("clock error: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ripr-version-terminate-{stamp}"));
+        fs::create_dir_all(&dir).map_err(|err| format!("failed to create dir: {err}"))?;
+
+        let member = dir.join("member-Cargo.toml");
+        let deferring_workspace = dir.join("deferring-Cargo.toml");
+        let write = |path: &std::path::Path, text: &str| -> Result<(), String> {
+            fs::write(path, text)
+                .map_err(|err| format!("failed to write {}: {err}", path.display()))
+        };
+        write(
+            &member,
+            "[package]\nname = \"ripr\"\nversion.workspace = true\n",
+        )?;
+        // A workspace root that also says `version.workspace = true`.
+        write(
+            &deferring_workspace,
+            "[workspace.package]\nversion.workspace = true\n",
+        )?;
+
+        let deferred_forever = read_crate_version(&member, &deferring_workspace);
+        let absent_member =
+            read_crate_version(&dir.join("absent-Cargo.toml"), &deferring_workspace);
+        fs::remove_dir_all(&dir).map_err(|err| format!("failed to remove dir: {err}"))?;
+
+        if deferred_forever.is_some() {
+            return Err(format!(
+                "expected unreadable when the workspace also defers, got {deferred_forever:?}"
+            ));
+        }
+        if absent_member.is_some() {
+            return Err(format!(
+                "expected unreadable when the member manifest is absent, got {absent_member:?}"
+            ));
+        }
+        Ok(())
+    }
+
     /// The release gate's version claim has to survive the indirection it now
     /// depends on: reading `crates/ripr/Cargo.toml` must resolve through the
     /// workspace root, and must yield `None` rather than a guess when it cannot.
