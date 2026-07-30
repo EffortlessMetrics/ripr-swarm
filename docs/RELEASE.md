@@ -31,7 +31,9 @@ tag/release URL in `EffortlessMetrics/ripr`, and the promotion evidence.
 From a clean swarm checkout, use the gated version command instead of editing
 the three release manifests independently:
 
-    cargo xtask bump-version 0.11.0
+```bash
+cargo xtask bump-version 0.11.0
+```
 
 The command requires the workspace version, editors/vscode/package.json, and
 both root version fields in editors/vscode/package-lock.json to agree before

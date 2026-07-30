@@ -99,7 +99,7 @@ fn validate_version_input(version: &str) -> Result<(), String> {
             .any(|character| matches!(character, '"' | '\'' | '\r' | '\n'))
     {
         return Err(format!(
-            "invalid release version {version:?}; provide a quoted Cargo-compatible version such as 0.11.0"
+            "invalid release version {version:?}; provide a valid Cargo-compatible version such as 0.11.0"
         ));
     }
     Ok(())
@@ -383,8 +383,14 @@ mod tests {
             "{\"version\":\"0.10.0\",\"packages\":{\"\":{\"version\":\"0.10.0\"}}}",
             "0.11.0",
         );
-        if result.is_ok() {
-            return Err("version drift must fail closed".to_string());
+        match result {
+            Ok(_) => return Err("version drift must fail closed".to_string()),
+            Err(error) => {
+                let expected = "release version drift detected before bump: workspace=0.10.0, package.json=0.9.0, package-lock.json=0.10.0";
+                if error != expected {
+                    return Err(format!("expected error {expected:?}, got {error:?}"));
+                }
+            }
         }
         Ok(())
     }
