@@ -6525,8 +6525,6 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0145-release-execution-scope.md",
   "docs/OUTPUT_SCHEMA.md",
-  "target/ripr/reports/release-scope.json",
-  "target/ripr/reports/release-scope.md",
 ]
 metrics = [
   "unit_test_pass_rate",
