@@ -1184,9 +1184,8 @@ pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
         .get("language_runs")
         .and_then(Value::as_array)
         .is_some_and(|runs| {
-            runs.iter().any(|run| {
-                run.get("status").and_then(Value::as_str) == Some("partial")
-            })
+            runs.iter()
+                .any(|run| run.get("status").and_then(Value::as_str) == Some("partial"))
         })
     {
         return true;

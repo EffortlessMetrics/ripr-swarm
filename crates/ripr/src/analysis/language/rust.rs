@@ -1395,8 +1395,7 @@ mod tests {
         macro_reach_limit_kind, owner_has_ffi_attr, partial_diff_budgets_from_env,
         partition_canonical_form, replace_witnessed_no_path_infection_summary,
         repo_index_file_limit_from_env, select_partial_diff_partition,
-        select_partial_diff_partition_with_identity, sha256_hex,
-        transitive_reach_limit_kind,
+        select_partial_diff_partition_with_identity, sha256_hex, transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -2528,7 +2527,10 @@ let _ = (result, note, raw);"##,
 
     #[test]
     fn partial_scope_identity_includes_skipped_generated_files() {
-        let analyzable = vec![changed_file("src/a.rs", 1, 0), changed_file("src/b.rs", 1, 0)];
+        let analyzable = vec![
+            changed_file("src/a.rs", 1, 0),
+            changed_file("src/b.rs", 1, 0),
+        ];
         let mut identity_a = analyzable.clone();
         identity_a.push(changed_file("src/generated.rs", 1, 0));
         let mut identity_b = analyzable.clone();
