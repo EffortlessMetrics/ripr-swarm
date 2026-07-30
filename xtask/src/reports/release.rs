@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,6 +9,8 @@ const PILOT_OUT: &str = "target/ripr/release-readiness/pilot";
 const OUTCOME_OUT: &str = "target/ripr/release-readiness/targeted-test-outcome.json";
 const AGENT_VERIFY_OUT: &str = "target/ripr/release-readiness/agent-verify.json";
 const AGENT_RECEIPT_OUT: &str = "target/ripr/release-readiness/agent-receipt.json";
+const AGENT_BEFORE_OUT: &str = "target/ripr/release-readiness/before.repo-exposure.json";
+const AGENT_AFTER_OUT: &str = "target/ripr/release-readiness/after.repo-exposure.json";
 const BOUNDARY_GAP_SEAM_ID: &str = "67fc764ba37d77bd";
 const BEFORE_EXPOSURE: &str =
     "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json";
@@ -108,7 +111,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         installed_command_surface_check(&installed_binary),
         pilot_fixture_check(&installed_binary),
         outcome_fixture_check(&installed_binary),
-        agent_verify_fixture_check(&installed_binary),
+        agent_verify_fixture_check(&installed_binary, crate_version.as_deref()),
         agent_receipt_fixture_check(&installed_binary),
         repo_exposure_latency_check(),
         lsp_cockpit_check(),
@@ -619,11 +622,26 @@ fn outcome_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
     }
 }
 
-fn agent_verify_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
+fn agent_verify_fixture_check(binary: &Path, crate_version: Option<&str>) -> ReleaseReadinessCheck {
+    let fixture_error = match bind_agent_fixture_pair(crate_version) {
+        Ok(()) => None,
+        Err(err) => Some(err),
+    };
     let command = format!(
-        "{} agent verify --root . --before {BEFORE_EXPOSURE} --after {AFTER_EXPOSURE} --json > {AGENT_VERIFY_OUT}",
+        "{} agent verify --root . --before {AGENT_BEFORE_OUT} --after {AGENT_AFTER_OUT} --json > {AGENT_VERIFY_OUT}",
         crate::normalize_path(binary)
     );
+    if let Some(err) = fixture_error {
+        return readiness_check(
+            "agent-verify-boundary-fixture",
+            "fail",
+            true,
+            &command,
+            "release-readiness could not bind the boundary-gap calibration fixtures",
+            vec![AGENT_BEFORE_OUT.to_string(), AGENT_AFTER_OUT.to_string()],
+            vec![err],
+        );
+    }
     if !binary.exists() {
         return readiness_check(
             "agent-verify-boundary-fixture",
@@ -644,9 +662,9 @@ fn agent_verify_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
             "--root",
             ".",
             "--before",
-            BEFORE_EXPOSURE,
+            AGENT_BEFORE_OUT,
             "--after",
-            AFTER_EXPOSURE,
+            AGENT_AFTER_OUT,
             "--json",
         ],
     ) {
@@ -763,6 +781,109 @@ fn agent_receipt_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
             vec![err],
         ),
     }
+}
+
+fn bind_agent_fixture_pair(crate_version: Option<&str>) -> Result<(), String> {
+    let producer_version = crate_version
+        .filter(|version| !version.trim().is_empty())
+        .ok_or_else(|| "effective ripr package version was unavailable".to_string())?;
+    let root = Path::new(".")
+        .canonicalize()
+        .map_err(|err| format!("failed to canonicalize release-readiness root: {err}"))?;
+    let head = run_command("git", &["rev-parse", "HEAD"])?;
+    if !head.success {
+        return Err(format!(
+            "could not resolve release-readiness repository HEAD: {}",
+            command_details(&head).join("; ")
+        ));
+    }
+    let head = head.stdout.trim();
+    if head.is_empty() {
+        return Err("release-readiness repository HEAD was empty".to_string());
+    }
+    let worktree = if git_worktree_is_clean()? {
+        "clean"
+    } else {
+        "dirty"
+    };
+    bind_agent_fixture(
+        BEFORE_EXPOSURE,
+        AGENT_BEFORE_OUT,
+        &root,
+        head,
+        worktree,
+        producer_version,
+    )?;
+    bind_agent_fixture(
+        AFTER_EXPOSURE,
+        AGENT_AFTER_OUT,
+        &root,
+        head,
+        worktree,
+        producer_version,
+    )
+}
+
+fn bind_agent_fixture(
+    source: &str,
+    destination: &str,
+    root: &Path,
+    head: &str,
+    worktree: &str,
+    producer_version: &str,
+) -> Result<(), String> {
+    let raw = fs::read_to_string(source)
+        .map_err(|err| format!("failed to read calibration fixture {source}: {err}"))?;
+    let mut value: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse calibration fixture {source}: {err}"))?;
+    value["schema_version"] = Value::String("0.3".to_string());
+    value["run_status"] = Value::String("complete".to_string());
+    value["artifact"] = json!({
+        "kind": "repo_exposure",
+        "schema_version": "1",
+        "canonicalization": "raw_json_placeholder_v1",
+        "producer": {"tool": "ripr", "version": producer_version},
+        "repository": {
+            "root": root.to_string_lossy().replace('\\', "/"),
+            "head": head,
+        },
+        "analysis": {
+            "format": "repo-exposure-json",
+            "mode": "draft",
+            "base_revision": null,
+            "input_identity": "input:release-readiness-boundary-fixture",
+            "command": "ripr check --format repo-exposure-json",
+            "profile": "draft",
+            "worktree": worktree,
+        },
+        "snapshot_identity": "snapshot:input:release-readiness-boundary-fixture",
+        "content_sha256": content_sha256_placeholder(),
+    });
+    let raw = serde_json::to_string_pretty(&value)
+        .map_err(|err| format!("failed to render bound calibration fixture {source}: {err}"))?;
+    fs::write(destination, recommit_content_sha256(raw))
+        .map_err(|err| format!("failed to write bound calibration fixture {destination}: {err}"))
+}
+
+fn content_sha256_placeholder() -> &'static str {
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+fn recommit_content_sha256(mut raw: String) -> String {
+    let placeholder = content_sha256_placeholder();
+    let key = "\"content_sha256\"";
+    if let Some(key_start) = raw.find(key) {
+        let value_search_start = key_start + key.len();
+        if let Some(value_offset) = raw[value_search_start..].find('"') {
+            let value_start = value_search_start + value_offset + 1;
+            if let Some(end_offset) = raw[value_start..].find('"') {
+                raw.replace_range(value_start..value_start + end_offset, placeholder);
+            }
+        }
+    }
+    let digest = Sha256::digest(raw.as_bytes());
+    let digest = format!("sha256:{digest:x}");
+    raw.replace(placeholder, &digest)
 }
 
 fn repo_exposure_latency_check() -> ReleaseReadinessCheck {
@@ -1555,12 +1676,14 @@ fn run_command_path(program: &Path, args: &[&str]) -> Result<CommandResult, Stri
 mod tests {
     use super::{
         EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
-        ReleaseReadinessCheck, ReleaseReadinessReport, extension_version_check_from,
-        missing_required_needles, package_version, parse_release_readiness_args,
-        read_crate_version, readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, vsix_start_current_repair_command_present,
+        ReleaseReadinessCheck, ReleaseReadinessReport, content_sha256_placeholder,
+        extension_version_check_from, missing_required_needles, package_version,
+        parse_release_readiness_args, read_crate_version, readiness_check, recommit_content_sha256,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
+    use sha2::{Digest, Sha256};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2021,6 +2144,30 @@ mod tests {
         let fail_status = release_readiness_status(&[pass, not_run, failure]);
         if fail_status != "fail" {
             return Err(format!("expected fail status, got {fail_status}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bound_agent_fixture_recommits_content_commitment() -> Result<(), String> {
+        let placeholder = content_sha256_placeholder();
+        let raw = format!(r#"{{"content_sha256":"{placeholder}","value":"fixture"}}"#);
+        let rebound = recommit_content_sha256(raw.clone());
+        let value: Value = serde_json::from_str(&rebound)
+            .map_err(|err| format!("bound fixture was not JSON: {err}"))?;
+        let digest = value
+            .get("content_sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "bound fixture omitted content_sha256".to_string())?;
+        if !digest.starts_with("sha256:") || digest == placeholder {
+            return Err(format!("unexpected content commitment {digest:?}"));
+        }
+        let canonical = rebound.replacen(digest, placeholder, 1);
+        let expected = format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()));
+        if digest != expected {
+            return Err(format!(
+                "content commitment was not stable: {digest} != {expected}"
+            ));
         }
         Ok(())
     }
