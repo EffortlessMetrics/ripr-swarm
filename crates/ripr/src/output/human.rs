@@ -2519,9 +2519,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains(
-                "analyzed: 2 changed expression(s) and 1 statically linked related"
-            ),
+            rendered.contains("analyzed: 2 changed expression(s) and 1 statically linked related"),
             "expected related-test count disclosure; got:\n{rendered}"
         );
     }
