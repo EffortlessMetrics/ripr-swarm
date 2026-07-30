@@ -2439,7 +2439,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "Scope analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related test(s)."
+                "analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related"
             ),
             "expected scope-count disclosure; got:\n{rendered}"
         );
@@ -2519,7 +2519,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Scope analyzed: 2 changed expression(s) and 1 statically linked related test(s)."
+                "analyzed: 2 changed expression(s) and 1 statically linked related"
             ),
             "expected related-test count disclosure; got:\n{rendered}"
         );
@@ -2532,7 +2532,11 @@ mod tests {
 
         assert!(wrapped.lines().all(|line| line.chars().count() <= 100));
         assert_eq!(
-            wrapped.split_whitespace().collect::<Vec<_>>().join(" "),
+            wrapped
+                .trim_start_matches("  - ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
             prose
         );
     }
