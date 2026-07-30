@@ -34,6 +34,12 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
 }
 
 fn validate_config(root: &Path) -> Result<&'static str, String> {
+    if !root.is_dir() {
+        return Err(format!(
+            "config validate root {} is not a directory",
+            root.display()
+        ));
+    }
     load_for_root(root)?;
     Ok("✓ ripr.toml valid")
 }
@@ -84,6 +90,28 @@ mod tests {
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         if result? != "✓ ripr.toml valid" {
             return Err("missing configuration returned the wrong success message".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validate_rejects_missing_and_file_roots() -> Result<(), String> {
+        let missing = temp_dir("missing-root");
+        let missing_error = validate_config(&missing).err().ok_or_else(|| {
+            "a nonexistent validation root must not use built-in defaults".to_string()
+        })?;
+        if !missing_error.contains("is not a directory") {
+            return Err(format!("unexpected missing-root error: {missing_error}"));
+        }
+
+        let file_root = temp_dir("file-root");
+        fs::write(&file_root, "not a directory\n").map_err(|error| error.to_string())?;
+        let file_error = validate_config(&file_root)
+            .err()
+            .ok_or_else(|| "a file validation root must not use built-in defaults".to_string())?;
+        fs::remove_file(&file_root).map_err(|error| error.to_string())?;
+        if !file_error.contains("is not a directory") {
+            return Err(format!("unexpected file-root error: {file_error}"));
         }
         Ok(())
     }
