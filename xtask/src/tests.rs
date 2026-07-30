@@ -21440,7 +21440,7 @@ fn capability_matrix_rejects_stale_or_duplicate_names() -> Result<(), String> {
 
 #[test]
 fn capability_matrix_reports_missing_structure() -> Result<(), String> {
-    with_temp_cwd("capability-matrix-missing", |_root| {
+    with_temp_cwd("capability-matrix-missing", |_root| -> Result<(), String> {
         let capabilities = vec![Capability {
             name: Some("Static exposure loop".to_string()),
             ..Capability::default()
@@ -21456,40 +21456,46 @@ fn capability_matrix_reports_missing_structure() -> Result<(), String> {
         Ok(())
     })?;
 
-    with_temp_cwd("capability-matrix-missing-header", |root| {
-        write(
-            &root.join("docs/CAPABILITY_MATRIX.md"),
-            "not a capability table\n",
-        );
-        let capabilities = vec![Capability {
-            name: Some("Static exposure loop".to_string()),
-            ..Capability::default()
-        }];
-        let mut violations = Vec::new();
-        super::validate_capability_matrix(&capabilities, &mut violations)?;
-        assert!(
-            violations.iter().any(|violation| violation
-                .contains("docs/CAPABILITY_MATRIX.md is missing the capability table header")),
-            "{violations:#?}"
-        );
-        Ok(())
-    })?;
+    with_temp_cwd(
+        "capability-matrix-missing-header",
+        |root| -> Result<(), String> {
+            write(
+                &root.join("docs/CAPABILITY_MATRIX.md"),
+                "not a capability table\n",
+            );
+            let capabilities = vec![Capability {
+                name: Some("Static exposure loop".to_string()),
+                ..Capability::default()
+            }];
+            let mut violations = Vec::new();
+            super::validate_capability_matrix(&capabilities, &mut violations)?;
+            assert!(
+                violations.iter().any(|violation| violation
+                    .contains("docs/CAPABILITY_MATRIX.md is missing the capability table header")),
+                "{violations:#?}"
+            );
+            Ok(())
+        },
+    )?;
 
-    with_temp_cwd("capability-matrix-nameless-row", |root| {
-        write(
-            &root.join("docs/CAPABILITY_MATRIX.md"),
-            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
-        );
-        let mut violations = Vec::new();
-        super::validate_capability_matrix(&[], &mut violations)?;
-        assert!(
+    with_temp_cwd(
+        "capability-matrix-nameless-row",
+        |root| -> Result<(), String> {
+            write(
+                &root.join("docs/CAPABILITY_MATRIX.md"),
+                "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+            );
+            let mut violations = Vec::new();
+            super::validate_capability_matrix(&[], &mut violations)?;
+            assert!(
             violations
                 .iter()
                 .any(|violation| violation.contains("contains a capability row without a name")),
             "{violations:#?}"
         );
-        Ok(())
-    })
+            Ok(())
+        },
+    )
 }
 
 #[test]
