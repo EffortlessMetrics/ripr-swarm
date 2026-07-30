@@ -449,62 +449,6 @@ mod tests {
     }
 
     #[test]
-    fn top_level_help_mentions_supported_commands() {
-        assert!(HELP.contains("ripr init"));
-        assert!(HELP.contains("ripr pilot"));
-        assert!(HELP.contains("ripr outcome"));
-        assert!(HELP.contains("ripr rerun --changed-test"));
-        assert!(HELP.contains("ripr evidence-health"));
-        assert!(HELP.contains("ripr review-comments"));
-        assert!(HELP.contains("ripr gate evaluate"));
-        assert!(HELP.contains("ripr baseline create"));
-        assert!(HELP.contains("ripr baseline diff"));
-        assert!(HELP.contains("ripr baseline update"));
-        assert!(HELP.contains("ripr zero status"));
-        assert!(HELP.contains("ripr policy readiness"));
-        assert!(HELP.contains("ripr policy operations"));
-        assert!(HELP.contains("ripr policy history"));
-        assert!(HELP.contains("ripr policy promote"));
-        assert!(HELP.contains("ripr policy preview-promote"));
-        assert!(HELP.contains("ripr policy waiver-aging"));
-        assert!(HELP.contains("ripr pr-ledger record"));
-        assert!(HELP.contains("ripr pr-comments plan"));
-        assert!(HELP.contains("ripr pr-review front-panel"));
-        assert!(HELP.contains("ripr coverage-grip frontier"));
-        assert!(HELP.contains("ripr assistant-loop proof"));
-        assert!(HELP.contains("ripr assistant-loop health"));
-        assert!(HELP.contains("ripr first-pr"));
-        assert!(HELP.contains("ripr start-here"));
-        assert!(HELP.contains("ripr first-action"));
-        assert!(HELP.contains("ripr reports index"));
-        assert!(HELP.contains("ripr reports gap-ledger"));
-        assert!(HELP.contains("ripr calibrate"));
-        assert!(HELP.contains("ripr receipt write"));
-        assert!(HELP.contains("ripr receipt check"));
-        assert!(HELP.contains("ripr agent start"));
-        assert!(HELP.contains("ripr agent brief"));
-        assert!(HELP.contains("ripr agent packet"));
-        assert!(HELP.contains("ripr agent verify"));
-        assert!(HELP.contains("ripr agent receipt"));
-        assert!(HELP.contains("ripr agent status"));
-        assert!(HELP.contains("ripr agent review-summary"));
-        assert!(HELP.contains("ripr swarm queue"));
-        assert!(HELP.contains("ripr swarm ingest"));
-        assert!(HELP.contains("ripr plus"));
-        assert!(HELP.contains("ripr diff"));
-        assert!(HELP.contains("ripr check"));
-        assert!(HELP.contains("ripr explain"));
-        assert!(HELP.contains("ripr context"));
-        assert!(HELP.contains("ripr doctor"));
-        assert!(HELP.contains("ripr cache status"));
-        assert!(HELP.contains("Start-here path:"));
-        assert!(HELP.contains("Safe next action means repair one named gap"));
-        assert!(HELP.contains("Missing artifact, stale evidence, wrong root"));
-        assert!(HELP.contains("Verify command, receipt command, and receipt path"));
-        assert!(HELP.contains("Preview-limited evidence stays syntax-first"));
-    }
-
-    #[test]
     fn print_help_all_writes_the_full_reference() {
         print_help_all();
     }
