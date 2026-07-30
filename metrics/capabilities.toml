@@ -266,7 +266,7 @@ evidence = [
   "framed LSP protocol smoke executes collectEvidenceContext against a published boundary-gap seam diagnostic",
   "VS Code e2e copies a live seam packet from the real server path"
 ]
-fixtures = ["fixtures/user-surface-projection-alignment"]
+fixtures = []
 next = "maintenance"
 metric = "packet includes missing discriminator and related tests"
 
@@ -1859,7 +1859,7 @@ evidence = [
   "diff badge native JSON remains basis finding_exposure",
   "checked-in badges/ripr.json and badges/ripr-plus.json are refreshed from generated endpoint artifacts"
 ]
-fixtures = []
+fixtures = ["fixtures/user-surface-projection-alignment"]
 next = "campaign/public-badge-projection-realignment"
 metric = "public badge headline counts unresolved actionable canonical repair items; seam-native inventory remains available through internal analyzer-health reports and is not the public ripr or ripr+ headline"
 
