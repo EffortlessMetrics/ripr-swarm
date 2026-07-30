@@ -659,6 +659,41 @@ fn check_human_output_reports_sample_findings() {
 }
 
 #[test]
+fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> Result<(), String> {
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let subcrate = workspace_root().join("crates/ripr");
+    let implicit = run_command(
+        bin,
+        Some(&subcrate),
+        &["check", "--base", "HEAD", "--format", "json"],
+    )
+    .map_err(|error| format!("run implicit-root check: {error}"))?;
+    assert_success(&implicit);
+    assert!(
+        String::from_utf8_lossy(&implicit.stderr).contains("resolved workspace root to"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&implicit.stderr)
+    );
+
+    let root = workspace_root().display().to_string();
+    let explicit = run_command(
+        bin,
+        Some(&subcrate),
+        &[
+            "check", "--root", &root, "--base", "HEAD", "--format", "json",
+        ],
+    )
+    .map_err(|error| format!("run explicit-root check: {error}"))?;
+    assert_success(&explicit);
+    assert!(
+        !String::from_utf8_lossy(&explicit.stderr).contains("resolved workspace root to"),
+        "explicit --root must skip implicit resolution; stderr:\n{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    Ok(())
+}
+
+#[test]
 fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     let root = ".";
     let diff = "crates/ripr/examples/sample/example.diff";
