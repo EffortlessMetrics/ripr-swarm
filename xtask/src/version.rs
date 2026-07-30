@@ -343,7 +343,12 @@ fn unquote(value: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_root_version, lockfile_versions, prepare_update, section_version};
+    use super::{
+        bump_version, cargo_metadata_validation, json_root_version, lockfile_versions,
+        prepare_update, replace_json_version_lines, replace_section_version, section_version,
+        validate_version_input, verify_updated_json, verify_updated_lockfile,
+    };
+    use std::fs;
 
     #[test]
     fn prepares_all_release_version_surfaces_without_reformatting_json() -> Result<(), String> {
@@ -390,6 +395,153 @@ mod tests {
             || json_root_version("{\"version\":\"0.10.0\"}", "package.json")? != "0.10.0"
         {
             return Err("owned version fields were not read".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bumps_fixture_release_files_and_validates_cargo_metadata() -> Result<(), String> {
+        crate::tests::with_temp_cwd("version-bump", |root| {
+            fs::write(
+                root.join("Cargo.toml"),
+                "[workspace]\nresolver = \"2\"\n\n[workspace.package]\nversion = \"0.10.0\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::create_dir_all(root.join("editors/vscode")).map_err(|error| error.to_string())?;
+            fs::write(
+                root.join(EXTENSION_MANIFEST),
+                "{\n  \"name\": \"ripr\",\n  \"version\": \"0.10.0\"\n}\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                root.join(EXTENSION_LOCKFILE),
+                "{\n  \"version\": \"0.10.0\",\n  \"packages\": {\n    \"\": {\n      \"version\": \"0.10.0\"\n    }\n  }\n}\n",
+            )
+            .map_err(|error| error.to_string())?;
+
+            bump_version(&["0.11.0".to_string()])?;
+            let workspace = fs::read_to_string(root.join(WORKSPACE_MANIFEST))
+                .map_err(|error| error.to_string())?;
+            let extension = fs::read_to_string(root.join(EXTENSION_MANIFEST))
+                .map_err(|error| error.to_string())?;
+            let lockfile = fs::read_to_string(root.join(EXTENSION_LOCKFILE))
+                .map_err(|error| error.to_string())?;
+            if !workspace.contains("version = \"0.11.0\"")
+                || !extension.contains("\"version\": \"0.11.0\"")
+                || lockfile.matches("\"version\": \"0.11.0\"").count() != 2
+            {
+                return Err("fixture release files did not receive the new version".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn rejects_invalid_version_inputs() -> Result<(), String> {
+        for version in ["", " 0.11.0", "0.11.0 ", "0. 11.0", "0\".11.0", "0\n11.0"] {
+            if validate_version_input(version).is_ok() {
+                return Err(format!("invalid version was accepted: {version:?}"));
+            }
+        }
+        validate_version_input("0.11.0")
+    }
+
+    #[test]
+    fn rejects_malformed_or_drifting_json_version_surfaces() -> Result<(), String> {
+        for (text, expected) in [
+            ("not json", "invalid JSON"),
+            ("{}", "no usable root version"),
+            ("{\"version\":\"\"}", "no usable root version"),
+        ] {
+            let error = json_root_version(text, "package.json")
+                .err()
+                .ok_or_else(|| format!("malformed JSON fixture was accepted: {text}"))?;
+            if !error.contains(expected) {
+                return Err(format!("unexpected JSON error: {error}"));
+            }
+        }
+
+        for (text, expected) in [
+            ("{\"version\":\"0.10.0\"}", "packages[\"\"]"),
+            (
+                "{\"version\":\"0.10.0\",\"packages\":{\"\":{\"version\":\"0.9.0\"}}}",
+                "differ",
+            ),
+            ("not json", "not valid JSON"),
+        ] {
+            let error = lockfile_versions(text)
+                .err()
+                .ok_or_else(|| format!("malformed lockfile fixture was accepted: {text}"))?;
+            if !error.contains(expected) {
+                return Err(format!("unexpected lockfile error: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replacement_and_updated_surface_guards_reject_bad_shapes() -> Result<(), String> {
+        let malformed_workspace = replace_section_version(
+            "[workspace.package]\nversion\n",
+            "workspace.package",
+            "0.11.0",
+        )
+        .err()
+        .ok_or_else(|| "malformed workspace version line was accepted".to_string())?;
+        if !malformed_workspace.contains("malformed") {
+            return Err(format!("unexpected workspace error: {malformed_workspace}"));
+        }
+
+        let malformed_json =
+            replace_json_version_lines("{\n  \"version\": \"0.9.0\"\n}\n", "0.10.0", "0.11.0", 1)
+                .err()
+                .ok_or_else(|| "JSON version drift was accepted".to_string())?;
+        if !malformed_json.contains("expected JSON version") {
+            return Err(format!(
+                "unexpected JSON replacement error: {malformed_json}"
+            ));
+        }
+
+        let count_error =
+            replace_json_version_lines("{\n  \"version\": \"0.10.0\"\n}\n", "0.10.0", "0.11.0", 2)
+                .err()
+                .ok_or_else(|| "missing JSON version field was accepted".to_string())?;
+        if !count_error.contains("expected 2 JSON version fields") {
+            return Err(format!("unexpected JSON count error: {count_error}"));
+        }
+
+        let json_error = verify_updated_json("{}", "package.json", "0.11.0", 1)
+            .err()
+            .ok_or_else(|| "updated JSON without a version was accepted".to_string())?;
+        if !json_error.contains("no usable root version") {
+            return Err(format!("unexpected updated JSON error: {json_error}"));
+        }
+        let lock_error = verify_updated_lockfile(
+            "{\"version\":\"0.11.0\",\"packages\":{\"\":{\"version\":\"0.10.0\"}}}",
+            "0.11.0",
+        )
+        .err()
+        .ok_or_else(|| "drifting updated lockfile was accepted".to_string())?;
+        if !lock_error.contains("differ") {
+            return Err(format!("unexpected updated lockfile error: {lock_error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_metadata_validation_succeeds_in_this_workspace() -> Result<(), String> {
+        crate::tests::with_repo_cwd(cargo_metadata_validation)
+    }
+
+    #[test]
+    fn replacement_helpers_preserve_comments_and_unquote_values() -> Result<(), String> {
+        let workspace = replace_section_version(
+            "[workspace.package]\nversion = '0.10.0' # release\n",
+            "workspace.package",
+            "0.11.0",
+        )?;
+        if !workspace.contains("version = '0.11.0' # release") {
+            return Err("TOML comment or quote style was not preserved".to_string());
         }
         Ok(())
     }
