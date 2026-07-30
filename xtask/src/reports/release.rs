@@ -114,7 +114,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         lsp_cockpit_check(),
         github_workflow_check(&installed_binary),
         vsix_packaging_check(),
-        extension_version_match_check(crate_version.as_deref()),
+        extension_version_match_check(version, crate_version.as_deref()),
         known_limits_docs_check(),
     ];
     let status = release_readiness_status(&checks).to_string();
@@ -288,10 +288,36 @@ fn path_install_check() -> ReleaseReadinessCheck {
     }
 }
 
+/// Commands the bounded first screen (`ripr --help`) must keep offering.
+///
+/// Only the first actions belong here. This is the screen a first-time reader
+/// sees, so the gate holds it to "can a new user start?" — not to the full
+/// catalog. `repository_first_screen_offers_the_first_run_commands` pins these
+/// against the shipped help text so a release cannot be cut on a first screen
+/// that dropped its own entry point.
+const FIRST_SCREEN_NEEDLES: &[&str] = &["ripr doctor", "ripr check", "ripr first-pr"];
+
+/// Release-loop commands the exhaustive reference (`ripr help --all`) must list.
+///
+/// These used to be grepped out of `--help`. #1613 moved the catalog behind
+/// `help --all`, which is now the surface that promises completeness — and
+/// `help_all_documents_every_public_command` binds that text to the parser's own
+/// command list, so this needle set is checking a claim something else keeps
+/// honest rather than checking prose in isolation.
+const RELEASE_LOOP_NEEDLES: &[&str] = &[
+    "ripr pilot",
+    "ripr outcome",
+    "ripr first-pr",
+    "ripr calibrate cargo-mutants",
+    "ripr agent verify",
+    "ripr agent receipt",
+];
+
 fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
     let binary_path = crate::normalize_path(binary);
-    let command =
-        format!("{binary_path} --version && {binary_path} --help && {binary_path} first-pr --help");
+    let command = format!(
+        "{binary_path} --version && {binary_path} --help && {binary_path} help --all && {binary_path} first-pr --help"
+    );
     if !binary.exists() {
         return readiness_check(
             "installed-command-surface",
@@ -378,17 +404,42 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
             );
         }
     };
-    let mut missing = missing_required_needles(
-        &help.stdout,
-        &[
-            "ripr pilot",
-            "ripr outcome",
-            "ripr first-pr",
-            "ripr calibrate cargo-mutants",
-            "ripr agent verify",
-            "ripr agent receipt",
-        ],
-    );
+    let help_all = match run_command_path(binary, &["help", "--all"]) {
+        Ok(result) if result.success => result,
+        Ok(result) => {
+            return readiness_check(
+                "installed-command-surface",
+                "fail",
+                true,
+                &command,
+                "installed binary help --all failed",
+                vec![crate::normalize_path(binary)],
+                command_details(&result),
+            );
+        }
+        Err(err) => {
+            return readiness_check(
+                "installed-command-surface",
+                "fail",
+                true,
+                &command,
+                "installed ripr help --all could not run",
+                vec![crate::normalize_path(binary)],
+                vec![err],
+            );
+        }
+    };
+    // Two surfaces, two claims. `--help` is the bounded first screen, so it is
+    // held only to the commands a first run needs; the full release-loop
+    // catalog moved behind `help --all` (#1613) and is checked there. Grepping
+    // `--help` for the whole catalog would fail the release on a deliberate
+    // presentation change, and grepping only `help --all` would let the first
+    // screen lose its first actions without any gate noticing.
+    let mut missing = missing_required_needles(&help.stdout, FIRST_SCREEN_NEEDLES);
+    missing.extend(missing_required_needles(
+        &help_all.stdout,
+        RELEASE_LOOP_NEEDLES,
+    ));
     missing.extend(missing_required_needles(
         &first_pr_help.stdout,
         &[
@@ -963,73 +1014,134 @@ fn vsix_packaging_check() -> ReleaseReadinessCheck {
     }
 }
 
-/// Fail-closed guard against the VS Code extension version silently drifting
-/// from the crate version. When `editors/vscode/package.json` lags the crate,
-/// `vsce` embeds the stale version into the VSIX and the marketplace publish
-/// fails with "vX already exists" — the failure mode that left the extension two
-/// releases behind through 0.8.0/0.9.0 (#1283). Any read failure or mismatch is
-/// a fail; only an exact match passes.
-fn extension_version_match_check(crate_version: Option<&str>) -> ReleaseReadinessCheck {
-    let package_json = Path::new("editors/vscode/package.json");
-    let ext_version = read_json_value(package_json).ok().and_then(|value| {
-        value
-            .get("version")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    });
-    extension_version_check_from(ext_version.as_deref(), crate_version)
+/// One editor manifest version, named so a mismatch says which file is wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorVersion {
+    /// Repo-relative path, plus the JSON pointer when a file carries the version
+    /// in more than one place.
+    source: String,
+    value: Option<String>,
 }
 
-/// Pure comparison split out from the file read so it is testable without a
-/// working-directory dependency.
-fn extension_version_check_from(
-    ext_version: Option<&str>,
+/// Fail-closed guard against the VS Code extension version silently drifting
+/// from the version actually being released. When `editors/vscode/package.json`
+/// lags, `vsce` embeds the stale version into the VSIX and the marketplace
+/// publish fails with "vX already exists" — the failure mode that left the
+/// extension two releases behind through 0.8.0/0.9.0 (#1283). Any read failure
+/// or mismatch is a fail; only exact agreement passes.
+///
+/// The referent is the **requested** release version, not the crate version.
+/// Comparing the extension to the crate made the gate vacuous on exactly the run
+/// that matters: with the workspace at 0.10.0 and the extension at 0.10.0,
+/// `release-readiness --version 0.11.0` reported "matches the crate version"
+/// while both lagged the release being prepared — and because a
+/// requested/crate mismatch downgrades `package-list` and `publish-dry-run` to
+/// `not_run` (non-required), `release_readiness_status` returned `warn` and the
+/// whole command exited 0. `docs/RELEASE.md` lists "the version in the root
+/// `Cargo.toml` is correct" as a *precondition* of this gate, so a disagreement
+/// here is a real not-ready state rather than a legitimate pre-bump one.
+///
+/// `package-lock.json` is checked too, in both places npm keeps the version.
+/// `docs/RELEASE.md` states it as a precondition and `publish-extension.yml`
+/// runs `npm ci`, which hard-fails when the lock disagrees with `package.json`.
+fn extension_version_match_check(
+    version: &str,
     crate_version: Option<&str>,
 ) -> ReleaseReadinessCheck {
-    let command =
-        "compare editors/vscode/package.json version to the workspace package version (Cargo.toml)";
-    match (ext_version, crate_version) {
-        (Some(ext), Some(krate)) if ext == krate => readiness_check(
-            "extension-version-match",
-            "pass",
-            true,
-            command,
-            "VS Code extension version matches the crate version",
-            vec!["editors/vscode/package.json".to_string()],
-            Vec::new(),
-        ),
-        (Some(ext), Some(krate)) => readiness_check(
+    let package_json = Path::new("editors/vscode/package.json");
+    let lock_json = Path::new("editors/vscode/package-lock.json");
+    let editors = vec![
+        EditorVersion {
+            source: "editors/vscode/package.json version".to_string(),
+            value: json_string_at(package_json, &["version"]),
+        },
+        EditorVersion {
+            source: "editors/vscode/package-lock.json version".to_string(),
+            value: json_string_at(lock_json, &["version"]),
+        },
+        EditorVersion {
+            source: "editors/vscode/package-lock.json packages.\"\".version".to_string(),
+            value: json_string_at(lock_json, &["packages", "", "version"]),
+        },
+    ];
+    extension_version_check_from(version, crate_version, &editors)
+}
+
+/// Read a string at a JSON pointer path, or `None` if any step is absent.
+fn json_string_at(path: &Path, pointer: &[&str]) -> Option<String> {
+    let mut value = read_json_value(path).ok()?;
+    for key in pointer {
+        value = value.get(key)?.clone();
+    }
+    value.as_str().map(str::to_string)
+}
+
+/// Pure comparison split out from the file reads so it is testable without a
+/// working-directory dependency.
+fn extension_version_check_from(
+    version: &str,
+    crate_version: Option<&str>,
+    editors: &[EditorVersion],
+) -> ReleaseReadinessCheck {
+    let command = "compare the requested release version to the workspace package version (Cargo.toml) and the editor manifests";
+    let sources = vec![
+        "Cargo.toml".to_string(),
+        "editors/vscode/package.json".to_string(),
+        "editors/vscode/package-lock.json".to_string(),
+    ];
+
+    let Some(krate) = crate_version else {
+        return readiness_check(
             "extension-version-match",
             "fail",
             true,
             command,
-            "VS Code extension version does not match the crate version; the marketplace publish would fail or republish a stale version",
-            Vec::new(),
-            vec![format!(
-                "editors/vscode/package.json version {ext} != crate version {krate} (bump editors/vscode/package.json + package-lock.json)"
-            )],
-        ),
-        (None, _) => readiness_check(
-            "extension-version-match",
-            "fail",
-            true,
-            command,
-            "could not read the VS Code extension version",
-            Vec::new(),
-            vec!["editors/vscode/package.json version field unreadable".to_string()],
-        ),
-        (_, None) => readiness_check(
-            "extension-version-match",
-            "fail",
-            true,
-            command,
-            "could not read the crate version",
+            "could not read the workspace package version",
             Vec::new(),
             vec![
                 "workspace package version unreadable via crates/ripr/Cargo.toml -> Cargo.toml [workspace.package]"
                     .to_string(),
             ],
-        ),
+        );
+    };
+
+    let mut problems = Vec::new();
+    if krate != version {
+        problems.push(format!(
+            "workspace package version {krate} != requested release version {version} (bump [workspace.package] version in Cargo.toml)"
+        ));
+    }
+    for editor in editors {
+        match &editor.value {
+            None => problems.push(format!("{} is unreadable", editor.source)),
+            Some(found) if found != version => problems.push(format!(
+                "{} is {found} != requested release version {version}",
+                editor.source
+            )),
+            Some(_) => {}
+        }
+    }
+
+    if problems.is_empty() {
+        readiness_check(
+            "extension-version-match",
+            "pass",
+            true,
+            command,
+            "the workspace package version and both editor manifests match the requested release version",
+            sources,
+            Vec::new(),
+        )
+    } else {
+        readiness_check(
+            "extension-version-match",
+            "fail",
+            true,
+            command,
+            "the release version is not consistently declared; the marketplace publish would fail or republish a stale version",
+            Vec::new(),
+            problems,
+        )
     }
 }
 
@@ -1442,19 +1554,42 @@ fn run_command_path(program: &Path, args: &[&str]) -> Result<CommandResult, Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        PackageVersion, ReleaseReadinessCheck, ReleaseReadinessReport,
-        extension_version_check_from, missing_required_needles, package_version,
-        parse_release_readiness_args, read_crate_version, readiness_check, release_readiness_json,
-        release_readiness_markdown, release_readiness_status,
-        vsix_start_current_repair_command_present,
+        EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
+        ReleaseReadinessCheck, ReleaseReadinessReport, extension_version_check_from,
+        missing_required_needles, package_version, parse_release_readiness_args,
+        read_crate_version, readiness_check, release_readiness_json, release_readiness_markdown,
+        release_readiness_status, vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Build the three editor manifest readings the real check collects.
+    fn editors(package_json: Option<&str>, lock: Option<&str>) -> Vec<EditorVersion> {
+        vec![
+            EditorVersion {
+                source: "editors/vscode/package.json version".to_string(),
+                value: package_json.map(str::to_string),
+            },
+            EditorVersion {
+                source: "editors/vscode/package-lock.json version".to_string(),
+                value: lock.map(str::to_string),
+            },
+            EditorVersion {
+                source: "editors/vscode/package-lock.json packages.\"\".version".to_string(),
+                value: lock.map(str::to_string),
+            },
+        ]
+    }
 
     #[test]
     fn extension_version_check_fails_closed_on_drift() -> Result<(), String> {
-        let matched = extension_version_check_from(Some("0.10.0"), Some("0.10.0"));
+        let matched = extension_version_check_from(
+            "0.10.0",
+            Some("0.10.0"),
+            &editors(Some("0.10.0"), Some("0.10.0")),
+        );
         if matched.status != "pass" || !matched.required {
             return Err(format!(
                 "expected pass+required on match, got {}/{}",
@@ -1466,13 +1601,88 @@ mod tests {
             (None, Some("0.10.0"), "unreadable extension"),
             (Some("0.10.0"), None, "unreadable crate"),
         ] {
-            let check = extension_version_check_from(ext, krate);
+            let check =
+                extension_version_check_from("0.10.0", krate, &editors(ext, Some("0.10.0")));
             if check.status != "fail" || !check.required {
                 return Err(format!(
                     "expected required fail for {label}, got {}/{}",
                     check.status, check.required
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// The defect this check was rewritten to close: everything agreed with the
+    /// crate, nothing agreed with the version being released, and the gate said
+    /// pass. Comparing against `crate_version` alone made the lens vacuous on the
+    /// one run that matters — `--version <next>` before the bump landed.
+    #[test]
+    fn extension_version_check_fails_when_everything_lags_the_requested_release()
+    -> Result<(), String> {
+        let check = extension_version_check_from(
+            "0.11.0",
+            Some("0.10.0"),
+            &editors(Some("0.10.0"), Some("0.10.0")),
+        );
+        if check.status != "fail" || !check.required {
+            return Err(format!(
+                "a release requested at 0.11.0 with everything at 0.10.0 must fail, got {}/{}",
+                check.status, check.required
+            ));
+        }
+        // The report has to name the root cause, not just the symptom: the
+        // workspace version is the thing a human has to bump first.
+        if !check
+            .details
+            .iter()
+            .any(|detail| detail.contains("[workspace.package]"))
+        {
+            return Err(format!(
+                "expected the workspace bump to be named in details, got {:?}",
+                check.details
+            ));
+        }
+        Ok(())
+    }
+
+    /// `npm ci` hard-fails when the lock disagrees with `package.json`, and
+    /// `publish-extension.yml` runs it — so a lock-only lag breaks the publish
+    /// even though `package.json` looks correct. Both places npm keeps the
+    /// version are checked.
+    #[test]
+    fn extension_version_check_catches_a_lock_only_lag() -> Result<(), String> {
+        let check = extension_version_check_from(
+            "0.11.0",
+            Some("0.11.0"),
+            &editors(Some("0.11.0"), Some("0.10.0")),
+        );
+        if check.status != "fail" || !check.required {
+            return Err(format!(
+                "a stale package-lock.json must fail, got {}/{}",
+                check.status, check.required
+            ));
+        }
+        if !check
+            .details
+            .iter()
+            .any(|detail| detail.contains("package-lock.json"))
+        {
+            return Err(format!(
+                "expected package-lock.json to be named, got {:?}",
+                check.details
+            ));
+        }
+        // `package.json` agrees with the request, so it must not be blamed.
+        if check
+            .details
+            .iter()
+            .any(|detail| detail.starts_with("editors/vscode/package.json"))
+        {
+            return Err(format!(
+                "package.json matches and must not be reported, got {:?}",
+                check.details
+            ));
         }
         Ok(())
     }
@@ -1741,6 +1951,32 @@ mod tests {
                 "editors/vscode/package.json version {ext_version} != workspace version {crate_version}"
             ));
         }
+
+        // The lock is a release precondition in its own right: `npm ci` in
+        // publish-extension.yml hard-fails when it disagrees with package.json,
+        // so a lock-only lag breaks the publish while package.json looks fine.
+        let lock_json = root.join("editors/vscode/package-lock.json");
+        let lock_text = fs::read_to_string(&lock_json)
+            .map_err(|err| format!("failed to read {}: {err}", lock_json.display()))?;
+        let lock: Value = serde_json::from_str(&lock_text)
+            .map_err(|err| format!("failed to parse {}: {err}", lock_json.display()))?;
+        for pointer in [vec!["version"], vec!["packages", "", "version"]] {
+            let mut found = &lock;
+            for key in &pointer {
+                found = found
+                    .get(key)
+                    .ok_or_else(|| format!("package-lock.json has no {}", pointer.join(".")))?;
+            }
+            let value = found.as_str().ok_or_else(|| {
+                format!("package-lock.json {} is not a string", pointer.join("."))
+            })?;
+            if value != crate_version {
+                return Err(format!(
+                    "package-lock.json {} is {value} != workspace version {crate_version}",
+                    pointer.join(".")
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1806,11 +2042,76 @@ mod tests {
                 "expected all first-run needles present: {missing:?}"
             ));
         }
+        // The two needle sets are checked against different surfaces, so a
+        // needle in the wrong set silently weakens the gate. `first-pr` is the
+        // deliberate overlap: it is both a first action and a release-loop step.
+        for needle in FIRST_SCREEN_NEEDLES {
+            if RELEASE_LOOP_NEEDLES.contains(needle) && *needle != "ripr first-pr" {
+                return Err(format!(
+                    "{needle} is in both needle sets; decide which surface owns it"
+                ));
+            }
+        }
         let missing_first_pr = missing_required_needles(help, &["ripr first-pr", "--receipts-dir"]);
         if missing_first_pr != ["--receipts-dir".to_string()] {
             return Err(format!("unexpected missing needles: {missing_first_pr:?}"));
         }
         Ok(())
+    }
+
+    /// Bind the needle sets to the help text this repository actually ships.
+    ///
+    /// `installed-command-surface` only runs in the on-demand release lane
+    /// (`policy/ci-lane-whitelist.toml`, `posture = "on_demand_release"`), so
+    /// nothing at PR time notices when a help change stops satisfying it. That is
+    /// exactly how #1613's help rework broke this gate: moving the catalog behind
+    /// `help --all` emptied five of six needles out of `--help`, and every PR
+    /// check stayed green. This test reads the shipped constants directly, so the
+    /// break surfaces in `cargo test` instead of mid-release.
+    #[test]
+    fn repository_help_surfaces_satisfy_command_surface_needles() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no parent directory".to_string())?
+            .to_path_buf();
+        let path = root.join("crates/ripr/src/cli/help/overview.rs");
+        let text = crate::read_text_lossy(&path)
+            .map_err(|err| format!("read {}: {err}", path.display()))?;
+
+        let first_screen = raw_string_const(&text, "HELP")
+            .ok_or_else(|| format!("could not locate HELP in {}", path.display()))?;
+        let full_reference = raw_string_const(&text, "HELP_ALL")
+            .ok_or_else(|| format!("could not locate HELP_ALL in {}", path.display()))?;
+
+        let missing_first = missing_required_needles(first_screen, FIRST_SCREEN_NEEDLES);
+        if !missing_first.is_empty() {
+            return Err(format!(
+                "the `ripr --help` first screen no longer offers {missing_first:?}; \
+                 either restore them or move them to RELEASE_LOOP_NEEDLES"
+            ));
+        }
+
+        let missing_all = missing_required_needles(full_reference, RELEASE_LOOP_NEEDLES);
+        if !missing_all.is_empty() {
+            return Err(format!(
+                "`ripr help --all` no longer documents {missing_all:?}; \
+                 the release gate would fail on this help text"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Extract the body of `const <name>: &str = r#"..."#;` from Rust source.
+    ///
+    /// Matches on `const <name>:` so `HELP` does not also match `HELP_ALL`.
+    fn raw_string_const<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+        let anchor = format!("const {name}:");
+        let after_name = text.find(&anchor)? + anchor.len();
+        let rest = text.get(after_name..)?;
+        let open = rest.find("r#\"")? + "r#\"".len();
+        let body = rest.get(open..)?;
+        let close = body.find("\"#")?;
+        body.get(..close)
     }
 
     #[test]
