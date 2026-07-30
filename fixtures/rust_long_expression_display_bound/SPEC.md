@@ -20,23 +20,35 @@ The diff widens the branch structure from two arms to three, so both the
 
 ## Then
 
-`ripr check` reports the finding, and the human `Changed` block renders
-`before` and `after` **bounded to the display budget with a trailing `…`**
-rather than at full source width. No rendered `before`/`after`/`expr` line in
-either `--format human` or `--format human-full` exceeds the budget plus its
-field label.
+`ripr check --format human-full` reports the finding, and its `Changed` block
+renders `before` and `after` **bounded to the display budget by wrapping across
+continuation lines** rather than at full source width. No rendered
+`before`/`after`/`expr` line exceeds the budget plus its field label.
 
-The complete, untruncated expression remains available in `--format json`,
-which is the lossless surface.
+The fragment stays **complete**: wrapping preserves every character, so
+stripping the label/indent column and rejoining the lines reproduces the
+original expression exactly. Nothing is elided, and no `…` appears.
+
+Completeness is the point rather than a nicety, because this is the only surface
+that carries these values at all: `--format json` serializes `probe.expression`
+only, never `probe.before` or `probe.after`. Truncating here would leave the
+long preimage in no ripr output. This fixture's own `expected/check.json` shows
+that — it contains the short predicate, not the long `before`.
+
+The default `--format human` digest is a different contract: it shows one
+selected finding, collapses and truncates for width, and routes the reader here.
 
 ## Must Not
 
 - Must not render the `before`/`after` expression at full source width; a 400+
   character line inside output whose every other line stays under ~100 makes
   the first read of a finding unusable (#2752).
-- Must not truncate so aggressively that the leading source text no longer
-  identifies which expression changed.
-- Must not drop the field label, the `…` marker, or the one-line-per-field
-  shape of the `Changed` block.
+- Must not elide any part of the expression in the full form — no `…`, no
+  dropped tail. The wrapped block must reconstruct the original exactly.
+- Must not normalize whitespace inside the fragment. A diff whose only delta is
+  whitespace in a string literal (`"a  b"` → `"a b"`) must still render `before`
+  and `after` differently.
+- Must not drop the field label or the continuation indent that aligns wrapped
+  lines under the value.
 - Must not change the classification, evidence, or confidence for this finding:
   the display bound is a rendering concern only.
