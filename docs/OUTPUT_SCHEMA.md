@@ -11886,6 +11886,35 @@ The Markdown report is derived from the same normalized DTO and is advisory
 only. This report never closes issues, merges PRs, selects or qualifies a
 candidate, or publishes release artifacts.
 
+## Release Denominator Ledger Report
+
+`release-denominator` writes a deterministic supplemental denominator report
+from a captured `release_denominator_snapshot`. The JSON report has this
+stable top-level shape:
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "release_denominator_report",
+  "status": "ready | reconcile_required",
+  "source": {},
+  "counts": {},
+  "records": [],
+  "range_digest": "sha256:...",
+  "candidate_tree_digest": "sha256:...",
+  "record_set_digest": "sha256:...",
+  "reconciliation_reasons": [],
+  "next_action": "...",
+  "authority_boundary": "supplemental_denominator_only",
+  "must_not_claim": ["candidate_qualified", "published", "released"]
+}
+```
+
+The validator preserves the ordered first-parent range and requires one
+reviewed record per range commit. Missing, duplicate, out-of-range, wrongly
+ordered, wrong-tree, stale-live, and unresolved-final-decision cases produce
+`reconcile_required`; no report status qualifies or publishes a candidate.
+
 ## Operator Cockpit Report
 
 `cargo xtask operator-cockpit` joins existing repo-local report artifacts into
