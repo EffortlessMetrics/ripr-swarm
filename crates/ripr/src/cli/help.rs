@@ -333,6 +333,7 @@ mod tests {
     #[test]
     fn help_all_mentions_supported_commands() {
         assert!(HELP_ALL.contains("ripr init"));
+        assert!(HELP_ALL.contains("ripr config validate"));
         assert!(HELP_ALL.contains("ripr pilot"));
         assert!(HELP_ALL.contains("ripr outcome"));
         assert!(HELP_ALL.contains("ripr rerun --changed-test"));
@@ -450,7 +451,6 @@ mod tests {
     #[test]
     fn top_level_help_mentions_supported_commands() {
         assert!(HELP.contains("ripr init"));
-        assert!(HELP.contains("ripr config validate"));
         assert!(HELP.contains("ripr pilot"));
         assert!(HELP.contains("ripr outcome"));
         assert!(HELP.contains("ripr rerun --changed-test"));
