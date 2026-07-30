@@ -81,8 +81,9 @@ then status is reconcile_required and the stale decision is not ready.
 
 ## Test Mapping
 
-- `xtask/src/reports/release_scope.rs::tests::accepted_scope_matches_the_execution_commit`
-  — complete Outcome A input verifies the commit and full path inventory.
+- `xtask/src/reports/release_scope.rs::tests::accepted_scope_normalizes_captured_git_observation`
+  — complete Outcome A input normalizes a captured commit and full path
+  inventory; the runnable command performs the live Git verification.
 - `xtask/src/reports/release_scope.rs::tests::a_missing_excluded_path_fails_closed`
   — partial candidate exclusion is rejected.
 - `xtask/src/reports/release_scope.rs::tests::a_changed_commit_path_fails_closed`

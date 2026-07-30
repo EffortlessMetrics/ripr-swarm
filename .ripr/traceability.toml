@@ -6505,7 +6505,7 @@ id = "RIPR-SPEC-0145"
 name = "0.11 candidate execution-surface scope"
 spec = "docs/specs/RIPR-SPEC-0145-release-execution-scope.md"
 tests = [
-  "xtask/src/reports/release_scope.rs::tests::accepted_scope_matches_the_execution_commit",
+  "xtask/src/reports/release_scope.rs::tests::accepted_scope_normalizes_captured_git_observation",
   "xtask/src/reports/release_scope.rs::tests::a_missing_excluded_path_fails_closed",
   "xtask/src/reports/release_scope.rs::tests::a_changed_commit_path_fails_closed",
   "xtask/src/reports/release_scope.rs::tests::closed_execution_issue_fails_closed",

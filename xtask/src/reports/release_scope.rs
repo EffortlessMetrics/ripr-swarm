@@ -147,7 +147,21 @@ fn repository_root() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "xtask manifest has no repository parent".to_string())
 }
 
+#[derive(Clone, Debug)]
+struct GitFacts {
+    observed_candidate_parent_sha: Option<String>,
+    execution_commit_is_present: bool,
+    observed_execution_paths: Vec<String>,
+    preserved_paths_present: bool,
+    execution_commit_parents: Vec<String>,
+    missing_dependent_commits: Vec<String>,
+}
+
 fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> {
+    build_report_with_facts(input, collect_git_facts(input, root))
+}
+
+fn build_report_with_facts(input: &ScopeInput, facts: GitFacts) -> Result<ScopeReport, String> {
     let mut reasons = Vec::new();
     if input.schema_version != SCHEMA_VERSION {
         reasons.push(format!(
@@ -180,42 +194,18 @@ fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> 
         reasons.push("candidate-only scope must preserve development history".to_string());
     }
 
-    let execution_commit_is_present = is_sha(&input.execution_commit)
-        && git_succeeds(
-            root,
-            &[
-                "cat-file",
-                "-e",
-                &format!("{}^{{commit}}", input.execution_commit),
-            ],
-        );
-    if !execution_commit_is_present {
+    if !facts.execution_commit_is_present {
         reasons.push(format!(
             "execution commit `{}` is not present",
             input.execution_commit
         ));
     }
-    for dependent in &input.strictly_dependent_commits {
-        if !is_sha(dependent)
-            || !git_succeeds(
-                root,
-                &["cat-file", "-e", &format!("{}^{{commit}}", dependent)],
-            )
-        {
-            reasons.push(format!("dependent commit `{dependent}` is not present"));
-        }
+    for dependent in &facts.missing_dependent_commits {
+        reasons.push(format!("dependent commit `{dependent}` is not present"));
     }
-
-    let observed_candidate_parent_sha = git_output(
-        root,
-        &[
-            "rev-parse",
-            "--verify",
-            &format!("{}^{{commit}}", input.candidate_parent_ref),
-        ],
-    );
     let candidate_parent_is_current = is_sha(&input.candidate_parent_sha)
-        && observed_candidate_parent_sha
+        && facts
+            .observed_candidate_parent_sha
             .as_deref()
             .is_some_and(|sha| sha == input.candidate_parent_sha);
     if !candidate_parent_is_current {
@@ -225,18 +215,8 @@ fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> 
         ));
     }
 
-    let observed_execution_paths = git_output_lines(
-        root,
-        &[
-            "show",
-            "--format=",
-            "--name-only",
-            "--no-renames",
-            &input.execution_commit,
-        ],
-    );
     let expected_paths = sorted_unique(&input.execution_only_paths);
-    let observed_paths = sorted_unique(&observed_execution_paths);
+    let observed_paths = sorted_unique(&facts.observed_execution_paths);
     if has_duplicates(&input.execution_only_paths) {
         reasons.push("execution-only path inventory contains duplicates".to_string());
     }
@@ -258,31 +238,17 @@ fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> 
         reasons
             .push("candidate exclusion does not cover the complete execution surface".to_string());
     }
-    let preserved_paths_are_outside_exclusion = input.preserved_paths.iter().all(|path| {
-        !exclusion_paths.contains(path)
-            && git_succeeds(
-                root,
-                &[
-                    "cat-file",
-                    "-e",
-                    &format!("{}:{path}", input.candidate_parent_sha),
-                ],
-            )
-    });
+    let preserved_paths_are_outside_exclusion = facts.preserved_paths_present
+        && input
+            .preserved_paths
+            .iter()
+            .all(|path| !exclusion_paths.contains(path));
     if !preserved_paths_are_outside_exclusion {
         reasons.push(
             "preserved provenance/static-assurance paths are missing or excluded".to_string(),
         );
     }
     let candidate_tree_is_not_claimed = true;
-    let execution_commit_parents = git_output(
-        root,
-        &["show", "-s", "--format=%P", &input.execution_commit],
-    )
-    .unwrap_or_default()
-    .split_whitespace()
-    .map(str::to_string)
-    .collect::<Vec<_>>();
     let decision_digest = sha256_json(input)?;
     let status = if reasons.is_empty() {
         "ready"
@@ -303,9 +269,9 @@ fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> 
         source: SourceReport {
             candidate_parent_ref: input.candidate_parent_ref.clone(),
             candidate_parent_sha: input.candidate_parent_sha.clone(),
-            observed_candidate_parent_sha,
+            observed_candidate_parent_sha: facts.observed_candidate_parent_sha,
             execution_commit: input.execution_commit.clone(),
-            execution_commit_parents,
+            execution_commit_parents: facts.execution_commit_parents,
             strictly_dependent_commits: sorted_unique(&input.strictly_dependent_commits),
             execution_only_paths: expected_paths.clone(),
             observed_execution_paths: observed_paths,
@@ -321,7 +287,7 @@ fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> 
         },
         checks: ChecksReport {
             outcome_is_explicit: input.outcome == EXPECTED_OUTCOME,
-            execution_commit_is_present,
+            execution_commit_is_present: facts.execution_commit_is_present,
             execution_paths_match_commit,
             exclusion_is_complete,
             preserved_paths_are_outside_exclusion,
@@ -339,6 +305,74 @@ fn build_report(input: &ScopeInput, root: &Path) -> Result<ScopeReport, String> 
             "release publication",
         ],
     })
+}
+
+fn collect_git_facts(input: &ScopeInput, root: &Path) -> GitFacts {
+    let execution_commit_is_present = is_sha(&input.execution_commit)
+        && git_succeeds(
+            root,
+            &[
+                "cat-file",
+                "-e",
+                &format!("{}^{{commit}}", input.execution_commit),
+            ],
+        );
+    let missing_dependent_commits = input
+        .strictly_dependent_commits
+        .iter()
+        .filter(|dependent| {
+            !is_sha(dependent)
+                || !git_succeeds(
+                    root,
+                    &["cat-file", "-e", &format!("{}^{{commit}}", dependent)],
+                )
+        })
+        .cloned()
+        .collect();
+    let observed_candidate_parent_sha = git_output(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{}^{{commit}}", input.candidate_parent_ref),
+        ],
+    );
+    let observed_execution_paths = git_output_lines(
+        root,
+        &[
+            "show",
+            "--format=",
+            "--name-only",
+            "--no-renames",
+            &input.execution_commit,
+        ],
+    );
+    let preserved_paths_present = input.preserved_paths.iter().all(|path| {
+        git_succeeds(
+            root,
+            &[
+                "cat-file",
+                "-e",
+                &format!("{}:{path}", input.candidate_parent_sha),
+            ],
+        )
+    });
+    let execution_commit_parents = git_output(
+        root,
+        &["show", "-s", "--format=%P", &input.execution_commit],
+    )
+    .unwrap_or_default()
+    .split_whitespace()
+    .map(str::to_string)
+    .collect();
+    GitFacts {
+        observed_candidate_parent_sha,
+        execution_commit_is_present,
+        observed_execution_paths,
+        preserved_paths_present,
+        execution_commit_parents,
+        missing_dependent_commits,
+    }
 }
 
 fn sorted_unique(values: &[String]) -> Vec<String> {
@@ -454,10 +488,21 @@ mod tests {
             .ok_or_else(|| "xtask has no repository parent".to_string())
     }
 
+    fn captured_facts(input: &ScopeInput) -> GitFacts {
+        GitFacts {
+            observed_candidate_parent_sha: Some(input.candidate_parent_sha.clone()),
+            execution_commit_is_present: true,
+            observed_execution_paths: input.execution_only_paths.clone(),
+            preserved_paths_present: true,
+            execution_commit_parents: vec!["captured-parent".to_string()],
+            missing_dependent_commits: Vec::new(),
+        }
+    }
+
     #[test]
-    fn accepted_scope_matches_the_execution_commit() -> Result<(), String> {
+    fn accepted_scope_normalizes_captured_git_observation() -> Result<(), String> {
         let input = fixture()?;
-        let report = build_report(&input, &root()?)?;
+        let report = build_report_with_facts(&input, captured_facts(&input))?;
         if report.status != "ready" {
             return Err(format!(
                 "expected ready report: {:?}",
