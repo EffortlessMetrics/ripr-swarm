@@ -698,8 +698,10 @@ fn config_file_discovery_records_source_metadata() -> Result<(), String> {
         .map_err(|err| format!("write config failed: {err}"))?;
 
     let config = load_for_root(&root)?;
+    let expected_path = fs::canonicalize(&config_path)
+        .map_err(|err| format!("canonicalize config failed: {err}"))?;
 
-    assert_eq!(config.source_path(), Some(config_path.as_path()));
+    assert_eq!(config.source_path(), Some(expected_path.as_path()));
     assert_eq!(config.source_text(), Some("[analysis]\nmode = \"fast\"\n"));
     assert_eq!(config.analysis().mode(), Some(&Mode::Fast));
     Ok(())

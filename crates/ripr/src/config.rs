@@ -122,7 +122,7 @@ enabled = ["rust"]
 fn discover_config_path(root: &Path) -> Option<PathBuf> {
     let direct = root.join(CONFIG_FILE_NAME);
     if direct.exists() {
-        return Some(direct);
+        return std::fs::canonicalize(direct).ok();
     }
 
     let search_root = std::fs::canonicalize(root).ok()?;
@@ -147,6 +147,9 @@ fn is_repository_boundary(directory: &Path) -> bool {
     let Ok(contents) = std::fs::read_to_string(manifest) else {
         return false;
     };
+    if !contents.contains("workspace") {
+        return false;
+    }
     let Ok(document) = toml::from_str::<toml::Value>(&contents) else {
         return false;
     };
