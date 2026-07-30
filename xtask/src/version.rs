@@ -345,11 +345,13 @@ fn unquote(value: &str) -> Option<&str> {
 mod tests {
     use super::{
         EXTENSION_LOCKFILE, EXTENSION_MANIFEST, WORKSPACE_MANIFEST, bump_version,
-        json_root_version, lockfile_versions, prepare_update, replace_json_version_lines,
-        replace_section_version, section_version, validate_version_input, verify_updated_json,
-        verify_updated_lockfile,
+        cargo_metadata_validation, format_write_failure, json_root_version, lockfile_versions,
+        prepare_update, replace_json_version_lines, replace_section_version, restore_files,
+        section_version, validate_version_input, verify_updated_json, verify_updated_lockfile,
     };
     use std::fs;
+    use std::io;
+    use std::path::Path;
 
     #[test]
     fn prepares_all_release_version_surfaces_without_reformatting_json() -> Result<(), String> {
@@ -540,5 +542,114 @@ mod tests {
             return Err("TOML comment or quote style was not preserved".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_empty_and_repeated_release_version_inputs() -> Result<(), String> {
+        if bump_version(&[]).is_ok() {
+            return Err("missing bump-version argument was accepted".to_string());
+        }
+        if prepare_update(
+            "[workspace.package]\nversion = \"0.10.0\"\n",
+            "{\"version\":\"0.10.0\"}",
+            "{\"version\":\"0.10.0\",\"packages\":{\"\":{\"version\":\"0.10.0\"}}}",
+            "0.10.0",
+        )
+        .is_ok()
+        {
+            return Err("same release version was accepted".to_string());
+        }
+
+        for workspace in [
+            "[workspace.package]\nversion = \"\"\n",
+            "[workspace]\nname = \"missing\"\n",
+        ] {
+            if section_version(workspace, "workspace.package").is_ok() {
+                return Err(format!(
+                    "invalid workspace version was accepted: {workspace:?}"
+                ));
+            }
+        }
+        for workspace in [
+            "[workspace.package]\nversion\n",
+            "[workspace.package]\nversion = bare\n",
+        ] {
+            if replace_section_version(workspace, "workspace.package", "0.11.0").is_ok() {
+                return Err(format!(
+                    "invalid workspace replacement was accepted: {workspace:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reports_updated_surface_mismatches_and_rollback_failures() -> Result<(), String> {
+        for (result, expected) in [
+            (
+                verify_updated_json("{\"version\":\"0.10.0\"}", "package.json", "0.11.0", 1),
+                "did not update",
+            ),
+            (
+                verify_updated_json("{\"version\":\"0.11.0\"}", "package.json", "0.11.0", 2),
+                "fewer than 2",
+            ),
+            (
+                verify_updated_lockfile(
+                    "{\"version\":\"0.10.0\",\"packages\":{\"\":{\"version\":\"0.10.0\"}}}",
+                    "0.11.0",
+                ),
+                "did not update",
+            ),
+        ] {
+            let error = result
+                .err()
+                .ok_or_else(|| format!("mismatch was accepted; expected {expected}"))?;
+            if !error.contains(expected) {
+                return Err(format!("unexpected mismatch error: {error}"));
+            }
+        }
+
+        let root = crate::tests::temp_dir("version-rollback");
+        let existing = root.join("existing.txt");
+        fs::write(&existing, "new").map_err(|error| error.to_string())?;
+        let original = "old".to_string();
+        if !restore_files(&[existing.as_path()], &[&original]).is_empty() {
+            return Err("successful rollback reported a failure".to_string());
+        }
+        if fs::read_to_string(&existing).map_err(|error| error.to_string())? != "old" {
+            return Err("successful rollback did not restore the original".to_string());
+        }
+
+        let missing_path = root.join("missing").join("file.txt");
+        let rollback_error = restore_files(&[missing_path.as_path()], &[&original]);
+        if rollback_error.is_empty() {
+            return Err("failed rollback did not report an error".to_string());
+        }
+        let write_error = format_write_failure(
+            Path::new("Cargo.toml"),
+            io::Error::other("synthetic write failure"),
+            rollback_error,
+        );
+        if !write_error.contains("synthetic write failure") {
+            return Err(format!("write failure omitted its cause: {write_error}"));
+        }
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn reports_cargo_metadata_failure_after_spawn() -> Result<(), String> {
+        crate::tests::with_temp_cwd("version-metadata-failure", |root| {
+            fs::write(root.join("Cargo.toml"), "[workspace\n")
+                .map_err(|error| error.to_string())?;
+            let error = cargo_metadata_validation()
+                .err()
+                .ok_or_else(|| "invalid Cargo manifest was accepted".to_string())?;
+            if error.is_empty() {
+                return Err("Cargo metadata failure had no diagnostic".to_string());
+            }
+            Ok(())
+        })
     }
 }
