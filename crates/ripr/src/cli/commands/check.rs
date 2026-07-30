@@ -475,7 +475,10 @@ fn render_check_gap_ledger_badge(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{args, copy_sample_workspace_to_temp, unique_repo_relative_test_dir};
+    use super::super::tests::{
+        args, copy_sample_workspace_to_temp, repo_root, unique_command_test_dir,
+        unique_repo_relative_test_dir,
+    };
     use super::*;
 
     #[test]
@@ -535,7 +538,15 @@ mod tests {
 
     #[test]
     fn workspace_root_walk_ignores_a_package_only_manifest() -> Result<(), String> {
-        let root = unique_repo_relative_test_dir("workspace-root-package");
+        let workspace = std::fs::canonicalize(repo_root()).map_err(|error| error.to_string())?;
+        let candidate = unique_command_test_dir("workspace-root-package");
+        let parent = workspace
+            .parent()
+            .ok_or_else(|| "workspace root has no parent".to_string())?;
+        let name = candidate
+            .file_name()
+            .ok_or_else(|| "temporary fixture has no file name".to_string())?;
+        let root = parent.join(name);
         let nested = root.join("src");
         std::fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
         std::fs::write(
