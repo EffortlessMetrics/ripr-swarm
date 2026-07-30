@@ -2,8 +2,8 @@
   "schema_version": "0.1",
   "kind": "release_execution_scope",
   "outcome": "preserve_accepted_0_11",
-  "candidate_parent_ref": "origin/main",
-  "candidate_parent_sha": "a98189d5240d03b14ac68b738744ad28790779fe",
+  "candidate_parent_ref": "c38ad7420df0381b45d49f6e95416d8aacb3a1bd",
+  "candidate_parent_sha": "c38ad7420df0381b45d49f6e95416d8aacb3a1bd",
   "execution_commit": "365f7d61e27fd441e997e6e17e3f3e28859a3964",
   "strictly_dependent_commits": [],
   "execution_only_paths": [

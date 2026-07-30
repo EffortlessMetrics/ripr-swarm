@@ -6509,6 +6509,7 @@ tests = [
   "xtask/src/reports/release_scope.rs::tests::a_missing_excluded_path_fails_closed",
   "xtask/src/reports/release_scope.rs::tests::a_changed_commit_path_fails_closed",
   "xtask/src/reports/release_scope.rs::tests::closed_execution_issue_fails_closed",
+  "xtask/src/reports/release_scope.rs::tests::duplicate_strictly_dependent_commits_fail_closed",
   "xtask/src/reports/release_scope.rs::tests::report_json_has_an_explicit_authority_boundary",
 ]
 fixtures = [
