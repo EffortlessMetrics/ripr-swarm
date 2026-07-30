@@ -1053,14 +1053,14 @@ proptest! {
             Ok(serialized) => serialized,
             Err(error) => {
                 prop_assert!(false, "valid raw config must serialize: {error}");
-                return;
+                return Ok(());
             }
         };
         let reparsed = match toml::from_str::<RawConfig>(&serialized) {
             Ok(reparsed) => reparsed,
             Err(error) => {
                 prop_assert!(false, "serialized raw config must deserialize: {error}");
-                return;
+                return Ok(());
             }
         };
 
