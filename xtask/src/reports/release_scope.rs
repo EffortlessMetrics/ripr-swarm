@@ -595,9 +595,6 @@ mod tests {
         ];
         let report = build_report(&input, &root()?)?;
         if report.status != "reconcile_required"
-            || !report
-                .reconciliation_reasons
-                .iter()
             || !report.reconciliation_reasons.iter().any(|reason| {
                 reason.contains("strictly dependent commits inventory contains duplicates")
             })
