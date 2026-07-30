@@ -700,10 +700,20 @@ fn config_file_discovery_records_source_metadata() -> Result<(), String> {
     let config = load_for_root(&root)?;
     let expected_path = fs::canonicalize(&config_path)
         .map_err(|err| format!("canonicalize config failed: {err}"))?;
+    let source_path = config.source_path().map(Path::to_path_buf);
+    let source_text = config.source_text().map(str::to_owned);
+    let mode = config.analysis().mode().cloned();
+    fs::remove_dir_all(&root).map_err(|err| format!("remove present fixture failed: {err}"))?;
 
-    assert_eq!(config.source_path(), Some(expected_path.as_path()));
-    assert_eq!(config.source_text(), Some("[analysis]\nmode = \"fast\"\n"));
-    assert_eq!(config.analysis().mode(), Some(&Mode::Fast));
+    if source_path != Some(expected_path) {
+        return Err(format!("unexpected source path: {source_path:?}"));
+    }
+    if source_text.as_deref() != Some("[analysis]\nmode = \"fast\"\n") {
+        return Err(format!("unexpected source text: {source_text:?}"));
+    }
+    if mode != Some(Mode::Fast) {
+        return Err(format!("unexpected config mode: {mode:?}"));
+    }
     Ok(())
 }
 
