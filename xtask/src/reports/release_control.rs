@@ -19,6 +19,7 @@ const AUTHORITY_ISSUE: u64 = 2379;
 const JSON_FILE: &str = "release-control.json";
 const MARKDOWN_FILE: &str = "release-control.md";
 const LIVE_COLLECTION_TIMEOUT: Duration = Duration::from_secs(30);
+const LIVE_OPEN_PR_LIMIT: usize = 100;
 
 const DISPOSITIONS: &[&str] = &[
     "release_required",
@@ -193,27 +194,35 @@ where
             "--state",
             "open",
             "--limit",
-            "100",
+            "101",
             "--json",
             "number,title,state,isDraft,headRefOid,baseRefName",
         ],
         "live open-PR collection",
     ) {
         Ok(value) => match serde_json::from_str::<Vec<LivePr>>(&value) {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|pr| SnapshotPr {
-                    number: pr.number,
-                    title: pr.title,
-                    state: pr.state.to_ascii_lowercase(),
-                    is_draft: pr.is_draft,
-                    head_sha: pr.head_sha,
-                    base_ref: pr.base_ref,
-                    linked_issue_refs: Vec::new(),
-                    release_disposition: None,
-                    disposition_reason: None,
-                })
-                .collect(),
+            Ok(rows) => {
+                if rows.len() > LIVE_OPEN_PR_LIMIT {
+                    open_prs_complete = false;
+                    collector_errors.push(format!(
+                        "live open-PR collection exceeded the bounded {LIVE_OPEN_PR_LIMIT}-row inventory"
+                    ));
+                }
+                rows.into_iter()
+                    .take(LIVE_OPEN_PR_LIMIT)
+                    .map(|pr| SnapshotPr {
+                        number: pr.number,
+                        title: pr.title,
+                        state: pr.state.to_ascii_lowercase(),
+                        is_draft: pr.is_draft,
+                        head_sha: pr.head_sha,
+                        base_ref: pr.base_ref,
+                        linked_issue_refs: Vec::new(),
+                        release_disposition: None,
+                        disposition_reason: None,
+                    })
+                    .collect()
+            }
             Err(error) => {
                 open_prs_complete = false;
                 collector_errors.push(format!(
@@ -644,9 +653,9 @@ fn markdown_cell(value: &str) -> String {
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::{
-        ReleaseControlInput, Snapshot, capture_live_snapshot_with, interpret_live_output,
-        live_output, normalize_snapshot, normalize_snapshot_with_origin, parse_args, read_snapshot,
-        report_json, report_markdown,
+        LIVE_OPEN_PR_LIMIT, ReleaseControlInput, Snapshot, capture_live_snapshot_with,
+        interpret_live_output, live_output, normalize_snapshot, normalize_snapshot_with_origin,
+        parse_args, read_snapshot, report_json, report_markdown,
     };
     use serde_json::{Value, json};
     use std::collections::VecDeque;
@@ -1070,6 +1079,56 @@ mod tests {
                 && command_failed.source.worktree_inventory_complete,
             "collector command failures were not recorded",
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn live_open_pr_bound_is_disclosed_and_fails_closed() -> Result<(), String> {
+        let main_sha = "cccccccccccccccccccccccccccccccccccccccc";
+        let rows = (1..=101)
+            .map(|number| {
+                format!(
+                    r#"{{"number":{number},"title":"live PR {number}","state":"OPEN","isDraft":false,"headRefOid":"{number:040x}","baseRefName":"main"}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut outputs = VecDeque::from(vec![
+            Ok(format!("{main_sha}\n")),
+            Ok(format!("[{rows}]")),
+            Ok(r#"{"state":"OPEN","body":"release graph"}"#.to_string()),
+            Ok("worktree repo-root\n".to_string()),
+        ]);
+        let mut requested_sentinel_limit = false;
+        let live = capture_live_snapshot_with(|program, args, _| {
+            if program == "gh"
+                && args
+                    .iter()
+                    .position(|arg| *arg == "--limit")
+                    .is_some_and(|index| args.get(index + 1).copied() == Some("101"))
+            {
+                requested_sentinel_limit = true;
+            }
+            outputs
+                .pop_front()
+                .ok_or_else(|| "test output queue exhausted".to_string())?
+        });
+        if !requested_sentinel_limit {
+            return Err("live collector did not request the sentinel PR row".to_string());
+        }
+        if live.source.open_prs_complete || live.prs.len() != LIVE_OPEN_PR_LIMIT {
+            return Err("bounded live PR inventory was not marked incomplete".to_string());
+        }
+        if !live
+            .collector_errors
+            .iter()
+            .any(|error| error.contains("exceeded the bounded 100-row inventory"))
+        {
+            return Err("live PR truncation lost its reconciliation reason".to_string());
+        }
+        if normalize_snapshot_with_origin(live, true).status != "reconcile_required" {
+            return Err("truncated live PR inventory must remain fail-closed".to_string());
+        }
         Ok(())
     }
 

@@ -93,27 +93,105 @@ reconciliation-required state or any per-PR disposition.
 
 ## Required Evidence
 
-- `xtask/src/reports/release_control.rs` owns snapshot parsing, bounded live
-  collection, fail-closed normalization, and the shared JSON/Markdown DTO
-  projection.
-- `fixtures/release_control/complete.json` and
-  `fixtures/release_control/reconcile-required.json` cover current complete
-  and stale/incomplete authority inputs.
-- `cargo xtask check-fixture-contracts` and `cargo xtask check-output-contracts`
-  validate the fixture and output shape.
-- The focused test corpus covers deterministic ordering, malformed authority
-  and PR fields, live collector success/failure, bounded subprocess errors,
-  and the explicit claim boundary.
+- `xtask/src/reports/release_control.rs` owns the captured-input schema,
+  bounded live collectors, deterministic normalization, shared JSON/Markdown
+  projection, and fail-closed merge eligibility.
+- `fixtures/release_control/complete.json` proves a complete current snapshot
+  with both required and held rows; `fixtures/release_control/reconcile-required.json`
+  proves stale authority cannot produce eligibility.
+- `xtask/src/command.rs` and `xtask/src/dispatch.rs` expose the report as a
+  report-only command, while `xtask/src/fixture_contracts/mod.rs` validates the
+  fixture corpus shape.
+- `.ripr/traceability.toml` links this specification to the focused tests,
+  fixtures, implementation, and report outputs.
+
+## Non-Goals
+
+- no singleton active-goal restoration or automatic backlog priority;
+- no candidate denominator, exact-candidate qualification, package proof,
+  source handoff, version bump, tag, publication, signing, or marketplace;
+- no issue closure, merge queue, branch operation, or GitHub mutation;
+- no replacement for #2379, #1609, #1704, or #1706.
 
 ## Acceptance Examples
 
-- fixed captured inputs produce byte-stable normalized JSON and Markdown;
-- PR input order cannot change the normalized report;
-- unrelated work remains visible and non-mergeable;
-- live collection inventories current main/open PR/#2379 inputs;
-- missing or stale authority never becomes merge eligibility;
-- the report preserves an explicit claim boundary and next action;
-- the command performs no external state mutation.
+### Complete captured input is deterministic
+
+```text
+Given a current captured snapshot with complete authority and explicit PR
+dispositions,
+when `cargo xtask release-control --input` replays it,
+then the JSON and Markdown reports are normalized in PR-number order and only
+non-draft `release_required` rows are merge-eligible.
+```
+
+### Stale authority fails closed
+
+```text
+Given a snapshot whose authority main SHA or completeness fields are stale,
+when the snapshot is normalized,
+then the report is `reconcile_required` and every PR remains non-mergeable.
+```
+
+### Live collection discloses missing authority
+
+```text
+Given the bounded live collector can observe main, open PRs, and #2379,
+when portfolio or active-claim authority is not supplied by that collector,
+then the report remains `reconcile_required` and names the missing inputs.
+```
+
+### An over-bound open-PR inventory fails closed
+
+```text
+Given the live open-PR inventory reaches its bounded collection limit,
+when the sentinel row shows that more rows exist,
+then the inventory is marked incomplete and no row can become merge-eligible.
+```
+
+## Test Mapping
+
+- `xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible`
+  — complete captured input applies the disposition and draft rules.
+- `xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed`
+  — missing PR authority clears all eligibility.
+- `xtask/src/reports/release_control.rs::tests::input_order_does_not_change_normalized_output`
+  — JSON and Markdown are stable under input reordering.
+- `xtask/src/reports/release_control.rs::tests::stale_authority_cannot_be_merge_eligible`
+  — stale source identity cannot produce eligibility.
+- `xtask/src/reports/release_control.rs::tests::unsupported_live_mode_cannot_be_merge_eligible`
+  — captured replay cannot impersonate the live collector.
+- `xtask/src/reports/release_control.rs::tests::collector_error_fails_closed_and_clears_eligibility`
+  — collector failures remain visible and non-mergeable.
+- `xtask/src/reports/release_control.rs::tests::non_main_base_cannot_be_merge_eligible`
+  — PRs targeting a non-release base are rejected.
+- `xtask/src/reports/release_control.rs::tests::bounded_live_collector_normalizes_success_and_failure_inputs`
+  — live command outputs and bounded failures are normalized explicitly.
+- `xtask/src/reports/release_control.rs::tests::live_open_pr_bound_is_disclosed_and_fails_closed`
+  — the sentinel row prevents a truncated open-PR inventory from appearing
+  complete.
+
+## Implementation Mapping
+
+- `xtask/src/reports/release_control.rs` — snapshot types, live `git`/`gh`
+  adapters, validation, disposition normalization, and report renderers.
+- `xtask/src/command.rs` — command parsing and report-only command catalog
+  entries.
+- `xtask/src/dispatch.rs` — dispatch to the release-control report.
+- `xtask/src/fixture_contracts/mod.rs` — release-control fixture contract
+  validation.
+- `fixtures/release_control/` — complete and reconcile-required captured
+  inputs plus their fixture specification.
+- `docs/OUTPUT_SCHEMA.md` — JSON/Markdown output shape and claim boundary.
+
+## Metrics
+
+- Focused release-control tests cover captured normalization, stale and
+  malformed inputs, bounded live collection, and output escaping.
+- `cargo xtask check-fixture-contracts` and `cargo xtask check-output-contracts`
+  validate the fixture and report contracts.
+- The report is advisory and does not publish a readiness, merge, or release
+  metric; no product support-tier metric changes in this slice.
 
 ## Proof
 
@@ -126,53 +204,9 @@ cargo xtask check-fixture-contracts
 cargo xtask check-pr
 ```
 
-## Non-Goals
-
-- no singleton active-goal authority or automatic backlog priority;
-- no candidate denominator, exact-candidate qualification, package proof,
-  source handoff, version bump, tag, publication, signing, or marketplace;
-- no issue closure, merge queue, branch operation, or GitHub mutation;
-- no replacement for #2379, #1609, #1704, or #1706.
-
 ## Claim boundary
 
 This spec proves only that a captured input or bounded live observation is
 normalized into an explicit, deterministic, fail-closed disposition report. It
 does not prove that a PR is correct, that a release candidate is qualified, or
 that a merge is approved.
-
-## Test Mapping
-
-- `xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible`
-  — complete authority input produces one eligible required row and keeps
-  held work visible.
-- `xtask/src/reports/release_control.rs::tests::input_order_does_not_change_normalized_output`
-  — JSON and Markdown projections are deterministic under PR reordering.
-- `xtask/src/reports/release_control.rs::tests::malformed_source_and_pr_fields_all_fail_closed`
-  — malformed authority and PR fields produce reconciliation reasons and no
-  eligible rows.
-- `xtask/src/reports/release_control.rs::tests::bounded_live_collector_normalizes_success_and_failure_inputs`
-  — bounded live collection records successful and failed adapter inputs.
-- `xtask/src/reports/release_control.rs::tests::live_command_and_result_interpretation_are_bounded`
-  — subprocess success, failure, missing program, timeout, and missing status
-  retain actionable diagnostics.
-
-## Implementation Mapping
-
-- `xtask/src/command.rs`, `xtask/src/dispatch.rs`, and
-  `xtask/src/reports/mod.rs` expose the report-only command.
-- `xtask/src/reports/release_control.rs` implements normalization and output.
-- `xtask/src/fixture_contracts/mod.rs` validates the release-control fixture
-  corpus.
-- `docs/OUTPUT_SCHEMA.md` documents the JSON and Markdown report shape.
-- `plans/release-control-0-11/implementation-plan.md` sequences the dependent
-  execution-scope, denominator, and candidate-bundle slices.
-
-## Metrics
-
-- `status` counts ready versus reconciliation-required snapshots.
-- `prs[].merge_eligible` counts rows admitted by this temporary lens only.
-- `source.open_prs_complete`, `source.active_claims_complete`, and
-  `source.worktree_inventory_complete` preserve completeness denominators.
-- `reconciliation_reasons` and `next_action` make missing authority evidence
-  actionable without converting unknown state into a release claim.

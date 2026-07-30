@@ -7676,6 +7676,8 @@ tests = [
   "xtask/src/reports/release_control.rs::tests::live_origin_is_required_before_live_snapshot_can_be_ready",
   "xtask/src/reports/release_control.rs::tests::collector_error_fails_closed_and_clears_eligibility",
   "xtask/src/reports/release_control.rs::tests::non_main_base_cannot_be_merge_eligible",
+  "xtask/src/reports/release_control.rs::tests::bounded_live_collector_normalizes_success_and_failure_inputs",
+  "xtask/src/reports/release_control.rs::tests::live_open_pr_bound_is_disclosed_and_fails_closed",
 ]
 fixtures = [
   "fixtures/release_control/complete.json",
@@ -7685,9 +7687,13 @@ code = [
   "xtask/src/reports/release_control.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
+  "xtask/src/fixture_contracts/mod.rs",
 ]
 outputs = [
-  "target/ripr/reports/release-control.json",
-  "target/ripr/reports/release-control.md",
+  "docs/specs/RIPR-SPEC-0144-release-control-lens.md",
+  "docs/OUTPUT_SCHEMA.md",
 ]
-metrics = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
