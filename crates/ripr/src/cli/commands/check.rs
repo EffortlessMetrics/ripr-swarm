@@ -525,13 +525,16 @@ mod tests {
         let resolved = resolve_workspace_root(&nested)?
             .ok_or_else(|| "expected a workspace root from the nested path".to_string())?;
         let expected = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
-        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-        if resolved != expected {
-            return Err(format!(
+        let mismatch = (resolved != expected).then(|| {
+            format!(
                 "resolved workspace root {} differs from expected {}",
                 resolved.display(),
                 expected.display()
-            ));
+            )
+        });
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        if let Some(error) = mismatch {
+            return Err(error);
         }
         Ok(())
     }
@@ -556,8 +559,9 @@ mod tests {
         .map_err(|error| error.to_string())?;
 
         let resolved = resolve_workspace_root(&nested)?;
+        let found_workspace = resolved.is_some();
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-        if resolved.is_some() {
+        if found_workspace {
             return Err("package-only manifest must not be treated as a workspace".to_string());
         }
         Ok(())
