@@ -10,6 +10,48 @@ import {
 
 let controller: RiprClientController | undefined;
 let coalescedStart: Promise<void> | undefined;
+let coalescedRestart: Promise<void> | undefined;
+let coalescedStop: Promise<void> | undefined;
+
+const START_SETTLE_BUDGET_MS = 30_000;
+
+type LifecycleController = Pick<RiprClientController, 'start' | 'stop'>;
+
+async function waitForLifecyclePromise(
+  operation: Promise<void>,
+  budgetMs: number,
+  description: string
+): Promise<void> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(
+        new Error(
+          `${description} did not settle within ${budgetMs}ms; refusing to stop or replace a client whose startup state is unresolved.`
+        )
+      );
+    }, budgetMs);
+  });
+  try {
+    await Promise.race([operation, timeout]);
+  } finally {
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+async function waitForInFlightStart(startSettleBudgetMs: number): Promise<void> {
+  const start = coalescedStart;
+  if (!start) {
+    return;
+  }
+  await waitForLifecyclePromise(
+    start.catch(() => undefined),
+    startSettleBudgetMs,
+    'ripr server startup'
+  );
+}
 
 export async function startServerOnce(
   currentController: Pick<RiprClientController, 'start'> | undefined
@@ -33,6 +75,63 @@ export async function startServerOnce(
   }
 }
 
+export async function restartServerOnce(
+  currentController: LifecycleController | undefined,
+  startSettleBudgetMs = START_SETTLE_BUDGET_MS
+): Promise<void> {
+  if (!currentController) {
+    return;
+  }
+  if (coalescedRestart) {
+    await coalescedRestart;
+    return;
+  }
+
+  const restart = (async () => {
+    await waitForInFlightStart(startSettleBudgetMs);
+    await currentController.stop();
+    await startServerOnce(currentController);
+  })();
+  coalescedRestart = restart;
+  try {
+    await restart;
+  } finally {
+    if (coalescedRestart === restart) {
+      coalescedRestart = undefined;
+    }
+  }
+}
+
+export async function stopServerOnce(
+  currentController: LifecycleController | undefined,
+  startSettleBudgetMs = START_SETTLE_BUDGET_MS
+): Promise<void> {
+  if (!currentController) {
+    return;
+  }
+  if (coalescedStop) {
+    await coalescedStop;
+    return;
+  }
+
+  const stop = (async () => {
+    const restart = coalescedRestart;
+    if (restart) {
+      await waitForLifecyclePromise(restart, startSettleBudgetMs, 'ripr server restart');
+    }
+    await waitForInFlightStart(startSettleBudgetMs);
+    await currentController.stop();
+  })();
+  coalescedStop = stop;
+  try {
+    await stop;
+  } finally {
+    if (coalescedStop === stop) {
+      coalescedStop = undefined;
+    }
+  }
+}
+
 export async function startAfterWorkspaceTrust(
   currentController: Pick<RiprClientController, 'start'> | undefined
 ): Promise<void> {
@@ -47,7 +146,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     output,
     status,
-    vscode.commands.registerCommand('ripr.restartServer', async () => controller?.restart()),
+    vscode.commands.registerCommand('ripr.restartServer', async () => {
+      try {
+        await restartServerOnce(controller);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        output.appendLine(`ripr server restart failed: ${message}`);
+        void vscode.window.showErrorMessage(
+          'ripr could not restart the server while startup was unresolved. Open ripr: Show Output, then retry.'
+        );
+      }
+    }),
     vscode.commands.registerCommand('ripr.refreshDiagnostics', async () =>
       controller?.refreshDiagnostics()
     ),
@@ -208,7 +317,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (zeroToFolderTransition && !controller?.isRunning()) {
         output.appendLine('ripr workspace folder added; starting server session.');
         try {
-          await controller?.start();
+          await startServerOnce(controller);
         } catch (error) {
           output.appendLine(`ripr server start after workspace folder added failed: ${String(error)}`);
         }
@@ -221,7 +330,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         event.affectsConfiguration('ripr.check') ||
         event.affectsConfiguration('ripr.baseRef')
       ) {
-        await controller?.restart();
+        try {
+          await restartServerOnce(controller);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          output.appendLine(`ripr server restart after configuration change failed: ${message}`);
+        }
         return;
       }
       if (event.affectsConfiguration('ripr.trace')) {
@@ -238,6 +352,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
-  await controller?.stop();
+  const currentController = controller;
   controller = undefined;
+  await stopServerOnce(currentController);
 }
