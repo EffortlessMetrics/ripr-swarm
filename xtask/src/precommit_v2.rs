@@ -46,9 +46,12 @@ struct PrecommitReport {
 
 pub(super) fn run() -> Result<(), String> {
     let root = repository_root()?;
-    let merge_base = git_output(&root, &["merge-base", "origin/main", "HEAD"])?
-        .trim()
-        .to_string();
+    let merge_base_args = vec![
+        "merge-base".to_string(),
+        "origin/main".to_string(),
+        "HEAD".to_string(),
+    ];
+    let merge_base = git_output(&root, &merge_base_args)?.trim().to_string();
     if merge_base.is_empty() {
         return Err("precommit change discovery returned an empty merge base".to_string());
     }
@@ -86,11 +89,20 @@ pub(super) fn run() -> Result<(), String> {
     }
     record_pass(&mut report, "existing repository policy precommit");
 
-    for args in [
-        vec!["diff", "--check", &format!("{}...HEAD", report.merge_base)],
-        vec!["diff", "--cached", "--check"],
-        vec!["diff", "--check"],
-    ] {
+    let diff_checks = [
+        vec![
+            "diff".to_string(),
+            "--check".to_string(),
+            format!("{}...HEAD", report.merge_base),
+        ],
+        vec![
+            "diff".to_string(),
+            "--cached".to_string(),
+            "--check".to_string(),
+        ],
+        vec!["diff".to_string(), "--check".to_string()],
+    ];
+    for args in diff_checks {
         let owned = git_args(&root, &args);
         if let Err(error) = crate::run::run_owned("git", &owned) {
             record_failure(&mut report, &format_command("git", &owned), &error);
@@ -148,12 +160,31 @@ fn repository_root() -> Result<PathBuf, String> {
 
 fn discover_changed_files(root: &Path, merge_base: &str) -> Result<Vec<String>, String> {
     let mut paths = BTreeSet::new();
-    for args in [
-        vec!["diff", "--name-only", "--diff-filter=ACMRD", &format!("{merge_base}...HEAD")],
-        vec!["diff", "--name-only", "--cached", "--diff-filter=ACMRD"],
-        vec!["diff", "--name-only", "--diff-filter=ACMRD"],
-        vec!["ls-files", "--others", "--exclude-standard"],
-    ] {
+    let commands = [
+        vec![
+            "diff".to_string(),
+            "--name-only".to_string(),
+            "--diff-filter=ACMRD".to_string(),
+            format!("{merge_base}...HEAD"),
+        ],
+        vec![
+            "diff".to_string(),
+            "--name-only".to_string(),
+            "--cached".to_string(),
+            "--diff-filter=ACMRD".to_string(),
+        ],
+        vec![
+            "diff".to_string(),
+            "--name-only".to_string(),
+            "--diff-filter=ACMRD".to_string(),
+        ],
+        vec![
+            "ls-files".to_string(),
+            "--others".to_string(),
+            "--exclude-standard".to_string(),
+        ],
+    ];
+    for args in commands {
         let output = git_output(root, &args)?;
         for line in output.lines() {
             let normalized = normalize_repo_path(line);
@@ -165,13 +196,13 @@ fn discover_changed_files(root: &Path, merge_base: &str) -> Result<Vec<String>, 
     Ok(paths.into_iter().collect())
 }
 
-fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+fn git_output(root: &Path, args: &[String]) -> Result<String, String> {
     crate::run::run_output_owned("git", &git_args(root, args))
 }
 
-fn git_args(root: &Path, args: &[&str]) -> Vec<String> {
+fn git_args(root: &Path, args: &[String]) -> Vec<String> {
     let mut owned = vec!["-C".to_string(), root.display().to_string()];
-    owned.extend(args.iter().map(|value| (*value).to_string()));
+    owned.extend(args.iter().cloned());
     owned
 }
 
@@ -401,7 +432,10 @@ mod tests {
                 relative_root: "xtask".to_string(),
             },
         ];
-        assert_eq!(select_impacted_packages(&changed, &roots), vec!["ripr"]);
+        assert_eq!(
+            select_impacted_packages(&changed, &roots),
+            vec!["ripr".to_string()]
+        );
         assert!(!needs_workspace_clippy(&changed));
     }
 
