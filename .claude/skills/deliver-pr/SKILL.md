@@ -66,6 +66,6 @@ Use focused subagents for repository mapping, correctness, test-oracle, security
 - `PR_CLOSED_WITH_DISPOSITION`
 - `EXTERNAL_BLOCKER`
 - `NEEDS_OWNER_DECISION`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
 
 Do not poll unchanged GitHub state. Yield the PR to the outer goal loop while remote systems own the next transition.
