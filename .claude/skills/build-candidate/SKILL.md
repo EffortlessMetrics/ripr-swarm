@@ -12,7 +12,7 @@ One candidate implements the claim, carries discriminating evidence, extends the
 1. Confirm the controlling issue, claim boundary, current branch/worktree, and governing sources.
 2. Read the owning production path and nearby proof before editing.
 3. Implement the smallest coherent change that satisfies the claim. Extend existing authorities instead of creating another validator, owner, or route.
-4. Run focused proof early. Classify failures as source, proof/oracle, instrument, environment, or not proven before choosing the repair.
+4. Run focused proof early. Classify failures as source, proof/oracle, instrument, environment, or not established before choosing the repair.
 5. Improve the test suite:
    - add discriminating negative or alternate cases;
    - validate fixture setup and intended subject;
@@ -55,4 +55,4 @@ Make and document reasonable reversible engineering decisions. Escalate only whe
 - `INSTRUMENT_FAILURE`
 - `INFRASTRUCTURE_FAILURE`
 - `EXTERNAL_BLOCKER`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
