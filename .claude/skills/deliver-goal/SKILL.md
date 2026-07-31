@@ -22,7 +22,7 @@ The user's original goal remains visible, its current interpretation and accepta
    - resume an equivalent PR;
    - update or create the controlling issue;
    - honor explicit prerequisites;
-   - ignore neighbouring file, crate, and symbol overlap unless Git or proof produces a concrete interaction.
+   - ignore sibling file, crate, and symbol overlap unless Git or proof produces a concrete interaction.
 5. Select one coherent required claim and use `deliver-pr`.
 6. When GitHub owns the next transition—required CI, external review, auto-merge, or merge queue—leave that PR in flight and advance another distinct required claim when useful.
 7. Revisit an in-flight PR only after a material event: a substantive finding, failed required check, changed candidate head, concrete conflict, changed prerequisite, merge, or closure.
