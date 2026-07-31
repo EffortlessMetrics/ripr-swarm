@@ -56,4 +56,4 @@ Focused read-only subagents may map source authority, GitHub history, external s
 - `CLAIM_PARTIAL`
 - `EXTERNAL_BLOCKER`
 - `NEEDS_OWNER_DECISION`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
