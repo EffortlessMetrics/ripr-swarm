@@ -219,6 +219,33 @@ suite('Extension Lifecycle Coordinator', () => {
     );
   });
 
+  test('failed stop retains session ownership and retries before replacement', async () => {
+    const coordinator = new ExtensionLifecycleCoordinator();
+    let startCalls = 0;
+    let stopCalls = 0;
+    const controller: LifecycleController = {
+      start: async () => {
+        startCalls += 1;
+      },
+      stop: async () => {
+        stopCalls += 1;
+        if (stopCalls === 1) {
+          throw new Error('sentinel stop failure');
+        }
+      },
+    };
+
+    await coordinator.start(controller);
+    await assert.rejects(coordinator.restart(controller, 1_000), /sentinel stop failure/);
+
+    assert.strictEqual(startCalls, 1, 'a failed stop must not create a replacement');
+    assert.strictEqual(stopCalls, 1);
+
+    await coordinator.restart(controller, 1_000);
+    assert.strictEqual(stopCalls, 2, 'the possibly-running session is stopped again before replacement');
+    assert.strictEqual(startCalls, 2, 'replacement starts only after a confirmed stop');
+  });
+
   test('startup rejection permits recovery restart before terminal shutdown', async () => {
     const coordinator = new ExtensionLifecycleCoordinator();
     const firstStart = deferred();
