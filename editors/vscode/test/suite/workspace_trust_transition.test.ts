@@ -18,17 +18,22 @@ suite('Workspace Trust Transition', () => {
     const startGate = new Promise<void>((resolve) => {
       releaseStart = resolve;
     });
+    let signalStartEntered: (() => void) | undefined;
+    const startEntered = new Promise<void>((resolve) => {
+      signalStartEntered = resolve;
+    });
     let startCalls = 0;
     const controller = {
       start: async () => {
         startCalls += 1;
+        signalStartEntered?.();
         await startGate;
       }
     } as Pick<RiprClientController, 'start'>;
 
     const first = startAfterWorkspaceTrust(controller);
     const second = startAfterWorkspaceTrust(controller);
-    await Promise.resolve();
+    await startEntered;
 
     assert.strictEqual(startCalls, 1);
     releaseStart?.();
