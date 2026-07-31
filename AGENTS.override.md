@@ -36,8 +36,8 @@ Git and focused integration proof surface real interactions when they occur
 ```
 
 Do not inspect sibling worktrees, reserve files/crates/semantic surfaces,
-maintain overlap maps, or monitor neighbouring implementations. Check other
-work only for:
+maintain overlap maps, or monitor sibling implementations. Check other work
+only for:
 
 - an equivalent PR implementing the same claim;
 - an explicit prerequisite;
