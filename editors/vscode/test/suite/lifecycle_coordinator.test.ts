@@ -152,6 +152,37 @@ suite('Extension Lifecycle Coordinator', () => {
     assert.strictEqual(startCalls, 2, 'coalesced restart must not create two replacements');
   });
 
+  test('terminal stop during restart stop does not stop the same session twice', async () => {
+    const coordinator = new ExtensionLifecycleCoordinator();
+    const firstStop = deferred();
+    const firstStopEntered = deferred();
+    let startCalls = 0;
+    let stopCalls = 0;
+    const controller: LifecycleController = {
+      start: async () => {
+        startCalls += 1;
+      },
+      stop: async () => {
+        stopCalls += 1;
+        if (stopCalls === 1) {
+          firstStopEntered.resolve();
+          await firstStop.promise;
+        }
+      },
+    };
+
+    await coordinator.start(controller);
+    const restart = coordinator.restart(controller, 1_000);
+    await firstStopEntered.promise;
+    const stop = coordinator.stop(controller, 1_000);
+
+    firstStop.resolve();
+    await Promise.all([restart, stop]);
+
+    assert.strictEqual(startCalls, 1, 'terminal stop suppresses the replacement start');
+    assert.strictEqual(stopCalls, 1, 'the already-stopped session is not stopped twice');
+  });
+
   test('stop begun during replacement startup remains final', async () => {
     const coordinator = new ExtensionLifecycleCoordinator();
     const replacementStart = deferred();
@@ -218,7 +249,7 @@ suite('Extension Lifecycle Coordinator', () => {
 
     assert.match(String(await observedInitial), /sentinel startup rejection/);
     await restart;
-    assert.strictEqual(stopCalls, 1);
+    assert.strictEqual(stopCalls, 0, 'rejected startup does not own a running session to stop');
     assert.strictEqual(startCalls, 2, 'recovery starts one fresh session after rejection');
   });
 
