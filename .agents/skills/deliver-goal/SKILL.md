@@ -5,7 +5,7 @@ description: Carry a high-level repository outcome through the distinct PR-sized
 
 # Useful result
 
-The original goal is preserved, its current interpretation and acceptance predicates are explicit, every required claim is either delivered, in flight, externally blocked, or honestly not proven, and the goal is closed only when the end state exists.
+The original goal is preserved, its current interpretation and acceptance predicates are explicit, every required claim is either delivered, in flight, externally blocked, or honestly not established, and the goal is closed only when the end state exists.
 
 # Procedure
 
@@ -32,8 +32,8 @@ The original goal is preserved, its current interpretation and acceptance predic
    - `failed`;
    - `limited`;
    - `not_applicable`;
-   - `not_proven`.
-10. Stop only when the goal is satisfied, every remaining required claim shares a genuine external blocker, a material non-derivable owner decision remains, or the result is honestly not proven.
+   - `not_established`.
+10. Stop only when the goal is satisfied, every remaining required claim shares a genuine external blocker, a material non-derivable owner decision remains, or the result is honestly not established.
 
 # Decision law
 
@@ -66,6 +66,6 @@ The root owns synthesis. Subagent reports are leads until verified against artif
 - `GOAL_IN_FLIGHT`
 - `EXTERNAL_BLOCKER`
 - `NEEDS_OWNER_DECISION`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
 
 A waiting PR is normally `GOAL_IN_FLIGHT`, not `EXTERNAL_BLOCKER`. “No more issues found” is never equivalent to `GOAL_SATISFIED`.
