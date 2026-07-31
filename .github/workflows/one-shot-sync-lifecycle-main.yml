@@ -1,0 +1,31 @@
+name: One-shot sync lifecycle branch with main
+
+on:
+  push:
+    branches:
+      - codex/vscode-lifecycle-coordinator-2123
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: codex/vscode-lifecycle-coordinator-2123
+          fetch-depth: 0
+
+      - name: Merge current main and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git merge --no-edit origin/main
+          git rm .github/workflows/one-shot-sync-lifecycle-main.yml
+          git commit -m 'chore(vscode): remove one-shot lifecycle sync workflow'
+          git push origin HEAD:codex/vscode-lifecycle-coordinator-2123
