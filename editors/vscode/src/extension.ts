@@ -15,6 +15,13 @@ import {
 let controller: RiprClientController | undefined;
 let lifecycleCoordinator = new ExtensionLifecycleCoordinator();
 
+/** Test-only reset for suites that exercise activation-scoped helpers with
+ * independent fake controllers in one extension-host process. Production
+ * activation resets the coordinator before constructing its controller. */
+export function resetLifecycleCoordinatorForTests(): void {
+  lifecycleCoordinator = new ExtensionLifecycleCoordinator();
+}
+
 export async function startServerOnce(
   currentController: Pick<RiprClientController, 'start'> | undefined
 ): Promise<void> {
