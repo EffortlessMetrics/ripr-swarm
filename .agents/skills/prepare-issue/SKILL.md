@@ -56,4 +56,4 @@ Use focused read-only agents for independent source mapping, external authority,
 - `CLAIM_PARTIAL`
 - `EXTERNAL_BLOCKER`
 - `NEEDS_OWNER_DECISION`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
