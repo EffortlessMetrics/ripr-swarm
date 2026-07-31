@@ -51,7 +51,7 @@
 //!
 
 // Shared internal outcome vocabulary for parser and output children under
-// #2827. The public Rust API remains unchanged until those projections adopt it.
+// #2827. The public Rust API remains unchanged until those consumers adopt it.
 mod analysis_outcome;
 mod atomic_file;
 
