@@ -61,6 +61,8 @@ export class ExtensionLifecycleCoordinator {
   private currentOperation: LifecycleOperation | undefined;
   private inFlightStart: Promise<void> | undefined;
   private terminalStopPromise: Promise<void> | undefined;
+  // Tracks ownership of a successfully started session so terminal stop does
+  // not stop a session twice when it supersedes a restart already in stop().
   private sessionRunning = false;
 
   constructor(private readonly waitFor: LifecycleWait = waitForLifecyclePromise) {}
