@@ -69,7 +69,7 @@ pass
 failed
 limited
 not_applicable
-not_proven
+not_established
 ```
 
 “No more issues found” is not `pass`.
@@ -173,7 +173,7 @@ A detailed builder or subagent report is not evidence.
   claims.
 - Treat missing, skipped, unobserved, stale, or incomparable evidence explicitly.
 - Distinguish source failure, test/oracle failure, instrument failure,
-  infrastructure failure, and not-proven state.
+  infrastructure failure, and not-established state.
 - Treat automated review findings as hypotheses: repair valid findings or reply
   with source-backed evidence.
 - Quota, unavailable, skipped, failed, or stale review-provider output is
