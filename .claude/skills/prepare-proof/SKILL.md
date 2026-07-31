@@ -19,7 +19,7 @@ A bounded proof contract distinguishes the desired behavior from the strongest p
    - fail fixture setup at setup;
    - assert the intended parsed subject exists;
    - never treat skipped or unobserved work as pass.
-6. Separate source failure, test-or-oracle failure, instrument failure, infrastructure failure, and not-proven evidence.
+6. Separate source failure, test-or-oracle failure, instrument failure, infrastructure failure, and not-established evidence.
 7. Use a removal or deliberately wrong implementation experiment when it materially strengthens the oracle.
 8. Bind evidence to the relevant repository, candidate, configuration, and artifact identities.
 9. Challenge the proof with a fresh oracle review before continuing implementation.
@@ -44,4 +44,4 @@ A test-oracle subagent may challenge fake oracles, token coincidence, platform/p
 - `PRODUCTION_PATH_NOT_REACHED`
 - `INSTRUMENT_FAILURE`
 - `EXTERNAL_BLOCKER`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
