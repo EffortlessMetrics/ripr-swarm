@@ -1,0 +1,37 @@
+name: One-shot format typed navigation replay
+
+on:
+  push:
+    branches:
+      - fix/format-typed-nav-replay-2836
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: fix/format-typed-nav-replay-2836
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Format and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          git rm .github/workflows/one-shot-format-typed-nav.yml
+          git add crates/ripr/tests/cli_smoke.rs
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(fmt): normalize typed navigation replay'
+          git push origin HEAD:fix/format-typed-nav-replay-2836
