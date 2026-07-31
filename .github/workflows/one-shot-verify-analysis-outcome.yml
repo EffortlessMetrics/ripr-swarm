@@ -1,0 +1,197 @@
+name: One-shot verify analysis outcome contract
+
+on:
+  push:
+    branches:
+      - codex/analysis-outcome-contract-2827
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: codex/analysis-outcome-contract-2827
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Harden fixture assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/ripr/src/analysis_outcome.rs')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one occurrence, found {count}: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once('''    fn outcome(
+              kind: AnalysisOutcomeKind,
+              counts: AnalysisOutcomeCounts,
+              limitations: Vec<AnalysisLimitation>,
+          ) -> Result<AnalysisOutcome, String> {
+              AnalysisOutcome::new(kind, AnalysisIdentity::default(), counts, limitations)
+          }
+          ''', '''    fn outcome(
+              kind: AnalysisOutcomeKind,
+              counts: AnalysisOutcomeCounts,
+              limitations: Vec<AnalysisLimitation>,
+          ) -> Result<AnalysisOutcome, String> {
+              AnalysisOutcome::new(kind, AnalysisIdentity::default(), counts, limitations)
+          }
+
+          fn expect_error<T: std::fmt::Debug>(
+              result: Result<T, String>,
+              expected: &str,
+          ) -> Result<(), String> {
+              match result {
+                  Ok(value) => Err(format!(
+                      "expected error containing `{expected}`, got success: {value:?}"
+                  )),
+                  Err(error) if error.contains(expected) => Ok(()),
+                  Err(error) => Err(format!(
+                      "expected error containing `{expected}`, got `{error}`"
+                  )),
+              }
+          }
+          ''')
+          replace_once('        let cases = vec![\n', '        let cases = [\n')
+          replace_once('''        assert!(invalid.is_err());
+          ''', '''        expect_error(invalid, "requires changed lines")?;
+          ''')
+          replace_once('''        assert!(result.is_err());
+          ''', '''        expect_error(result, "cannot carry incomplete-analysis limitations")?;
+          ''')
+          replace_once('''    #[test]
+              fn portable_paths_reject_absolute_and_parent_traversal() {
+                  assert!(normalize_portable_analysis_path("/tmp/file.rs").is_err());
+                  assert!(normalize_portable_analysis_path("../file.rs").is_err());
+                  assert!(normalize_portable_analysis_path("C:\\\\tmp\\\\file.rs").is_err());
+                  assert_eq!(
+                      normalize_portable_analysis_path("src\\\\module\\\\file.rs"),
+                      Ok("src/module/file.rs".to_string())
+                  );
+              }
+          ''', '''    #[test]
+              fn portable_paths_reject_absolute_and_parent_traversal() -> Result<(), String> {
+                  expect_error(
+                      normalize_portable_analysis_path("/tmp/file.rs"),
+                      "repository-relative",
+                  )?;
+                  expect_error(
+                      normalize_portable_analysis_path("../file.rs"),
+                      "parent traversal",
+                  )?;
+                  expect_error(
+                      normalize_portable_analysis_path("C:\\\\tmp\\\\file.rs"),
+                      "repository-relative",
+                  )?;
+                  let normalized = normalize_portable_analysis_path("src\\\\module\\\\file.rs")?;
+                  assert_eq!(normalized, "src/module/file.rs");
+                  Ok(())
+              }
+          ''')
+          replace_once('''    #[test]
+              fn limitation_text_is_bounded() -> Result<(), String> {
+                  let too_long = "x".repeat(MAX_ANALYSIS_LIMITATION_DETAIL_CHARS + 1);
+                  assert!(
+                      AnalysisRecovery::new(AnalysisRecoveryKind::Retry, too_long.clone()).is_err()
+                  );
+                  assert!(
+                      limitation(AnalysisLimitationKind::ProducerFailure)?
+                          .with_detail(too_long)
+                          .is_err()
+                  );
+                  Ok(())
+              }
+          ''', '''    #[test]
+              fn limitation_text_is_bounded() -> Result<(), String> {
+                  let too_long = "x".repeat(MAX_ANALYSIS_LIMITATION_DETAIL_CHARS + 1);
+                  expect_error(
+                      AnalysisRecovery::new(AnalysisRecoveryKind::Retry, too_long.clone()),
+                      "maximum",
+                  )?;
+                  expect_error(
+                      limitation(AnalysisLimitationKind::ProducerFailure)?.with_detail(too_long),
+                      "maximum",
+                  )?;
+                  Ok(())
+              }
+          ''')
+          replace_once('''        AnalysisOutcomeKind::NoScope | AnalysisOutcomeKind::NoChangedLines => {
+                  if counts.changed_line_count != 0
+                      || counts.candidate_line_count != 0
+                      || counts.probe_count != 0
+                      || counts.finding_count != 0
+                  {
+                      return Err(format!(
+                          "analysis outcome {kind:?} requires zero changed-line, candidate, probe, and finding counts"
+                      ));
+                  }
+              }
+          ''', '''        AnalysisOutcomeKind::NoScope => {
+                  if counts != AnalysisOutcomeCounts::default() {
+                      return Err(
+                          "analysis outcome NoScope requires every count to be zero".to_string(),
+                      );
+                  }
+              }
+              AnalysisOutcomeKind::NoChangedLines => {
+                  if counts.changed_line_count != 0
+                      || counts.candidate_line_count != 0
+                      || counts.probe_count != 0
+                      || counts.finding_count != 0
+                  {
+                      return Err(
+                          "analysis outcome NoChangedLines requires zero changed-line, candidate, probe, and finding counts"
+                              .to_string(),
+                      );
+                  }
+              }
+          ''')
+          replace_once('''        || without_current.starts_with('/')
+                  || without_current.starts_with("//")
+                  || has_drive_prefix
+          ''', '''        || without_current.starts_with('/')
+                  || has_drive_prefix
+          ''')
+
+          path.write_text(text)
+          PY
+
+      - name: Format and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo test -p ripr analysis_outcome --lib
+          cargo clippy -p ripr --lib --tests -- -D warnings
+          git diff --check
+
+      - name: Commit verified source and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/one-shot-verify-analysis-outcome.yml
+          git add crates/ripr/src/analysis_outcome.rs crates/ripr/src/lib.rs
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test(domain): verify analysis outcome invariants'
+          git push origin HEAD:codex/analysis-outcome-contract-2827
