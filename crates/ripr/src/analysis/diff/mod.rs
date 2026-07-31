@@ -3,6 +3,9 @@ mod model;
 mod parse;
 mod path;
 
+#[cfg(test)]
+mod limitations_tests;
+
 pub use load::{
     load_diff, load_diff_range, load_worktree_diff, resolve_base_commit,
     resolve_default_base_commit, working_tree_has_tracked_changes,
