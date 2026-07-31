@@ -55,4 +55,4 @@ Choose and document reasonable reversible decisions. Escalate only when material
 - `INSTRUMENT_FAILURE`
 - `INFRASTRUCTURE_FAILURE`
 - `EXTERNAL_BLOCKER`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
