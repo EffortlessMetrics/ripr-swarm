@@ -253,6 +253,38 @@ suite('Extension Lifecycle Coordinator', () => {
     assert.strictEqual(startCalls, 2, 'recovery starts one fresh session after rejection');
   });
 
+  test('completed startup remains single after a bounded restart timeout', async () => {
+    const firstStart = deferred();
+    const firstStartEntered = deferred();
+    const timeout = deferred();
+    const coordinator = new ExtensionLifecycleCoordinator(manualTimeoutWait(timeout));
+    let startCalls = 0;
+    let stopCalls = 0;
+    const controller: LifecycleController = {
+      start: async () => {
+        startCalls += 1;
+        firstStartEntered.resolve();
+        await firstStart.promise;
+      },
+      stop: async () => {
+        stopCalls += 1;
+      },
+    };
+
+    const initialStart = coordinator.start(controller);
+    await firstStartEntered.promise;
+    const restart = coordinator.restart(controller, 30_000);
+    timeout.resolve();
+    await assert.rejects(restart, /did not settle within 30000ms/);
+
+    firstStart.resolve();
+    await initialStart;
+    await coordinator.start(controller, 30_000);
+
+    assert.strictEqual(startCalls, 1, 'the surviving completed startup is reused');
+    assert.strictEqual(stopCalls, 0);
+  });
+
   test('wedged startup reaches a deterministic finite failure without side effects', async () => {
     const firstStart = deferred();
     const firstStartEntered = deferred();
