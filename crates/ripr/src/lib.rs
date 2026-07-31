@@ -50,6 +50,8 @@
 //! ```
 //!
 
+// Shared producer-owned outcome vocabulary for parser and output children
+// under #2827; consumers use the crate-root re-exports below.
 mod analysis_outcome;
 mod atomic_file;
 
