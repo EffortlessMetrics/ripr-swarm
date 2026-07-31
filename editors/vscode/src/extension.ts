@@ -57,7 +57,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const message = error instanceof Error ? error.message : String(error);
         output.appendLine(`ripr server restart failed: ${message}`);
         void vscode.window.showErrorMessage(
-          'ripr could not restart the server while startup was unresolved. Open ripr: Show Output, then retry.'
+          `ripr could not restart the server: ${message} Open ripr: Show Output, then retry.`
         );
       }
     }),
