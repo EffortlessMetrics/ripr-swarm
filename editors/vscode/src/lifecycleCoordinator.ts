@@ -86,12 +86,17 @@ export class ExtensionLifecycleCoordinator {
     ) {
       return current.promise;
     }
+    if (this.sessionRunning) {
+      this.desiredState = 'running';
+      return Promise.resolve();
+    }
 
     this.desiredState = 'running';
     const generation = this.nextGeneration();
     return this.beginOperation('start', generation, async (previous) => {
       await this.waitForPriorOperation(previous, settleBudgetMs);
-      if (!this.isCurrentRunningGeneration(generation)) {
+      await this.waitForInFlightStart(settleBudgetMs);
+      if (!this.isCurrentRunningGeneration(generation) || this.sessionRunning) {
         return;
       }
       await this.startController(currentController);
