@@ -2,9 +2,17 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { RiprClientController, RiprClientRuntime } from '../../src/client';
 import { RiprConfig } from '../../src/config';
-import { startAfterWorkspaceTrust, startServerOnce } from '../../src/extension';
+import {
+  resetLifecycleCoordinatorForTests,
+  startAfterWorkspaceTrust,
+  startServerOnce
+} from '../../src/extension';
 
 suite('Workspace Trust Transition', () => {
+  setup(() => {
+    resetLifecycleCoordinatorForTests();
+  });
+
   test('concurrent trust-grant starts coalesce into one controller start', async () => {
     let releaseStart: (() => void) | undefined;
     const startGate = new Promise<void>((resolve) => {
