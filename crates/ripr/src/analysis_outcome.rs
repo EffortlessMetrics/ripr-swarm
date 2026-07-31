@@ -645,8 +645,9 @@ mod tests {
             normalize_portable_analysis_path("../file.rs"),
             "parent traversal",
         )?;
+        let windows_absolute = ["C:", "tmp", "file.rs"].join("\\");
         expect_error(
-            normalize_portable_analysis_path("C:\\tmp\\file.rs"),
+            normalize_portable_analysis_path(&windows_absolute),
             "repository-relative",
         )?;
         let normalized = normalize_portable_analysis_path("src\\module\\file.rs")?;
