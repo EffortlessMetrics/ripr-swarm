@@ -19,7 +19,7 @@ A bounded proof contract can distinguish the intended behavior from the stronges
    - fixture setup succeeds before downstream assertions;
    - parsed inputs contain the intended subject;
    - skipped or unobserved work is not treated as pass.
-6. Separate source failure, test-or-oracle failure, instrument failure, infrastructure failure, and not-proven states.
+6. Separate source failure, test-or-oracle failure, instrument failure, infrastructure failure, and not-established states.
 7. Prefer a removal or wrong-implementation experiment where it materially strengthens the oracle.
 8. Record expected artifacts, identities, currentness, and claim limits.
 9. Review the proof against the strongest counter-read before implementation continues.
@@ -44,4 +44,4 @@ A read-only test-oracle reviewer may challenge fake oracles, token coincidence, 
 - `PRODUCTION_PATH_NOT_REACHED`
 - `INSTRUMENT_FAILURE`
 - `EXTERNAL_BLOCKER`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
