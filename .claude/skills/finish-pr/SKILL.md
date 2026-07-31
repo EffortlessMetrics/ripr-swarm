@@ -19,7 +19,7 @@ The selected PR has an exact current candidate, every substantive finding repair
    - rollback boundary;
    - exact candidate SHA.
 3. Read current review submissions, inline threads, required and advisory checks, mergeability, and head identity.
-4. Classify findings as valid source defect, test/oracle defect, stale, incorrect, infrastructure/instrument failure, or not proven.
+4. Classify findings as valid source defect, test/oracle defect, stale, incorrect, infrastructure/instrument failure, or not established.
 5. Repair valid findings in the same candidate. Refute incorrect findings with source-backed evidence. Resolve only after a repair or reply exists.
 6. Refresh only proof and review dimensions affected by the repair.
 7. Keep three subjects separate:
@@ -50,4 +50,4 @@ Quota, unavailable, skipped, failed, or stale reviewer output means review is mi
 - `INSTRUMENT_FAILURE`
 - `INFRASTRUCTURE_FAILURE`
 - `EXTERNAL_BLOCKER`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
