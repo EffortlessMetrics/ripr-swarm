@@ -66,6 +66,6 @@ Focused read-only agents may inspect authority, tests, correctness, security, co
 - `PR_CLOSED_WITH_DISPOSITION`
 - `EXTERNAL_BLOCKER`
 - `NEEDS_OWNER_DECISION`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
 
 A remote-owned wait yields to the goal loop; it does not keep the root polling unchanged state.
