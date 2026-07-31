@@ -42,7 +42,7 @@ Use `deliver-goal` when the user states an outcome rather than one scoped issue.
    in flight and advance another distinct required claim when useful.
 8. Reconcile after every merge or deliberate closure.
 9. Stop only when predicates pass, a real external blocker covers all remaining
-   work, a material owner decision remains, or the result is not proven.
+   work, a material owner decision remains, or the result is not established.
 
 Do not substitute “finish this issue” for the larger requested end state unless
 that issue's acceptance actually equals the goal.
@@ -287,7 +287,7 @@ Valid terminal or yielding conditions are:
 - real external blocker;
 - material owner decision;
 - deliberate closure or supersession with residual work preserved;
-- not proven.
+- not established.
 
 Invalid stopping conditions include:
 
