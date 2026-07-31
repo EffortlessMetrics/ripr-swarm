@@ -46,15 +46,7 @@ struct PrecommitReport {
 
 pub(super) fn run() -> Result<(), String> {
     let root = repository_root()?;
-    let merge_base_args = vec![
-        "merge-base".to_string(),
-        "origin/main".to_string(),
-        "HEAD".to_string(),
-    ];
-    let merge_base = git_output(&root, &merge_base_args)?.trim().to_string();
-    if merge_base.is_empty() {
-        return Err("precommit change discovery returned an empty merge base".to_string());
-    }
+    let merge_base = resolve_merge_base(&root)?;
 
     let changed_files = discover_changed_files(&root, &merge_base)?;
     let workspace_clippy = needs_workspace_clippy(&changed_files);
@@ -152,10 +144,33 @@ fn run_clippy(
 }
 
 fn repository_root() -> Result<PathBuf, String> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "xtask manifest has no repository parent".to_string())
+    let output = crate::run::run_output("git", &["rev-parse", "--show-toplevel"])?;
+    let root = output.trim();
+    if root.is_empty() {
+        return Err("git rev-parse returned an empty repository root".to_string());
+    }
+    fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize repository root `{root}`: {error}"))
+}
+
+fn resolve_merge_base(root: &Path) -> Result<String, String> {
+    let mut failures = Vec::new();
+    for base in ["origin/main", "main"] {
+        let args = vec![
+            "merge-base".to_string(),
+            base.to_string(),
+            "HEAD".to_string(),
+        ];
+        match git_output(root, &args) {
+            Ok(output) if !output.trim().is_empty() => return Ok(output.trim().to_string()),
+            Ok(_) => failures.push(format!("{base}: empty merge-base output")),
+            Err(error) => failures.push(format!("{base}: {error}")),
+        }
+    }
+    Err(format!(
+        "precommit could not resolve a merge base against `origin/main` or local `main`: {}",
+        failures.join("; ")
+    ))
 }
 
 fn discover_changed_files(root: &Path, merge_base: &str) -> Result<Vec<String>, String> {
@@ -224,11 +239,18 @@ fn load_package_roots(root: &Path) -> Result<Vec<PackageRoot>, String> {
         let Some(parent) = package.manifest_path.parent() else {
             return Err(format!("package `{}` manifest has no parent", package.name));
         };
-        let relative = parent.strip_prefix(root).map_err(|error| {
+        let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+            format!(
+                "canonicalize package `{}` manifest root {}: {error}",
+                package.name,
+                parent.display()
+            )
+        })?;
+        let relative = canonical_parent.strip_prefix(root).map_err(|error| {
             format!(
                 "package `{}` manifest root {} is outside repository {}: {error}",
                 package.name,
-                parent.display(),
+                canonical_parent.display(),
                 root.display()
             )
         })?;
@@ -262,7 +284,7 @@ fn select_impacted_packages(changed: &[String], roots: &[PackageRoot]) -> Vec<St
 
 fn path_is_under(path: &str, root: &str) -> bool {
     if root.is_empty() {
-        return path == "Cargo.toml";
+        return true;
     }
     path == format!("{root}/Cargo.toml") || path.starts_with(&format!("{root}/"))
 }
@@ -437,6 +459,25 @@ mod tests {
             vec!["ripr".to_string()]
         );
         assert!(!needs_workspace_clippy(&changed));
+    }
+
+    #[test]
+    fn root_package_receives_unclaimed_rust_file() {
+        let changed = vec!["src/lib.rs".to_string()];
+        let roots = vec![
+            PackageRoot {
+                name: "nested".to_string(),
+                relative_root: "crates/nested".to_string(),
+            },
+            PackageRoot {
+                name: "root-package".to_string(),
+                relative_root: String::new(),
+            },
+        ];
+        assert_eq!(
+            select_impacted_packages(&changed, &roots),
+            vec!["root-package".to_string()]
+        );
     }
 
     #[test]
