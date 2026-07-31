@@ -5,7 +5,7 @@ description: Carry a high-level repository outcome through the distinct PR-sized
 
 # Result
 
-The user's original goal remains visible, its current interpretation and acceptance predicates are explicit, and the repository advances through distinct claims until the end state is satisfied, externally blocked, materially undecidable, or honestly not proven.
+The user's original goal remains visible, its current interpretation and acceptance predicates are explicit, and the repository advances through distinct claims until the end state is satisfied, externally blocked, materially undecidable, or honestly not established.
 
 # Workflow
 
@@ -27,8 +27,8 @@ The user's original goal remains visible, its current interpretation and accepta
 6. When GitHub owns the next transition—required CI, external review, auto-merge, or merge queue—leave that PR in flight and advance another distinct required claim when useful.
 7. Revisit an in-flight PR only after a material event: a substantive finding, failed required check, changed candidate head, concrete conflict, changed prerequisite, merge, or closure.
 8. Reconcile issue and parent-goal state after every merge or deliberate closure.
-9. Evaluate every predicate as `pass`, `failed`, `limited`, `not_applicable`, or `not_proven`.
-10. Stop only when the goal is satisfied, all remaining work shares a genuine external blocker, a material non-derivable owner decision remains, or the result is not proven.
+9. Evaluate every predicate as `pass`, `failed`, `limited`, `not_applicable`, or `not_established`.
+10. Stop only when the goal is satisfied, all remaining work shares a genuine external blocker, a material non-derivable owner decision remains, or the result is not established.
 
 # Engineering decisions
 
@@ -50,6 +50,6 @@ Do not stop merely because several implementations are possible. Read the source
 - `GOAL_IN_FLIGHT`
 - `EXTERNAL_BLOCKER`
 - `NEEDS_OWNER_DECISION`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
 
-A PR waiting on CI or review is normally `GOAL_IN_FLIGHT`, not a blocker. Exhausting known issues is not proof that the goal is satisfied.
+A PR waiting on CI or review is normally `GOAL_IN_FLIGHT`, not a blocker. Exhausting known issues is not evidence that the goal is satisfied.
