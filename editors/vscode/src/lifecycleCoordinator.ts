@@ -61,6 +61,7 @@ export class ExtensionLifecycleCoordinator {
   private currentOperation: LifecycleOperation | undefined;
   private inFlightStart: Promise<void> | undefined;
   private terminalStopPromise: Promise<void> | undefined;
+  private sessionRunning = false;
 
   constructor(private readonly waitFor: LifecycleWait = waitForLifecyclePromise) {}
 
@@ -120,7 +121,7 @@ export class ExtensionLifecycleCoordinator {
         return;
       }
 
-      await currentController.stop();
+      await this.stopController(currentController);
       if (!this.isCurrentRunningGeneration(generation)) {
         return;
       }
@@ -155,7 +156,7 @@ export class ExtensionLifecycleCoordinator {
       if (!this.isCurrentStoppedGeneration(generation)) {
         return;
       }
-      await currentController.stop();
+      await this.stopController(currentController);
     });
     this.terminalStopPromise = stop;
     return stop;
@@ -219,11 +220,23 @@ export class ExtensionLifecycleCoordinator {
     this.inFlightStart = start;
     try {
       await start;
+      this.sessionRunning = true;
+    } catch (error) {
+      this.sessionRunning = false;
+      throw error;
     } finally {
       if (this.inFlightStart === start) {
         this.inFlightStart = undefined;
       }
     }
+  }
+
+  private async stopController(currentController: LifecycleController): Promise<void> {
+    if (!this.sessionRunning) {
+      return;
+    }
+    await currentController.stop();
+    this.sessionRunning = false;
   }
 
   private isCurrentRunningGeneration(generation: number): boolean {
