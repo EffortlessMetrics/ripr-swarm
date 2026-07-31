@@ -10,8 +10,7 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
 pub(crate) const ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "0.1";
-pub(crate) const ANALYSIS_OUTCOME_CLAIM_BOUNDARY: &str =
-    "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
+pub(crate) const ANALYSIS_OUTCOME_CLAIM_BOUNDARY: &str = "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
 pub(crate) const MAX_ANALYSIS_LIMITATION_DETAIL_CHARS: usize = 512;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -296,10 +295,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
     Ok(segments.join("/"))
 }
 
-fn normalize_optional_bounded_text(
-    field: &str,
-    value: &mut Option<String>,
-) -> Result<(), String> {
+fn normalize_optional_bounded_text(field: &str, value: &mut Option<String>) -> Result<(), String> {
     if let Some(current) = value.take() {
         *value = Some(bounded_nonempty_text(field, current)?);
     }
@@ -502,9 +498,7 @@ mod tests {
             outcome(
                 AnalysisOutcomeKind::UnsupportedInput,
                 AnalysisOutcomeCounts::default(),
-                vec![limitation(
-                    AnalysisLimitationKind::CombinedHunkUnsupported,
-                )?],
+                vec![limitation(AnalysisLimitationKind::CombinedHunkUnsupported)?],
             )?,
             outcome(
                 AnalysisOutcomeKind::AnalysisFailed,
@@ -559,9 +553,7 @@ mod tests {
                     probe_count: 1,
                     finding_count: 0,
                 },
-                vec![limitation(
-                    AnalysisLimitationKind::CombinedHunkUnsupported,
-                )?],
+                vec![limitation(AnalysisLimitationKind::CombinedHunkUnsupported)?],
             ),
             "cannot carry incomplete-analysis limitations",
         )
@@ -612,9 +604,7 @@ mod tests {
         let one = outcome(
             AnalysisOutcomeKind::UnsupportedInput,
             AnalysisOutcomeCounts::default(),
-            vec![limitation(
-                AnalysisLimitationKind::CombinedHunkUnsupported,
-            )?],
+            vec![limitation(AnalysisLimitationKind::CombinedHunkUnsupported)?],
         )?;
         let two = outcome(
             AnalysisOutcomeKind::UnsupportedInput,
@@ -633,9 +623,7 @@ mod tests {
         let unsupported = outcome(
             AnalysisOutcomeKind::UnsupportedInput,
             AnalysisOutcomeCounts::default(),
-            vec![limitation(
-                AnalysisLimitationKind::CombinedHunkUnsupported,
-            )?],
+            vec![limitation(AnalysisLimitationKind::CombinedHunkUnsupported)?],
         )?;
         let failed = outcome(
             AnalysisOutcomeKind::AnalysisFailed,
@@ -689,9 +677,7 @@ mod tests {
         let valid = outcome(
             AnalysisOutcomeKind::UnsupportedInput,
             AnalysisOutcomeCounts::default(),
-            vec![limitation(
-                AnalysisLimitationKind::CombinedHunkUnsupported,
-            )?],
+            vec![limitation(AnalysisLimitationKind::CombinedHunkUnsupported)?],
         )?;
         let mut value = serde_json::to_value(valid)
             .map_err(|error| format!("serialize outcome value failed: {error}"))?;
