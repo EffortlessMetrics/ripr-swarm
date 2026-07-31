@@ -7,129 +7,32 @@ import {
   RiprSuggestedAssertionTarget,
   RiprTargetedTestBriefTarget,
 } from './client';
+import {
+  DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
+  ExtensionLifecycleCoordinator,
+} from './lifecycleCoordinator';
 
 let controller: RiprClientController | undefined;
-let coalescedStart: Promise<void> | undefined;
-let coalescedRestart: Promise<void> | undefined;
-let coalescedStop: Promise<void> | undefined;
-
-const START_SETTLE_BUDGET_MS = 30_000;
-
-type LifecycleController = Pick<RiprClientController, 'start' | 'stop'>;
-
-async function waitForLifecyclePromise(
-  operation: Promise<void>,
-  budgetMs: number,
-  description: string
-): Promise<void> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(
-        new Error(
-          `${description} did not settle within ${budgetMs}ms; refusing to stop or replace a client whose startup state is unresolved.`
-        )
-      );
-    }, budgetMs);
-  });
-  try {
-    await Promise.race([operation, timeout]);
-  } finally {
-    if (timeoutHandle !== undefined) {
-      clearTimeout(timeoutHandle);
-    }
-  }
-}
-
-async function waitForInFlightStart(startSettleBudgetMs: number): Promise<void> {
-  const start = coalescedStart;
-  if (!start) {
-    return;
-  }
-  await waitForLifecyclePromise(
-    start.catch(() => undefined),
-    startSettleBudgetMs,
-    'ripr server startup'
-  );
-}
+let lifecycleCoordinator = new ExtensionLifecycleCoordinator();
 
 export async function startServerOnce(
   currentController: Pick<RiprClientController, 'start'> | undefined
 ): Promise<void> {
-  if (!currentController) {
-    return;
-  }
-  if (coalescedStart) {
-    await coalescedStart;
-    return;
-  }
-
-  const start = currentController.start();
-  coalescedStart = start;
-  try {
-    await start;
-  } finally {
-    if (coalescedStart === start) {
-      coalescedStart = undefined;
-    }
-  }
+  await lifecycleCoordinator.start(currentController);
 }
 
 export async function restartServerOnce(
-  currentController: LifecycleController | undefined,
-  startSettleBudgetMs = START_SETTLE_BUDGET_MS
+  currentController: Pick<RiprClientController, 'start' | 'stop'> | undefined,
+  startSettleBudgetMs = DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS
 ): Promise<void> {
-  if (!currentController) {
-    return;
-  }
-  if (coalescedRestart) {
-    await coalescedRestart;
-    return;
-  }
-
-  const restart = (async () => {
-    await waitForInFlightStart(startSettleBudgetMs);
-    await currentController.stop();
-    await startServerOnce(currentController);
-  })();
-  coalescedRestart = restart;
-  try {
-    await restart;
-  } finally {
-    if (coalescedRestart === restart) {
-      coalescedRestart = undefined;
-    }
-  }
+  await lifecycleCoordinator.restart(currentController, startSettleBudgetMs);
 }
 
 export async function stopServerOnce(
-  currentController: LifecycleController | undefined,
-  startSettleBudgetMs = START_SETTLE_BUDGET_MS
+  currentController: Pick<RiprClientController, 'start' | 'stop'> | undefined,
+  startSettleBudgetMs = DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS
 ): Promise<void> {
-  if (!currentController) {
-    return;
-  }
-  if (coalescedStop) {
-    await coalescedStop;
-    return;
-  }
-
-  const stop = (async () => {
-    const restart = coalescedRestart;
-    if (restart) {
-      await waitForLifecyclePromise(restart, startSettleBudgetMs, 'ripr server restart');
-    }
-    await waitForInFlightStart(startSettleBudgetMs);
-    await currentController.stop();
-  })();
-  coalescedStop = stop;
-  try {
-    await stop;
-  } finally {
-    if (coalescedStop === stop) {
-      coalescedStop = undefined;
-    }
-  }
+  await lifecycleCoordinator.stop(currentController, startSettleBudgetMs);
 }
 
 export async function startAfterWorkspaceTrust(
@@ -141,6 +44,7 @@ export async function startAfterWorkspaceTrust(
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('ripr', { log: true });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  lifecycleCoordinator = new ExtensionLifecycleCoordinator();
   controller = new RiprClientController(context, output, undefined, status);
 
   context.subscriptions.push(
