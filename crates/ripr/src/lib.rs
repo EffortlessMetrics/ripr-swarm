@@ -50,8 +50,8 @@
 //! ```
 //!
 
-// Shared producer-owned outcome vocabulary for parser and output children
-// under #2827; consumers use the crate-root re-exports below.
+// Shared internal outcome vocabulary for parser and output children under
+// #2827. The public Rust API remains unchanged until those projections adopt it.
 mod analysis_outcome;
 mod atomic_file;
 
@@ -91,12 +91,6 @@ pub use analysis::LanguageRunStatus;
 pub use analysis::PartialDiffScope;
 pub use analysis::PartialDiffStopReason;
 pub use analysis::PreviewLanguageAdvisory;
-pub use analysis_outcome::{
-    ANALYSIS_OUTCOME_CLAIM_BOUNDARY, ANALYSIS_OUTCOME_SCHEMA_VERSION, AnalysisIdentity,
-    AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome, AnalysisOutcomeCounts,
-    AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
-    MAX_ANALYSIS_LIMITATION_DETAIL_CHARS, normalize_portable_analysis_path,
-};
 /// Analyze a workspace diff using the default RIPR static pipeline.
 pub use app::{
     CheckInput, CheckOutput, check_workspace, collect_context, explain_finding,
