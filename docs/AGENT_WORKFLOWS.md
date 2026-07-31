@@ -136,7 +136,7 @@ one claim normally has one current candidate
 one writer mutates that candidate branch/worktree at a time
 ```
 
-Agents do not inspect neighbouring worktrees, reserve files or crates, maintain
+Agents do not inspect sibling worktrees, reserve files or crates, maintain
 an overlap ledger, or watch sibling implementations.
 
 Before creating work, check only for:
