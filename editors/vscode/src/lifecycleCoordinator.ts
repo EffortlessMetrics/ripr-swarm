@@ -3,6 +3,8 @@ export interface LifecycleController {
   stop(): Promise<void>;
 }
 
+export type LifecycleStartController = Pick<LifecycleController, 'start'>;
+
 export type LifecycleWait = (
   operation: Promise<void>,
   budgetMs: number,
@@ -63,7 +65,7 @@ export class ExtensionLifecycleCoordinator {
   constructor(private readonly waitFor: LifecycleWait = waitForLifecyclePromise) {}
 
   start(
-    currentController: LifecycleController | undefined,
+    currentController: LifecycleStartController | undefined,
     settleBudgetMs = DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS
   ): Promise<void> {
     if (!currentController) {
@@ -212,7 +214,7 @@ export class ExtensionLifecycleCoordinator {
     );
   }
 
-  private async startController(currentController: LifecycleController): Promise<void> {
+  private async startController(currentController: LifecycleStartController): Promise<void> {
     const start = currentController.start();
     this.inFlightStart = start;
     try {
