@@ -25,7 +25,7 @@ The selected PR has an exact current head, all substantive findings repaired or 
    - stale/obsolete;
    - incorrect finding;
    - infrastructure or instrument failure;
-   - not proven.
+   - not established.
 5. Repair valid findings through the same candidate. For an incorrect finding, reply with source-backed evidence. Resolve only after the reply or repair exists.
 6. Refresh only proof and review dimensions affected by the repair.
 7. Distinguish candidate-head proof from integration proof:
@@ -56,4 +56,4 @@ Quota, unavailable, skipped, failed, or stale review-provider output is missing 
 - `INSTRUMENT_FAILURE`
 - `INFRASTRUCTURE_FAILURE`
 - `EXTERNAL_BLOCKER`
-- `NOT_PROVEN`
+- `NOT_ESTABLISHED`
