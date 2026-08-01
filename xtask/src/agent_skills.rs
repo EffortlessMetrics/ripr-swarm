@@ -12,14 +12,26 @@ const SKILLS: [&str; 6] = [
     "prepare-proof",
 ];
 
-const PROVIDERS: [(&str, &str, &str, &str); 2] = [
-    ("codex", "AGENTS.md", ".agents/skills", ".claude/skills"),
-    ("claude", "CLAUDE.md", ".claude/skills", ".agents/skills"),
+const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 2] = [
+    (
+        "codex",
+        "AGENTS.md",
+        ".agents/skills",
+        ".claude/skills",
+        Some("AGENTS.override.md"),
+    ),
+    (
+        "claude",
+        "CLAUDE.md",
+        ".claude/skills",
+        ".agents/skills",
+        None,
+    ),
 ];
 
 pub(crate) fn check() -> Result<(), String> {
     let mut findings = Vec::new();
-    for (provider, instructions, root, other_root) in PROVIDERS {
+    for (provider, instructions, root, other_root, override_path) in PROVIDERS {
         let text = match fs::read_to_string(instructions) {
             Ok(text) => text,
             Err(error) => {
@@ -32,11 +44,28 @@ pub(crate) fn check() -> Result<(), String> {
                 "{provider}: {instructions} does not point at {root}"
             ));
         }
-        if text.contains(&format!("{other_root}/"))
-            && !text.contains("Do not route")
-            && !text.contains("Do not import or route")
-        {
+        if has_active_reference(&text, other_root) {
             findings.push(format!("{provider}: root imports {other_root}"));
+        }
+        let mut provider_text = text.clone();
+        if let Some(override_path) = override_path {
+            match fs::read_to_string(override_path) {
+                Ok(override_text) => {
+                    if !override_text.contains(root) {
+                        findings.push(format!(
+                            "{provider}: {override_path} does not point at {root}"
+                        ));
+                    }
+                    if has_active_reference(&override_text, other_root) {
+                        findings.push(format!("{provider}: {override_path} imports {other_root}"));
+                    }
+                    provider_text.push('\n');
+                    provider_text.push_str(&override_text);
+                }
+                Err(error) => {
+                    findings.push(format!("{provider}: {override_path} unreadable: {error}"))
+                }
+            }
         }
         if text.contains("## Orchestration Operating Model")
             || text.contains("Use role-specific workers")
@@ -110,7 +139,7 @@ pub(crate) fn check() -> Result<(), String> {
             if !closed || name != Some(skill) || !description {
                 findings.push(format!("{provider}: {relative} has invalid frontmatter"));
             }
-            if skill_text.contains(other_root) {
+            if has_active_reference(&skill_text, other_root) {
                 findings.push(format!("{provider}: {relative} imports {other_root}"));
             }
             for sibling in SKILLS {
@@ -122,33 +151,25 @@ pub(crate) fn check() -> Result<(), String> {
                     ));
                 }
             }
+            provider_text.push('\n');
+            provider_text.push_str(&skill_text);
+        }
+        for state in [
+            "PR_IN_FLIGHT",
+            "GOAL_IN_FLIGHT",
+            "NEEDS_OWNER_DECISION",
+            "NOT_ESTABLISHED",
+        ] {
+            if !provider_text.contains(state) {
+                findings.push(format!("{provider}: required state absent: {state}"));
+            }
         }
     }
-    let all_provider_text = PROVIDERS
-        .iter()
-        .flat_map(|(_, instructions, root, _)| {
-            let mut paths = vec![instructions.to_string()];
-            paths.extend(
-                SKILLS
-                    .iter()
-                    .map(|skill| format!("{root}/{skill}/SKILL.md")),
-            );
-            paths
-        })
-        .filter_map(|path| fs::read_to_string(path).ok())
-        .collect::<Vec<_>>()
-        .join("\n");
-    for state in [
-        "PR_IN_FLIGHT",
-        "GOAL_IN_FLIGHT",
-        "NEEDS_OWNER_DECISION",
-        "NOT_ESTABLISHED",
-    ] {
-        if !all_provider_text.contains(state) {
-            findings.push(format!("required state absent: {state}"));
-        }
-    }
-    let status = if findings.is_empty() { "pass" } else { "fail" };
+    let status = if findings.is_empty() {
+        "pass"
+    } else {
+        "failed"
+    };
     let report = json!({
         "schema_version": "0.1",
         "status": status,
@@ -184,6 +205,14 @@ pub(crate) fn check() -> Result<(), String> {
             report["findings"].as_array().map_or(0, Vec::len)
         ))
     }
+}
+
+fn has_active_reference(text: &str, target: &str) -> bool {
+    let lines = text.lines().collect::<Vec<_>>();
+    lines
+        .iter()
+        .enumerate()
+        .any(|(index, line)| line.contains(target) && !negative_context(&lines, index))
 }
 
 fn negative_context(lines: &[&str], index: usize) -> bool {

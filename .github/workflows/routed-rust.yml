@@ -635,6 +635,7 @@ jobs:
       - name: Doc/spec gates (full precommit table)
         run: |
           cargo xtask precommit
+          cargo xtask check-agent-skills
       - name: Upload docs-gate reports
         if: always()
         uses: actions/upload-artifact@v7
