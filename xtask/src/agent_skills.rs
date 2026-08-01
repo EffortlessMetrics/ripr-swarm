@@ -67,45 +67,6 @@ pub(crate) fn check() -> Result<(), String> {
                 }
             }
         }
-        if text.contains("## Orchestration Operating Model")
-            || text.contains("Use role-specific workers")
-            || text.contains("### Wave discipline")
-        {
-            findings.push(format!(
-                "{provider}: retired fixed-role orchestration is active"
-            ));
-        }
-        let lines = text.lines().collect::<Vec<_>>();
-        for token in [
-            "active-goal",
-            "current-writer",
-            "current-stage",
-            "liveness",
-            "candidate-frontier",
-        ] {
-            for (index, line) in lines.iter().enumerate() {
-                let lower = line.to_ascii_lowercase();
-                if lower.contains(token) && !negative_context(&lines, index) {
-                    findings.push(format!(
-                        "{provider}: active orchestration authority contains {token}: {line}"
-                    ));
-                }
-            }
-        }
-        let has_active_kiro = lines.iter().enumerate().any(|(index, line)| {
-            let lower = line.to_ascii_lowercase();
-            lower.contains("kiro")
-                && (lower.contains("route")
-                    || lower.contains("lifecycle")
-                    || lower.contains("overlay")
-                    || lower.contains("skill"))
-                && !negative_context(&lines, index)
-        });
-        if has_active_kiro {
-            findings.push(format!(
-                "{provider}: active Kiro lifecycle route is present"
-            ));
-        }
         for skill in SKILLS {
             let relative = format!("{root}/{skill}/SKILL.md");
             let path = Path::new(&relative);
@@ -153,6 +114,45 @@ pub(crate) fn check() -> Result<(), String> {
             }
             provider_text.push('\n');
             provider_text.push_str(&skill_text);
+        }
+        if provider_text.contains("## Orchestration Operating Model")
+            || provider_text.contains("Use role-specific workers")
+            || provider_text.contains("### Wave discipline")
+        {
+            findings.push(format!(
+                "{provider}: retired fixed-role orchestration is active"
+            ));
+        }
+        let lines = provider_text.lines().collect::<Vec<_>>();
+        for token in [
+            "active-goal",
+            "current-writer",
+            "current-stage",
+            "liveness",
+            "candidate-frontier",
+        ] {
+            for (index, line) in lines.iter().enumerate() {
+                let lower = line.to_ascii_lowercase();
+                if lower.contains(token) && !negative_context(&lines, index) {
+                    findings.push(format!(
+                        "{provider}: active orchestration authority contains {token}: {line}"
+                    ));
+                }
+            }
+        }
+        let has_active_kiro = lines.iter().enumerate().any(|(index, line)| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("kiro")
+                && (lower.contains("route")
+                    || lower.contains("lifecycle")
+                    || lower.contains("overlay")
+                    || lower.contains("skill"))
+                && !negative_context(&lines, index)
+        });
+        if has_active_kiro {
+            findings.push(format!(
+                "{provider}: active Kiro lifecycle route is present"
+            ));
         }
         for state in [
             "PR_IN_FLIGHT",
