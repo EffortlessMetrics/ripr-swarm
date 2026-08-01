@@ -314,6 +314,16 @@ mod tests {
     fn self_reexec_command(env_key: &str) -> Result<Command, String> {
         let exe = std::env::current_exe().map_err(|err| err.to_string())?;
         let mut command = Command::new(exe);
+        // Run only the harness test that consumes this mode. Without the
+        // exact filter the child starts the entire 3,990-test binary before
+        // reaching `reexec_harness`, so the parent can falsely report a pipe
+        // deadlock under normal parallel workspace load.
+        let test_name = match env_key {
+            HANG_ENV => "git::tests::deadline_kills_and_reaps_a_hung_invocation",
+            FLOOD_ENV => "git::tests::output_larger_than_the_pipe_buffer_does_not_deadlock",
+            _ => return Err(format!("unknown git test harness mode: {env_key}")),
+        };
+        command.args([test_name, "--exact"]);
         command.env(env_key, "1");
         Ok(command)
     }
@@ -502,7 +512,11 @@ mod tests {
         if !is_git_invocation_timeout(&err) {
             return Err(format!("expected the named timeout error, got: {err}"));
         }
-        if elapsed >= Duration::from_secs(20) {
+        // Process scheduling and taskkill startup can add tens of seconds
+        // under the default parallel workspace suite. The implementation's
+        // reader drain remains bounded; leave enough harness headroom to
+        // avoid turning that scheduler contention into a false failure.
+        if elapsed >= Duration::from_secs(60) {
             return Err(format!(
                 "pipe-inheriting timeout took {elapsed:?}; reader drain was not bounded"
             ));

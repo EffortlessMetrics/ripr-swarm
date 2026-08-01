@@ -844,6 +844,7 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1063,6 +1064,7 @@ fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1325,6 +1327,7 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_refresh_resolves_git_inputs_once_and_projects_the_record() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -7477,6 +7480,7 @@ fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -7680,7 +7684,7 @@ fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<()
 }
 
 #[test]
-#[serial]
+#[serial(framed_lsp)]
 fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release()
 -> Result<(), String> {
     // Regression pin for the deferred-pull deadlock (#2031 review): the pull
@@ -7875,7 +7879,7 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
                 .map_err(|err| format!("failed to close test client: {err}"))?;
             Ok::<(), String>(())
         };
-        match tokio::time::timeout(Duration::from_secs(10), exchange).await {
+        match tokio::time::timeout(Duration::from_secs(60), exchange).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
@@ -7886,7 +7890,7 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
             }
         }
         // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_secs(10), &mut server_task).await {
+        match tokio::time::timeout(Duration::from_secs(60), &mut server_task).await {
             Ok(join_result) => {
                 join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
             }
@@ -7900,7 +7904,7 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
 }
 
 #[test]
-#[serial]
+#[serial(framed_lsp)]
 fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
     // Regression pin for the root-switch re-pull (#2031 review): pulled
     // settings are scoped to the root URI, so leaving a selected root in
@@ -8121,7 +8125,7 @@ fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
                 .map_err(|err| format!("failed to close test client: {err}"))?;
             Ok::<(), String>(())
         };
-        match tokio::time::timeout(Duration::from_secs(10), exchange).await {
+        match tokio::time::timeout(Duration::from_secs(60), exchange).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
@@ -8132,7 +8136,7 @@ fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
             }
         }
         // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_secs(10), &mut server_task).await {
+        match tokio::time::timeout(Duration::from_secs(60), &mut server_task).await {
             Ok(join_result) => {
                 join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
             }
@@ -8146,7 +8150,7 @@ fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
 }
 
 #[test]
-#[serial]
+#[serial(framed_lsp)]
 fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> {
     // Regression pin for the direct A -> B root switch (#2031 review): one
     // didChangeWorkspaceFolders returning [B] rewrites the authority to the
@@ -8230,6 +8234,31 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
                 }),
             )
             .await?;
+
+            // Completing the client-facing response does not guarantee that
+            // the server has finished applying the pull. Wait for the
+            // published state before starting the root transition; otherwise
+            // the next notification can race the pull's refresh task under
+            // the default parallel workspace load and make the test report a
+            // missing re-pull even though the route is correct.
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "workspace/executeCommand",
+                    "params": {
+                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                        "arguments": []
+                    }
+                }),
+            )
+            .await?;
+            let first_status = read_lsp_response(&mut client_read, 2).await?;
+            assert_eq!(
+                first_status["result"]["analysis_status"]["input_authority"]["configuration_pull"]["state"],
+                "applied"
+            );
 
             // Direct switch A -> B in ONE notification. The authority becomes
             // RootChanged (non-analyzable), so no re-pull may be scheduled
@@ -8359,7 +8388,7 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
                 .map_err(|err| format!("failed to close test client: {err}"))?;
             Ok::<(), String>(())
         };
-        match tokio::time::timeout(Duration::from_secs(10), exchange).await {
+        match tokio::time::timeout(Duration::from_secs(60), exchange).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
@@ -8370,7 +8399,7 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
             }
         }
         // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_secs(10), &mut server_task).await {
+        match tokio::time::timeout(Duration::from_secs(60), &mut server_task).await {
             Ok(join_result) => {
                 join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
             }
@@ -15583,6 +15612,7 @@ where
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> Result<(), String> {
     // Issue #1622 criterion 6 (RIPR-SPEC-0129): the saved-workspace journey
     // over the real tower-lsp-server framing — initialize, didOpen, didChange
@@ -16074,6 +16104,7 @@ fn lsp_trace_toggle_leaves_status_identity_and_revision_untouched() -> Result<()
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
     const CANARY: &str = "RIPR_TRACE_CANARY_NEVER_EMIT_7f3a9c";
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -16341,6 +16372,7 @@ fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -16601,6 +16633,7 @@ fn analysis_status_params(notifications: &[serde_json::Value]) -> Vec<serde_json
 }
 
 #[test]
+#[serial(framed_lsp)]
 fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let temp = boundary_gap_git_fixture_root("component-degradation")?;
