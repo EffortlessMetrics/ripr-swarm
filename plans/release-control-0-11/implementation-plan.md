@@ -156,10 +156,10 @@ PR #2790 merged at `3c08654028dcf20eb9bee5fbf3c67b3ef6111891` with deterministic
 synthetic fixtures for validator shape. PR #2795 then merged at
 `f55df6f67797de5d2fe4515b689aa7cea57669b4`, retaining the real census in
 `fixtures/release_denominator/current-main-provisional.json`. This refresh
-rebases the provisional census to `origin/main` `bdf7386f517c2a6999581236d6f509a254dd590a`:
-the first-parent range `c86807ec..bdf7386f` contains 222 observed commits and
+rebases the provisional census to `origin/main` `a8777c3549e52855415bff55753356adfc9c1cb9`:
+the first-parent range `c86807ec..a8777c35` contains 223 observed commits and
 the candidate-tree projection contains 219 records. Merged PRs #2842, #2844,
-and corrective #2858, plus later corrective follow-ups, remain explicitly
+and corrective #2858/#2859, plus later corrective follow-ups, remain explicitly
 `safe_defer_post_0_11` / `hold_post_release` and absent by
 `candidate_only_exclusion` unless #2379 changes the release graph. The fixture
 proves current range identity and reconciled disposition only; it is not a
