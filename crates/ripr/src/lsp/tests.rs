@@ -7879,7 +7879,7 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
                 .map_err(|err| format!("failed to close test client: {err}"))?;
             Ok::<(), String>(())
         };
-        match tokio::time::timeout(Duration::from_secs(60), exchange).await {
+        match tokio::time::timeout(Duration::from_mins(1), exchange).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
@@ -7890,7 +7890,7 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
             }
         }
         // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_secs(60), &mut server_task).await {
+        match tokio::time::timeout(Duration::from_mins(1), &mut server_task).await {
             Ok(join_result) => {
                 join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
             }
@@ -8125,7 +8125,7 @@ fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
                 .map_err(|err| format!("failed to close test client: {err}"))?;
             Ok::<(), String>(())
         };
-        match tokio::time::timeout(Duration::from_secs(60), exchange).await {
+        match tokio::time::timeout(Duration::from_mins(1), exchange).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
@@ -8136,7 +8136,7 @@ fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
             }
         }
         // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_secs(60), &mut server_task).await {
+        match tokio::time::timeout(Duration::from_mins(1), &mut server_task).await {
             Ok(join_result) => {
                 join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
             }
@@ -8388,7 +8388,7 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
                 .map_err(|err| format!("failed to close test client: {err}"))?;
             Ok::<(), String>(())
         };
-        match tokio::time::timeout(Duration::from_secs(60), exchange).await {
+        match tokio::time::timeout(Duration::from_mins(1), exchange).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
@@ -8399,7 +8399,7 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
             }
         }
         // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_secs(60), &mut server_task).await {
+        match tokio::time::timeout(Duration::from_mins(1), &mut server_task).await {
             Ok(join_result) => {
                 join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
             }
