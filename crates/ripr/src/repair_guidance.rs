@@ -468,12 +468,12 @@ impl AssertionGuidance {
 /// substituted value.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct DiscriminatorGuidanceView {
-    pub(crate) state: DiscriminatorState,
-    pub(crate) text: Option<String>,
-    pub(crate) basis: Option<DiscriminatorBasis>,
-    pub(crate) reason: Option<GuidanceReason>,
-    pub(crate) recovery: Option<GuidanceRecovery>,
-    pub(crate) static_limit_kind: Option<StaticLimitKind>,
+    state: DiscriminatorState,
+    text: Option<String>,
+    basis: Option<DiscriminatorBasis>,
+    reason: Option<GuidanceReason>,
+    recovery: Option<GuidanceRecovery>,
+    static_limit_kind: Option<StaticLimitKind>,
 }
 
 /// Additive wire projection of [`AssertionGuidance`].
@@ -482,13 +482,13 @@ pub(crate) struct DiscriminatorGuidanceView {
 /// concrete, producer-derived assertion. It is null in every non-concrete state.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct AssertionGuidanceView {
-    pub(crate) state: AssertionState,
-    pub(crate) example: Option<String>,
-    pub(crate) kind: Option<AssertionKind>,
-    pub(crate) basis: Option<AssertionBasis>,
-    pub(crate) observer_kind: Option<ObserverKind>,
-    pub(crate) reason: Option<GuidanceReason>,
-    pub(crate) recovery: Option<GuidanceRecovery>,
+    state: AssertionState,
+    example: Option<String>,
+    kind: Option<AssertionKind>,
+    basis: Option<AssertionBasis>,
+    observer_kind: Option<ObserverKind>,
+    reason: Option<GuidanceReason>,
+    recovery: Option<GuidanceRecovery>,
 }
 
 #[derive(Deserialize)]
@@ -603,6 +603,25 @@ impl DiscriminatorGuidanceView {
                 }
             }
         }
+        // Presence alone is not enough: a state paired with someone else's
+        // reason or recovery hands the consumer the wrong explanation while
+        // still passing contract validation.
+        if let Some(reason) = self.reason
+            && !allowed_discriminator_reasons(self.state).contains(&reason)
+        {
+            return Err(format!(
+                "discriminator state {:?} cannot carry reason {reason:?}",
+                self.state
+            ));
+        }
+        if let Some(recovery) = self.recovery
+            && !allowed_discriminator_recoveries(self.state).contains(&recovery)
+        {
+            return Err(format!(
+                "discriminator state {:?} cannot carry recovery {recovery:?}",
+                self.state
+            ));
+        }
         let expects_limit = self.state == DiscriminatorState::StaticLimitation;
         if expects_limit != self.static_limit_kind.is_some() {
             return Err(
@@ -690,7 +709,105 @@ impl AssertionGuidanceView {
                     .to_string(),
             );
         }
+        if let Some(reason) = self.reason
+            && !allowed_assertion_reasons(self.state).contains(&reason)
+        {
+            return Err(format!(
+                "assertion state {:?} cannot carry reason {reason:?}",
+                self.state
+            ));
+        }
+        if let Some(recovery) = self.recovery
+            && !allowed_assertion_recoveries(self.state).contains(&recovery)
+        {
+            return Err(format!(
+                "assertion state {:?} cannot carry recovery {recovery:?}",
+                self.state
+            ));
+        }
         Ok(())
+    }
+}
+
+/// The reasons each discriminator state is allowed to carry.
+///
+/// Closed per state so a stored packet cannot pair, say, `stale` with
+/// `producer_fact_absent` and still validate.
+fn allowed_discriminator_reasons(state: DiscriminatorState) -> &'static [GuidanceReason] {
+    match state {
+        DiscriminatorState::Present => &[],
+        DiscriminatorState::NotProduced => &[
+            GuidanceReason::ProducerFactAbsent,
+            GuidanceReason::NoBehavioralDiscriminatorDerived,
+        ],
+        DiscriminatorState::NotApplicable => &[
+            GuidanceReason::RouteIsInspectionOnly,
+            GuidanceReason::RouteIsVerificationOnly,
+        ],
+        DiscriminatorState::StaticLimitation => &[
+            GuidanceReason::StaticLimitationBlocksDerivation,
+            GuidanceReason::CrossLanguageOracleUnresolved,
+        ],
+        DiscriminatorState::Stale => &[GuidanceReason::SnapshotStale],
+    }
+}
+
+/// The recoveries each discriminator state is allowed to carry. A stale
+/// snapshot can only be refreshed; it cannot route the reader to a fix site
+/// whose evidence is known to be out of date.
+fn allowed_discriminator_recoveries(state: DiscriminatorState) -> &'static [GuidanceRecovery] {
+    match state {
+        DiscriminatorState::Present
+        | DiscriminatorState::NotApplicable
+        | DiscriminatorState::StaticLimitation => &[],
+        DiscriminatorState::NotProduced => &[
+            GuidanceRecovery::InspectFixSite,
+            GuidanceRecovery::RunExplain,
+            GuidanceRecovery::ReviewExternalOracle,
+            GuidanceRecovery::NoRecoveryAvailable,
+        ],
+        DiscriminatorState::Stale => &[
+            GuidanceRecovery::RefreshAnalysis,
+            GuidanceRecovery::NoRecoveryAvailable,
+        ],
+    }
+}
+
+/// The reasons each assertion state is allowed to carry.
+fn allowed_assertion_reasons(state: AssertionState) -> &'static [GuidanceReason] {
+    match state {
+        AssertionState::Concrete => &[],
+        AssertionState::RequiresObserverSetup => &[GuidanceReason::ObserverNotStaticallyVisible],
+        AssertionState::FixSiteOnly => &[GuidanceReason::RouteIsInspectionOnly],
+        AssertionState::VerificationOnly => &[GuidanceReason::RouteIsVerificationOnly],
+        AssertionState::Unresolved => &[
+            GuidanceReason::ProducerFactAbsent,
+            GuidanceReason::NoBehavioralDiscriminatorDerived,
+            GuidanceReason::CrossLanguageOracleUnresolved,
+            GuidanceReason::StaticLimitationBlocksDerivation,
+        ],
+        AssertionState::Stale => &[GuidanceReason::SnapshotStale],
+    }
+}
+
+/// The recoveries each assertion state is allowed to carry.
+fn allowed_assertion_recoveries(state: AssertionState) -> &'static [GuidanceRecovery] {
+    match state {
+        AssertionState::Concrete
+        | AssertionState::RequiresObserverSetup
+        | AssertionState::FixSiteOnly
+        | AssertionState::VerificationOnly => &[],
+        AssertionState::Unresolved => &[
+            GuidanceRecovery::InspectFixSite,
+            GuidanceRecovery::RunExplain,
+            GuidanceRecovery::AddObserverThenAssert,
+            GuidanceRecovery::ReviewExternalOracle,
+            GuidanceRecovery::NoRecoveryAvailable,
+        ],
+        AssertionState::Stale => &[
+            GuidanceRecovery::RefreshAnalysis,
+            GuidanceRecovery::NoRecoveryAvailable,
+        ],
     }
 }
 
@@ -698,10 +815,10 @@ impl AssertionGuidanceView {
 /// and claim boundary so a consumer never has to infer either from field shape.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct RepairGuidance {
-    pub(crate) schema_version: String,
-    pub(crate) discriminator: DiscriminatorGuidanceView,
-    pub(crate) assertion: AssertionGuidanceView,
-    pub(crate) claim_boundary: String,
+    schema_version: String,
+    discriminator: DiscriminatorGuidanceView,
+    assertion: AssertionGuidanceView,
+    claim_boundary: String,
 }
 
 #[derive(Deserialize)]
@@ -1270,6 +1387,78 @@ mod tests {
             }),
             "maximum",
         )
+    }
+
+    #[test]
+    fn a_state_cannot_borrow_another_states_reason_or_recovery() -> Result<(), String> {
+        // A stale snapshot explained as an absent producer fact, routed to a
+        // fix site whose evidence is known to be out of date. Presence-only
+        // validation accepted this; the consumer got the wrong explanation
+        // and the wrong recovery while the contract still reported valid.
+        let mismatched_stale = serde_json::json!({
+            "state": "stale",
+            "text": null,
+            "basis": null,
+            "reason": "producer_fact_absent",
+            "recovery": "inspect_fix_site",
+            "static_limit_kind": null
+        });
+        expect_error(
+            serde_json::from_value::<DiscriminatorGuidanceView>(mismatched_stale),
+            "cannot carry reason",
+        )?;
+
+        let stale_with_wrong_recovery = serde_json::json!({
+            "state": "stale",
+            "text": null,
+            "basis": null,
+            "reason": "snapshot_stale",
+            "recovery": "inspect_fix_site",
+            "static_limit_kind": null
+        });
+        expect_error(
+            serde_json::from_value::<DiscriminatorGuidanceView>(stale_with_wrong_recovery),
+            "cannot carry recovery",
+        )?;
+
+        let observer_setup_with_stale_reason = serde_json::json!({
+            "state": "requires_observer_setup",
+            "example": null,
+            "kind": null,
+            "basis": null,
+            "observer_kind": "side_effect_sink",
+            "reason": "snapshot_stale",
+            "recovery": null
+        });
+        expect_error(
+            serde_json::from_value::<AssertionGuidanceView>(observer_setup_with_stale_reason),
+            "cannot carry reason",
+        )?;
+
+        let assertion_stale_with_wrong_recovery = serde_json::json!({
+            "state": "stale",
+            "example": null,
+            "kind": null,
+            "basis": null,
+            "observer_kind": null,
+            "reason": "snapshot_stale",
+            "recovery": "add_observer_then_assert"
+        });
+        expect_error(
+            serde_json::from_value::<AssertionGuidanceView>(assertion_stale_with_wrong_recovery),
+            "cannot carry recovery",
+        )?;
+
+        // Every state the adapters actually produce still validates.
+        let produced = RepairGuidance::new(
+            &DiscriminatorAvailability::from_gap_route(GapRouteGuidanceFacts::default())?,
+            &AssertionGuidance::from_seam_facts(seam_facts(None))?,
+        )?;
+        assert_eq!(
+            produced.discriminator.state,
+            DiscriminatorState::NotProduced
+        );
+        Ok(())
     }
 
     #[test]
