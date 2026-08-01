@@ -735,13 +735,14 @@ export class RiprClientController {
       );
     }
 
-    if (this.client === client) {
-      this.client = undefined;
-    }
     // The captured start's finally block clears this when it completes. A
     // completed start has no remaining deduplication authority here.
     if (this.startingPromise === starting) {
       this.startingPromise = undefined;
+    }
+    if (client && this.client === client) {
+      await client.stop();
+      this.client = undefined;
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
@@ -750,9 +751,6 @@ export class RiprClientController {
     this.dirtyRiprDocuments.clear();
     while (this.notificationDisposables.length > 0) {
       this.notificationDisposables.pop()?.dispose();
-    }
-    if (client && this.client === undefined) {
-      await client.stop();
     }
     this.updateStatus({
       kind: 'stopped',
