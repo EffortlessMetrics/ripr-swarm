@@ -4586,7 +4586,7 @@
     {
       "commit_sha": "7b6e4cdc2bff48113e9d439416adf1850a0feb19",
       "first_parent_position": 219,
-      "subject": "feat(domain): define typed repair-guidance availability contract (#2830)",
+      "subject": "feat(domain): define typed repair-guidance availability contract (#2830) (#2854)",
       "pr_refs": [2854], "issue_refs": [],
       "theme_or_surface": "feat(domain)",
       "release_disposition": "operator_decision_required",
@@ -4599,7 +4599,7 @@
     {
       "commit_sha": "0d7db2e896ea34eb68bd37be6612e63bdc282a35",
       "first_parent_position": 220,
-      "subject": "ux(gate): name an absent placement instead of rendering a broken anchor (#2641)",
+      "subject": "ux(gate): name an absent placement instead of rendering a broken anchor (#2641) (#2855)",
       "pr_refs": [2855], "issue_refs": [],
       "theme_or_surface": "ux(gate)",
       "release_disposition": "operator_decision_required",
