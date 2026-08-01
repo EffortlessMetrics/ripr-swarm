@@ -800,15 +800,38 @@ fn git_bytes(root: &Path, args: &[&str], context: &str) -> Result<Vec<u8>, Preco
 }
 
 fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError> {
-    capture_process_output("cargo", args).map_err(|error| {
-        PrecommitError::new(
-            match error.kind {
-                ProcessErrorKind::Launch => PrecommitFailureKind::Infrastructure,
-                ProcessErrorKind::Exit => PrecommitFailureKind::IncompleteEvidence,
-            },
-            format!("{context}: {}", error.message),
-        )
-    })
+    let output =
+        capture_output_with_timeout("cargo", args, &[], PRECOMMIT_COMMAND_TIMEOUT, context)
+            .map_err(|message| {
+                PrecommitError::new(PrecommitFailureKind::Infrastructure, message)
+            })?;
+    if output.timed_out {
+        return Err(PrecommitError::new(
+            PrecommitFailureKind::Infrastructure,
+            format!(
+                "{context} exceeded the {} second precommit timeout",
+                PRECOMMIT_COMMAND_TIMEOUT.as_secs()
+            ),
+        ));
+    }
+    let Some(status) = output.status else {
+        return Err(PrecommitError::new(
+            PrecommitFailureKind::Infrastructure,
+            format!("{context} produced no process status"),
+        ));
+    };
+    if status.success() {
+        return Ok(output.stdout.into_bytes());
+    }
+    let detail = [output.stdout.trim(), output.stderr.trim()]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(PrecommitError::new(
+        PrecommitFailureKind::IncompleteEvidence,
+        format!("{context} failed with {status}: {detail}"),
+    ))
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
