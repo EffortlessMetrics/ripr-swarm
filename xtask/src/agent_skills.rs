@@ -46,6 +46,7 @@ pub(crate) fn check() -> Result<(), String> {
                 "{provider}: retired fixed-role orchestration is active"
             ));
         }
+        let lines = text.lines().collect::<Vec<_>>();
         for token in [
             "active-goal",
             "current-writer",
@@ -53,34 +54,25 @@ pub(crate) fn check() -> Result<(), String> {
             "liveness",
             "candidate-frontier",
         ] {
-            for line in text.lines() {
+            for (index, line) in lines.iter().enumerate() {
                 let lower = line.to_ascii_lowercase();
-                if lower.contains(token)
-                    && !lower.contains("no ")
-                    && !lower.contains("not ")
-                    && !lower.contains("do not")
-                    && !text.contains("Do not create repository-global")
-                {
+                if lower.contains(token) && !negative_context(&lines, index) {
                     findings.push(format!(
                         "{provider}: active orchestration authority contains {token}: {line}"
                     ));
                 }
             }
         }
-        let has_active_kiro = text.lines().any(|line| {
+        let has_active_kiro = lines.iter().enumerate().any(|(index, line)| {
             let lower = line.to_ascii_lowercase();
             lower.contains("kiro")
                 && (lower.contains("route")
                     || lower.contains("lifecycle")
                     || lower.contains("overlay")
                     || lower.contains("skill"))
-                && !lower.contains("no kiro")
-                && !lower.contains("without kiro")
+                && !negative_context(&lines, index)
         });
-        if has_active_kiro
-            && !(text.contains("Do not create fixed actor rosters")
-                && text.contains("Kiro lifecycle routes"))
-        {
+        if has_active_kiro {
             findings.push(format!(
                 "{provider}: active Kiro lifecycle route is present"
             ));
@@ -192,4 +184,16 @@ pub(crate) fn check() -> Result<(), String> {
             report["findings"].as_array().map_or(0, Vec::len)
         ))
     }
+}
+
+fn negative_context(lines: &[&str], index: usize) -> bool {
+    (0..=2).any(|offset| {
+        index
+            .checked_sub(offset)
+            .and_then(|candidate| lines.get(candidate))
+            .map(|line| line.to_ascii_lowercase())
+            .is_some_and(|line| {
+                line.contains("do not") || line.contains("no ") || line.contains("without ")
+            })
+    })
 }
