@@ -2,15 +2,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::run::{ProcessErrorKind, capture_process_output, run_process_status};
+use crate::run::{ProcessErrorKind, capture_output_with_timeout, capture_process_output};
+
+#[cfg(test)]
+use crate::run::run_process_status;
 
 const REPORT_JSON: &str = "target/ripr/reports/precommit-v2.json";
 const REPORT_MARKDOWN: &str = "target/ripr/reports/precommit-v2.md";
+const PRECOMMIT_COMMAND_TIMEOUT: Duration = Duration::from_mins(15);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -237,14 +241,23 @@ pub(super) fn run() -> Result<(), String> {
         .iter()
         .any(|path| is_rust_relevant(path))
     {
+        let metadata_args = cargo_metadata_args(&root);
+        let metadata_command = format_command(
+            "cargo",
+            &metadata_args.iter().map(String::as_str).collect::<Vec<_>>(),
+            &root,
+        );
         match load_package_roots(&root) {
-            Ok(value) => value,
+            Ok(value) => {
+                record_pass(&mut report, &metadata_command);
+                value
+            }
             Err(error) => {
                 return fail_with_report(
                     &root,
                     &mut report,
                     error.kind,
-                    "load cargo metadata",
+                    metadata_command,
                     error.message,
                 );
             }
@@ -540,13 +553,7 @@ fn deduplicate_changes(changes: Vec<ChangedPath>) -> Vec<ChangedPath> {
 }
 
 fn load_package_roots(root: &Path) -> Result<Vec<PackageRoot>, PrecommitError> {
-    let args = vec![
-        "metadata".to_string(),
-        "--format-version".to_string(),
-        "1".to_string(),
-        "--manifest-path".to_string(),
-        root.join("Cargo.toml").display().to_string(),
-    ];
+    let args = cargo_metadata_args(root);
     let output = cargo_bytes(&args, "load cargo metadata")?;
     let metadata: CargoMetadata = serde_json::from_slice(&output).map_err(|error| {
         PrecommitError::new(
@@ -616,6 +623,16 @@ fn load_package_roots(root: &Path) -> Result<Vec<PackageRoot>, PrecommitError> {
             .then_with(|| left.name.cmp(&right.name))
     });
     Ok(roots)
+}
+
+fn cargo_metadata_args(root: &Path) -> Vec<String> {
+    vec![
+        "metadata".to_string(),
+        "--format-version".to_string(),
+        "1".to_string(),
+        "--manifest-path".to_string(),
+        root.join("Cargo.toml").display().to_string(),
+    ]
 }
 
 fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPlan {
@@ -795,13 +812,50 @@ fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
-    run_process_status(program, args).map_err(|error| PrecommitError {
-        kind: match error.kind {
-            ProcessErrorKind::Launch => PrecommitFailureKind::Infrastructure,
-            ProcessErrorKind::Exit => PrecommitFailureKind::SourceOrPolicy,
-        },
-        message: error.message,
-    })
+    let output = capture_output_with_timeout(
+        program,
+        args,
+        &[],
+        PRECOMMIT_COMMAND_TIMEOUT,
+        "precommit command",
+    )
+    .map_err(|message| PrecommitError::new(PrecommitFailureKind::Infrastructure, message))?;
+    if output.timed_out {
+        return Err(PrecommitError::new(
+            PrecommitFailureKind::Infrastructure,
+            format!(
+                "{program} {} exceeded the {} second precommit timeout",
+                args.join(" "),
+                PRECOMMIT_COMMAND_TIMEOUT.as_secs()
+            ),
+        ));
+    }
+    let Some(status) = output.status else {
+        return Err(PrecommitError::new(
+            PrecommitFailureKind::Infrastructure,
+            format!("{program} {} produced no process status", args.join(" ")),
+        ));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let detail = [output.stdout.trim(), output.stderr.trim()]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(PrecommitError::new(
+        PrecommitFailureKind::SourceOrPolicy,
+        format!(
+            "{program} {} failed with {status}{}",
+            args.join(" "),
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ),
+    ))
 }
 
 fn record_pass(report: &mut PrecommitReport, command: &str) {
