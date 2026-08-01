@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
+};
+
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
     is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_new_path_marker,
@@ -141,6 +146,7 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
         pure_rename_paths: state.pure_rename_paths(),
+        limitations: state.limitations(),
     }
 }
 
@@ -152,6 +158,97 @@ pub(crate) struct ParsedDiff {
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
     pub(crate) pure_rename_paths: Vec<PathBuf>,
+    /// Input the parser saw but could not honestly reduce to two-way changed
+    /// lines: combined merge hunks and unresolved conflict regions. The parser
+    /// is the producer of this typed fact; projecting it into human, JSON,
+    /// SARIF, badge, gate, or LSP output is a separate slice (#2829), so no
+    /// non-test consumer reads it yet (#2828).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "producer-owned diff-parse limitations; #2829 adds the first output projection"
+        )
+    )]
+    pub(crate) limitations: Vec<AnalysisLimitation>,
+}
+
+/// A git conflict marker at the start of a source line, after the unified-diff
+/// side prefix has been stripped.
+enum ConflictMarker {
+    /// `<<<<<<<` — opens an unresolved conflict region.
+    Start,
+    /// `>>>>>>>` — closes it.
+    End,
+}
+
+const CONFLICT_START_MARKER: &str = "<<<<<<<";
+const CONFLICT_END_MARKER: &str = ">>>>>>>";
+
+/// Classify `raw` as a conflict-region boundary.
+///
+/// Detection strips exactly one unified-diff side prefix (`+`, `-`, or the
+/// context space) and then requires the remaining source line to *begin* with
+/// a complete marker run, followed by end of line or the label separator.
+/// Marker text embedded inside a source line (a literal such as
+/// `"<<<<<<< not a conflict"`) is never at line start, a longer run
+/// (`<<<<<<<<`) is not git's marker, and a lone `=======` separator is not a
+/// region boundary on its own — all three stay ordinary diff payload (#2828).
+fn conflict_marker(raw: &str) -> Option<ConflictMarker> {
+    let source = raw.strip_prefix(['+', '-', ' '])?;
+    if is_complete_conflict_marker(source, CONFLICT_START_MARKER) {
+        return Some(ConflictMarker::Start);
+    }
+    if is_complete_conflict_marker(source, CONFLICT_END_MARKER) {
+        return Some(ConflictMarker::End);
+    }
+    None
+}
+
+fn is_complete_conflict_marker(source: &str, marker: &str) -> bool {
+    let Some(rest) = source.strip_prefix(marker) else {
+        return false;
+    };
+    rest.is_empty() || rest.starts_with(' ')
+}
+
+/// Build the typed limitation the diff-parse stage owns for `kind`.
+///
+/// The parser is not a `Result` context, so the fallible DTO attributes
+/// degrade rather than propagate: an unportable path or a non-positive count
+/// drops that optional attribute and keeps the limitation. The recovery detail
+/// is a constant that satisfies the DTO bounds; if it ever stopped doing so the
+/// limitation is dropped rather than emitted without a repair route, because a
+/// limitation with no recovery is not representable.
+fn diff_parse_limitation(
+    kind: AnalysisLimitationKind,
+    path: Option<&PathBuf>,
+    affected_items: u64,
+) -> Option<AnalysisLimitation> {
+    let recovery = match kind {
+        AnalysisLimitationKind::CombinedHunkUnsupported => AnalysisRecovery::new(
+            AnalysisRecoveryKind::UseTwoWayDiff,
+            "Combined merge hunks carry N-parent coordinates that do not reduce to one old/new pair. \
+             Re-run against a two-way diff (for example `git diff <base>...<head>`).",
+        ),
+        AnalysisLimitationKind::UnresolvedConflictMarkers => AnalysisRecovery::new(
+            AnalysisRecoveryKind::ResolveConflicts,
+            "The diff still contains conflict markers, so neither side is the changed behavior. \
+             Resolve the conflict region and re-run the analysis.",
+        ),
+        _ => return None,
+    };
+    let recovery = recovery.ok()?;
+    let mut limitation = AnalysisLimitation::new(kind, AnalysisStage::DiffParse, recovery);
+    if let Some(path) = path
+        && let Ok(with_path) = limitation.clone().with_path(path.to_string_lossy())
+    {
+        limitation = with_path;
+    }
+    if let Ok(with_affected) = limitation.clone().with_affected_items(affected_items) {
+        limitation = with_affected;
+    }
+    Some(limitation)
 }
 
 fn parse_hunk_header(raw: &str) -> Option<(usize, usize)> {
@@ -173,7 +270,8 @@ fn parse_start(segment: &str) -> Option<usize> {
 
 mod parser_state {
     use super::{
-        ChangedFile, ChangedLine, is_dev_null_new_path_marker, is_new_path_marker,
+        AnalysisLimitation, AnalysisLimitationKind, ChangedFile, ChangedLine, ConflictMarker,
+        conflict_marker, diff_parse_limitation, is_dev_null_new_path_marker, is_new_path_marker,
         parse_git_old_path, parse_hunk_header, parse_new_path_marker,
         parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
         parse_rename_to_path,
@@ -204,6 +302,12 @@ mod parser_state {
         pure_rename_counted: bool,
         pure_rename_file_count: usize,
         pure_rename_paths: Vec<PathBuf>,
+        conflict_region: bool,
+        /// One entry per (limitation kind, file) pair, counting occurrences.
+        /// Keyed by a `BTreeMap` so repeated occurrences in the same file
+        /// coalesce into a single limitation and the emitted order is
+        /// deterministic (#2828).
+        limitation_counts: BTreeMap<(AnalysisLimitationKind, Option<PathBuf>), u64>,
     }
 
     impl ParserState {
@@ -230,6 +334,30 @@ mod parser_state {
 
         pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
             self.pure_rename_paths.clone()
+        }
+
+        /// Typed diff-parse limitations for the input seen so far. Emitted at
+        /// the end of parsing; an unclosed conflict region is already recorded
+        /// because recording happens when the region opens.
+        pub(super) fn limitations(&self) -> Vec<AnalysisLimitation> {
+            self.limitation_counts
+                .iter()
+                .filter_map(|((kind, path), affected_items)| {
+                    diff_parse_limitation(*kind, path.as_ref(), *affected_items)
+                })
+                .collect()
+        }
+
+        /// Record one occurrence of `kind` against the file currently in
+        /// scope. The path is bound only when it is known; an occurrence in an
+        /// unattributed section still yields a path-less limitation rather
+        /// than silence.
+        fn record_limitation(&mut self, kind: AnalysisLimitationKind) {
+            let count = self
+                .limitation_counts
+                .entry((kind, self.current_path.clone()))
+                .or_insert(0);
+            *count = count.saturating_add(1);
         }
 
         pub(super) fn handle_rename_metadata(
@@ -327,6 +455,9 @@ mod parser_state {
         pub(super) fn close_hunk(&mut self) {
             self.in_hunk = false;
             self.saw_old_path_marker = false;
+            // A conflict region cannot outlive the hunk that opened it: the
+            // quarantine recovers at the hunk or file boundary (#2828).
+            self.conflict_region = false;
         }
 
         pub(super) fn register_path_marker(
@@ -415,6 +546,7 @@ mod parser_state {
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
+            self.conflict_region = false;
             self.section_old_path = parse_git_old_path(raw);
             self.deletion_section = false;
             self.deletion_counted = false;
@@ -430,10 +562,27 @@ mod parser_state {
         }
 
         pub(super) fn handle_hunk_header(&mut self, raw: &str) -> bool {
+            // Combined hunk headers (`@@@ -1,1 -1,1 +1,1 @@@`, one extra `@`
+            // per merge parent) must be recognised BEFORE the ordinary `@@`
+            // branch. Their N-parent coordinates are not an old/new pair, so
+            // the body cannot be reduced to two-way changed lines. Record the
+            // typed limitation and quarantine the body by leaving the hunk
+            // closed: consume_hunk_line drops every following line until the
+            // next supported `@@` header or file boundary reopens a hunk.
+            // Previously the header fell through parse_hunk_header, the body
+            // was discarded the same way, and no record remained (#2828).
+            if raw.starts_with("@@@") {
+                self.saw_old_path_marker = false;
+                self.in_hunk = false;
+                self.conflict_region = false;
+                self.record_limitation(AnalysisLimitationKind::CombinedHunkUnsupported);
+                return true;
+            }
             if !raw.starts_with("@@") {
                 return false;
             }
             self.saw_old_path_marker = false;
+            self.conflict_region = false;
             if let Some((old_start, new_start)) = parse_hunk_header(raw) {
                 // Overflow guard: if either start coordinate is at usize::MAX,
                 // the counter cannot advance and every line in this hunk would
@@ -478,6 +627,7 @@ mod parser_state {
             }
             self.in_hunk = false;
             self.saw_old_path_marker = false;
+            self.conflict_region = false;
             true
         }
 
@@ -491,6 +641,28 @@ mod parser_state {
                 return;
             }
 
+            // Unresolved-conflict quarantine (#2828). A `<<<<<<<` marker opens
+            // a region whose lines describe neither side's behavior honestly,
+            // so they are recorded once as a typed limitation instead of as
+            // changed lines; the marker that closes the region is quarantined
+            // with it. Previously every marker and conflicted body line was
+            // pushed as an ordinary added or removed source line. Line
+            // counters still advance below, so any hunk line after the region
+            // keeps its real coordinate.
+            let mut quarantined = self.conflict_region;
+            match conflict_marker(raw) {
+                Some(ConflictMarker::Start) if !self.conflict_region => {
+                    self.conflict_region = true;
+                    self.record_limitation(AnalysisLimitationKind::UnresolvedConflictMarkers);
+                    quarantined = true;
+                }
+                Some(ConflictMarker::End) if self.conflict_region => {
+                    self.conflict_region = false;
+                    quarantined = true;
+                }
+                _ => {}
+            }
+
             let Some(path) = self.current_path.clone() else {
                 return;
             };
@@ -499,11 +671,13 @@ mod parser_state {
             };
 
             if let Some(text) = raw.strip_prefix('+') {
-                file.added_lines.push(ChangedLine {
-                    line: self.new_line,
-                    new_side_line: self.new_line,
-                    text: text.to_string(),
-                });
+                if !quarantined {
+                    file.added_lines.push(ChangedLine {
+                        line: self.new_line,
+                        new_side_line: self.new_line,
+                        text: text.to_string(),
+                    });
+                }
                 // Fail closed on overflow: if the new-side counter is already
                 // at usize::MAX (from a malicious or malformed @@ header), it
                 // cannot advance. Earlier behaviour silently emitted every
@@ -523,11 +697,13 @@ mod parser_state {
                 // Callers that build a SourceLocation pointing into the NEW file
                 // MUST use `new_side_line`; using `line` (the old-side counter)
                 // would target the wrong position in the new file.
-                file.removed_lines.push(ChangedLine {
-                    line: self.old_line,
-                    new_side_line: self.new_line,
-                    text: text.to_string(),
-                });
+                if !quarantined {
+                    file.removed_lines.push(ChangedLine {
+                        line: self.old_line,
+                        new_side_line: self.new_line,
+                        text: text.to_string(),
+                    });
+                }
                 if let Some(next) = self.old_line.checked_add(1) {
                     self.old_line = next;
                 } else {
