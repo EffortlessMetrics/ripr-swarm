@@ -1401,7 +1401,7 @@ mod tests {
             ));
             fs::create_dir_all(&path).map_err(|error| format!("create fixture: {error}"))?;
             let fixture = Self { path };
-            fixture.git(&["init", "-q"])?;
+            fixture.git(&["init", "-q", "--initial-branch=main"])?;
             fixture.git(&["config", "user.email", "fixture@example.invalid"])?;
             fixture.git(&["config", "user.name", "fixture"])?;
             Ok(fixture)
