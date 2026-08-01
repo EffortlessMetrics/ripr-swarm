@@ -4,10 +4,7 @@ use crate::analysis_outcome::{AnalysisLimitation, AnalysisLimitationKind, Analys
 
 use super::parse::{ParsedDiff, parse_unified_diff_with_metadata};
 
-fn limitation_of_kind(
-    parsed: &ParsedDiff,
-    kind: AnalysisLimitationKind,
-) -> &AnalysisLimitation {
+fn limitation_of_kind(parsed: &ParsedDiff, kind: AnalysisLimitationKind) -> &AnalysisLimitation {
     parsed
         .limitations
         .iter()
@@ -126,10 +123,7 @@ fn added_conflict_region_is_quarantined_and_typed() {
          +>>>>>>> theirs\n",
     );
 
-    let limitation = limitation_of_kind(
-        &parsed,
-        AnalysisLimitationKind::UnresolvedConflictMarkers,
-    );
+    let limitation = limitation_of_kind(&parsed, AnalysisLimitationKind::UnresolvedConflictMarkers);
     assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
     assert_eq!(limitation.affected_items, Some(1));
     let file = changed_file(&parsed, "src/lib.rs");
@@ -151,10 +145,7 @@ fn removed_conflict_region_is_quarantined_and_typed() {
          ->>>>>>> theirs\n",
     );
 
-    let limitation = limitation_of_kind(
-        &parsed,
-        AnalysisLimitationKind::UnresolvedConflictMarkers,
-    );
+    let limitation = limitation_of_kind(&parsed, AnalysisLimitationKind::UnresolvedConflictMarkers);
     assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
     let file = changed_file(&parsed, "src/lib.rs");
     assert!(file.added_lines.is_empty());
@@ -173,10 +164,7 @@ fn unclosed_conflict_region_remains_limited_at_end_of_input() {
          +=======\n",
     );
 
-    let limitation = limitation_of_kind(
-        &parsed,
-        AnalysisLimitationKind::UnresolvedConflictMarkers,
-    );
+    let limitation = limitation_of_kind(&parsed, AnalysisLimitationKind::UnresolvedConflictMarkers);
     assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
     assert!(changed_file(&parsed, "src/lib.rs").added_lines.is_empty());
 }
