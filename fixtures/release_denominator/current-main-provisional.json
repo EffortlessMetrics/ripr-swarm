@@ -1,14 +1,14 @@
 {
   "schema_version": "0.1",
   "kind": "release_denominator_snapshot",
-  "captured_at": "2026-08-01T22:24:00Z",
+  "captured_at": "2026-08-01T23:04:00Z",
   "source": {
     "mode": "captured",
     "stage": "provisional",
     "freshness": "current",
     "historical_base_sha": "c86807ecdbf359594ef88c0ff38b10b446139dca",
     "candidate_ref": "origin/main",
-    "candidate_sha": "5576c5331580413840c5958be4bb2d4e07b197dc",
+    "candidate_sha": "a379dd1bc27e7cba09f24f9dd9a9e6a90982e9af",
     "range_commits": [
       "fd1eec2ad8145678f0fb494a50bd181d6857b0c7",
       "7fc0dda3dd6625f20874c3703aeaacfe65a289e7",
@@ -233,7 +233,9 @@
       "224c240824566ec4c3beea4b3c86c6a149b81761",
       "bdf7386f517c2a6999581236d6f509a254dd590a",
       "a8777c3549e52855415bff55753356adfc9c1cb9",
-      "5576c5331580413840c5958be4bb2d4e07b197dc"
+      "5576c5331580413840c5958be4bb2d4e07b197dc",
+      "4c836dd61dc50f7a6711be82f5faca63ff220665",
+      "a379dd1bc27e7cba09f24f9dd9a9e6a90982e9af"
     ],
     "candidate_tree_commits": [
       "fd1eec2ad8145678f0fb494a50bd181d6857b0c7",
@@ -4663,6 +4665,32 @@
       "review_refs": [], "proof_refs": ["git:first-parent-range", "issue:2822"],
       "source_survivor_or_swarm_exclusion_effect": "corrective VS Code lifecycle production seam merged in development main; preserve the prior hold_post_release disposition and exclude the incomplete acceptance candidate from the 0.11 tree",
       "limitation_or_operator_decision": "Corrective implementation is merged, but issue acceptance remains partial; safe_defer_post_0_11 until complete current-main lifecycle and real-host proof completes."
+    },
+    {
+      "commit_sha": "4c836dd61dc50f7a6711be82f5faca63ff220665",
+      "first_parent_position": 225,
+      "subject": "release: reconcile post-merge acceptance candidates (#2857)",
+      "pr_refs": [2857], "issue_refs": [],
+      "theme_or_surface": "release-control",
+      "release_disposition": "safe_defer_post_0_11",
+      "acceptance_owner": "release-control-2379",
+      "candidate_tree_state": "absent_by_candidate_only_exclusion",
+      "review_refs": [], "proof_refs": ["git:first-parent-range", "pr:2857"],
+      "source_survivor_or_swarm_exclusion_effect": "release-control reconciliation is present in development main; preserve the post-0.11 hold and keep unresolved acceptance candidates outside the 0.11 tree",
+      "limitation_or_operator_decision": "Control refresh merged, but #2840/#2841 acceptance and #1609 operator decisions remain unresolved; safe_defer_post_0_11 unless #2379 changes the release graph."
+    },
+    {
+      "commit_sha": "a379dd1bc27e7cba09f24f9dd9a9e6a90982e9af",
+      "first_parent_position": 226,
+      "subject": "fix(vscode): omit absent context identity",
+      "pr_refs": [2867], "issue_refs": [1579],
+      "theme_or_surface": "fix(vscode)",
+      "release_disposition": "safe_defer_post_0_11",
+      "acceptance_owner": "vscode-lifecycle-verification",
+      "candidate_tree_state": "absent_by_candidate_only_exclusion",
+      "review_refs": [], "proof_refs": ["git:first-parent-range", "issue:1579"],
+      "source_survivor_or_swarm_exclusion_effect": "corrective VS Code context-contract implementation is merged in development main; preserve the post-0.11 hold and keep the corrective candidate outside the 0.11 tree",
+      "limitation_or_operator_decision": "Corrective implementation is merged, but broader #1579 acceptance remains partial; safe_defer_post_0_11 unless #2379 changes the release graph."
     }
   ]
 }

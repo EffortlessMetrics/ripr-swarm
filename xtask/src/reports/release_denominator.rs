@@ -1246,11 +1246,11 @@ mod tests {
             ),
         )?;
         require(
-            report.records.len() == 224,
+            report.records.len() == 226,
             "current-main census record count changed",
         )?;
         require(
-            report.source.range_commits.len() == 224,
+            report.source.range_commits.len() == 226,
             "current-main census range count changed",
         )?;
         require(

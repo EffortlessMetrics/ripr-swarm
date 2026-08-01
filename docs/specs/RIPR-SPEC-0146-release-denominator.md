@@ -61,13 +61,11 @@ decision; final output is ready only after every record is reconciled.
 
 ## Current-main evidence
 
-`fixtures/release_denominator/current-main-provisional.json` is a historical
-captured provisional census of `c86807ec..5576c533` at `origin/main` as
-observed on 2026-08-01. It carries 224 first-parent records and 219
-candidate-tree records. It is not a current-main receipt after later merges;
-PR B of #2831 must migrate it before denominator decisions consume it. The
-development-main merges for #2842, #2844, corrective #2858/#2859, and
-corrective #2862 are retained in
+`fixtures/release_denominator/current-main-provisional.json` is a captured
+provisional census of `c86807ec..a379dd1` at `origin/main` as observed on
+2026-08-01. It carries 226 first-parent records and 219 candidate-tree
+records. The development-main merges for #2842, #2844, corrective #2858/#2859,
+corrective #2862, release-control #2857, and corrective #2867 are retained in
 the denominator with `safe_defer_post_0_11` / `hold_post_release` disposition
 and `absent_by_candidate_only_exclusion` tree state; the later corrective
 commits inherit that disposition unless #2379 changes the release graph. The
