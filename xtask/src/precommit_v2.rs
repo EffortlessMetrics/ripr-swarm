@@ -109,9 +109,9 @@ pub(super) fn run() -> Result<(), String> {
         let args = workspace_clippy_args(&root);
         run_clippy(&root, &mut report, args)?;
     } else if report.impacted_packages.is_empty() {
-        report
-            .skipped
-            .push("Clippy skipped: no Rust package or workspace-wide Rust surface changed.".to_string());
+        report.skipped.push(
+            "Clippy skipped: no Rust package or workspace-wide Rust surface changed.".to_string(),
+        );
     } else {
         for package in report.impacted_packages.clone() {
             let args = package_clippy_args(&root, &package);
@@ -123,11 +123,7 @@ pub(super) fn run() -> Result<(), String> {
     write_report(&root, &report)
 }
 
-fn run_clippy(
-    root: &Path,
-    report: &mut PrecommitReport,
-    args: Vec<String>,
-) -> Result<(), String> {
+fn run_clippy(root: &Path, report: &mut PrecommitReport, args: Vec<String>) -> Result<(), String> {
     let command = format_command("cargo", &args);
     match crate::run::run_owned("cargo", &args) {
         Ok(()) => {
