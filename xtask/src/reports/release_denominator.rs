@@ -658,11 +658,11 @@ mod tests {
             ),
         )?;
         require(
-            report.records.len() == 221,
+            report.records.len() == 222,
             "current-main census record count changed",
         )?;
         require(
-            report.source.range_commits.len() == 221,
+            report.source.range_commits.len() == 222,
             "current-main census range count changed",
         )?;
         require(

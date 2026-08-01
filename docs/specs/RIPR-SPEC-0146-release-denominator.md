@@ -56,9 +56,10 @@ decision; final output is ready only after every record is reconciled.
 ## Current-main evidence
 
 `fixtures/release_denominator/current-main-provisional.json` is a captured
-provisional census of `c86807ec..224c2408` at `origin/main` as observed on
-2026-08-01. It carries 221 first-parent records and 219 candidate-tree
-records. The two development-main merges for #2842 and #2844 are retained in
+provisional census of `c86807ec..bdf7386f` at `origin/main` as observed on
+2026-08-01. It carries 222 first-parent records and 219 candidate-tree
+records. The development-main merges for #2842, #2844, and corrective #2858
+are retained in
 the denominator with `safe_defer_post_0_11` / `hold_post_release` disposition
 and `absent_by_candidate_only_exclusion` tree state; the later corrective
 commits inherit that disposition unless #2379 changes the release graph. The
@@ -76,7 +77,7 @@ under `RIPR-SPEC-0146`. Focused proof is provided by the ten tests named there
 and the complete/reconcile-required fixtures under
 `fixtures/release_denominator/`; hosted CI is the authoritative execution
 proof for this PR. The current-main census is loaded by a focused
-normalization test that pins its 221-record range and 219-record candidate-tree
+normalization test that pins its 222-record range and 219-record candidate-tree
 count.
 
 ## Problem
@@ -122,7 +123,7 @@ decision in a final ledger, or disagreeing with live observations produces
 The ten focused tests listed in `.ripr/traceability.toml` cover deterministic
 normalization, missing/duplicate/out-of-range/order/tree failures, final
 operator decisions, live drift, JSON/Markdown claim-boundary parity, and the
-current-main 221-record census with the two candidate-only exclusions.
+current-main 222-record census with the three candidate-only exclusions.
 
 ## Implementation Mapping
 
