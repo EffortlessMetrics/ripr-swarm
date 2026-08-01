@@ -564,7 +564,7 @@ impl DiscriminatorGuidanceView {
                     .text
                     .as_deref()
                     .ok_or("discriminator state present requires text")?;
-                bounded_guidance_text("discriminator text", text)?;
+                check_guidance_text("discriminator text", text)?;
                 if self.basis.is_none() {
                     return Err("discriminator state present requires a producer basis".to_string());
                 }
@@ -625,7 +625,7 @@ impl AssertionGuidanceView {
                     .example
                     .as_deref()
                     .ok_or("assertion state concrete requires an example")?;
-                bounded_guidance_text("assertion example", example)?;
+                check_guidance_text("assertion example", example)?;
                 if self.kind.is_none() || self.basis.is_none() {
                     return Err(
                         "assertion state concrete requires an assertion kind and producer basis"
@@ -781,18 +781,27 @@ impl RepairGuidance {
     }
 }
 
-fn bounded_guidance_text(field: &str, value: &str) -> Result<String, String> {
-    let value = value.trim().to_string();
-    if value.is_empty() {
+/// Validate bounds on a borrowed slice. The `validate` paths only need the
+/// verdict, so they must not allocate a `String` they immediately discard.
+fn check_guidance_text(field: &str, value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Err(format!("{field} must not be empty"));
     }
-    let count = value.chars().count();
+    let count = trimmed.chars().count();
     if count > MAX_REPAIR_GUIDANCE_TEXT_CHARS {
         return Err(format!(
             "{field} has {count} characters; maximum is {MAX_REPAIR_GUIDANCE_TEXT_CHARS}"
         ));
     }
-    Ok(value)
+    Ok(())
+}
+
+/// Validate and normalize into the owned form the typed states store.
+fn bounded_guidance_text(field: &str, value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    check_guidance_text(field, trimmed)?;
+    Ok(trimmed.to_string())
 }
 
 #[cfg(test)]
