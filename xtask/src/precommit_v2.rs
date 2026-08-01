@@ -653,7 +653,11 @@ fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPla
         }
         if let Some(owner) = nearest_package(path, roots) {
             packages.insert(owner.name.clone());
-            if path.ends_with("Cargo.toml") || path.ends_with("build.rs") || owner.proc_macro {
+            if path.ends_with(".rs")
+                || path.ends_with("Cargo.toml")
+                || path.ends_with("build.rs")
+                || owner.proc_macro
+            {
                 widen_dependents.insert(owner.name.clone());
             }
         }
@@ -1130,6 +1134,39 @@ mod tests {
         require(
             plan.impacted_packages == vec!["app".to_string(), "macro".to_string()],
             "reverse dependent closure missing",
+        )
+    }
+
+    #[test]
+    fn ordinary_library_source_widens_reverse_dependents() -> Result<(), String> {
+        let roots = vec![
+            PackageRoot {
+                name: "app".to_string(),
+                relative_root: "crates/app".to_string(),
+                dependencies: vec!["lib".to_string()],
+                proc_macro: false,
+            },
+            PackageRoot {
+                name: "lib".to_string(),
+                relative_root: "crates/lib".to_string(),
+                dependencies: Vec::new(),
+                proc_macro: false,
+            },
+        ];
+        let changes = ChangeSet {
+            changes: vec![ChangedPath {
+                kind: "modified".to_string(),
+                path: "crates/lib/src/lib.rs".to_string(),
+                old_path: None,
+                origins: vec!["unstaged".to_string()],
+            }],
+            complete: true,
+            limitations: Vec::new(),
+        };
+        let plan = build_impact_plan(&changes, &roots);
+        require(
+            plan.impacted_packages == vec!["app".to_string(), "lib".to_string()],
+            "ordinary library source did not include reverse dependents",
         )
     }
 
