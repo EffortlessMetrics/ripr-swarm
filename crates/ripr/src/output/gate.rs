@@ -581,6 +581,9 @@ fn gate_decision(
             mutation_calibration: &mutation_calibration,
             acknowledgement_label: acknowledgement_label.as_deref(),
         },
+        // #2640: the configured labels travel alongside the matched one so a
+        // blocking reason can name the label that would have acknowledged it.
+        &policy.acknowledgement_labels,
     );
     let repair_route = build_gate_repair_route(candidate);
     GateDecision {
@@ -805,7 +808,11 @@ fn candidate_would_block(
     }
 }
 
-fn gate_reason(candidate: &GateCandidate, context: GateReasonContext<'_>) -> String {
+fn gate_reason(
+    candidate: &GateCandidate,
+    context: GateReasonContext<'_>,
+    configured_acknowledgement_labels: &[String],
+) -> String {
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
@@ -892,7 +899,20 @@ fn gate_reason(candidate: &GateCandidate, context: GateReasonContext<'_>) -> Str
                 "new policy-eligible gap has supporting recommendation calibration".to_string()
             }
         }
-        "blocking" => "policy-eligible gap blocks under acknowledgeable mode".to_string(),
+        "blocking" => {
+            let expected = configured_acknowledgement_labels
+                .iter()
+                .map(|label| format!("`{label}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if expected.is_empty() {
+                "policy-eligible gap blocks under acknowledgeable mode".to_string()
+            } else {
+                format!(
+                    "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: {expected})"
+                )
+            }
+        }
         _ if context.mode == GateMode::VisibleOnly => {
             "visible-only mode records evidence without blocking".to_string()
         }

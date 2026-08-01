@@ -34,6 +34,11 @@ fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), St
     assert_eq!(report.summary.blocking, 1);
     assert!(gate_decision_should_fail(&report));
     assert_eq!(report.decisions[0].decision, "blocking");
+    // #2640: the reason names the label that would have acknowledged the gap.
+    assert_eq!(
+        report.decisions[0].gate_reason,
+        "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `ripr-waive`)"
+    );
     Ok(())
 }
 
@@ -1265,6 +1270,26 @@ fn gate_labels_array_supports_custom_acknowledgement_label() -> Result<(), Strin
         report.decisions[0].policy.acknowledgement_label.as_deref(),
         Some("accepted-risk")
     );
+
+    // #2640: without the waiver label the blocking reason names the configured
+    // label, not the built-in default.
+    input.labels_json = None;
+    let blocked = build_gate_decision_report(&input)?;
+    assert_eq!(blocked.status, "blocked");
+    assert_eq!(blocked.decisions[0].decision, "blocking");
+    assert_eq!(
+        blocked.decisions[0].gate_reason,
+        "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `accepted-risk`)"
+    );
+    assert!(!blocked.decisions[0].gate_reason.contains("ripr-waive"));
+
+    input.acknowledgement_labels = vec!["accepted-risk".to_string(), "ops-waiver".to_string()];
+    let blocked = build_gate_decision_report(&input)?;
+    assert_eq!(
+        blocked.decisions[0].gate_reason,
+        "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `accepted-risk`, `ops-waiver`)"
+    );
+
     let _ = fs::remove_dir_all(dir);
     Ok(())
 }
