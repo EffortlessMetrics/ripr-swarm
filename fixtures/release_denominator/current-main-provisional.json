@@ -1,14 +1,14 @@
 {
   "schema_version": "0.1",
   "kind": "release_denominator_snapshot",
-  "captured_at": "2026-08-01T20:22:10Z",
+  "captured_at": "2026-08-01T22:24:00Z",
   "source": {
     "mode": "captured",
     "stage": "provisional",
     "freshness": "current",
     "historical_base_sha": "c86807ecdbf359594ef88c0ff38b10b446139dca",
     "candidate_ref": "origin/main",
-    "candidate_sha": "a8777c3549e52855415bff55753356adfc9c1cb9",
+    "candidate_sha": "5576c5331580413840c5958be4bb2d4e07b197dc",
     "range_commits": [
       "fd1eec2ad8145678f0fb494a50bd181d6857b0c7",
       "7fc0dda3dd6625f20874c3703aeaacfe65a289e7",
@@ -232,7 +232,8 @@
       "0d7db2e896ea34eb68bd37be6612e63bdc282a35",
       "224c240824566ec4c3beea4b3c86c6a149b81761",
       "bdf7386f517c2a6999581236d6f509a254dd590a",
-      "a8777c3549e52855415bff55753356adfc9c1cb9"
+      "a8777c3549e52855415bff55753356adfc9c1cb9",
+      "5576c5331580413840c5958be4bb2d4e07b197dc"
     ],
     "candidate_tree_commits": [
       "fd1eec2ad8145678f0fb494a50bd181d6857b0c7",
@@ -4649,6 +4650,19 @@
       "review_refs": [], "proof_refs": ["git:first-parent-range", "issue:2840"],
       "source_survivor_or_swarm_exclusion_effect": "corrective provider-system implementation merged in development main; preserve the prior hold_post_release disposition and exclude the incomplete acceptance candidate from the 0.11 tree",
       "limitation_or_operator_decision": "Corrective implementation is merged, but issue acceptance remains partial; safe_defer_post_0_11 until cold provider loading and behavioral dogfood complete."
+    },
+    {
+      "commit_sha": "5576c5331580413840c5958be4bb2d4e07b197dc",
+      "first_parent_position": 224,
+      "subject": "fix(vscode): restore controller lifecycle production seam (#2862)",
+      "pr_refs": [2862], "issue_refs": [2822],
+      "theme_or_surface": "fix(vscode)",
+      "release_disposition": "safe_defer_post_0_11",
+      "acceptance_owner": "vscode-lifecycle-verification",
+      "candidate_tree_state": "absent_by_candidate_only_exclusion",
+      "review_refs": [], "proof_refs": ["git:first-parent-range", "issue:2822"],
+      "source_survivor_or_swarm_exclusion_effect": "corrective VS Code lifecycle production seam merged in development main; preserve the prior hold_post_release disposition and exclude the incomplete acceptance candidate from the 0.11 tree",
+      "limitation_or_operator_decision": "Corrective implementation is merged, but issue acceptance remains partial; safe_defer_post_0_11 until complete current-main lifecycle and real-host proof completes."
     }
   ]
 }
