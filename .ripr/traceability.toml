@@ -6526,6 +6526,7 @@ tests = [
   "xtask/src/reports/release_denominator.rs::tests::reference_projection_mismatch_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::contradictory_reference_identity_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::malformed_reference_evidence_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::compatibility_projections_sort_reference_numbers",
 ]
 fixtures = [
   "fixtures/release_denominator/complete.json",

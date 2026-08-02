@@ -469,18 +469,20 @@ fn normalize_reference_projections(record: &mut CommitRecord, reasons: &mut Vec<
                 right.github_identity.as_deref().unwrap_or_default(),
             ))
     });
-    let projected_pr_refs = record
+    let mut projected_pr_refs = record
         .references
         .iter()
         .filter(|reference| reference.kind == "merge_pr" || reference.kind == "pull_request")
         .map(|reference| reference.number)
         .collect::<Vec<_>>();
-    let projected_issue_refs = record
+    projected_pr_refs.sort_unstable();
+    let mut projected_issue_refs = record
         .references
         .iter()
         .filter(|reference| reference.kind == "issue")
         .map(|reference| reference.number)
         .collect::<Vec<_>>();
+    projected_issue_refs.sort_unstable();
     if record.pr_refs.is_empty() {
         record.pr_refs = projected_pr_refs;
     } else if record.pr_refs != projected_pr_refs {
@@ -1104,6 +1106,20 @@ mod tests {
         require(
             report.status == "reconcile_required",
             "malformed reference evidence was accepted",
+        )
+    }
+
+    #[test]
+    fn compatibility_projections_sort_reference_numbers() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.records[1].references[1].number = 1000;
+        snapshot.records[1].references[1].evidence_url =
+            Some("https://github.com/EffortlessMetrics/ripr-swarm/pull/1000".to_string());
+        snapshot.records[1].pr_refs.clear();
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report.records[1].pr_refs == [1000, 2790],
+            "compatibility PR projection was not sorted numerically",
         )
     }
 
