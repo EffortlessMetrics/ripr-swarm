@@ -8244,6 +8244,7 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
             // route is correct.
             let status_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
             let mut status_request_id = 100_u64;
+            let mut observed_states = Vec::new();
             loop {
                 let request_id = status_request_id;
                 status_request_id += 1;
@@ -8273,13 +8274,14 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
                     .and_then(|input_authority| input_authority.get("configuration_pull"))
                     .and_then(|configuration_pull| configuration_pull.get("state"))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or("missing");
+                    .map_or("<missing>", |value| value);
+                observed_states.push(format!("id {request_id}: {configuration_state}"));
                 if configuration_state == "applied" {
                     break;
                 }
                 if tokio::time::Instant::now() >= status_deadline {
                     return Err(format!(
-                        "initial configuration pull was not applied before the bounded deadline; last observed state: {configuration_state}"
+                        "initial configuration pull was not applied before the bounded deadline; observed states: {observed_states:?}"
                     ));
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;

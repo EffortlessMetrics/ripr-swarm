@@ -499,7 +499,7 @@ mod tests {
             "-NoProfile",
             "-Command",
             &format!(
-                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_path_text}' -Value $p.Id; Wait-Process -Id $p.Id"
+                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 60') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_path_text}' -Value $p.Id; Wait-Process -Id $p.Id"
             ),
         ]);
         let started = Instant::now();
@@ -544,12 +544,11 @@ mod tests {
                 "pipe-inheriting descendant {descendant_pid} remained alive after timeout; tree termination was not proven"
             ));
         }
-        // Process scheduling and taskkill startup can add tens of seconds
-        // under the default parallel workspace suite. The implementation's
-        // reader drain remains bounded; leave enough harness headroom to
-        // avoid turning that scheduler contention into a false failure while
-        // keeping the bound below the descendant's 120-second lifetime.
-        if elapsed >= Duration::from_secs(60) {
+        // The descendant lives for 60 seconds, while a correct process-tree
+        // kill must complete this proof below the 30-second bound. The PID
+        // check is the discriminator: bounded pipe draining alone can return
+        // without proving that the inherited writer was terminated.
+        if elapsed >= Duration::from_secs(30) {
             return Err(format!(
                 "pipe-inheriting timeout took {elapsed:?}; reader drain was not bounded"
             ));
