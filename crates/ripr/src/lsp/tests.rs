@@ -8272,9 +8272,9 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
                     read_lsp_response(&mut client_read, request_id),
                 )
                 .await
-                .map_err(|_| {
+                .map_err(|timeout_error| {
                     format!(
-                        "initial configuration pull response timed out; observed states: {observed_states:?}"
+                        "initial configuration pull response timed out ({timeout_error}); observed states: {observed_states:?}"
                     )
                 })??;
                 if status.get("error").is_some() {

@@ -541,7 +541,7 @@ mod tests {
                 .stderr(Stdio::null())
                 .status();
             return Err(format!(
-                "pipe-inheriting descendant {descendant_pid} remained alive after timeout; tree termination was not proven"
+                "pipe-inheriting descendant {descendant_pid} remained alive after timeout; tree termination was not established"
             ));
         }
         // The descendant lives for 60 seconds, while a correct process-tree
