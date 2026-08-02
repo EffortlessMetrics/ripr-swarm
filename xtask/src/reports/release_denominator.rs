@@ -824,8 +824,34 @@ mod tests {
             "fixture denominator is incomplete",
         )?;
         require(
-            report.record_set_digest.starts_with("sha256:"),
-            "record digest missing",
+            report.source.historical_base_sha == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "historical base identity changed",
+        )?;
+        require(
+            report.source.candidate_sha == "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "candidate identity changed",
+        )?;
+        require(
+            report.source.range_commits.first().map(String::as_str)
+                == Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                && report.source.range_commits.last().map(String::as_str)
+                    == Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+            "ordered range identity changed",
+        )?;
+        require(
+            report.range_digest
+                == "sha256:e596e47e5225954058523ad415e398252211b02e99522c614e8dc413fae713a8",
+            "ordered range digest changed",
+        )?;
+        require(
+            report.candidate_tree_digest
+                == "sha256:e596e47e5225954058523ad415e398252211b02e99522c614e8dc413fae713a8",
+            "candidate-tree digest changed",
+        )?;
+        require(
+            report.record_set_digest
+                == "sha256:5e49670e6b0f8da180ac36538bb8267d02849795595d56b9b29cba0e679ea9d4",
+            "normalized record-set digest changed",
         )?;
         let again = normalize_snapshot(fixture()?, None)?;
         require(
@@ -1177,7 +1203,24 @@ mod tests {
         require(
             report.source.candidate_tree_commits.len() == 219,
             "current-main census candidate-tree count changed",
-        )
+        )?;
+        require(
+            report.source.historical_base_sha == "c86807ecdbf359594ef88c0ff38b10b446139dca"
+                && report.source.candidate_sha == "5576c5331580413840c5958be4bb2d4e07b197dc"
+                && report.source.range_commits.first().map(String::as_str)
+                    == Some("fd1eec2ad8145678f0fb494a50bd181d6857b0c7")
+                && report.source.range_commits.last().map(String::as_str)
+                    == Some("5576c5331580413840c5958be4bb2d4e07b197dc"),
+            "current-main identity changed",
+        )?;
+        require(
+            report.range_digest
+                == "sha256:e2d1bb7679cb1c554e707907160a657b80ff95f999cbf704fbff8ca7c0e4d75d"
+                && report.candidate_tree_digest
+                    == "sha256:c1b3675b6b98f609343f35711898e805a6ad27577c8f9b351ae53718b91082ae",
+            "current-main range or candidate-tree digest changed",
+        )?;
+        Ok(())
     }
 
     #[test]
