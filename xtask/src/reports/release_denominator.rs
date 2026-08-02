@@ -38,6 +38,20 @@ const TREE_STATES: &[&str] = &[
     "source_only_not_in_swarm_candidate",
 ];
 
+const REFERENCE_KINDS: &[&str] = &[
+    "merge_pr",
+    "issue",
+    "pull_request",
+    "reviewed_manual_mapping",
+];
+
+const REFERENCE_SOURCES: &[&str] = &[
+    "associated_pull_request",
+    "closing_reference",
+    "body_reference",
+    "explicit_review",
+];
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct Snapshot {
     schema_version: String,
@@ -68,6 +82,8 @@ struct CommitRecord {
     pr_refs: Vec<u64>,
     #[serde(default)]
     issue_refs: Vec<u64>,
+    #[serde(default)]
+    references: Vec<ReferenceEvidence>,
     theme_or_surface: String,
     release_disposition: String,
     acceptance_owner: String,
@@ -80,6 +96,20 @@ struct CommitRecord {
     proof_refs: Vec<String>,
     source_survivor_or_swarm_exclusion_effect: String,
     limitation_or_operator_decision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct ReferenceEvidence {
+    kind: String,
+    number: u64,
+    source: String,
+    #[serde(default)]
+    evidence_url: Option<String>,
+    #[serde(default)]
+    github_identity: Option<String>,
+    observed_for_commit_sha: String,
+    reviewed: bool,
+    limitation: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,7 +171,7 @@ fn read_snapshot(path: &str) -> Result<Snapshot, String> {
 }
 
 fn normalize_snapshot(
-    snapshot: Snapshot,
+    mut snapshot: Snapshot,
     live_facts: Option<&LiveFacts>,
 ) -> Result<NormalizedReport, String> {
     let mut reasons = Vec::new();
@@ -171,8 +201,8 @@ fn normalize_snapshot(
     let mut seen = BTreeSet::new();
     let mut counts_by_disposition = BTreeMap::new();
     let mut counts_by_tree_state = BTreeMap::new();
-    for (index, record) in snapshot.records.iter().enumerate() {
-        if !seen.insert(record.commit_sha.as_str()) {
+    for (index, record) in snapshot.records.iter_mut().enumerate() {
+        if !seen.insert(record.commit_sha.clone()) {
             reasons.push(format!(
                 "commit {} appears more than once",
                 record.commit_sha
@@ -203,6 +233,7 @@ fn normalize_snapshot(
                 index + 1
             ));
         }
+        normalize_reference_projections(record, &mut reasons);
         validate_record(record, &snapshot.source, &mut reasons);
         *counts_by_disposition
             .entry(record.release_disposition.clone())
@@ -412,6 +443,158 @@ fn validate_record(record: &CommitRecord, source: &SnapshotSource, reasons: &mut
     {
         reasons.push(format!(
             "commit {} source_only_followup disposition has the wrong tree state",
+            record.commit_sha
+        ));
+    }
+    validate_reference_evidence(record, source, reasons);
+}
+
+fn normalize_reference_projections(record: &mut CommitRecord, reasons: &mut Vec<String>) {
+    if record.references.is_empty() {
+        return;
+    }
+    record.references.sort_by(|left, right| {
+        (
+            left.kind.as_str(),
+            left.number,
+            left.source.as_str(),
+            left.evidence_url.as_deref().unwrap_or_default(),
+            left.github_identity.as_deref().unwrap_or_default(),
+        )
+            .cmp(&(
+                right.kind.as_str(),
+                right.number,
+                right.source.as_str(),
+                right.evidence_url.as_deref().unwrap_or_default(),
+                right.github_identity.as_deref().unwrap_or_default(),
+            ))
+    });
+    let projected_pr_refs = record
+        .references
+        .iter()
+        .filter(|reference| reference.kind == "merge_pr" || reference.kind == "pull_request")
+        .map(|reference| reference.number)
+        .collect::<Vec<_>>();
+    let projected_issue_refs = record
+        .references
+        .iter()
+        .filter(|reference| reference.kind == "issue")
+        .map(|reference| reference.number)
+        .collect::<Vec<_>>();
+    if record.pr_refs.is_empty() {
+        record.pr_refs = projected_pr_refs;
+    } else if record.pr_refs != projected_pr_refs {
+        reasons.push(format!(
+            "commit {} pr_refs compatibility projection disagrees with references",
+            record.commit_sha
+        ));
+    }
+    if record.issue_refs.is_empty() {
+        record.issue_refs = projected_issue_refs;
+    } else if record.issue_refs != projected_issue_refs {
+        reasons.push(format!(
+            "commit {} issue_refs compatibility projection disagrees with references",
+            record.commit_sha
+        ));
+    }
+}
+
+fn validate_reference_evidence(
+    record: &CommitRecord,
+    source: &SnapshotSource,
+    reasons: &mut Vec<String>,
+) {
+    let mut seen_authorities = BTreeSet::new();
+    let mut evidence_kinds = BTreeMap::new();
+    for reference in &record.references {
+        if !REFERENCE_KINDS.contains(&reference.kind.as_str()) {
+            reasons.push(format!(
+                "commit {} has invalid reference kind {}",
+                record.commit_sha, reference.kind
+            ));
+        }
+        if !REFERENCE_SOURCES.contains(&reference.source.as_str()) {
+            reasons.push(format!(
+                "commit {} has invalid reference source {}",
+                record.commit_sha, reference.source
+            ));
+        }
+        if reference.number == 0 {
+            reasons.push(format!(
+                "commit {} has a zero reference number",
+                record.commit_sha
+            ));
+        }
+        if reference.observed_for_commit_sha != record.commit_sha {
+            reasons.push(format!(
+                "commit {} reference observation binds to {}",
+                record.commit_sha, reference.observed_for_commit_sha
+            ));
+        }
+        let evidence_url = reference
+            .evidence_url
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        let github_identity = reference
+            .github_identity
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        if usize::from(evidence_url.is_some()) + usize::from(github_identity.is_some()) != 1 {
+            reasons.push(format!(
+                "commit {} reference {} must carry exactly one evidence_url or github_identity",
+                record.commit_sha, reference.number
+            ));
+        }
+        if !reference.reviewed && reference.limitation.trim().is_empty() {
+            reasons.push(format!(
+                "commit {} unreviewed reference {} must state its limitation",
+                record.commit_sha, reference.number
+            ));
+        }
+        if source.stage == "final" && !reference.reviewed {
+            reasons.push(format!(
+                "final ledger retains an unreviewed reference {} for commit {}",
+                reference.number, record.commit_sha
+            ));
+        }
+        if reference.kind == "merge_pr" && reference.source != "associated_pull_request" {
+            reasons.push(format!(
+                "commit {} merge_pr reference {} must use associated_pull_request source",
+                record.commit_sha, reference.number
+            ));
+        }
+        if reference.kind == "reviewed_manual_mapping" && reference.source != "explicit_review" {
+            reasons.push(format!(
+                "commit {} reviewed_manual_mapping {} must use explicit_review source",
+                record.commit_sha, reference.number
+            ));
+        }
+        if !seen_authorities.insert((
+            reference.kind.clone(),
+            reference.number,
+            reference.source.clone(),
+        )) {
+            reasons.push(format!(
+                "commit {} contains duplicate reference authority {}:{}:{}",
+                record.commit_sha, reference.kind, reference.number, reference.source
+            ));
+        }
+        if let Some(identity) = evidence_url.or(github_identity)
+            && let Some(previous_kind) = evidence_kinds.insert(identity, &reference.kind)
+            && previous_kind != &reference.kind
+        {
+            reasons.push(format!(
+                "commit {} evidence identity has contradictory reference kinds",
+                record.commit_sha
+            ));
+        }
+    }
+    if source.stage == "final"
+        && record.references.is_empty()
+        && (!record.pr_refs.is_empty() || !record.issue_refs.is_empty())
+    {
+        reasons.push(format!(
+            "final ledger commit {} relies on legacy reference projections without authority evidence",
             record.commit_sha
         ));
     }
@@ -640,6 +823,203 @@ mod tests {
         require(
             report.record_set_digest == again.record_set_digest,
             "record digest is not stable",
+        )
+    }
+
+    #[test]
+    fn reference_authority_pins_known_merge_and_issue_pair() -> Result<(), String> {
+        let report = normalize_snapshot(fixture()?, None)?;
+        let first = report
+            .records
+            .first()
+            .ok_or_else(|| "complete fixture has no first record".to_string())?;
+        require(
+            first.references.iter().any(|reference| {
+                reference.kind == "merge_pr"
+                    && reference.number == 2788
+                    && reference.source == "associated_pull_request"
+            }),
+            "known merge PR authority is missing",
+        )?;
+        require(
+            first.references.iter().any(|reference| {
+                reference.kind == "issue"
+                    && reference.number == 2767
+                    && reference.source == "closing_reference"
+            }),
+            "known issue authority is missing",
+        )?;
+        require(
+            first.pr_refs == [2788] && first.issue_refs == [2767],
+            "compatibility projections do not match retained references",
+        )
+    }
+
+    #[test]
+    fn body_reference_remains_distinct_from_merge_pr_authority() -> Result<(), String> {
+        let report = normalize_snapshot(fixture()?, None)?;
+        let second = report
+            .records
+            .get(1)
+            .ok_or_else(|| "complete fixture has no second record".to_string())?;
+        require(
+            second.references.iter().any(|reference| {
+                reference.kind == "pull_request"
+                    && reference.number == 2791
+                    && reference.source == "body_reference"
+            }),
+            "non-merge body PR authority is missing",
+        )?;
+        require(
+            second.pr_refs == [2760, 2791],
+            "PR compatibility projection lost the body reference",
+        )
+    }
+
+    #[test]
+    fn no_linked_issue_record_can_remain_explicitly_empty() -> Result<(), String> {
+        let report = normalize_snapshot(fixture()?, None)?;
+        let third = report
+            .records
+            .get(2)
+            .ok_or_else(|| "complete fixture has no third record".to_string())?;
+        require(
+            third.references.is_empty() && third.pr_refs.is_empty() && third.issue_refs.is_empty(),
+            "no-linked-issue record gained fabricated reference authority",
+        )
+    }
+
+    #[test]
+    fn reviewed_manual_mapping_is_explicit_and_replayable() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        let observed_for_commit_sha = snapshot.records[2].commit_sha.clone();
+        snapshot.records[2].references.push(ReferenceEvidence {
+            kind: "reviewed_manual_mapping".to_string(),
+            number: 1704,
+            source: "explicit_review".to_string(),
+            evidence_url: None,
+            github_identity: Some("review:release-authority-1704".to_string()),
+            observed_for_commit_sha,
+            reviewed: true,
+            limitation: "manual mapping retained for portfolio authority".to_string(),
+        });
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report.status == "ready"
+                && report.records[2].references[0].kind == "reviewed_manual_mapping",
+            "reviewed manual mapping was not retained",
+        )
+    }
+
+    #[test]
+    fn reference_order_is_normalized_and_mapping_changes_digest() -> Result<(), String> {
+        let fixture_snapshot = fixture()?;
+        let baseline = normalize_snapshot(fixture_snapshot.clone(), None)?;
+        let mut reordered = fixture_snapshot.clone();
+        reordered.records[0].references.reverse();
+        reordered.records[0].pr_refs.clear();
+        reordered.records[0].issue_refs.clear();
+        let reordered_report = normalize_snapshot(reordered, None)?;
+        require(
+            baseline.record_set_digest == reordered_report.record_set_digest,
+            "reference order changed the normalized digest",
+        )?;
+
+        let mut changed = fixture_snapshot;
+        changed.records[0].references[0].number = 2789;
+        changed.records[0].pr_refs.clear();
+        let changed_report = normalize_snapshot(changed, None)?;
+        require(
+            baseline.record_set_digest != changed_report.record_set_digest,
+            "changed reference mapping did not change the record-set digest",
+        )
+    }
+
+    #[test]
+    fn final_ledger_rejects_unreviewed_reference() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.source.stage = "final".to_string();
+        snapshot.records[0].references[0].reviewed = false;
+        snapshot.records[0].references[0].limitation = "provider unavailable".to_string();
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("unreviewed reference")),
+            "unreviewed final reference was accepted",
+        )
+    }
+
+    #[test]
+    fn final_ledger_rejects_ambiguous_manual_mapping() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.source.stage = "final".to_string();
+        let observed_for_commit_sha = snapshot.records[2].commit_sha.clone();
+        snapshot.records[2].references.push(ReferenceEvidence {
+            kind: "reviewed_manual_mapping".to_string(),
+            number: 1704,
+            source: "explicit_review".to_string(),
+            evidence_url: None,
+            github_identity: Some("review:ambiguous-1704".to_string()),
+            observed_for_commit_sha,
+            reviewed: false,
+            limitation: "ambiguous mapping requires operator review".to_string(),
+        });
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("unreviewed reference")),
+            "ambiguous final manual mapping was accepted",
+        )
+    }
+
+    #[test]
+    fn final_ledger_rejects_legacy_only_reference_projection() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.source.stage = "final".to_string();
+        snapshot.records[0].references.clear();
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report.reconciliation_reasons.iter().any(|reason| {
+                reason.contains("legacy reference projections without authority evidence")
+            }),
+            "final legacy-only reference projection was accepted",
+        )
+    }
+
+    #[test]
+    fn reference_projection_mismatch_fails_closed() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.records[0].pr_refs = vec![9999];
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("pr_refs compatibility projection")),
+            "contradictory compatibility projection was accepted",
+        )
+    }
+
+    #[test]
+    fn contradictory_reference_identity_fails_closed() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        let mut contradictory = snapshot.records[0].references[0].clone();
+        contradictory.kind = "issue".to_string();
+        contradictory.source = "closing_reference".to_string();
+        snapshot.records[0].references.push(contradictory);
+        snapshot.records[0].pr_refs.clear();
+        snapshot.records[0].issue_refs.clear();
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("contradictory reference kinds")),
+            "contradictory reference identity was accepted",
         )
     }
 
