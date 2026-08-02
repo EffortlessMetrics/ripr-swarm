@@ -1178,11 +1178,21 @@ mod tests {
         snapshot.records[1].references[1].number = 1000;
         snapshot.records[1].references[1].evidence_url =
             Some("https://github.com/EffortlessMetrics/ripr-swarm/pull/1000".to_string());
+        let mut lower_issue = snapshot.records[1].references[2].clone();
+        lower_issue.number = 1000;
+        lower_issue.evidence_url =
+            Some("https://github.com/EffortlessMetrics/ripr-swarm/issues/1000".to_string());
+        snapshot.records[1].references.push(lower_issue);
         snapshot.records[1].pr_refs.clear();
+        snapshot.records[1].issue_refs.clear();
         let report = normalize_snapshot(snapshot, None)?;
         require(
             report.records[1].pr_refs == [1000, 2790],
             "compatibility PR projection was not sorted numerically",
+        )?;
+        require(
+            report.records[1].issue_refs == [1000, 2768],
+            "compatibility issue projection was not sorted numerically",
         )
     }
 
