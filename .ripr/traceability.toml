@@ -6512,6 +6512,7 @@ tests = [
   "xtask/src/reports/release_denominator.rs::tests::out_of_range_record_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::wrong_order_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::wrong_tree_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::candidate_tree_extra_commit_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::final_operator_decision_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::live_observation_mismatch_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::report_json_and_markdown_share_the_claim_boundary",

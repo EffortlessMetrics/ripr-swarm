@@ -339,6 +339,18 @@ fn validate_source(snapshot: &Snapshot, reasons: &mut Vec<String>) {
         &source.candidate_tree_commits,
         reasons,
     );
+    let range_commits = source
+        .range_commits
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    for commit_sha in &source.candidate_tree_commits {
+        if !range_commits.contains(commit_sha.as_str()) {
+            reasons.push(format!(
+                "candidate_tree_commits contains commit {commit_sha} outside range_commits"
+            ));
+        }
+    }
 }
 
 fn validate_sha_list(name: &str, values: &[String], reasons: &mut Vec<String>) {
@@ -1336,6 +1348,27 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("present_in_candidate")),
             "wrong-tree reason absent",
+        )
+    }
+
+    #[test]
+    fn candidate_tree_extra_commit_fails_closed() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot
+            .source
+            .candidate_tree_commits
+            .push("ffffffffffffffffffffffffffffffffffffffff".to_string());
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report.status == "reconcile_required",
+            "candidate tree accepted a commit outside the captured range",
+        )?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("outside range_commits")),
+            "candidate-tree range disagreement reason absent",
         )
     }
 

@@ -41,7 +41,8 @@ observations. It does not replace the reviewed ledger.
 ## Validation
 
 Validation fails closed for missing, duplicate, out-of-range, or wrongly
-ordered records; range/tree disagreement; disposition/tree-state mismatch;
+ordered records; candidate-tree commit sets that are not subsets of the
+captured range; range/tree disagreement; disposition/tree-state mismatch;
 unresolved operator decisions in a final ledger; and live observation drift.
 JSON and Markdown are rendered from the same normalized report and carry the
 same authority boundary and limitation statements.
@@ -129,7 +130,7 @@ decision in a final ledger, or disagreeing with live observations produces
 
 ## Test Mapping
 
-The twenty-four focused tests listed in `.ripr/traceability.toml` cover deterministic
+The twenty-five focused tests listed in `.ripr/traceability.toml` cover deterministic
 normalization, missing/duplicate/out-of-range/order/tree failures, final
 operator decisions, live drift, JSON/Markdown claim-boundary parity, typed
 reference authority, compatibility projection mismatch, contradictory
