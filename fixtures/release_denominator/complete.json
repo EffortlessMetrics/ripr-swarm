@@ -33,11 +33,11 @@
       "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
       "first_parent_position": 2,
       "subject": "release: retain control-plane honesty",
-      "pr_refs": [2760, 2791], "issue_refs": [2613],
+      "pr_refs": [2790, 2791], "issue_refs": [2768],
       "references": [
-        {"kind": "merge_pr", "number": 2760, "source": "associated_pull_request", "evidence_url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2760", "observed_for_commit_sha": "cccccccccccccccccccccccccccccccccccccccc", "reviewed": true, "limitation": ""},
+        {"kind": "merge_pr", "number": 2790, "source": "associated_pull_request", "evidence_url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2790", "observed_for_commit_sha": "cccccccccccccccccccccccccccccccccccccccc", "reviewed": true, "limitation": ""},
         {"kind": "pull_request", "number": 2791, "source": "body_reference", "evidence_url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/2791", "observed_for_commit_sha": "cccccccccccccccccccccccccccccccccccccccc", "reviewed": true, "limitation": "referenced in body, not the merge PR"},
-        {"kind": "issue", "number": 2613, "source": "closing_reference", "evidence_url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2613", "observed_for_commit_sha": "cccccccccccccccccccccccccccccccccccccccc", "reviewed": true, "limitation": ""
+        {"kind": "issue", "number": 2768, "source": "closing_reference", "evidence_url": "https://github.com/EffortlessMetrics/ripr-swarm/issues/2768", "observed_for_commit_sha": "cccccccccccccccccccccccccccccccccccccccc", "reviewed": true, "limitation": ""
         }
       ],
       "theme_or_surface": "control_or_honesty",

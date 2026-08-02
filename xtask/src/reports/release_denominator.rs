@@ -871,8 +871,24 @@ mod tests {
             "non-merge body PR authority is missing",
         )?;
         require(
-            second.pr_refs == [2760, 2791],
-            "PR compatibility projection lost the body reference",
+            second.references.iter().any(|reference| {
+                reference.kind == "merge_pr"
+                    && reference.number == 2790
+                    && reference.source == "associated_pull_request"
+            }),
+            "second known merge PR authority is missing",
+        )?;
+        require(
+            second.references.iter().any(|reference| {
+                reference.kind == "issue"
+                    && reference.number == 2768
+                    && reference.source == "closing_reference"
+            }),
+            "second known issue authority is missing",
+        )?;
+        require(
+            second.pr_refs == [2790, 2791] && second.issue_refs == [2768],
+            "PR or issue compatibility projection lost retained references",
         )
     }
 
