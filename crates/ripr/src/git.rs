@@ -618,6 +618,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn output_larger_than_the_pipe_buffer_does_not_deadlock() -> Result<(), String> {
         if reexec_harness() {
             return Ok(());
