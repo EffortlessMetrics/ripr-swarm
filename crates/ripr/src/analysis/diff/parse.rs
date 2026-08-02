@@ -114,6 +114,18 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
         // and is consumed as a removed line.  A file-section separator starts
         // with `--- ` (three dashes + space) and is always followed immediately
         // by `+++ <path>`.  We peek at the next line before committing.
+        if state.combined_quarantine()
+            && parse_old_path_marker(raw)
+            && lines
+                .get(i + 1)
+                .is_some_and(|next| is_new_path_marker(next))
+        {
+            // A plain `---`/`+++` pair can follow a combined hunk without a
+            // `diff --git` boundary. Combined source text carries parent
+            // prefix columns and cannot match these unprefixed markers.
+            state.close_combined_quarantine();
+        }
+
         if state.in_hunk()
             && parse_old_path_marker(raw)
             && lines
@@ -206,17 +218,29 @@ mod parser_state {
     enum ConflictSide {
         Added,
         Removed,
+        Context,
     }
 
-    /// Git conflict markers are exactly seven characters, optionally followed by
-    /// a space and a label (`<<<<<<< ours`). A bare `=======` is deliberately
-    /// NOT an opener: it appears verbatim in ordinary source (Markdown rules,
-    /// comment banners) and treating it as one would quarantine real changes.
+    /// Git conflict markers use at least seven repeated marker characters,
+    /// optionally followed by a space and a label (`<<<<<<< ours`). A bare
+    /// `=======` is deliberately NOT an opener: it appears verbatim in
+    /// ordinary source (Markdown rules, comment banners) and treating it as
+    /// one would quarantine real changes. Git's `conflict-marker-size` setting
+    /// can increase the repeated marker width.
     fn is_conflict_marker(payload: &str, marker: &str) -> bool {
-        payload == marker
-            || payload
-                .strip_prefix(marker)
-                .is_some_and(|rest| rest.starts_with(' '))
+        let Some(marker_char) = marker.chars().next() else {
+            return false;
+        };
+        let marker_width = marker.chars().count();
+        let repeated_width = payload
+            .chars()
+            .take_while(|character| *character == marker_char)
+            .count();
+        if repeated_width < marker_width {
+            return false;
+        }
+        let rest = &payload[repeated_width..];
+        rest.is_empty() || rest.starts_with(' ')
     }
 
     #[derive(Default)]
@@ -256,6 +280,10 @@ mod parser_state {
             self.in_hunk
         }
 
+        pub(super) fn combined_quarantine(&self) -> bool {
+            self.combined_quarantine
+        }
+
         pub(super) fn deleted_file_count(&self) -> usize {
             self.deleted_file_count
         }
@@ -288,6 +316,7 @@ mod parser_state {
                     Some(next) => self.old_line = next,
                     None => self.close_hunk(),
                 },
+                Some(ConflictSide::Context) => self.advance_quarantined_line(None),
                 None => match (self.old_line.checked_add(1), self.new_line.checked_add(1)) {
                     (Some(old), Some(new)) => {
                         self.old_line = old;
@@ -437,6 +466,14 @@ mod parser_state {
         /// outer loop when it detects a plain-diff file-section boundary while
         /// a hunk is still open (RANK-2 fix).
         pub(super) fn close_hunk(&mut self) {
+            self.in_hunk = false;
+            self.saw_old_path_marker = false;
+            self.conflict_region = None;
+        }
+
+        pub(super) fn close_combined_quarantine(&mut self) {
+            self.combined_quarantine = false;
+            self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
             self.conflict_region = None;
@@ -645,6 +682,7 @@ mod parser_state {
             let side = match raw.as_bytes().first() {
                 Some(b'+') => Some(ConflictSide::Added),
                 Some(b'-') => Some(ConflictSide::Removed),
+                Some(b' ') => Some(ConflictSide::Context),
                 _ => None,
             };
             let payload = if side.is_some() { &raw[1..] } else { raw };

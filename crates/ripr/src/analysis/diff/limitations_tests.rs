@@ -227,3 +227,95 @@ fn ordinary_two_way_hunk_output_and_existing_counters_remain_unchanged() -> Resu
     assert_eq!(file.added_lines[0].text, "new");
     Ok(())
 }
+
+#[test]
+fn combined_quarantine_recognizes_plain_file_pair_without_diff_header() -> Result<(), String> {
+    let parsed = parse_unified_diff_with_metadata(
+        "diff --cc src/merge.rs\n\
+         --- a/src/merge.rs\n\
+         +++ b/src/merge.rs\n\
+         @@@ -1,1 -1,1 +1,1 @@@\n\
+         --parent\n\
+         ++merge\n\
+         --- a/src/next.rs\n\
+         +++ b/src/next.rs\n\
+         @@ -1,1 +1,1 @@\n\
+         -old\n\
+         +new\n",
+    );
+
+    limitation_of_kind(&parsed, AnalysisLimitationKind::CombinedHunkUnsupported)?;
+    let next = changed_file(&parsed, "src/next.rs")?;
+    assert_eq!(next.removed_lines.len(), 1);
+    assert_eq!(next.added_lines.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn combined_quarantine_does_not_reinterpret_prefixed_path_marker_shaped_body_text()
+-> Result<(), String> {
+    let parsed = parse_unified_diff_with_metadata(
+        "diff --cc src/merge.rs\n\
+         --- a/src/merge.rs\n\
+         +++ b/src/merge.rs\n\
+         @@@ -1,1 -1,1 +1,1 @@@\n\
+         ++--- a/src/fake.rs\n\
+         +++++ b/src/fake.rs\n",
+    );
+
+    limitation_of_kind(&parsed, AnalysisLimitationKind::CombinedHunkUnsupported)?;
+    assert_eq!(parsed.changed_files.len(), 1);
+    if changed_file(&parsed, "src/fake.rs").is_ok() {
+        return Err("quarantined source text created a fake changed file".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn configurable_ten_character_conflict_markers_are_quarantined() -> Result<(), String> {
+    let parsed = parse_unified_diff_with_metadata(
+        "diff --git a/.gitattributes b/.gitattributes\n\
+         --- a/.gitattributes\n\
+         +++ b/.gitattributes\n\
+         @@ -1,1 +1,1 @@\n\
+         +*.rs conflict-marker-size=10\n\
+         diff --git a/src/lib.rs b/src/lib.rs\n\
+         --- a/src/lib.rs\n\
+         +++ b/src/lib.rs\n\
+         @@ -1,1 +1,5 @@\n\
+         +<<<<<<<<<< ours\n\
+         +let value = 1;\n\
+         +==========\n\
+         +let value = 2;\n\
+         +>>>>>>>>>> theirs\n",
+    );
+
+    limitation_of_kind(&parsed, AnalysisLimitationKind::UnresolvedConflictMarkers)?;
+    assert!(changed_file(&parsed, "src/lib.rs")?.added_lines.is_empty());
+    Ok(())
+}
+
+#[test]
+fn context_line_conflict_markers_advance_coordinates_and_quarantine_region() -> Result<(), String> {
+    let parsed = parse_unified_diff_with_metadata(
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+         --- a/src/lib.rs\n\
+         +++ b/src/lib.rs\n\
+         @@ -1,7 +1,7 @@\n\
+         \x20<<<<<<< ours\n\
+         \x20left\n\
+         \x20=======\n\
+         \x20right\n\
+         \x20>>>>>>> theirs\n\
+         -old\n\
+         +new\n",
+    );
+
+    limitation_of_kind(&parsed, AnalysisLimitationKind::UnresolvedConflictMarkers)?;
+    let file = changed_file(&parsed, "src/lib.rs")?;
+    assert_eq!(file.removed_lines.len(), 1);
+    assert_eq!(file.added_lines.len(), 1);
+    assert_eq!(file.removed_lines[0].line, 6);
+    assert_eq!(file.added_lines[0].new_side_line, 6);
+    Ok(())
+}
