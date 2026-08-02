@@ -177,11 +177,11 @@ its 224/219 counts are not the current release denominator. PR #2831 A owns
 only the typed reference-authority schema, offline validator, compatibility
 projection checks, and representative fixture proof. Concurrent product and
 release lanes remain independently owned and are not required to close for
-this plan slice. Its current exact head is
+this plan slice. The production repair commit is
 `2a20da216428aa5ea13757d68f9fe9eed8cb6be1`; the focused denominator suite has
 25 tests, including the fail-closed candidate-tree-subset regression. The local
 wrapper/clippy relink remains unverified because the Windows volume exhausted
-space; hosted required proof is authoritative for the pushed head.
+space; hosted required proof is authoritative for the pushed candidate.
 
 ## Non-goals and safety boundary
 
