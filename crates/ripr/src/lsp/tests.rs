@@ -8246,6 +8246,12 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
             let mut status_request_id = 100_u64;
             let mut observed_states = Vec::new();
             loop {
+                let remaining = status_deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(format!(
+                        "initial configuration pull was not applied before the bounded deadline; observed states: {observed_states:?}"
+                    ));
+                }
                 let request_id = status_request_id;
                 status_request_id += 1;
                 write_lsp_message(
@@ -8261,7 +8267,16 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
                     }),
                 )
                 .await?;
-                let status = read_lsp_response(&mut client_read, request_id).await?;
+                let status = tokio::time::timeout(
+                    remaining,
+                    read_lsp_response(&mut client_read, request_id),
+                )
+                .await
+                .map_err(|_| {
+                    format!(
+                        "initial configuration pull response timed out; observed states: {observed_states:?}"
+                    )
+                })??;
                 if status.get("error").is_some() {
                     return Err(format!(
                         "initial workspace status request failed: {status}"
