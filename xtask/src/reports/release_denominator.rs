@@ -460,6 +460,9 @@ fn normalize_reference_projections(record: &mut CommitRecord, reasons: &mut Vec<
             left.source.as_str(),
             left.evidence_url.as_deref().unwrap_or_default(),
             left.github_identity.as_deref().unwrap_or_default(),
+            left.observed_for_commit_sha.as_str(),
+            left.reviewed,
+            left.limitation.as_str(),
         )
             .cmp(&(
                 right.kind.as_str(),
@@ -467,6 +470,9 @@ fn normalize_reference_projections(record: &mut CommitRecord, reasons: &mut Vec<
                 right.source.as_str(),
                 right.evidence_url.as_deref().unwrap_or_default(),
                 right.github_identity.as_deref().unwrap_or_default(),
+                right.observed_for_commit_sha.as_str(),
+                right.reviewed,
+                right.limitation.as_str(),
             ))
     });
     let mut projected_pr_refs = record
@@ -475,14 +481,14 @@ fn normalize_reference_projections(record: &mut CommitRecord, reasons: &mut Vec<
         .filter(|reference| reference.kind == "merge_pr" || reference.kind == "pull_request")
         .map(|reference| reference.number)
         .collect::<Vec<_>>();
-    projected_pr_refs.sort_unstable();
+    projected_pr_refs.sort();
     let mut projected_issue_refs = record
         .references
         .iter()
         .filter(|reference| reference.kind == "issue")
         .map(|reference| reference.number)
         .collect::<Vec<_>>();
-    projected_issue_refs.sort_unstable();
+    projected_issue_refs.sort();
     if record.pr_refs.is_empty() {
         record.pr_refs = projected_pr_refs;
     } else if record.pr_refs != projected_pr_refs {
@@ -507,7 +513,7 @@ fn validate_reference_evidence(
     reasons: &mut Vec<String>,
 ) {
     let mut seen_authorities = BTreeSet::new();
-    let mut evidence_kinds = BTreeMap::new();
+    let mut evidence_identities = BTreeMap::new();
     for reference in &record.references {
         if !REFERENCE_KINDS.contains(&reference.kind.as_str()) {
             reasons.push(format!(
@@ -587,14 +593,21 @@ fn validate_reference_evidence(
                 record.commit_sha, reference.kind, reference.number, reference.source
             ));
         }
-        if let Some(identity) = evidence_url.or(github_identity)
-            && let Some(previous_kind) = evidence_kinds.insert(identity, &reference.kind)
-            && previous_kind != &reference.kind
-        {
-            reasons.push(format!(
-                "commit {} evidence identity has contradictory reference kinds",
-                record.commit_sha
-            ));
+        if let Some(identity) = evidence_url.or(github_identity) {
+            let authority = (
+                reference.kind.clone(),
+                reference.number,
+                reference.source.clone(),
+            );
+            if let Some(previous) =
+                evidence_identities.insert(identity.to_string(), authority.clone())
+                && previous != authority
+            {
+                reasons.push(format!(
+                    "commit {} evidence identity has contradictory reference claims",
+                    record.commit_sha
+                ));
+            }
         }
     }
     if source.stage == "final"
@@ -1068,8 +1081,26 @@ mod tests {
             report
                 .reconciliation_reasons
                 .iter()
-                .any(|reason| reason.contains("contradictory reference kinds")),
+                .any(|reason| reason.contains("contradictory reference claims")),
             "contradictory reference identity was accepted",
+        )
+    }
+
+    #[test]
+    fn reused_reference_identity_for_different_claim_fails_closed() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.source.stage = "final".to_string();
+        let mut reused = snapshot.records[0].references[0].clone();
+        reused.number = 2789;
+        snapshot.records[0].references.push(reused);
+        snapshot.records[0].pr_refs.clear();
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("contradictory reference claims")),
+            "reused reference identity was accepted for a different claim",
         )
     }
 
