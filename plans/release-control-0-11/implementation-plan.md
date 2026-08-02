@@ -168,9 +168,10 @@ reviewed final denominator and cannot unblock #1609 or #2769.
 ## Live reconciliation boundary (2026-08-02)
 
 The release-control checkout was refreshed from `origin/main`
-`8d520fdf7f4c036b711cbd5b5b1aa5d8b29bb592` after independently owned PR #2860
-merged its process/CWD harness correction on top of PR #2870's earlier
-test-only process-harness correction. The captured provisional fixture
+`d2a93e7bbb91ea90e46e38b92bef4e9cd281e9cb` after independently owned PR #2861
+merged the typed diff-limitation parser correction on top of PR #2860's
+process/CWD harness correction and PR #2870's earlier test-only harness
+correction. The captured provisional fixture
 above remains historical until #2831 PR B imports a fresh GitHub-backed census;
 its 224/219 counts are not the current release denominator. PR #2831 A owns
 only the typed reference-authority schema, offline validator, compatibility
