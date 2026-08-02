@@ -8236,29 +8236,54 @@ fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> 
             .await?;
 
             // Completing the client-facing response does not guarantee that
-            // the server has finished applying the pull. Wait for the
-            // published state before starting the root transition; otherwise
-            // the next notification can race the pull's refresh task under
-            // the default parallel workspace load and make the test report a
-            // missing re-pull even though the route is correct.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let first_status = read_lsp_response(&mut client_read, 2).await?;
-            assert_eq!(
-                first_status["result"]["analysis_status"]["input_authority"]["configuration_pull"]["state"],
-                "applied"
-            );
+            // the server has finished applying the pull. Poll the published
+            // state with unique request IDs before starting the root
+            // transition; otherwise the next notification can race the
+            // pull's refresh task under the default parallel workspace load
+            // and make the test report a missing re-pull even though the
+            // route is correct.
+            let status_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+            let mut status_request_id = 100_u64;
+            loop {
+                let request_id = status_request_id;
+                status_request_id += 1;
+                write_lsp_message(
+                    &mut client_write,
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "workspace/executeCommand",
+                        "params": {
+                            "command": COLLECT_WORKSPACE_STATUS_COMMAND,
+                            "arguments": []
+                        }
+                    }),
+                )
+                .await?;
+                let status = read_lsp_response(&mut client_read, request_id).await?;
+                if status.get("error").is_some() {
+                    return Err(format!(
+                        "initial workspace status request failed: {status}"
+                    ));
+                }
+                let configuration_state = status
+                    .get("result")
+                    .and_then(|result| result.get("analysis_status"))
+                    .and_then(|analysis_status| analysis_status.get("input_authority"))
+                    .and_then(|input_authority| input_authority.get("configuration_pull"))
+                    .and_then(|configuration_pull| configuration_pull.get("state"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("missing");
+                if configuration_state == "applied" {
+                    break;
+                }
+                if tokio::time::Instant::now() >= status_deadline {
+                    return Err(format!(
+                        "initial configuration pull was not applied before the bounded deadline; last observed state: {configuration_state}"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
 
             // Direct switch A -> B in ONE notification. The authority becomes
             // RootChanged (non-analyzable), so no re-pull may be scheduled

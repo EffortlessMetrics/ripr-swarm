@@ -490,11 +490,17 @@ mod tests {
         if reexec_harness() {
             return Ok(());
         }
+        let marker_path =
+            std::env::temp_dir().join(format!("ripr-pipe-descendant-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&marker_path);
+        let marker_path_text = marker_path.display().to_string().replace('\'', "''");
         let mut command = Command::new("powershell");
         command.args([
             "-NoProfile",
             "-Command",
-            "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') -NoNewWindow -PassThru; Wait-Process -Id $p.Id",
+            &format!(
+                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_path_text}' -Value $p.Id; Wait-Process -Id $p.Id"
+            ),
         ]);
         let started = Instant::now();
         let result = collect_output_with_deadline(
@@ -512,10 +518,37 @@ mod tests {
         if !is_git_invocation_timeout(&err) {
             return Err(format!("expected the named timeout error, got: {err}"));
         }
+        let descendant_pid = std::fs::read_to_string(&marker_path)
+            .map_err(|read_error| format!("descendant PID marker was not written: {read_error}"))?
+            .trim()
+            .parse::<u32>()
+            .map_err(|parse_error| format!("descendant PID marker was invalid: {parse_error}"))?;
+        let process_check = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "if (Get-Process -Id {descendant_pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+                ),
+            ])
+            .status()
+            .map_err(|check_error| format!("failed to inspect descendant process: {check_error}"))?;
+        let _ = std::fs::remove_file(&marker_path);
+        if process_check.success() {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &descendant_pid.to_string(), "/T", "/F"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            return Err(format!(
+                "pipe-inheriting descendant {descendant_pid} remained alive after timeout; tree termination was not proven"
+            ));
+        }
         // Process scheduling and taskkill startup can add tens of seconds
         // under the default parallel workspace suite. The implementation's
         // reader drain remains bounded; leave enough harness headroom to
-        // avoid turning that scheduler contention into a false failure.
+        // avoid turning that scheduler contention into a false failure while
+        // keeping the bound below the descendant's 120-second lifetime.
         if elapsed >= Duration::from_secs(60) {
             return Err(format!(
                 "pipe-inheriting timeout took {elapsed:?}; reader drain was not bounded"
