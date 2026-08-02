@@ -553,6 +553,12 @@ fn validate_reference_evidence(
                 record.commit_sha, reference.number
             ));
         }
+        if reference.kind == "reviewed_manual_mapping" && reference.limitation.trim().is_empty() {
+            reasons.push(format!(
+                "commit {} reviewed_manual_mapping {} must state its reason",
+                record.commit_sha, reference.number
+            ));
+        }
         if source.stage == "final" && !reference.reviewed {
             reasons.push(format!(
                 "final ledger retains an unreviewed reference {} for commit {}",
@@ -1120,6 +1126,29 @@ mod tests {
         require(
             report.records[1].pr_refs == [1000, 2790],
             "compatibility PR projection was not sorted numerically",
+        )
+    }
+
+    #[test]
+    fn reviewed_manual_mapping_requires_reason() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        let observed_for_commit_sha = snapshot.records[2].commit_sha.clone();
+        snapshot.records[2].references.push(ReferenceEvidence {
+            kind: "reviewed_manual_mapping".to_string(),
+            number: 1704,
+            source: "explicit_review".to_string(),
+            evidence_url: None,
+            github_identity: Some("review:release-authority-1704".to_string()),
+            observed_for_commit_sha,
+            reviewed: true,
+            limitation: String::new(),
+        });
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report.reconciliation_reasons.iter().any(|reason| {
+                reason.contains("reviewed_manual_mapping") && reason.contains("reason")
+            }),
+            "reviewed manual mapping without a reason was accepted",
         )
     }
 

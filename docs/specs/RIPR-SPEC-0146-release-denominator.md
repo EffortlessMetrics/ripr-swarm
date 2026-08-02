@@ -80,7 +80,7 @@ shared fail-closed validator. It does not close the final candidate decision
 tracked by #1609 or the dependent release-editor lane #2769.
 
 The implementation and fixture contract are mapped in `.ripr/traceability.toml`
-under `RIPR-SPEC-0146`. Focused proof is provided by the twenty-two tests named there
+under `RIPR-SPEC-0146`. Focused proof is provided by the twenty-three tests named there
 and the complete/reconcile-required fixtures under
 `fixtures/release_denominator/`; hosted CI is the authoritative execution
 proof for this PR. The complete fixture pins the #2767/#2788 and #2768/#2790
@@ -129,13 +129,13 @@ decision in a final ledger, or disagreeing with live observations produces
 
 ## Test Mapping
 
-The twenty-two focused tests listed in `.ripr/traceability.toml` cover deterministic
+The twenty-three focused tests listed in `.ripr/traceability.toml` cover deterministic
 normalization, missing/duplicate/out-of-range/order/tree failures, final
 operator decisions, live drift, JSON/Markdown claim-boundary parity, typed
 reference authority, compatibility projection mismatch, contradictory
 identity, the two known issue/merge-PR pairs, deterministic ordering, changed mappings, final unreviewed
 references, malformed reference evidence, numeric compatibility projection
-ordering, and the historical current-main census.
+ordering, manual-mapping reasons, and the historical current-main census.
 
 ## Implementation Mapping
 
