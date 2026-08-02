@@ -11912,6 +11912,15 @@ The Markdown report is derived from the same normalized DTO and is advisory
 only. This report never closes issues, merges PRs, selects or qualifies a
 candidate, or publishes release artifacts.
 
+The open-PR inventory is informational and must not be used as a candidate
+readiness gate. Candidate readiness is a separate, cut-relative decision over
+selected claims, candidate-only exclusions, the reviewed denominator through
+development cut `C`, and a reproducible candidate tree. The candidate control
+artifact must report `candidate_required_claims_pending` and the associated
+landed, excluded, deferred, unresolved-defect, denominator, cut, and immutable
+candidate-reference state. An `open_release_pr_count`, if displayed, is
+context only.
+
 ## Release Denominator Ledger Report
 
 `release-denominator` writes a deterministic supplemental denominator report

@@ -61,6 +61,37 @@ The report is advisory and report-only. It does not close issues, relabel
 items, merge or rebase PRs, create or delete branches, select a candidate,
 qualify a release, or mutate development `main`.
 
+## Candidate-relative hard-cut boundary
+
+The open-PR inventory and each row's `merge_eligible` value are work-selection
+and ownership observations. Neither is a repository-wide candidate-readiness
+gate. In particular, the report must not require the open release-PR count to
+reach zero before a candidate can be selected.
+
+Candidate readiness is evaluated against a selected development cut `C`, a
+selected claim set `S`, candidate-only exclusions `E`, and a reproducible
+candidate tree `T = project(C, E)`. The hard-cut predicate is:
+
+```text
+candidate_required_claims_pending == 0
+```
+
+That predicate requires every selected claim to be landed by `C`, explicitly
+excluded from `T`, or explicitly deferred with a truthful release non-claim;
+no known unresolved defect may invalidate the selected claims; every commit
+through `C` must have a reviewed disposition and candidate-tree state; and the
+projection from `C` to `T` must be reproducible. Commits and PRs outside `S`
+may remain open or land after `C` without affecting this candidate. They are
+relevant only if they disclose a defect that invalidates `T`.
+
+The candidate control vocabulary is
+`selected_candidate_claims`, `candidate_required_claims_pending`,
+`candidate_claims_landed`, `candidate_claims_excluded`,
+`candidate_claims_deferred`, `candidate_defects_unresolved`,
+`denominator_decisions_remaining`, `candidate_cut_selected`, and
+`candidate_ref_created`. An informational `open_release_pr_count` must not be
+used as a readiness predicate.
+
 ## Input contract
 
 The input envelope has `schema_version = "0.1"` and
@@ -120,6 +151,7 @@ reconciliation-required state or any per-PR disposition.
 - no singleton active-goal restoration or automatic backlog priority;
 - no candidate denominator, exact-candidate qualification, package proof,
   source handoff, version bump, tag, publication, signing, or marketplace;
+- no repository-wide convergence requirement or open-PR-zero gate;
 - no issue closure, merge queue, branch operation, or GitHub mutation;
 - no replacement for #2379, #1609, #1704, or #1706.
 
