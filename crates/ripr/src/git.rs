@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    #[serial(git_process)]
+    #[serial]
     fn deadline_kills_and_reaps_a_hung_invocation() -> Result<(), String> {
         if reexec_harness() {
             return Ok(());
@@ -487,7 +487,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    #[serial(git_process)]
+    #[serial]
     fn deadline_kills_pipe_inheriting_descendants_without_blocking_the_reader() -> Result<(), String>
     {
         if reexec_harness() {
@@ -582,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    #[serial(git_process)]
+    #[serial]
     fn cancellation_wins_over_a_long_deadline() -> Result<(), String> {
         if reexec_harness() {
             return Ok(());
