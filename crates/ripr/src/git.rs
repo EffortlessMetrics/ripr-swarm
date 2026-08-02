@@ -282,6 +282,7 @@ mod tests {
     use crate::analysis::cancellation::{
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
+    use serial_test::serial;
 
     /// Env flag that makes the re-executed test binary hang instead of
     /// running tests, so timeout/cancellation tests get a deterministic
@@ -370,6 +371,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(git_process)]
     fn deadline_kills_and_reaps_a_hung_invocation() -> Result<(), String> {
         if reexec_harness() {
             return Ok(());
@@ -485,6 +487,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[serial(git_process)]
     fn deadline_kills_pipe_inheriting_descendants_without_blocking_the_reader() -> Result<(), String>
     {
         if reexec_harness() {
@@ -579,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(git_process)]
     fn cancellation_wins_over_a_long_deadline() -> Result<(), String> {
         if reexec_harness() {
             return Ok(());

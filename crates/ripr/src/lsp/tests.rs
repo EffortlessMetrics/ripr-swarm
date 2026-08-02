@@ -844,7 +844,7 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1064,7 +1064,7 @@ fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1327,7 +1327,7 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_refresh_resolves_git_inputs_once_and_projects_the_record() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -7480,7 +7480,7 @@ fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -7684,7 +7684,7 @@ fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<()
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release()
 -> Result<(), String> {
     // Regression pin for the deferred-pull deadlock (#2031 review): the pull
@@ -7904,7 +7904,7 @@ fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_relea
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
     // Regression pin for the root-switch re-pull (#2031 review): pulled
     // settings are scoped to the root URI, so leaving a selected root in
@@ -8150,7 +8150,7 @@ fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> {
     // Regression pin for the direct A -> B root switch (#2031 review): one
     // didChangeWorkspaceFolders returning [B] rewrites the authority to the
@@ -15654,7 +15654,7 @@ where
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> Result<(), String> {
     // Issue #1622 criterion 6 (RIPR-SPEC-0129): the saved-workspace journey
     // over the real tower-lsp-server framing — initialize, didOpen, didChange
@@ -16146,7 +16146,7 @@ fn lsp_trace_toggle_leaves_status_identity_and_revision_untouched() -> Result<()
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
     const CANARY: &str = "RIPR_TRACE_CANARY_NEVER_EMIT_7f3a9c";
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -16414,7 +16414,7 @@ fn framed_lsp_trace_lifecycle_and_redaction() -> Result<(), String> {
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -16675,7 +16675,7 @@ fn analysis_status_params(notifications: &[serde_json::Value]) -> Vec<serde_json
 }
 
 #[test]
-#[serial(framed_lsp)]
+#[serial]
 fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let temp = boundary_gap_git_fixture_root("component-degradation")?;
