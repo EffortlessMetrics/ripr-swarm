@@ -6525,6 +6525,7 @@ tests = [
   "xtask/src/reports/release_denominator.rs::tests::final_ledger_rejects_legacy_only_reference_projection",
   "xtask/src/reports/release_denominator.rs::tests::reference_projection_mismatch_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::contradictory_reference_identity_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::malformed_reference_evidence_fails_closed",
 ]
 fixtures = [
   "fixtures/release_denominator/complete.json",

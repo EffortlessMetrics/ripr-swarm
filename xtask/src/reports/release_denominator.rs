@@ -1040,6 +1040,74 @@ mod tests {
     }
 
     #[test]
+    fn malformed_reference_evidence_fails_closed() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.source.stage = "final".to_string();
+        let observed_for_commit_sha = snapshot.records[0].commit_sha.clone();
+        let malformed = ReferenceEvidence {
+            kind: "unknown".to_string(),
+            number: 0,
+            source: "unknown".to_string(),
+            evidence_url: None,
+            github_identity: None,
+            observed_for_commit_sha: "ffffffffffffffffffffffffffffffffffffffff".to_string(),
+            reviewed: false,
+            limitation: String::new(),
+        };
+        let mut merge_with_wrong_source = malformed.clone();
+        merge_with_wrong_source.kind = "merge_pr".to_string();
+        merge_with_wrong_source.number = 1801;
+        merge_with_wrong_source.source = "body_reference".to_string();
+        merge_with_wrong_source.evidence_url =
+            Some("https://github.com/EffortlessMetrics/ripr-swarm/pull/1801".to_string());
+        merge_with_wrong_source.observed_for_commit_sha = observed_for_commit_sha.clone();
+        merge_with_wrong_source.reviewed = true;
+        let mut manual_with_wrong_source = merge_with_wrong_source.clone();
+        manual_with_wrong_source.kind = "reviewed_manual_mapping".to_string();
+        manual_with_wrong_source.number = 1802;
+        manual_with_wrong_source.evidence_url =
+            Some("https://github.com/EffortlessMetrics/ripr-swarm/pull/1802".to_string());
+        manual_with_wrong_source.source = "body_reference".to_string();
+        let duplicate = manual_with_wrong_source.clone();
+        let mut same_identity_same_kind = manual_with_wrong_source.clone();
+        same_identity_same_kind.number = 1803;
+        same_identity_same_kind.source = "explicit_review".to_string();
+        same_identity_same_kind.evidence_url = duplicate.evidence_url.clone();
+        snapshot.records[0].references = vec![
+            malformed,
+            merge_with_wrong_source,
+            manual_with_wrong_source,
+            duplicate,
+            same_identity_same_kind,
+        ];
+        snapshot.records[0].pr_refs.clear();
+        snapshot.records[0].issue_refs = vec![9999];
+        let report = normalize_snapshot(snapshot, None)?;
+        let reasons = report.reconciliation_reasons.join("\n");
+        for expected in [
+            "invalid reference kind",
+            "invalid reference source",
+            "zero reference number",
+            "reference observation binds",
+            "must carry exactly one evidence_url or github_identity",
+            "unreviewed reference",
+            "merge_pr reference",
+            "reviewed_manual_mapping",
+            "duplicate reference authority",
+            "issue_refs compatibility projection",
+        ] {
+            require(
+                reasons.contains(expected),
+                format!("malformed reference evidence missed {expected}"),
+            )?;
+        }
+        require(
+            report.status == "reconcile_required",
+            "malformed reference evidence was accepted",
+        )
+    }
+
+    #[test]
     fn current_main_provisional_census_is_ready_and_pinned() -> Result<(), String> {
         let snapshot: Snapshot = serde_json::from_str(include_str!(
             "../../../fixtures/release_denominator/current-main-provisional.json"
