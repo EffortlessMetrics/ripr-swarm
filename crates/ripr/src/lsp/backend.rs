@@ -5301,6 +5301,8 @@ mod top_limitation_selection_tests {
 
     #[test]
     fn top_limitation_retains_typed_incomplete_outcome() -> Result<(), String> {
+        let repo_root = PathBuf::from("C:").join("repo");
+        let repo_root_text = repo_root.to_string_lossy().to_string();
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::UnresolvedConflictMarkers,
             AnalysisStage::DiffParse,
@@ -5321,7 +5323,7 @@ mod top_limitation_selection_tests {
             vec![limitation],
         )?;
         let snapshot = AnalysisSnapshot {
-            root: PathBuf::from("C:/repo"),
+            root: repo_root.clone(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -5345,7 +5347,7 @@ mod top_limitation_selection_tests {
             snapshot_run_status: Some("limited_incomplete_input".to_string()),
             ..AnalysisHealth::default()
         };
-        let authority = WorkspaceRootAuthority::selected(PathBuf::from("C:/repo"));
+        let authority = WorkspaceRootAuthority::selected(repo_root.clone());
         let value = top_limitation_dto(&health, Some(&snapshot), &authority).into_json();
 
         assert_eq!(value["status"], "analysis_outcome_incomplete");
@@ -5356,10 +5358,13 @@ mod top_limitation_selection_tests {
             value["analysis_outcome"]["limitations"][0]["recovery"]["kind"],
             "resolve_conflicts"
         );
-        assert!(!value["analysis_outcome"].to_string().contains("C:/repo"));
+        assert!(
+            !value["analysis_outcome"]
+                .to_string()
+                .contains(&repo_root_text)
+        );
 
-        let (service, _socket) =
-            LspService::new(|client| Backend::new(client, PathBuf::from("C:/repo")));
+        let (service, _socket) = LspService::new(|client| Backend::new(client, repo_root));
         let backend = service.inner();
         *backend
             .latest_analysis
