@@ -17,6 +17,9 @@ use std::time::{Duration, Instant};
 /// upper bound.
 const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 
+#[cfg(windows)]
+const WINDOWS_TREE_EXIT_GRACE: Duration = Duration::from_millis(500);
+
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -585,7 +588,21 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
     }
     let tree_terminated = terminate_timed_process_tree(child);
     if tree_terminated {
-        return Ok(true);
+        #[cfg(windows)]
+        {
+            // `taskkill /T /F` can report success before the direct parent
+            // has actually exited. Confirm the parent is gone before
+            // returning; otherwise its post-wait continuation can still run.
+            // If it remains alive, the direct kill below is the bounded
+            // fallback while the tree kill remains responsible for descendants.
+            if wait_for_child_exit(child, WINDOWS_TREE_EXIT_GRACE, error_context)? {
+                return Ok(true);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            return Ok(true);
+        }
     }
     match child.kill() {
         Ok(()) => Ok(true),
@@ -602,6 +619,28 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
                 ))
             }
         }
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_child_exit(
+    child: &mut Child,
+    grace: Duration,
+    error_context: &str,
+) -> Result<bool, String> {
+    let started = Instant::now();
+    loop {
+        if child
+            .try_wait()
+            .map_err(|err| format!("failed to poll {error_context}: {err}"))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        if started.elapsed() >= grace {
+            return Ok(false);
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
