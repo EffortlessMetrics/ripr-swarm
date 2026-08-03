@@ -1704,6 +1704,10 @@ fn incomplete_zero_finding_diff_is_not_a_green_badge() -> Result<(), String> {
         value["analysis_outcome"]["limitations"][0]["kind"],
         "unresolved_conflict_markers"
     );
+    let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
+        .map_err(|error| format!("Shields JSON should parse: {error}"))?;
+    assert_eq!(shields["message"], "analysis-incomplete: unsupported_input");
+    assert_eq!(shields["color"], "yellow");
     Ok(())
 }
 
