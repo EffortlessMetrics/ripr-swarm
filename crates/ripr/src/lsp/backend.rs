@@ -5153,6 +5153,7 @@ fn top_limitation_dto(
                 outcome.kind.as_str()
             )
         };
+        let limitation_count = outcome.limitations.len().max(1);
         return common(
             "analysis_outcome_incomplete",
             outcome.kind.as_str(),
@@ -5160,8 +5161,8 @@ fn top_limitation_dto(
             why_not_actionable,
             recovery_route,
             sample_sources,
-            outcome.counts.finding_count as usize,
-            outcome.counts.candidate_line_count as usize,
+            1,
+            limitation_count,
             vec![
                 "not a gate, baseline, badge, or RIPR Zero input",
                 "not test adequacy",
@@ -5393,6 +5394,8 @@ mod top_limitation_selection_tests {
         let value = top_limitation_dto(&health, Some(&snapshot), &authority).into_json();
 
         assert_eq!(value["status"], "analysis_outcome_incomplete");
+        assert_eq!(value["selected_count"], 1);
+        assert_eq!(value["total_count"], 1);
         assert_eq!(value["limitation_category"], "unsupported_input");
         assert_eq!(value["run_status"], "limited_incomplete_input");
         assert_eq!(value["analysis_outcome"]["kind"], "unsupported_input");
