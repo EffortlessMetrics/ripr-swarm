@@ -199,6 +199,7 @@ impl LanguageAdapter for PerlAdapter {
         Ok(LanguageDiffResult {
             findings,
             changed_files,
+            candidate_line_count: 0,
             changed_files_by_language: Vec::new(),
             partial_scope: None,
             skipped_files: 0,

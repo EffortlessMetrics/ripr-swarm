@@ -26,6 +26,21 @@ pub(crate) enum AnalysisOutcomeKind {
     AnalysisFailed,
 }
 
+impl AnalysisOutcomeKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoScope => "no_scope",
+            Self::NoChangedLines => "no_changed_lines",
+            Self::NoBehavioralCandidates => "no_behavioral_candidates",
+            Self::CompleteNoFindings => "complete_no_findings",
+            Self::CompleteWithFindings => "complete_with_findings",
+            Self::PartialWithLimitations => "partial_with_limitations",
+            Self::UnsupportedInput => "unsupported_input",
+            Self::AnalysisFailed => "analysis_failed",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AnalysisStage {
@@ -371,10 +386,13 @@ fn validate_outcome(
                 || counts.probe_count != 0
                 || counts.finding_count != 0
             {
-                return Err(
-                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts"
-                        .to_string(),
-                );
+                return Err(format!(
+                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts (changed_line_count={}, candidate_line_count={}, probe_count={}, finding_count={})",
+                    counts.changed_line_count,
+                    counts.candidate_line_count,
+                    counts.probe_count,
+                    counts.finding_count,
+                ));
             }
         }
         AnalysisOutcomeKind::CompleteNoFindings => {

@@ -21,6 +21,10 @@ use std::path::Path;
 pub(crate) struct LanguageDiffResult {
     pub(crate) findings: Vec<Finding>,
     pub(crate) changed_files: usize,
+    /// Number of distinct changed source lines for which the adapter
+    /// generated at least one probe. This is a producer fact, not a proxy for
+    /// every changed source line.
+    pub(crate) candidate_line_count: usize,
     /// Per-output-language breakdown of `changed_files` for adapters that
     /// cover more than one output language — the TypeScript adapter handles
     /// `.ts/.tsx` (typescript) and `.js/.jsx` (javascript) (#2103 review).

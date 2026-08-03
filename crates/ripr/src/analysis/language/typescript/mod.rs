@@ -265,6 +265,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         Ok(LanguageDiffResult {
             findings,
             changed_files: changed_count,
+            candidate_line_count: 0,
             changed_files_by_language,
             partial_scope: None,
             skipped_files: 0,

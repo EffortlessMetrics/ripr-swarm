@@ -13,8 +13,15 @@ use super::{
     sort, summary,
 };
 use crate::analysis::cancellation;
+use crate::analysis_outcome::{
+    AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+    AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
+};
 use crate::config::OraclePolicy;
 use crate::domain::Finding;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 /// Whether a language id corresponds to a preview adapter.
 ///
@@ -180,6 +187,7 @@ fn run_pipeline_for_diff_text(
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
     let changed_files = parsed_diff.changed_files;
+    let mut limitations = parsed_diff.limitations;
     let deleted_file_count = parsed_diff.deleted_file_count;
     let submodule_file_count = parsed_diff.submodule_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
@@ -198,6 +206,7 @@ fn run_pipeline_for_diff_text(
     let mut changed_files_by_language: Vec<(LanguageId, usize)> = Vec::new();
     let mut language_runs: Vec<LanguageRun> = Vec::new();
     let mut partial_scope: Option<PartialDiffScope> = None;
+    let mut candidate_line_count = 0usize;
 
     // Rust (the stable reference adapter) runs first, ahead of the preview
     // loop, so its partial-diff partition (RIPR-PROP-0019, #1999) governs the
@@ -229,6 +238,7 @@ fn run_pipeline_for_diff_text(
         partial_scope = result.partial_scope.clone();
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
+        candidate_line_count += result.candidate_line_count;
         changed_files_by_language.push((LanguageId::Rust, result.changed_files));
     }
     // When the Rust adapter returned a partial partition, preview adapters
@@ -271,6 +281,9 @@ fn run_pipeline_for_diff_text(
         match attempted {
             Ok(result) => {
                 cancellation::checkpoint()?;
+                candidate_line_count += result
+                    .candidate_line_count
+                    .max(candidate_lines_from_findings(&result.findings));
                 findings.extend(result.findings);
                 if result.changed_files_by_language.is_empty() {
                     changed_files_by_language.push((*language, result.changed_files));
@@ -362,13 +375,137 @@ fn run_pipeline_for_diff_text(
         summary_result.record_changed_files_by_language(language.as_str(), files);
     }
 
+    limitations.extend(limitations_from_language_runs(&language_runs)?);
+    if let Some(scope) = &partial_scope {
+        limitations.push(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::DiffScopeOversized,
+                AnalysisStage::AnalysisPipeline,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
+                    "Raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or RIPR_PARTIAL_DIFF_LINE_BUDGET, then re-run the analysis.",
+                )?,
+            )
+            .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
+            .with_detail(format!(
+                "The run analyzed {} changed line(s) and left at least {} changed line(s) outside the selected partition.",
+                scope.selected_changed_lines, scope.uninspected_changed_lines_lower_bound
+            ))?,
+        );
+    }
+
+    let changed_line_count = changed_files
+        .iter()
+        .map(|file| {
+            file.added_lines
+                .len()
+                .saturating_add(file.removed_lines.len())
+        })
+        .sum::<usize>();
+    let kind = if limitations.iter().any(|limitation| {
+        matches!(
+            limitation.kind,
+            AnalysisLimitationKind::CombinedHunkUnsupported
+                | AnalysisLimitationKind::UnresolvedConflictMarkers
+        )
+    }) {
+        AnalysisOutcomeKind::UnsupportedInput
+    } else if !limitations.is_empty() {
+        AnalysisOutcomeKind::PartialWithLimitations
+    } else if changed_files.is_empty() {
+        AnalysisOutcomeKind::NoScope
+    } else if changed_line_count == 0 {
+        AnalysisOutcomeKind::NoChangedLines
+    } else if findings.is_empty() && candidate_line_count == 0 {
+        AnalysisOutcomeKind::NoBehavioralCandidates
+    } else if findings.is_empty() {
+        AnalysisOutcomeKind::CompleteNoFindings
+    } else {
+        AnalysisOutcomeKind::CompleteWithFindings
+    };
+    let input_digest = Sha256::digest(diff_text.as_bytes());
+    let input_identity = format!(
+        "sha256:{}",
+        input_digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let analysis_outcome = Some(AnalysisOutcome::new(
+        kind,
+        AnalysisIdentity {
+            base_revision: options.base.clone(),
+            input_identity: Some(input_identity),
+            ..AnalysisIdentity::default()
+        },
+        AnalysisOutcomeCounts {
+            changed_file_count: changed_files.len() as u64,
+            changed_line_count: changed_line_count as u64,
+            candidate_line_count: candidate_line_count as u64,
+            probe_count: findings.len() as u64,
+            finding_count: findings.len() as u64,
+        },
+        limitations,
+    )?);
+
     Ok(AnalysisResult {
+        analysis_outcome,
         summary: summary_result,
         findings,
         preview_language_advisories: preview_advisories,
         language_runs,
         partial_scope,
     })
+}
+
+fn candidate_lines_from_findings(findings: &[Finding]) -> usize {
+    findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.probe.location.file.clone(),
+                finding.probe.location.line,
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn limitations_from_language_runs(
+    language_runs: &[LanguageRun],
+) -> Result<Vec<AnalysisLimitation>, String> {
+    language_runs
+        .iter()
+        .map(|run| {
+            let (kind, recovery) = match run.status {
+                LanguageRunStatus::Unavailable | LanguageRunStatus::Invalid => (
+                    AnalysisLimitationKind::LanguageAdapterUnavailable,
+                    AnalysisRecoveryKind::EnableLanguage,
+                ),
+                LanguageRunStatus::Partial => (
+                    AnalysisLimitationKind::ProducerFailure,
+                    AnalysisRecoveryKind::InspectFailure,
+                ),
+                LanguageRunStatus::Ok => return Ok(None),
+            };
+            let detail = run
+                .reason
+                .clone()
+                .unwrap_or_else(|| format!("{} adapter did not complete.", run.language));
+            Ok(Some(
+                AnalysisLimitation::new(
+                    kind,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        recovery,
+                        "Inspect the adapter result and re-run the analysis.",
+                    )?,
+                )
+                .with_detail(format!("{}: {detail}", run.language))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map(|items| items.into_iter().flatten().collect())
 }
 
 pub(crate) fn run_repo_pipeline_with_oracle_policy(
@@ -461,6 +598,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
     }
 
     Ok(AnalysisResult {
+        analysis_outcome: None,
         summary: summary_result,
         findings,
         preview_language_advisories: preview_advisories,
@@ -1041,6 +1179,69 @@ mod tests {
         );
         // Rust failure on an invalid root propagates as a top-level Err.
         result.expect_err("expected Rust adapter failure to propagate");
+    }
+
+    #[test]
+    fn diff_pipeline_projects_parser_limitation_and_distinguishes_complete_zero()
+    -> Result<(), String> {
+        let root = temp_root("analysis-outcome-projection")?;
+        write(root.join("src/lib.rs").as_path(), "pub fn existing() {}\n")?;
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+        };
+        let combined = "diff --cc src/lib.rs\n\
+             index 1111111,2222222..3333333\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@@ -1,1 -1,1 +1,1 @@@\n\
+             -old\n\
+             +new\n";
+        let incomplete = run_pipeline_for_diff_text(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            combined,
+        )?;
+        let outcome = incomplete
+            .analysis_outcome
+            .ok_or_else(|| "combined diff must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::UnsupportedInput);
+        assert!(incomplete.findings.is_empty());
+        assert_eq!(outcome.limitations.len(), 1);
+        assert_eq!(
+            outcome.limitations[0].kind,
+            AnalysisLimitationKind::CombinedHunkUnsupported
+        );
+
+        let complete_zero = run_pipeline_for_diff_text(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            "diff --git a/docs/readme.md b/docs/readme.md\n\
+             --- a/docs/readme.md\n\
+             +++ b/docs/readme.md\n\
+             @@ -1,1 +1,1 @@\n\
+             -old\n\
+             +new\n",
+        )?;
+        let outcome = complete_zero
+            .analysis_outcome
+            .ok_or_else(|| "ordinary zero result must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::NoBehavioralCandidates);
+        assert!(outcome.limitations.is_empty());
+        assert!(complete_zero.findings.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+        Ok(())
     }
 
     #[test]
