@@ -588,6 +588,68 @@ mod tests {
     }
 
     #[test]
+    fn typed_limitation_tokens_match_the_wire_contract() {
+        let limitation_kinds = [
+            (
+                AnalysisLimitationKind::CombinedHunkUnsupported,
+                "combined_hunk_unsupported",
+            ),
+            (
+                AnalysisLimitationKind::UnresolvedConflictMarkers,
+                "unresolved_conflict_markers",
+            ),
+            (
+                AnalysisLimitationKind::DiffScopeOversized,
+                "diff_scope_oversized",
+            ),
+            (
+                AnalysisLimitationKind::LanguageAdapterUnavailable,
+                "language_adapter_unavailable",
+            ),
+            (
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                "language_scope_unsupported",
+            ),
+            (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
+            (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
+        ];
+        for (kind, expected) in limitation_kinds {
+            assert_eq!(kind.as_str(), expected);
+        }
+
+        let stages = [
+            (AnalysisStage::DiffLoad, "diff_load"),
+            (AnalysisStage::DiffParse, "diff_parse"),
+            (AnalysisStage::LanguageAdapter, "language_adapter"),
+            (AnalysisStage::ProbeGeneration, "probe_generation"),
+            (
+                AnalysisStage::FindingClassification,
+                "finding_classification",
+            ),
+            (AnalysisStage::AnalysisPipeline, "analysis_pipeline"),
+        ];
+        for (stage, expected) in stages {
+            assert_eq!(stage.as_str(), expected);
+        }
+
+        let recoveries = [
+            (AnalysisRecoveryKind::NarrowDiff, "narrow_diff"),
+            (AnalysisRecoveryKind::UseTwoWayDiff, "use_two_way_diff"),
+            (AnalysisRecoveryKind::ResolveConflicts, "resolve_conflicts"),
+            (AnalysisRecoveryKind::EnableLanguage, "enable_language"),
+            (
+                AnalysisRecoveryKind::IncreaseConfiguredLimit,
+                "increase_configured_limit",
+            ),
+            (AnalysisRecoveryKind::Retry, "retry"),
+            (AnalysisRecoveryKind::InspectFailure, "inspect_failure"),
+        ];
+        for (recovery, expected) in recoveries {
+            assert_eq!(recovery.as_str(), expected);
+        }
+    }
+
+    #[test]
     fn no_behavioral_candidates_requires_positive_producer_facts() -> Result<(), String> {
         expect_error(
             outcome(
