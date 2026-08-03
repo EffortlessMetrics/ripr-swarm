@@ -1225,6 +1225,15 @@ pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
         == Some(false)
 }
 
+/// Return the producer-owned typed outcome kind for an incomplete envelope.
+/// Consumers use this only for fail-closed diagnostics.
+pub(crate) fn incomplete_analysis_outcome_kind(value: &Value) -> &str {
+    value
+        .pointer("/analysis_outcome/outcome/kind")
+        .and_then(Value::as_str)
+        .unwrap_or("incomplete")
+}
+
 fn resolve_root_path(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()

@@ -30,7 +30,7 @@ impl std::fmt::Display for InputState {
 // take a serde dep; rendering to JSON is done via serde_json::json! in json.rs.
 
 /// Top-level in-memory representation of the PR evidence summary.
-pub(super) struct PrEvidenceSummaryJson {
+pub struct PrEvidenceSummaryJson {
     /// `"complete"`, `"incomplete"`, `"seam_limit_applied"`,
     /// `"diff_complete_full_repo_limited"`, or `"unknown"`.
     pub(super) run_status: String,

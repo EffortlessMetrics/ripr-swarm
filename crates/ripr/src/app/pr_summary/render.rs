@@ -343,7 +343,7 @@ fn value_at_path<'a>(value: Option<&'a Value>, path: &[&str]) -> Option<&'a Valu
 }
 
 /// Render the compact Markdown panel from the computed summary struct.
-pub(super) fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> String {
+pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> String {
     use super::model::{NullableU64, U64OrNotAvailable};
     let mut out = String::new();
     out.push_str("# PR Evidence Summary v1\n\n");

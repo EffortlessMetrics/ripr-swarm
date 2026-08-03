@@ -81,9 +81,10 @@ pub(super) fn read_gap_ledger_impl(
             return Some(Vec::new());
         }
         if super::discloses_incomplete_analysis_outcome(&value) {
+            let kind = super::incomplete_analysis_outcome_kind(&value);
             config_errors.push(format!(
                 "required gap decision ledger input {} discloses an incomplete analysis \
-                 outcome; an incomplete denominator is never a gate input",
+                 outcome ({kind}); an incomplete denominator is never a gate input",
                 display_path(path),
             ));
             return Some(Vec::new());
@@ -261,8 +262,9 @@ pub(super) fn read_baseline_impl(
                 return BaselineIndex::default();
             }
             if super::discloses_incomplete_analysis_outcome(&value) {
+                let kind = super::incomplete_analysis_outcome_kind(&value);
                 config_errors.push(format!(
-                    "baseline {} discloses an incomplete analysis outcome; \
+                    "baseline {} discloses an incomplete analysis outcome ({kind}); \
                      an incomplete denominator is never a baseline input",
                     display_path(path),
                 ));

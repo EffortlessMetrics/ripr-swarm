@@ -48,6 +48,7 @@ pub(crate) struct GapDecisionLedgerReport {
     generated_at: String,
     inputs: GapDecisionLedgerInputs,
     summary: GapDecisionLedgerSummary,
+    analysis_outcome: Option<Value>,
     records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -268,14 +269,22 @@ pub(crate) fn build_gap_decision_ledger_report(
     input: GapDecisionLedgerInput,
 ) -> GapDecisionLedgerReport {
     let mut warnings = Vec::new();
+    let mut analysis_outcome = None;
     let mut records = match input.records_json {
-        Ok(contents) => match parse_gap_decision_source(input.source_kind, &contents) {
-            Ok(records) => records,
-            Err(err) => {
-                warnings.push(format!("parse {} failed: {err}", input.records_path));
-                Vec::new()
+        Ok(contents) => {
+            if input.source_kind == GapDecisionLedgerSourceKind::CheckOutput {
+                analysis_outcome = serde_json::from_str::<Value>(&contents)
+                    .ok()
+                    .and_then(|value| value.get("analysis_outcome").cloned());
             }
-        },
+            match parse_gap_decision_source(input.source_kind, &contents) {
+                Ok(records) => records,
+                Err(err) => {
+                    warnings.push(format!("parse {} failed: {err}", input.records_path));
+                    Vec::new()
+                }
+            }
+        }
         Err(err) => {
             warnings.push(err);
             Vec::new()
@@ -309,6 +318,7 @@ pub(crate) fn build_gap_decision_ledger_report(
             records: input.records_path,
         },
         summary,
+        analysis_outcome,
         records,
         warnings,
         limits: vec![
@@ -337,6 +347,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         generated_at: &'a str,
         inputs: &'a GapDecisionLedgerInputs,
         summary: &'a GapDecisionLedgerSummary,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        analysis_outcome: Option<&'a Value>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -351,6 +363,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         generated_at: &report.generated_at,
         inputs: &report.inputs,
         summary: &report.summary,
+        analysis_outcome: report.analysis_outcome.as_ref(),
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,

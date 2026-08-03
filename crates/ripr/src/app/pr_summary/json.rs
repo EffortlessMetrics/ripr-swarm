@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 ///   When present, `verify_failed_receipts` is derived from its
 ///   `attempts[].verify_result` field. When absent, `verify_failed_receipts`
 ///   stays `not_available` (honest-absent rule: absence ≠ zero).
-pub(super) fn build_pr_evidence_summary(
+pub fn build_pr_evidence_summary(
     start_here_value: Option<&Value>,
     gap_ledger_value: Option<&Value>,
     repo_exposure_value: Option<&Value>,
@@ -466,7 +466,7 @@ fn nullable_u64(v: &NullableU64) -> Value {
 }
 
 /// Render the in-memory summary as a versioned JSON string.
-pub(super) fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
+pub fn render_pr_evidence_summary_json(s: &PrEvidenceSummaryJson) -> String {
     let top_repair = match &s.top_repair {
         Some(r) => json!({
             "canonical_gap_id": r.canonical_gap_id,

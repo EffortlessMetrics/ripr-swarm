@@ -111,7 +111,7 @@ Schema version `0.1`. Stable field order.
   "kind": "pr_evidence_summary",
   "tool": "ripr",
   "run_status": "diff_complete_full_repo_limited",
-  "analysis_complete": true,
+  "analysis_complete": null,
   "analysis_outcome": null,
   "changed_surfaces": 3,
   "gaps": {
