@@ -6527,6 +6527,7 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md",
   "docs/OUTPUT_SCHEMA.md",
+  "docs/BADGE_POLICY.md",
 ]
 metrics = [
   "analysis_outcome_complete_zero_distinguishable",

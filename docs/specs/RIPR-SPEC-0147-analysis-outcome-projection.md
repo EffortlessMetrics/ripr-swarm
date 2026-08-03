@@ -61,8 +61,8 @@ projection does not analyze those regions.
 - the outcome input identity is stable for identical diff bytes and does not
   contain an absolute checkout path;
 - SARIF and diff-scoped badge output disclose an incomplete zero-result run;
-  repo-scoped badges retain `analysis_complete = null` because no diff
-  denominator exists.
+  repo-scoped badges retain `analysis_complete = null` and
+  `analysis_outcome = null` because no diff denominator exists.
 - Gate, generated-CI, LSP, agent, and review surfaces remain explicitly
   unclaimed until their own parity fixtures land.
 
