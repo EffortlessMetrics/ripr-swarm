@@ -185,7 +185,7 @@ this plan slice. The production repair commit is
 required routed proof for #2869 was still running when GitHub merged it, so that
 hosted receipt is retained as an explicit proof gap rather than a pass. The
 pinned record-set digest is
-`sha256:e33dd0e4e7a42924a3a3da8e0cd4dce414e0dbf5d92e0e23da65462c134052c2`.
+`sha256:166380b5b8cef061f6d617db089a5070e566e54841bd103c6a962d832881efe0`.
 
 ## Non-goals and safety boundary
 
