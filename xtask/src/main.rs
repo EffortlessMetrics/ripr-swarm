@@ -371,6 +371,11 @@ impl CwdLock {
         }
     }
 
+    /// Acquire a shared reader slot.
+    ///
+    /// This gate is not reentrant: callers must not acquire another reader
+    /// while holding a `CwdReadGuard`, because a queued writer would block the
+    /// nested acquisition while the existing guard blocks that writer.
     fn read(&self) -> CwdReadGuard<'_> {
         let mut state = self
             .state
@@ -386,6 +391,10 @@ impl CwdLock {
         CwdReadGuard { lock: self }
     }
 
+    /// Acquire the exclusive writer slot.
+    ///
+    /// This gate is not reentrant: callers must not acquire a writer while
+    /// holding either a `CwdReadGuard` or a `CwdWriteGuard`.
     fn write(&self) -> CwdWriteGuard<'_> {
         let mut state = self
             .state
@@ -412,13 +421,18 @@ pub(crate) struct CwdReadGuard<'a> {
 #[cfg(test)]
 impl Drop for CwdReadGuard<'_> {
     fn drop(&mut self) {
-        let mut state = self
-            .lock
-            .state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        state.active_readers = state.active_readers.saturating_sub(1);
-        self.lock.available.notify_all();
+        let active_readers = {
+            let mut state = self
+                .lock
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.active_readers = state.active_readers.saturating_sub(1);
+            state.active_readers
+        };
+        if active_readers == 0 {
+            self.lock.available.notify_all();
+        }
     }
 }
 
@@ -430,12 +444,14 @@ pub(crate) struct CwdWriteGuard<'a> {
 #[cfg(test)]
 impl Drop for CwdWriteGuard<'_> {
     fn drop(&mut self) {
-        let mut state = self
-            .lock
-            .state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        state.active_writer = false;
+        {
+            let mut state = self
+                .lock
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.active_writer = false;
+        }
         self.lock.available.notify_all();
     }
 }
