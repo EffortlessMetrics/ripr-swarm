@@ -629,18 +629,29 @@ fn wait_for_child_exit(
     error_context: &str,
 ) -> Result<bool, String> {
     let started = Instant::now();
+    let deadline = started
+        .checked_add(grace)
+        .ok_or_else(|| format!("failed to establish child-exit deadline for {error_context}"))?;
     loop {
-        if child
-            .try_wait()
-            .map_err(|err| format!("failed to poll {error_context}: {err}"))?
-            .is_some()
-        {
-            return Ok(true);
-        }
-        if started.elapsed() >= grace {
+        if Instant::now() >= deadline {
             return Ok(false);
         }
-        thread::sleep(Duration::from_millis(10));
+
+        let exited = child
+            .try_wait()
+            .map_err(|err| format!("failed to poll {error_context}: {err}"))?;
+        if exited.is_some() {
+            // Only accept an exit observed strictly before the bounded grace
+            // deadline. A late observation must not turn a failed tree-kill
+            // test into a pass merely because the child eventually exited.
+            return Ok(Instant::now() < deadline);
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        thread::sleep(remaining.min(Duration::from_millis(10)));
     }
 }
 
