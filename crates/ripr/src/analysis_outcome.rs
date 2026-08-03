@@ -39,6 +39,17 @@ impl AnalysisOutcomeKind {
             Self::AnalysisFailed => "analysis_failed",
         }
     }
+
+    pub(crate) const fn is_complete(self) -> bool {
+        matches!(
+            self,
+            Self::NoScope
+                | Self::NoChangedLines
+                | Self::NoBehavioralCandidates
+                | Self::CompleteNoFindings
+                | Self::CompleteWithFindings
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
