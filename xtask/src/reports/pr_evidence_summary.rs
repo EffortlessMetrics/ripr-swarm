@@ -8,6 +8,7 @@ use super::write_parented_file;
 use io::load_json;
 use json::{build_pr_evidence_summary, render_pr_evidence_summary_json};
 use render::{SummaryRenderInput, render_pr_evidence_summary};
+use serde_json::Value;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -104,6 +105,36 @@ fn render_evidence_summary_md(s: &model::PrEvidenceSummaryJson, _json_text: &str
     let mut out = String::new();
     out.push_str("# PR Evidence Summary v1\n\n");
     out.push_str(&format!("**Run Status**: `{}`\n\n", s.run_status));
+    out.push_str(&format!(
+        "**Analysis Complete**: `{}`\n\n",
+        s.analysis_complete
+            .map_or_else(|| "not_available".to_string(), |value| value.to_string())
+    ));
+    if let Some(outcome) = &s.analysis_outcome {
+        let kind = outcome
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str)
+            .unwrap_or("not_available");
+        out.push_str(&format!("**Analysis Outcome**: `{kind}`\n\n"));
+        if let Some(limitations) = outcome
+            .pointer("/outcome/limitations")
+            .and_then(Value::as_array)
+        {
+            out.push_str("### Analysis Limitations\n\n");
+            for limitation in limitations {
+                let limitation_kind = limitation
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("not_available");
+                let recovery = limitation
+                    .pointer("/recovery/kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("not_available");
+                out.push_str(&format!("- `{limitation_kind}`; recovery: `{recovery}`\n"));
+            }
+            out.push('\n');
+        }
+    }
 
     // Changed surfaces
     let surfaces = match &s.changed_surfaces {

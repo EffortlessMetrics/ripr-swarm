@@ -5113,7 +5113,8 @@ tests = [
   "crates/ripr/src/app/pr_summary/json.rs::tests::repo_exposure_limitations_are_aggregated",
   "crates/ripr/src/app/pr_summary/mod.rs::tests::parse_accepts_baseline",
   "crates/ripr/src/app/pr_summary/mod.rs::tests::parse_rejects_unknown_arg",
-  "crates/ripr/tests/cli_smoke.rs::pr_summary_help_exits_cleanly"
+  "crates/ripr/tests/cli_smoke.rs::pr_summary_help_exits_cleanly",
+  "xtask/src/reports/pr_evidence_summary/json.rs::tests::typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete"
 ]
 fixtures = []
 code = [
@@ -5122,7 +5123,10 @@ code = [
   "crates/ripr/src/app/pr_summary/model.rs",
   "crates/ripr/src/app/pr_summary/render.rs",
   "crates/ripr/src/output/gate.rs",
-  "crates/ripr/src/output/gate/input.rs"
+  "crates/ripr/src/output/gate/input.rs",
+  "xtask/src/reports/pr_evidence_summary.rs",
+  "xtask/src/reports/pr_evidence_summary/json.rs",
+  "xtask/src/reports/pr_evidence_summary/model.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md",

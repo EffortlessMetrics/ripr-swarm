@@ -276,7 +276,7 @@ integer values computed from the before/after snapshots.
 ## Implementation Mapping
 
 - `crates/ripr/src/app/pr_summary/mod.rs` — binary command options and
-  artifact composition; the xtask command delegates here.
+  artifact composition.
 - `crates/ripr/src/app/pr_summary/json.rs` — summary derivation and JSON
   rendering, including typed incomplete-outcome preservation.
 - `crates/ripr/src/app/pr_summary/model.rs` — `PrEvidenceSummaryJson`,
@@ -285,6 +285,9 @@ integer values computed from the before/after snapshots.
   including typed outcome kind and recovery limitations.
 - `crates/ripr/src/output/gate.rs` and `gate/input.rs` — fail-closed gate and
   baseline consumption of typed incomplete outcomes.
+- `xtask/src/reports/pr_evidence_summary.rs` and its `json.rs`/`model.rs`
+  modules — compatibility command kept behaviorally paired with the binary
+  summary, including typed outcome disclosure.
 - `docs/OUTPUT_SCHEMA.md` — `## PR Evidence Summary` section: updated field source for `verify_failed_receipts`.
 - `docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md` — this file.
 
