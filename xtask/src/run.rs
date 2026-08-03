@@ -612,7 +612,10 @@ fn terminate_after_timeout(child: &mut Child, error_context: &str) -> Result<boo
                 .map_err(|err| format!("failed to poll {error_context}: {err}"))?
                 .is_some()
             {
-                Ok(false)
+                // A successful Windows tree-kill request still represents an
+                // enforced timeout even if the parent exits in the race
+                // between the final poll and the direct-kill fallback.
+                Ok(tree_terminated)
             } else {
                 Err(format!(
                     "failed to terminate timed-out {error_context}: {kill_err}"
