@@ -7164,7 +7164,9 @@ language = "rust"
 
         let guidance = workflow_step(&workflow, "Run RIPR PR guidance report");
         assert!(guidance.contains("github.event_name == 'pull_request'"));
-        assert!(guidance.contains("mkdir -p target/ripr/review"));
+        assert!(guidance.contains("mkdir -p target/ripr/pr target/ripr/review"));
+        assert!(guidance.contains("check_status=0"));
+        assert!(guidance.contains("target/ripr/pr/check.json"));
         assert!(guidance.contains("ripr review-comments"));
         assert!(guidance.contains("--base \"origin/${{ github.base_ref }}\""));
         assert!(guidance.contains("--head HEAD"));
