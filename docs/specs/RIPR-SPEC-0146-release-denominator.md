@@ -62,17 +62,22 @@ decision; final output is ready only after every record is reconciled.
 ## Current-main evidence
 
 `fixtures/release_denominator/current-main-provisional.json` is a captured
-provisional census of `c86807ec..fcbb30a` at `origin/main` as observed on
-2026-08-02. It carries 230 first-parent records and 219 candidate-tree
-records. The development-main merges for #2842, #2844, corrective #2858/#2859,
+provisional census of `c86807ec..c30a2683` at `origin/main` as observed on
+2026-08-03. It carries 234 first-parent records and 219 candidate-tree
+records, with 15 candidate-only exclusions and 15 safe deferrals. The
+development-main merges for #2842, #2844, corrective #2858/#2859,
 corrective #2862, release-control #2857, corrective #2867, #2870, #2860, #2861,
-and #2869 are retained in
+#2869, #2876, #2873, #2878, and #2872 are retained in
 the denominator with current `safe_defer_post_0_11` disposition and
 `absent_by_candidate_only_exclusion` tree state; earlier `hold_post_release`
-is historical context only. The later corrective
-commits inherit that disposition unless #2379 changes the release graph. The
-fixture is range/identity and explicitly reconciled disposition evidence, not
-a final release qualification.
+is historical context only. The later corrective commits inherit that
+disposition unless #2379 changes the release graph. The fixture pins cutoff
+`c30a26831b75051813bfaa3dbd9378096ec6aa82`, range digest
+`sha256:b85b8314b5f738335ae63220fe5f0ea8ef4e6e1892124eea148ea49181168501`,
+and record-set digest
+`sha256:157ce060005a3bf3b58501af0a7e7f8b4ced5a3a9be9786c2f1d9a20ac676461`.
+It is range/identity and explicitly reconciled disposition evidence, not a
+final release qualification.
 
 ## Acceptance and proof map
 
@@ -137,7 +142,8 @@ reference authority, compatibility projection mismatch, contradictory
 identity, the two known issue/merge-PR pairs, deterministic ordering, changed mappings, final unreviewed
 references, malformed reference evidence, numeric compatibility projection
 ordering, manual-mapping reasons, reused reference identity, and the current-main
-census pinned to the final corrective cutoff and record-set digest.
+census pinned to the final corrective cutoff, counts, excluded commit
+identities, and record-set digest.
 
 ## Implementation Mapping
 
