@@ -6514,6 +6514,8 @@ tests = [
   "crates/ripr/src/output/json/mod.rs::tests::typed_incomplete_outcome_matches_human_and_json_projection",
   "crates/ripr/src/output/gate/tests.rs::tests::gate_fails_closed_on_typed_incomplete_analysis_outcome",
   "crates/ripr/src/app/pr_summary/json.rs::tests::typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_discloses_incomplete_zero_finding_outcome_at_run_level",
+  "crates/ripr/src/output/badge/tests.rs::tests::incomplete_zero_finding_diff_is_not_a_green_badge",
 ]
 code = [
   "crates/ripr/src/analysis_outcome.rs",
@@ -6528,10 +6530,16 @@ code = [
   "crates/ripr/src/app/pr_summary/json.rs",
   "crates/ripr/src/app/pr_summary/model.rs",
   "crates/ripr/src/app/pr_summary/render.rs",
+  "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/badge/model.rs",
+  "crates/ripr/src/output/badge/render.rs",
+  "crates/ripr/src/output/badge/summaries.rs",
+  "crates/ripr/src/output/badge/test_efficiency.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md",
   "docs/OUTPUT_SCHEMA.md",
+  "docs/BADGE_POLICY.md",
 ]
 metrics = [
   "analysis_outcome_complete_zero_distinguishable",
