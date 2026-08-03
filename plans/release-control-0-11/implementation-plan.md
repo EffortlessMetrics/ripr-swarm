@@ -7,8 +7,9 @@ active-goal authority.
 
 The live baseline was initially `origin/main` at
 `76193cf5da5a2ab7034a95752ff05bc3061a6228`; it advanced through several
-reconciliations and is currently `fcbb30a7cf6a37027fa377abafb617632b2e6f57`
-as of 2026-08-02. The release authority remains
+reconciliations and was observed at `fcbb30a7cf6a37027fa377abafb617632b2e6f57`
+on 2026-08-02. The later current-main observation is recorded below. The
+release authority remains
 [#2379](https://github.com/EffortlessMetrics/ripr-swarm/issues/2379), while
 #1704 and #1706 remain the longer-term portfolio and selected-work authorities.
 Those identities must be reread before each release disposition; this plan is
