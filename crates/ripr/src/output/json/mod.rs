@@ -103,7 +103,7 @@ mod tests {
         assert!(!human.contains("Analysis outcome: \"unsupported_input\""));
         assert!(human.contains("analysis incomplete"));
         assert!(human.contains("Zero findings is not a clean result"));
-        assert!(human.contains("CombinedHunkUnsupported"));
+        assert!(human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
         Ok(())
     }

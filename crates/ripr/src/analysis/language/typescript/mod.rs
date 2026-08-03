@@ -15,6 +15,10 @@ pub(crate) use super::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
 };
 pub(super) use crate::analysis::probes;
+pub(crate) use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
+};
 pub(crate) use crate::config::OraclePolicy;
 pub(crate) use crate::domain::{
     ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding,
@@ -262,6 +266,22 @@ impl LanguageAdapter for TypeScriptAdapter {
         if changed_javascript > 0 {
             changed_files_by_language.push((LanguageId::JavaScript, changed_javascript));
         }
+        let limitations = parse_limits
+            .iter()
+            .map(|limit| {
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::Retry,
+                        "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
+                    )?,
+                )
+                .with_path(limit.file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(limit.reason.clone())
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         Ok(LanguageDiffResult {
             findings,
             changed_files: changed_count,
@@ -269,6 +289,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             changed_files_by_language,
             partial_scope: None,
             skipped_files: 0,
+            limitations,
         })
     }
 
