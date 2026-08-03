@@ -147,8 +147,9 @@ Observed after the latest live reconciliation: `origin/main` is
 delivered the typed reference-authority and fail-closed offline denominator
 slice. Its final routed result was not a clean qualification signal, so this
 merge is recorded as delivered implementation evidence, not candidate or
-release qualification. The current open-PR inventory contains #2863, #2864,
-#2865, #2866, and #2868; those rows remain ownership/disposition context and
+release qualification. The current open-PR inventory observed at
+`2026-08-03T02:42:33-04:00` contains #2863, #2864, #2865, #2866, #2868,
+#2871, #2872, and #2873. Those rows remain ownership/disposition context and
 do not form a global hard-cut predicate.
 Passed locally: `cargo metadata --no-deps --locked`, `cargo fmt --all --
 --check`, standalone rustfmt for every changed Rust file, `cargo check -p xtask
