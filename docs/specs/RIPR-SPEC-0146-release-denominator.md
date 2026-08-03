@@ -67,8 +67,9 @@ provisional census of `c86807ec..fcbb30a` at `origin/main` as observed on
 records. The development-main merges for #2842, #2844, corrective #2858/#2859,
 corrective #2862, release-control #2857, corrective #2867, #2870, #2860, #2861,
 and #2869 are retained in
-the denominator with `safe_defer_post_0_11` / `hold_post_release` disposition
-and `absent_by_candidate_only_exclusion` tree state; the later corrective
+the denominator with current `safe_defer_post_0_11` disposition and
+`absent_by_candidate_only_exclusion` tree state; earlier `hold_post_release`
+is historical context only. The later corrective
 commits inherit that disposition unless #2379 changes the release graph. The
 fixture is range/identity and explicitly reconciled disposition evidence, not
 a final release qualification.

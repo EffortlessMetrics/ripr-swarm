@@ -161,9 +161,10 @@ rebases the provisional census to `origin/main`
 `c86807ec..fcbb30a` contains 230 observed commits and the candidate-tree
 projection contains 219 records. Merged PRs #2842, #2844, corrective #2858/#2859,
 corrective #2862, release-control #2857, corrective #2867, #2870, #2860, #2861,
-and #2869 remain explicitly
-`safe_defer_post_0_11` / `hold_post_release` and absent by
-`candidate_only_exclusion` unless #2379 changes the release graph. The fixture
+and #2869 remain explicitly assigned current
+`safe_defer_post_0_11` disposition and
+`absent_by_candidate_only_exclusion` tree state; earlier `hold_post_release`
+is historical context only unless #2379 changes the release graph. The fixture
 proves current range identity and reconciled disposition only; it is not a
 reviewed final denominator and cannot unblock #1609 or #2769.
 
