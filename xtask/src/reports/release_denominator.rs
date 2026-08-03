@@ -1283,6 +1283,7 @@ mod tests {
                 .counts_by_tree_state
                 .get("absent_by_candidate_only_exclusion")
                 == Some(&15)
+                && report.counts_by_tree_state.get("present_in_candidate") == Some(&219)
                 && report.counts_by_disposition.get("safe_defer_post_0_11") == Some(&15)
                 && report
                     .counts_by_disposition
